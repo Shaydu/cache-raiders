@@ -1,0 +1,388 @@
+import RealityKit
+import simd
+import UIKit
+import Foundation
+
+// MARK: - Box Loot Container
+/// A box-shaped container with a door that opens to reveal loot
+class BoxLootContainer {
+    static func create(type: LootBoxType, id: String, sizeMultiplier: Float = 1.0) -> LootBoxContainer {
+        let container = ModelEntity()
+        container.name = id
+        
+        let baseSize = type.size * sizeMultiplier
+        
+        // Load the treasure chest model
+        let (box, lid) = loadTreasureChestModel(size: baseSize, type: type)
+        
+        // Create prize that sits inside the box
+        let prize = createPrize(type: type, size: baseSize)
+        prize.position = SIMD3<Float>(0, 0, 0) // Center of box
+        prize.isEnabled = false // Hidden until opened
+        
+        // Add effects
+        addEffects(to: box, type: type)
+        
+        // Assemble
+        container.addChild(box)
+        if let lid = lid {
+            container.addChild(lid)
+        }
+        container.addChild(prize)
+        
+        // Create a dummy lid if model doesn't have one
+        let doorLid = lid ?? ModelEntity()
+        
+        return LootBoxContainer(
+            container: container,
+            box: box,
+            lid: doorLid, // Lid/door from model or dummy
+            prize: prize
+        )
+    }
+    
+    /// Loads a treasure chest USDZ model (randomly chooses between available models)
+    /// Note: Make sure "Stylised_Treasure_Chest.usdz" and "Treasure_Chest.usdz" are added to the Xcode project and included in the app bundle
+    private static func loadTreasureChestModel(size: Float, type: LootBoxType) -> (box: ModelEntity, lid: ModelEntity?) {
+        // List of available treasure chest models (in order of preference)
+        let chestModels = ["Stylised_Treasure_Chest", "Treasure_Chest"]
+        
+        // Randomly select a model (or try them in order if random fails)
+        let selectedModel = chestModels.randomElement() ?? chestModels[0]
+        
+        // Try to load the selected model
+        guard let modelURL = Bundle.main.url(forResource: selectedModel, withExtension: "usdz") else {
+            // Try the other model if first one fails
+            let fallbackModel = selectedModel == "Stylised_Treasure_Chest" ? "Treasure_Chest" : "Stylised_Treasure_Chest"
+            guard let fallbackURL = Bundle.main.url(forResource: fallbackModel, withExtension: "usdz") else {
+                print("⚠️ Could not find any treasure chest model in bundle")
+                print("   Make sure Stylised_Treasure_Chest.usdz and/or Treasure_Chest.usdz are added to the Xcode project")
+                print("   Using fallback procedural box")
+                return (createFallbackBox(size: size, color: type.color, glowColor: type.glowColor), createDoor(size: size, color: type.color, glowColor: type.glowColor))
+            }
+            
+            return loadChestModelFromURL(fallbackURL, size: size, type: type, modelName: fallbackModel)
+        }
+        
+        return loadChestModelFromURL(modelURL, size: size, type: type, modelName: selectedModel)
+    }
+    
+    /// Helper function to load a chest model from a URL
+    private static func loadChestModelFromURL(_ modelURL: URL, size: Float, type: LootBoxType, modelName: String) -> (box: ModelEntity, lid: ModelEntity?) {
+        do {
+            // Load the model entity - this might return a scene with multiple entities
+            let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
+            
+            // If it's a ModelEntity, use it directly
+            // If it's a scene with children, find the main chest entity
+            let modelEntity: ModelEntity
+            if let directModel = loadedEntity as? ModelEntity {
+                modelEntity = directModel
+            } else {
+                // Search for the main chest model in children
+                if let chest = findFirstModelEntity(in: loadedEntity) {
+                    modelEntity = chest
+                } else {
+                    // Create a wrapper and add the loaded entity as child
+                    modelEntity = ModelEntity()
+                    modelEntity.addChild(loadedEntity)
+                }
+            }
+            
+            // Scale the model to match desired size
+            // Adjust scale based on model's original size (you may need to tweak this)
+            modelEntity.scale = SIMD3<Float>(repeating: size * 0.5) // Adjust multiplier as needed
+            
+            // Ensure model is right-side up (not upside down)
+            // Some models may load with incorrect orientation
+            // Reset rotation to ensure proper orientation
+            modelEntity.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
+            
+            // Try to find the lid in the model hierarchy
+            // Common names for lids: "lid", "Lid", "top", "Top", "door", "Door", "chest_lid", etc.
+            var lidEntity: ModelEntity? = nil
+            lidEntity = findEntity(named: "lid", in: modelEntity) ??
+                       findEntity(named: "Lid", in: modelEntity) ??
+                       findEntity(named: "top", in: modelEntity) ??
+                       findEntity(named: "Top", in: modelEntity) ??
+                       findEntity(named: "door", in: modelEntity) ??
+                       findEntity(named: "Door", in: modelEntity) ??
+                       findEntity(named: "chest_lid", in: modelEntity) ??
+                       findEntity(named: "Chest_Lid", in: modelEntity)
+            
+            // If lid found, remove it from parent so we can animate it separately
+            if let lid = lidEntity {
+                lid.removeFromParent()
+                print("✅ Found and extracted lid from treasure chest model: \(modelName)")
+            } else {
+                print("ℹ️ No lid found in model \(modelName) - chest may open differently or lid is part of main mesh")
+                // If the model has built-in animations, we might want to use those instead
+                // Check for available animations
+                let availableAnimations = modelEntity.availableAnimations
+                if !availableAnimations.isEmpty {
+                    print("   Model has \(availableAnimations.count) available animation(s) - may use built-in animations")
+                }
+            }
+            
+            // Apply materials/colors if needed
+            applyMaterials(to: modelEntity, color: type.color, glowColor: type.glowColor)
+            
+            return (modelEntity, lidEntity)
+        } catch {
+            print("❌ Error loading treasure chest model \(modelName): \(error)")
+            print("   Using fallback procedural box")
+            return (createFallbackBox(size: size, color: type.color, glowColor: type.glowColor), createDoor(size: size, color: type.color, glowColor: type.glowColor))
+        }
+    }
+    
+    /// Finds the first ModelEntity in a hierarchy
+    private static func findFirstModelEntity(in entity: Entity) -> ModelEntity? {
+        if let modelEntity = entity as? ModelEntity {
+            return modelEntity
+        }
+        
+        for child in entity.children {
+            if let found = findFirstModelEntity(in: child) {
+                return found
+            }
+        }
+        
+        return nil
+    }
+    
+    /// Recursively searches for an entity with a specific name
+    private static func findEntity(named name: String, in entity: Entity) -> ModelEntity? {
+        if let modelEntity = entity as? ModelEntity, modelEntity.name == name {
+            return modelEntity
+        }
+        
+        for child in entity.children {
+            if let found = findEntity(named: name, in: child) {
+                return found
+            }
+        }
+        
+        return nil
+    }
+    
+    /// Applies materials to the model entities
+    private static func applyMaterials(to entity: Entity, color: UIColor, glowColor: UIColor) {
+        if let modelEntity = entity as? ModelEntity, var model = modelEntity.model {
+            // Update materials with glow effect
+            var materials: [Material] = []
+            for material in model.materials {
+                if var simpleMaterial = material as? SimpleMaterial {
+                    // Enhance the material with glow
+                    simpleMaterial.color = .init(tint: color)
+                    materials.append(simpleMaterial)
+                } else {
+                    materials.append(material)
+                }
+            }
+            model.materials = materials
+            modelEntity.model = model
+        }
+        
+        // Recursively apply to children
+        for child in entity.children {
+            applyMaterials(to: child, color: color, glowColor: glowColor)
+        }
+    }
+    
+    /// Fallback: creates a procedural box if model can't be loaded
+    private static func createFallbackBox(size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
+        return createBox(size: size, color: color, glowColor: glowColor)
+    }
+    
+    private static func createBox(size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
+        // Main box body
+        let boxMesh = MeshResource.generateBox(
+            width: size * 0.6,
+            height: size * 0.6,
+            depth: size * 0.6,
+            cornerRadius: size * 0.05
+        )
+        
+        var boxMaterial = SimpleMaterial()
+        boxMaterial.color = .init(tint: color)
+        boxMaterial.roughness = 0.4
+        boxMaterial.metallic = 0.3
+        
+        let boxEntity = ModelEntity(mesh: boxMesh, materials: [boxMaterial])
+        
+        // Add decorative corners
+        let cornerSize = size * 0.08
+        let cornerPositions: [SIMD3<Float>] = [
+            SIMD3<Float>(size * 0.3, size * 0.3, size * 0.3),   // Top front right
+            SIMD3<Float>(-size * 0.3, size * 0.3, size * 0.3),  // Top front left
+            SIMD3<Float>(size * 0.3, -size * 0.3, size * 0.3),  // Bottom front right
+            SIMD3<Float>(-size * 0.3, -size * 0.3, size * 0.3), // Bottom front left
+            SIMD3<Float>(size * 0.3, size * 0.3, -size * 0.3),  // Top back right
+            SIMD3<Float>(-size * 0.3, size * 0.3, -size * 0.3),  // Top back left
+            SIMD3<Float>(size * 0.3, -size * 0.3, -size * 0.3), // Bottom back right
+            SIMD3<Float>(-size * 0.3, -size * 0.3, -size * 0.3)  // Bottom back left
+        ]
+        
+        for position in cornerPositions {
+            let corner = createCorner(size: cornerSize, glowColor: glowColor)
+            corner.position = position
+            boxEntity.addChild(corner)
+        }
+        
+        // Add glowing seams/cracks
+        addGlowingSeams(to: boxEntity, size: size, glowColor: glowColor)
+        
+        return boxEntity
+    }
+    
+    private static func createDoor(size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
+        // Door panel (slightly inset from box edge)
+        let doorMesh = MeshResource.generateBox(
+            width: size * 0.55,
+            height: size * 0.55,
+            depth: size * 0.05,
+            cornerRadius: size * 0.03
+        )
+        
+        var doorMaterial = SimpleMaterial()
+        doorMaterial.color = .init(tint: color)
+        doorMaterial.roughness = 0.4
+        doorMaterial.metallic = 0.3
+        
+        let doorEntity = ModelEntity(mesh: doorMesh, materials: [doorMaterial])
+        
+        // Add door handle
+        let handleMesh = MeshResource.generateSphere(radius: size * 0.03)
+        var handleMaterial = SimpleMaterial()
+        handleMaterial.color = .init(tint: glowColor)
+        handleMaterial.roughness = 0.0
+        handleMaterial.metallic = 1.0
+        
+        let handleEntity = ModelEntity(mesh: handleMesh, materials: [handleMaterial])
+        handleEntity.position = SIMD3<Float>(size * 0.2, 0, size * 0.03)
+        doorEntity.addChild(handleEntity)
+        
+        // Add decorative lock/keyhole
+        let lockMesh = MeshResource.generateBox(
+            width: size * 0.08,
+            height: size * 0.12,
+            depth: size * 0.02,
+            cornerRadius: size * 0.01
+        )
+        let lockEntity = ModelEntity(mesh: lockMesh, materials: [handleMaterial])
+        lockEntity.position = SIMD3<Float>(-size * 0.15, 0, size * 0.03)
+        doorEntity.addChild(lockEntity)
+        
+        // Add glowing runes/symbols on door
+        for i in 0..<4 {
+            let angle = Float(i) * (Float.pi * 2 / 4)
+            let rune = createRune(size: size, glowColor: glowColor)
+            rune.position = SIMD3<Float>(
+                cos(angle) * size * 0.15,
+                sin(angle) * size * 0.15,
+                size * 0.03
+            )
+            doorEntity.addChild(rune)
+        }
+        
+        return doorEntity
+    }
+    
+    private static func createCorner(size: Float, glowColor: UIColor) -> ModelEntity {
+        let cornerMesh = MeshResource.generateBox(size: size)
+        var cornerMaterial = SimpleMaterial()
+        cornerMaterial.color = .init(tint: glowColor)
+        cornerMaterial.roughness = 0.2
+        cornerMaterial.metallic = 0.8
+        
+        return ModelEntity(mesh: cornerMesh, materials: [cornerMaterial])
+    }
+    
+    private static func createRune(size: Float, glowColor: UIColor) -> ModelEntity {
+        let runeMesh = MeshResource.generateBox(
+            width: size * 0.04,
+            height: size * 0.06,
+            depth: size * 0.01,
+            cornerRadius: size * 0.01
+        )
+        var runeMaterial = SimpleMaterial()
+        runeMaterial.color = .init(tint: glowColor)
+        runeMaterial.roughness = 0.0
+        
+        let runeEntity = ModelEntity(mesh: runeMesh, materials: [runeMaterial])
+        
+        // Add point light for glow
+        let light = PointLightComponent(color: glowColor, intensity: 50)
+        runeEntity.components.set(light)
+        
+        return runeEntity
+    }
+    
+    private static func addGlowingSeams(to entity: ModelEntity, size: Float, glowColor: UIColor) {
+        // Add glowing seams where light escapes
+        let seamPositions: [SIMD3<Float>] = [
+            SIMD3<Float>(size * 0.3, 0, size * 0.3),   // Right side
+            SIMD3<Float>(-size * 0.3, 0, size * 0.3), // Left side
+            SIMD3<Float>(0, size * 0.3, size * 0.3),   // Top
+            SIMD3<Float>(0, -size * 0.3, size * 0.3)   // Bottom
+        ]
+        
+        for position in seamPositions {
+            let seam = MeshResource.generateBox(
+                width: size * 0.02,
+                height: size * 0.4,
+                depth: size * 0.01
+            )
+            var seamMaterial = SimpleMaterial()
+            seamMaterial.color = .init(tint: glowColor)
+            seamMaterial.roughness = 0.0
+            
+            let seamEntity = ModelEntity(mesh: seam, materials: [seamMaterial])
+            seamEntity.position = position
+            entity.addChild(seamEntity)
+        }
+    }
+    
+    private static func createPrize(type: LootBoxType, size: Float) -> ModelEntity {
+        let prizeSize = size * 0.25
+        let prizeMesh = MeshResource.generateSphere(radius: prizeSize)
+        
+        var prizeMaterial = SimpleMaterial()
+        prizeMaterial.color = .init(tint: type.color)
+        prizeMaterial.roughness = 0.1
+        prizeMaterial.metallic = 0.9
+        
+        let prizeEntity = ModelEntity(mesh: prizeMesh, materials: [prizeMaterial])
+        
+        // Add glow effect
+        let light = PointLightComponent(color: type.glowColor, intensity: 300)
+        prizeEntity.components.set(light)
+        
+        return prizeEntity
+    }
+    
+    private static func addEffects(to entity: ModelEntity, type: LootBoxType) {
+        // Add point light for dramatic glow
+        let light = PointLightComponent(color: type.glowColor, intensity: 400)
+        entity.components.set(light)
+        
+        // Add floating animation
+        addFloatingAnimation(to: entity)
+    }
+    
+    private static func addFloatingAnimation(to entity: ModelEntity) {
+        let baseY = entity.position.y
+        var offset: Float = 0
+        
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak entity] timer in
+            guard let entity = entity, entity.parent != nil else {
+                timer.invalidate()
+                return
+            }
+            
+            offset += 0.03
+            entity.position.y = baseY + sin(offset) * 0.05
+        }
+    }
+}
+

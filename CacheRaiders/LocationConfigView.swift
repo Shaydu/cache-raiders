@@ -67,6 +67,13 @@ struct LocationConfigView: View {
                             .foregroundColor(.secondary)
                             .frame(height: 300)
                     }
+                    
+                    if let userLocation = userLocationManager.currentLocation {
+                        Button("🔄 Regenerate Random Loot Boxes") {
+                            locationManager.regenerateLocations(near: userLocation)
+                        }
+                        .foregroundColor(.blue)
+                    }
                 }
                 
                 Section("Current Locations") {

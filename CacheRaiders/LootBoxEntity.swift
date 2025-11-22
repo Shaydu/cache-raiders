@@ -1,6 +1,7 @@
 import RealityKit
 import ARKit
 import simd
+import AVFoundation
 
 // MARK: - Loot Box Type (Archaeological Artifacts)
 enum LootBoxType: String, CaseIterable, Codable {
@@ -45,29 +46,123 @@ enum LootBoxType: String, CaseIterable, Codable {
     }
 }
 
+// MARK: - Loot Box Container
+struct LootBoxContainer {
+    let container: ModelEntity
+    let box: ModelEntity
+    let lid: ModelEntity
+    let prize: ModelEntity
+}
+
 // MARK: - Loot Box Entity
 class LootBoxEntity {
-    static func createLootBox(type: LootBoxType, id: String) -> ModelEntity {
-        let entity: ModelEntity
+    static func createLootBox(type: LootBoxType, id: String, sizeMultiplier: Float = 1.0) -> LootBoxContainer {
+        // Determine container type based on loot box type
+        // Use skull for crystal skull, chalice for golden idol, box for others
+        switch type {
+        case .crystalSkull:
+            return SkullLootContainer.create(type: type, id: id, sizeMultiplier: sizeMultiplier)
+        case .goldenIdol:
+            return ChaliceLootContainer.create(type: type, id: id, sizeMultiplier: sizeMultiplier)
+        case .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet:
+            return BoxLootContainer.create(type: type, id: id, sizeMultiplier: sizeMultiplier)
+        }
+    }
+    
+    // Extract lid from box entity (finds and removes skull lid)
+    private static func extractLid(from box: ModelEntity, type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity? {
+        let size = type.size * sizeMultiplier
+        // Find the skull lid child (it's positioned at size * 0.35 on Y axis)
+        for child in box.children {
+            if abs(child.position.y - size * 0.35) < 0.1 {
+                // This is likely the lid
+                if let modelEntity = child as? ModelEntity {
+                    modelEntity.removeFromParent()
+                    return modelEntity
+                }
+            }
+        }
+        
+        // If no lid found, create one
+        return createLid(type: type, sizeMultiplier: sizeMultiplier)
+    }
+    
+    // Create a separate lid entity
+    private static func createLid(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
+        let size = type.size * sizeMultiplier
+        let lidBase = MeshResource.generateBox(
+            width: size * 0.4,
+            height: size * 0.15,
+            depth: size * 0.4,
+            cornerRadius: 0.05
+        )
+        
+        var lidMaterial = SimpleMaterial()
+        lidMaterial.color = .init(tint: UIColor(red: 0.25, green: 0.2, blue: 0.15, alpha: 1.0))
+        lidMaterial.roughness = 0.8
+        lidMaterial.metallic = 0.1
+        
+        let lidEntity = ModelEntity(mesh: lidBase, materials: [lidMaterial])
+        lidEntity.position = SIMD3<Float>(0, size * 0.35, 0)
+        
+        // Add skull decoration to lid
+        addSkullLid(to: lidEntity, size: size, glowColor: type.glowColor)
+        
+        return lidEntity
+    }
+    
+    // Create prize entity (the artifact inside)
+    private static func createPrize(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
+        let size = type.size * sizeMultiplier * 0.6 // Smaller than box
+        
+        let prizeMesh: MeshResource
+        var prizeMaterial = SimpleMaterial()
         
         switch type {
         case .crystalSkull:
-            entity = createCrystalSkull(type: type)
+            prizeMesh = MeshResource.generateSphere(radius: size * 0.3)
+            prizeMaterial.color = .init(tint: type.color)
+            prizeMaterial.roughness = 0.1
+            prizeMaterial.metallic = 0.9
         case .goldenIdol:
-            entity = createGoldenIdol(type: type)
+            prizeMesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.6, depth: size * 0.3, cornerRadius: 0.05)
+            prizeMaterial.color = .init(tint: type.color)
+            prizeMaterial.roughness = 0.2
+            prizeMaterial.metallic = 0.8
         case .ancientArtifact:
-            entity = createAncientArtifact(type: type)
+            prizeMesh = MeshResource.generateBox(width: size * 0.5, height: size * 0.4, depth: size * 0.4, cornerRadius: 0.03)
+            prizeMaterial.color = .init(tint: type.color)
+            prizeMaterial.roughness = 0.3
+            prizeMaterial.metallic = 0.6
         case .templeRelic:
-            entity = createTempleRelic(type: type)
+            prizeMesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.5, depth: size * 0.4, cornerRadius: 0.04)
+            prizeMaterial.color = .init(tint: type.color)
+            prizeMaterial.roughness = 0.4
+            prizeMaterial.metallic = 0.5
         case .puzzleBox:
-            entity = createPuzzleBox(type: type)
+            prizeMesh = MeshResource.generateBox(width: size * 0.45, height: size * 0.35, depth: size * 0.45, cornerRadius: 0.05)
+            prizeMaterial.color = .init(tint: type.color)
+            prizeMaterial.roughness = 0.5
+            prizeMaterial.metallic = 0.4
         case .stoneTablet:
-            entity = createStoneTablet(type: type)
+            prizeMesh = MeshResource.generateBox(width: size * 0.6, height: size * 0.2, depth: size * 0.4, cornerRadius: 0.02)
+            prizeMaterial.color = .init(tint: type.color)
+            prizeMaterial.roughness = 0.6
+            prizeMaterial.metallic = 0.3
         }
         
-        entity.name = id
-        addEffects(to: entity, type: type)
-        return entity
+        let prizeEntity = ModelEntity(mesh: prizeMesh, materials: [prizeMaterial])
+        
+        // Add glow effect to prize
+        var glowMaterial = SimpleMaterial()
+        glowMaterial.color = .init(tint: type.glowColor)
+        glowMaterial.roughness = 0.0
+        glowMaterial.metallic = 0.0
+        
+        // Add floating animation (using timer-based approach for compatibility)
+        addPrizeFloatingAnimation(to: prizeEntity)
+        
+        return prizeEntity
     }
     
     // MARK: - Dark & Mysterious Details (Helper Functions)
@@ -267,8 +362,8 @@ class LootBoxEntity {
     }
     
     // MARK: - Crystal Skull Creation
-    private static func createCrystalSkull(type: LootBoxType) -> ModelEntity {
-        let size = type.size
+    private static func createCrystalSkull(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
+        let size = type.size * sizeMultiplier
         
         // Create dark ancient box with skull lid
         let boxBase = MeshResource.generateBox(
@@ -299,8 +394,8 @@ class LootBoxEntity {
     }
     
     // MARK: - Golden Idol Creation
-    private static func createGoldenIdol(type: LootBoxType) -> ModelEntity {
-        let size = type.size
+    private static func createGoldenIdol(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
+        let size = type.size * sizeMultiplier
         
         // Create dark ancient chest with skull decorations
         let chestBase = MeshResource.generateBox(
@@ -331,8 +426,8 @@ class LootBoxEntity {
     }
     
     // MARK: - Ancient Artifact Creation
-    private static func createAncientArtifact(type: LootBoxType) -> ModelEntity {
-        let size = type.size
+    private static func createAncientArtifact(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
+        let size = type.size * sizeMultiplier
         
         // Create dark weathered artifact box
         let mainBody = MeshResource.generateBox(
@@ -363,8 +458,8 @@ class LootBoxEntity {
     }
     
     // MARK: - Temple Relic Creation
-    private static func createTempleRelic(type: LootBoxType) -> ModelEntity {
-        let size = type.size
+    private static func createTempleRelic(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
+        let size = type.size * sizeMultiplier
         
         // Create dark stone pedestal
         let pedestal = MeshResource.generateBox(
@@ -407,8 +502,8 @@ class LootBoxEntity {
     }
     
     // MARK: - Puzzle Box Creation
-    private static func createPuzzleBox(type: LootBoxType) -> ModelEntity {
-        let size = type.size
+    private static func createPuzzleBox(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
+        let size = type.size * sizeMultiplier
         
         // Create dark ancient puzzle box
         let mainBox = MeshResource.generateBox(
@@ -674,6 +769,21 @@ class LootBoxEntity {
             
             offset += 0.03
             entity.position.y = baseY + sin(offset) * 0.05
+        }
+    }
+    
+    private static func addPrizeFloatingAnimation(to entity: ModelEntity) {
+        let baseY = entity.position.y
+        var offset: Float = 0
+        
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak entity] timer in
+            guard let entity = entity, entity.parent != nil else {
+                timer.invalidate()
+                return
+            }
+            
+            offset += 0.03
+            entity.position.y = baseY + sin(offset) * 0.1
         }
     }
     

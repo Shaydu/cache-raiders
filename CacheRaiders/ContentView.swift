@@ -8,13 +8,17 @@ struct ContentView: View {
     @State private var showLocationConfig = false
     @State private var showSettings = false
     @State private var nearbyLocations: [LootBoxLocation] = []
+    @State private var distanceToNearest: Double?
+    @State private var temperatureStatus: String?
     
     var body: some View {
         ZStack {
             ARLootBoxView(
                 locationManager: locationManager,
                 userLocationManager: userLocationManager,
-                nearbyLocations: $nearbyLocations
+                nearbyLocations: $nearbyLocations,
+                distanceToNearest: $distanceToNearest,
+                temperatureStatus: $temperatureStatus
             )
             .ignoresSafeArea()
             
@@ -69,6 +73,22 @@ struct ContentView: View {
                             .padding()
                             .background(.ultraThinMaterial)
                             .cornerRadius(10)
+                        
+                        Text("💡 Tap on a loot box to collect it (must be within 5m)")
+                            .font(.caption)
+                            .padding()
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(10)
+                    }
+                    
+                    // Temperature indicator with distance
+                    if let status = temperatureStatus {
+                        Text(status)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .padding()
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(10)
                     }
                     
                     if !locationManager.locations.isEmpty {
@@ -85,10 +105,27 @@ struct ContentView: View {
             LocationConfigView(locationManager: locationManager)
         }
         .sheet(isPresented: $showSettings) {
-            SettingsView(locationManager: locationManager)
+            SettingsView(locationManager: locationManager, userLocationManager: userLocationManager)
         }
         .onAppear {
             userLocationManager.requestLocationPermission()
+        }
+        .onChange(of: userLocationManager.currentLocation) { newLocation in
+            // When we get a GPS fix, check if we need to create/regenerate locations
+            if let location = newLocation {
+                // Check if we have a valid GPS fix
+                guard location.horizontalAccuracy >= 0 && location.horizontalAccuracy < 100 else {
+                    return
+                }
+                
+                // If no locations, or if we need to check/regenerate, reload with user location
+                if locationManager.locations.isEmpty {
+                    locationManager.loadLocations(userLocation: location)
+                } else {
+                    // Check if existing locations are too far away
+                    locationManager.loadLocations(userLocation: location)
+                }
+            }
         }
     }
 }

@@ -1,5 +1,14 @@
 import SwiftUI
 import MapKit
+import CoreLocation
+
+// MARK: - Map Annotation Model
+struct MapAnnotationItem: Identifiable {
+    let id: String
+    let coordinate: CLLocationCoordinate2D
+    let isUserLocation: Bool
+    let lootBoxLocation: LootBoxLocation?
+}
 
 // MARK: - Loot Box Map View
 struct LootBoxMapView: View {
@@ -9,24 +18,68 @@ struct LootBoxMapView: View {
         center: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
         span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
     )
-    @State private var selectedCoordinate: CLLocationCoordinate2D?
-    @State private var showDistanceWarning = false
-    @State private var distanceMessage = ""
+    
+    // Combine user location and loot boxes into a single annotation array
+    private var allAnnotations: [MapAnnotationItem] {
+        var annotations: [MapAnnotationItem] = []
+        
+        // Add user location pin
+        if let userLocation = userLocationManager.currentLocation {
+            annotations.append(MapAnnotationItem(
+                id: "user_location",
+                coordinate: userLocation.coordinate,
+                isUserLocation: true,
+                lootBoxLocation: nil
+            ))
+        }
+        
+        // Add all loot box locations
+        annotations.append(contentsOf: locationManager.locations.map { location in
+            MapAnnotationItem(
+                id: location.id,
+                coordinate: location.coordinate,
+                isUserLocation: false,
+                lootBoxLocation: location
+            )
+        })
+        
+        return annotations
+    }
     
     var body: some View {
-        Map(coordinateRegion: $region, annotationItems: locationManager.locations) { location in
-            MapAnnotation(coordinate: location.coordinate) {
-                VStack(spacing: 4) {
-                    Image(systemName: location.collected ? "checkmark.circle.fill" : "mappin.circle.fill")
-                        .foregroundColor(location.collected ? .green : .red)
-                        .font(.title)
-                        .background(Circle().fill(.white))
-                    
-                    Text(location.name)
-                        .font(.caption)
-                        .padding(4)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(4)
+        Map(coordinateRegion: $region, annotationItems: allAnnotations) { annotation in
+            MapAnnotation(coordinate: annotation.coordinate) {
+                if annotation.isUserLocation {
+                    // User location pin
+                    VStack(spacing: 4) {
+                        Image(systemName: "location.fill")
+                            .foregroundColor(.blue)
+                            .font(.title2)
+                            .background(Circle().fill(.white))
+                            .shadow(radius: 3)
+                        
+                        Text("You")
+                            .font(.caption)
+                            .fontWeight(.bold)
+                            .padding(4)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(4)
+                    }
+                } else if let location = annotation.lootBoxLocation {
+                    // Loot box pin
+                    VStack(spacing: 4) {
+                        Image(systemName: location.collected ? "checkmark.circle.fill" : "mappin.circle.fill")
+                            .foregroundColor(location.collected ? .green : .red)
+                            .font(.title)
+                            .background(Circle().fill(.white))
+                            .shadow(radius: 3)
+                        
+                        Text(location.name)
+                            .font(.caption)
+                            .padding(4)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(4)
+                    }
                 }
             }
         }
@@ -42,38 +95,21 @@ struct LootBoxMapView: View {
     }
     
     private func updateRegion() {
-        var coordinates: [CLLocationCoordinate2D] = []
-        
-        // Add user location if available
+        // Center on user location if available, otherwise use default
         if let userLocation = userLocationManager.currentLocation {
-            coordinates.append(userLocation.coordinate)
+            // Center on user location with a reasonable zoom level
+            region = MKCoordinateRegion(
+                center: userLocation.coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01) // ~1km view
+            )
+        } else if !locationManager.locations.isEmpty {
+            // Fallback: center on first loot box if no user location
+            let firstLocation = locationManager.locations[0]
+            region = MKCoordinateRegion(
+                center: firstLocation.coordinate,
+                span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
+            )
         }
-        
-        // Add all loot box locations
-        coordinates.append(contentsOf: locationManager.locations.map { $0.coordinate })
-        
-        guard !coordinates.isEmpty else { return }
-        
-        // Calculate bounding box
-        let latitudes = coordinates.map { $0.latitude }
-        let longitudes = coordinates.map { $0.longitude }
-        
-        let minLat = latitudes.min() ?? 0
-        let maxLat = latitudes.max() ?? 0
-        let minLon = longitudes.min() ?? 0
-        let maxLon = longitudes.max() ?? 0
-        
-        let centerLat = (minLat + maxLat) / 2
-        let centerLon = (minLon + maxLon) / 2
-        
-        // Add padding
-        let latDelta = max((maxLat - minLat) * 1.5, 0.01)
-        let lonDelta = max((maxLon - minLon) * 1.5, 0.01)
-        
-        region = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: centerLat, longitude: centerLon),
-            span: MKCoordinateSpan(latitudeDelta: latDelta, longitudeDelta: lonDelta)
-        )
     }
 }
 

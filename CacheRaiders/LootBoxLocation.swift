@@ -21,30 +21,84 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     }
 }
 
+// MARK: - CLLocation Extension for Bearing
+extension CLLocation {
+    func bearing(to destination: CLLocation) -> Double {
+        let lat1 = self.coordinate.latitude * .pi / 180.0
+        let lat2 = destination.coordinate.latitude * .pi / 180.0
+        let deltaLon = (destination.coordinate.longitude - self.coordinate.longitude) * .pi / 180.0
+        
+        let y = sin(deltaLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(deltaLon)
+        
+        let bearing = atan2(y, x) * 180.0 / .pi
+        return (bearing + 360.0).truncatingRemainder(dividingBy: 360.0)
+    }
+}
+
 // MARK: - Loot Box Location Manager
 class LootBoxLocationManager: ObservableObject {
     @Published var locations: [LootBoxLocation] = []
-    @Published var maxSearchDistance: Double = 100.0 // Default 100 meters
+    @Published var maxSearchDistance: Double = 10.0 // Default 10 meters (minimum)
+    @Published var showARDebugVisuals: Bool = false // Default: debug visuals disabled
+    @Published var lootBoxMinSize: Double = 0.25 // Default 0.25m (minimum size)
+    @Published var lootBoxMaxSize: Double = 1.0 // Default 1.0m (maximum size) - reduced from 3.0m
+    var onSizeChanged: (() -> Void)? // Callback when size settings change
     private let locationsFileName = "lootBoxLocations.json"
     private let maxDistanceKey = "maxSearchDistance"
+    private let debugVisualsKey = "showARDebugVisuals"
+    private let lootBoxMinSizeKey = "lootBoxMinSize"
+    private let lootBoxMaxSizeKey = "lootBoxMaxSize"
     
     init() {
         loadLocations()
         loadMaxDistance()
+        loadDebugVisuals()
+        loadLootBoxSizes()
     }
     
     // Load locations from JSON file
-    func loadLocations() {
+    func loadLocations(userLocation: CLLocation? = nil) {
         guard let url = getLocationsFileURL() else { return }
         
         do {
             let data = try Data(contentsOf: url)
-            locations = try JSONDecoder().decode([LootBoxLocation].self, from: data)
+            let loadedLocations = try JSONDecoder().decode([LootBoxLocation].self, from: data)
+            
+            // Check if we have a user location and if loaded locations are too far away
+            if let userLocation = userLocation {
+                // Check if any location is within a reasonable distance (10km)
+                let hasNearbyLocation = loadedLocations.contains { location in
+                    userLocation.distance(from: location.location) <= 10000
+                }
+                
+                if !hasNearbyLocation && !loadedLocations.isEmpty {
+                    // All locations are too far away - regenerate random ones nearby
+                    print("⚠️ Loaded locations are too far away (>10km), regenerating random locations nearby")
+                    createDefaultLocations(near: userLocation)
+                    return
+                }
+            }
+            
+            locations = loadedLocations
             print("✅ Loaded \(locations.count) loot box locations")
         } catch {
-            print("⚠️ Could not load locations, using defaults: \(error)")
-            createDefaultLocations()
+            print("⚠️ Could not load locations, creating random defaults: \(error)")
+            // Only create defaults if we have a user location
+            if let userLocation = userLocation {
+                createDefaultLocations(near: userLocation)
+            } else {
+                // If no user location yet, create empty array (will be populated when location is available)
+                locations = []
+            }
         }
+    }
+    
+    // Clear all locations and regenerate random ones near user
+    func regenerateLocations(near userLocation: CLLocation) {
+        locations = []
+        createDefaultLocations(near: userLocation)
+        print("🔄 Regenerated 3 random loot boxes near your location")
     }
     
     // Save locations to JSON file
@@ -69,36 +123,52 @@ class LootBoxLocationManager: ObservableObject {
         return documentsDirectory.appendingPathComponent(locationsFileName)
     }
     
-    // Create default locations (example coordinates - user should update these)
-    func createDefaultLocations() {
-        // Example: Replace these with your actual yard coordinates
-        locations = [
-            LootBoxLocation(
+    // Create default locations randomly within maxSearchDistance of user location
+    func createDefaultLocations(near userLocation: CLLocation) {
+        let lootBoxTypes: [LootBoxType] = [.crystalSkull, .goldenIdol, .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet]
+        let lootBoxNames = ["Crystal Skull", "Golden Idol", "Ancient Artifact", "Temple Relic", "Puzzle Box", "Stone Tablet"]
+        
+        locations = []
+        
+        // Generate 3 random loot boxes within maxSearchDistance
+        for i in 0..<3 {
+            // Generate random distance (between 10% and 90% of maxSearchDistance)
+            // Ensure minimum distance is at least 5 meters
+            let minDistance = max(maxSearchDistance * 0.1, 5.0)
+            let maxDistance = maxSearchDistance * 0.9
+            let randomDistance = Double.random(in: minDistance...maxDistance)
+            
+            // Generate random bearing (0-360 degrees)
+            let randomBearing = Double.random(in: 0...360) * .pi / 180.0
+            
+            // Calculate new coordinates using haversine formula
+            let earthRadius: Double = 6371000 // meters
+            let lat1 = userLocation.coordinate.latitude * .pi / 180.0
+            let lon1 = userLocation.coordinate.longitude * .pi / 180.0
+            
+            let lat2 = asin(sin(lat1) * cos(randomDistance / earthRadius) +
+                           cos(lat1) * sin(randomDistance / earthRadius) * cos(randomBearing))
+            let lon2 = lon1 + atan2(sin(randomBearing) * sin(randomDistance / earthRadius) * cos(lat1),
+                                    cos(randomDistance / earthRadius) - sin(lat1) * sin(lat2))
+            
+            let newLat = lat2 * 180.0 / .pi
+            let newLon = lon2 * 180.0 / .pi
+            
+            // Pick random type and name
+            let randomIndex = Int.random(in: 0..<lootBoxTypes.count)
+            
+            locations.append(LootBoxLocation(
                 id: UUID().uuidString,
-                name: "Crystal Skull",
-                type: .crystalSkull,
-                latitude: 37.7749,  // Replace with your latitude
-                longitude: -122.4194, // Replace with your longitude
+                name: lootBoxNames[randomIndex],
+                type: lootBoxTypes[randomIndex],
+                latitude: newLat,
+                longitude: newLon,
                 radius: 5.0 // 5 meter radius
-            ),
-            LootBoxLocation(
-                id: UUID().uuidString,
-                name: "Golden Idol",
-                type: .goldenIdol,
-                latitude: 37.7750,  // Replace with your latitude
-                longitude: -122.4195, // Replace with your longitude
-                radius: 5.0
-            ),
-            LootBoxLocation(
-                id: UUID().uuidString,
-                name: "Ancient Artifact",
-                type: .ancientArtifact,
-                latitude: 37.7751,  // Replace with your latitude
-                longitude: -122.4196, // Replace with your longitude
-                radius: 5.0
-            )
-        ]
+            ))
+        }
+        
         saveLocations()
+        print("✅ Created 3 random loot boxes within \(maxSearchDistance)m of your location")
     }
     
     // Add a new location
@@ -140,6 +210,49 @@ class LootBoxLocationManager: ObservableObject {
         if let saved = UserDefaults.standard.object(forKey: maxDistanceKey) as? Double {
             maxSearchDistance = saved
         }
+    }
+    
+    // Save debug visuals preference
+    func saveDebugVisuals() {
+        UserDefaults.standard.set(showARDebugVisuals, forKey: debugVisualsKey)
+    }
+    
+    // Load debug visuals preference
+    private func loadDebugVisuals() {
+        showARDebugVisuals = UserDefaults.standard.bool(forKey: debugVisualsKey)
+    }
+    
+    // Save loot box size preferences
+    func saveLootBoxSizes() {
+        UserDefaults.standard.set(lootBoxMinSize, forKey: lootBoxMinSizeKey)
+        UserDefaults.standard.set(lootBoxMaxSize, forKey: lootBoxMaxSizeKey)
+        
+        // Ensure min <= max
+        if lootBoxMinSize > lootBoxMaxSize {
+            lootBoxMinSize = lootBoxMaxSize
+        }
+        
+        // Notify that sizes have changed
+        onSizeChanged?()
+    }
+    
+    // Load loot box size preferences
+    private func loadLootBoxSizes() {
+        if let saved = UserDefaults.standard.object(forKey: lootBoxMinSizeKey) as? Double {
+            lootBoxMinSize = saved
+        }
+        if let saved = UserDefaults.standard.object(forKey: lootBoxMaxSizeKey) as? Double {
+            lootBoxMaxSize = saved
+        }
+        // Ensure min <= max
+        if lootBoxMinSize > lootBoxMaxSize {
+            lootBoxMinSize = lootBoxMaxSize
+        }
+    }
+    
+    // Get a random size between min and max
+    func getRandomLootBoxSize() -> Double {
+        return Double.random(in: lootBoxMinSize...lootBoxMaxSize)
     }
     
     // Check if user is at a specific location

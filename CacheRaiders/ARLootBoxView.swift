@@ -7,13 +7,16 @@ struct ARLootBoxView: UIViewRepresentable {
     @ObservedObject var locationManager: LootBoxLocationManager
     @ObservedObject var userLocationManager: UserLocationManager
     @Binding var nearbyLocations: [LootBoxLocation]
+    @Binding var distanceToNearest: Double?
+    @Binding var temperatureStatus: String?
+    @State private var arView: ARView?
     
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
         
         // AR session configuration
         let config = ARWorldTrackingConfiguration()
-        config.planeDetection = [.horizontal]
+        config.planeDetection = [.horizontal, .vertical] // Detect both floors and walls
         config.environmentTexturing = .automatic
         
         // Check if AR is supported
@@ -29,10 +32,11 @@ struct ARLootBoxView: UIViewRepresentable {
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleTap(_:)))
         arView.addGestureRecognizer(tapGesture)
         
-        // Optional debug visuals
-        arView.debugOptions = [.showFeaturePoints, .showAnchorOrigins]
+        // Debug visuals disabled for cleaner AR experience
+        // Uncomment the line below to enable debug visuals (green feature points, anchor origins)
+        // arView.debugOptions = [.showFeaturePoints, .showAnchorOrigins]
         
-        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations)
+        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus)
         return arView
     }
     
@@ -40,7 +44,7 @@ struct ARLootBoxView: UIViewRepresentable {
         // Ensure AR session is running
         if uiView.session.configuration == nil {
             let config = ARWorldTrackingConfiguration()
-            config.planeDetection = [.horizontal]
+            config.planeDetection = [.horizontal, .vertical] // Detect both floors and walls
             config.environmentTexturing = .automatic
             uiView.session.run(config, options: [.resetTracking])
         }
