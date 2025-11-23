@@ -675,9 +675,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             let raycastResults = arView.session.raycast(raycastQuery)
 
             guard let result = raycastResults.first else {
-                Swift.print("⚠️ Raycast failed - no floor detected at attempt \(attempts)")
+                if attempts <= 3 { // Only log first few failures to avoid spam
+                    Swift.print("⚠️ Raycast failed - no floor/table detected at attempt \(attempts)")
+                    Swift.print("   💡 Try moving camera to scan more surfaces, or place objects manually by tapping")
+                }
                 continue
             }
+
+            Swift.print("✅ Raycast succeeded - found surface at attempt \(attempts)")
 
             let hitY = result.worldTransform.columns.3.y
             let cameraY = cameraPos.y
@@ -746,7 +751,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         Swift.print("✅ Randomized and placed \(placedCount) spheres!")
         if placedCount == 0 {
-            Swift.print("⚠️ WARNING: No spheres were placed! Check debug logs above for placement failures.")
+            Swift.print("⚠️ WARNING: No spheres were placed!")
+            Swift.print("   💡 Try: 1) Move camera around to scan surfaces, 2) Tap on surfaces to place manually")
+        } else {
+            Swift.print("   🎯 Spheres placed on floors/tables - look around to find them!")
         }
     }
 
@@ -915,20 +923,25 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
         
         for anchor in anchors {
-            // Remove all horizontal plane anchors (floors/ceilings) - we don't need them
-            // ARKit's plane detection is causing issues with ceiling detection
+            // Handle horizontal plane anchors (floors/tables) - we need these for raycasting!
             if let planeAnchor = anchor as? ARPlaneAnchor {
                 if planeAnchor.alignment == .horizontal {
-                    // Check if this plane is above the camera (likely a ceiling)
+                    // Check if this plane is above the camera (likely a ceiling) or suspiciously large
                     let planeY = planeAnchor.transform.columns.3.y
                     let planeHeight = planeAnchor.planeExtent.height
                     let planeWidth = planeAnchor.planeExtent.width
-                    
-                    // Remove if it's above camera or if it's suspiciously large (likely a ceiling)
-                    if planeY > cameraPos.y || (planeHeight > 5.0 || planeWidth > 5.0) {
-                        Swift.print("🗑️ Removing horizontal plane anchor (likely ceiling): Y=\(String(format: "%.2f", planeY)), size=\(String(format: "%.2f", planeWidth))x\(String(format: "%.2f", planeHeight))")
+
+                    // Allow reasonable-sized horizontal planes (floors/tables) but remove problematic ones
+                    let isCeiling = planeY > cameraPos.y + 0.5 // Clearly above camera
+                    let isTooLarge = planeHeight > 8.0 || planeWidth > 8.0 // Suspiciously large
+                    let isTooSmall = planeHeight < 0.3 || planeWidth < 0.3 // Too small to be useful
+
+                    if isCeiling || isTooLarge || isTooSmall {
+                        Swift.print("🗑️ Removing horizontal plane anchor: ceiling=\(isCeiling), too_large=\(isTooLarge), too_small=\(isTooSmall), Y=\(String(format: "%.2f", planeY)), size=\(String(format: "%.2f", planeWidth))x\(String(format: "%.2f", planeHeight))")
                         // Remove the anchor by not adding it to the scene
                         // ARKit will handle cleanup
+                    } else {
+                        Swift.print("✅ Keeping horizontal plane anchor (floor/table): Y=\(String(format: "%.2f", planeY)), size=\(String(format: "%.2f", planeWidth))x\(String(format: "%.2f", planeHeight))")
                     }
                 }
                 // Disabled: Don't create occlusion planes for vertical planes (was causing dark boxes everywhere)
