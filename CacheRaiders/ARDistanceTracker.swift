@@ -343,10 +343,6 @@ class ARDistanceTracker: ObservableObject {
     }
     
     private func updateTemperatureStatus(currentDistance: Double, location: LootBoxLocation) {
-        // Log distance in both meters and feet/inches for debugging
-        let (feet, inches) = metersToFeetAndInches(currentDistance)
-        Swift.print("📏 Distance to nearest loot box (\(location.name)): \(String(format: "%.2f", currentDistance))m (\(feet)'\(inches)\")")
-        
         // Update temperature status with distance included (only show distance when we have a comparison)
         var status: String?
         if let previous = previousDistance {
@@ -357,13 +353,9 @@ class ARDistanceTracker: ObservableObject {
             if currentDistance < previous - threshold {
                 let distanceStr = formatDistance(currentDistance)
                 status = "🔥 Warmer (\(distanceStr))"
-                let (prevFeet, prevInches) = metersToFeetAndInches(previous)
-                Swift.print("   🔥 Getting warmer! (was \(prevFeet)'\(prevInches)\")")
             } else if currentDistance > previous + threshold {
                 let distanceStr = formatDistance(currentDistance)
                 status = "❄️ Colder (\(distanceStr))"
-                let (prevFeet, prevInches) = metersToFeetAndInches(previous)
-                Swift.print("   ❄️ Getting colder... (was \(prevFeet)'\(prevInches)\")")
             } else {
                 // Within threshold - keep previous status or show same distance
                 let distanceStr = formatDistance(currentDistance)

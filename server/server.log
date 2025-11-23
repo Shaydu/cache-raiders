@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/Users/shaydu/dev/CacheRaiders/server/app.py", line 7, in <module>
+    from flask_socketio import SocketIO, emit
+ModuleNotFoundError: No module named 'flask_socketio'

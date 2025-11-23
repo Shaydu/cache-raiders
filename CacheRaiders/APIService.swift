@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 import UIKit
+import SystemConfiguration
 
 // MARK: - API Response Models
 struct APIObject: Codable {
@@ -56,7 +57,57 @@ class APIService {
         if let customURL = UserDefaults.standard.string(forKey: "apiBaseURL"), !customURL.isEmpty {
             return customURL
         }
-        return "http://localhost:5001"
+        // Try to get a suggested local network IP (Docker uses port 5000)
+        if let suggestedIP = getSuggestedLocalIP() {
+            return "http://\(suggestedIP):5000"
+        }
+        return "http://localhost:5000"
+    }
+    
+    /// Get a suggested local network IP address based on the device's network
+    private func getSuggestedLocalIP() -> String? {
+        // Try to get the device's local IP to suggest a server IP in the same range
+        var address: String?
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        
+        guard getifaddrs(&ifaddr) == 0 else { return nil }
+        guard let firstAddr = ifaddr else { return nil }
+        
+        for ifptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+            let interface = ifptr.pointee
+            let addrFamily = interface.ifa_addr.pointee.sa_family
+            
+            // Check for IPv4
+            if addrFamily == UInt8(AF_INET) {
+                let name = String(cString: interface.ifa_name)
+                // Prefer en0 (WiFi) or en1 (Ethernet)
+                if name == "en0" || name == "en1" {
+                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                    getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
+                               &hostname, socklen_t(hostname.count),
+                               nil, socklen_t(0), NI_NUMERICHOST)
+                    address = String(cString: hostname)
+                    // If we found en0 (WiFi), use it; otherwise continue looking
+                    if name == "en0" {
+                        break
+                    }
+                }
+            }
+        }
+        
+        freeifaddrs(ifaddr)
+        
+        // If we found the device IP, suggest a server IP in the same subnet
+        // Try .1 first (often the router/server), then .100
+        if let deviceIP = address {
+            let components = deviceIP.split(separator: ".")
+            if components.count == 4 {
+                // Try .1 first (common for router/server)
+                return "\(components[0]).\(components[1]).\(components[2]).1"
+            }
+        }
+        
+        return nil
     }
     
     // User identifier - in production, this should be a proper user ID
@@ -118,7 +169,8 @@ class APIService {
             let _: [String: String] = try await makeRequest(url: url)
             return true
         } catch {
-            print("⚠️ API health check failed: \(error)")
+            // Suppress detailed error logging - just return false
+            // The calling code will handle the fallback
             return false
         }
     }
@@ -221,6 +273,15 @@ class APIService {
         }
         
         return try await makeRequest(url: url)
+    }
+    
+    /// Reset all finds (make all objects unfound)
+    func resetAllFinds() async throws -> [String: Any] {
+        guard let url = URL(string: "\(baseURL)/api/finds/reset") else {
+            throw APIError.invalidURL
+        }
+        
+        return try await makeRequest(url: url, method: "POST")
     }
     
     /// Convert APIObject to LootBoxLocation

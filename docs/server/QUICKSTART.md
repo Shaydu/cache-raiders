@@ -86,4 +86,3 @@ curl http://localhost:5000/api/stats
 - **CORS errors**: The server has CORS enabled, but make sure your API URL is correct
 - **Database issues**: The database file is created automatically. Make sure the container has write permissions.
 
-

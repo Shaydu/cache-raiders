@@ -4,6 +4,7 @@ Simple REST API for tracking loot box objects, their locations, and who found th
 """
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 import sqlite3
 import os
 import math
@@ -12,6 +13,7 @@ from typing import Optional, List, Dict
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for iOS app
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')  # Enable WebSocket support
 
 # Database file path
 DB_PATH = os.path.join(os.path.dirname(__file__), 'cache_raiders.db')
@@ -222,7 +224,44 @@ def create_object():
         ))
         
         conn.commit()
+        
+        # Get the created object to broadcast
+        cursor.execute('''
+            SELECT 
+                o.id,
+                o.name,
+                o.type,
+                o.latitude,
+                o.longitude,
+                o.radius,
+                o.created_at,
+                o.created_by,
+                CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
+                f.found_by,
+                f.found_at
+            FROM objects o
+            LEFT JOIN finds f ON o.id = f.object_id
+            WHERE o.id = ?
+        ''', (data['id'],))
+        
+        row = cursor.fetchone()
         conn.close()
+        
+        # Broadcast new object to all connected clients
+        if row:
+            socketio.emit('object_created', {
+                'id': row['id'],
+                'name': row['name'],
+                'type': row['type'],
+                'latitude': row['latitude'],
+                'longitude': row['longitude'],
+                'radius': row['radius'],
+                'created_at': row['created_at'],
+                'created_by': row['created_by'],
+                'collected': bool(row['collected']),
+                'found_by': row['found_by'],
+                'found_at': row['found_at']
+            })
         
         return jsonify({
             'id': data['id'],
@@ -255,13 +294,21 @@ def mark_found(object_id: str):
         return jsonify({'error': 'Object already found'}), 409
     
     # Record the find
+    found_at = datetime.utcnow().isoformat()
     cursor.execute('''
         INSERT INTO finds (object_id, found_by, found_at)
         VALUES (?, ?, ?)
-    ''', (object_id, found_by, datetime.utcnow().isoformat()))
+    ''', (object_id, found_by, found_at))
     
     conn.commit()
     conn.close()
+    
+    # Broadcast object collected event to all connected clients
+    socketio.emit('object_collected', {
+        'object_id': object_id,
+        'found_by': found_by,
+        'found_at': found_at
+    })
     
     return jsonify({
         'object_id': object_id,
@@ -283,6 +330,11 @@ def unmark_found(object_id: str):
     
     if deleted == 0:
         return jsonify({'error': 'No find record found for this object'}), 404
+    
+    # Broadcast object uncollected event to all connected clients
+    socketio.emit('object_uncollected', {
+        'object_id': object_id
+    })
     
     return jsonify({
         'object_id': object_id,
@@ -361,11 +413,57 @@ def get_stats():
         'top_finders': top_finders
     })
 
+@app.route('/api/finds/reset', methods=['POST'])
+def reset_all_finds():
+    """Reset all objects to unfound status by clearing all finds."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Count finds before deletion
+    cursor.execute('SELECT COUNT(*) as count FROM finds')
+    finds_count = cursor.fetchone()['count']
+    
+    # Delete all finds
+    cursor.execute('DELETE FROM finds')
+    deleted_count = cursor.rowcount
+    
+    conn.commit()
+    conn.close()
+    
+    # Broadcast reset event to all connected clients
+    socketio.emit('all_finds_reset', {
+        'message': 'All objects have been reset to unfound status',
+        'finds_removed': deleted_count
+    })
+    
+    return jsonify({
+        'message': 'All finds have been reset',
+        'finds_removed': deleted_count
+    }), 200
+
+# WebSocket event handlers
+@socketio.on('connect')
+def handle_connect():
+    """Handle client connection."""
+    print(f"🔌 Client connected: {request.sid}")
+    emit('connected', {'status': 'connected', 'message': 'Successfully connected to CacheRaiders WebSocket'})
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle client disconnection."""
+    print(f"🔌 Client disconnected: {request.sid}")
+
+@socketio.on('ping')
+def handle_ping():
+    """Handle ping for keepalive."""
+    emit('pong', {'timestamp': datetime.utcnow().isoformat()})
+
 if __name__ == '__main__':
     init_db()
     port = int(os.environ.get('PORT', 5001))  # Use 5001 as default to avoid conflicts
     print("🚀 Starting CacheRaiders API server...")
     print(f"📁 Database: {DB_PATH}")
     print(f"🌐 Server running on http://localhost:{port}")
-    app.run(host='0.0.0.0', port=port, debug=True)
+    print(f"🔌 WebSocket server enabled")
+    socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)
 

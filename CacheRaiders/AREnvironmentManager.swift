@@ -31,11 +31,9 @@ class AREnvironmentManager {
         
         if disableAmbient {
             // When ambient light is disabled, set uniform luminance on all objects
-            Swift.print("🌑 Ambient light disabled - applying uniform luminance to all existing and new objects")
             applyUniformLuminanceToScene()
         } else {
             // When ambient light is re-enabled, restore materials on all objects
-            Swift.print("☀️ Ambient light enabled - restoring materials on all existing objects")
             restoreMaterialsToScene()
         }
     }

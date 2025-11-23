@@ -142,4 +142,3 @@ func createDefaultLocations(near userLocation: CLLocation) async {
 2. Sync generated objects to API
 3. Or generate objects on server
 
-

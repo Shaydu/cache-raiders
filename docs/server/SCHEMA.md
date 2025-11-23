@@ -121,4 +121,3 @@ LIMIT 10;
 - The API prevents duplicate finds for the same object (enforced in application logic)
 - User IDs are currently simple strings (device UUIDs in iOS app)
 
-

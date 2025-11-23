@@ -13,6 +13,16 @@ struct ContentView: View {
     @State private var collectionNotification: String?
     @State private var nearestObjectDirection: Double?
     
+    // Computed property for loot box counter - uses findableLocations for consistency
+    // Directly references locationManager.findableLocations to ensure SwiftUI tracks changes
+    private var lootBoxCounter: (found: Int, total: Int) {
+        // Use findableLocations property to ensure consistency with other parts of the app
+        let findableLocations = locationManager.findableLocations
+        let foundCount = findableLocations.filter { $0.collected }.count
+        let totalCount = findableLocations.count
+        return (found: foundCount, total: totalCount)
+    }
+    
     var body: some View {
         ZStack {
             ARLootBoxView(
@@ -76,7 +86,7 @@ struct ContentView: View {
                 }
                 
                 if let currentLocation = userLocationManager.currentLocation {
-                    Text("📍 Location: \(currentLocation.coordinate.latitude, specifier: "%.6f"), \(currentLocation.coordinate.longitude, specifier: "%.6f")")
+                    Text("📍 Location: \(currentLocation.coordinate.latitude, specifier: "%.8f"), \(currentLocation.coordinate.longitude, specifier: "%.8f")")
                         .font(.caption)
                         .padding()
                         .background(.ultraThinMaterial)
@@ -131,11 +141,9 @@ struct ContentView: View {
                     }
                     
                     if !locationManager.locations.isEmpty {
-                        // Only count findable locations (exclude map markers)
-                        let findableLocations = locationManager.findableLocations
-                        let foundCount = findableLocations.filter { $0.collected }.count
-                        let totalCount = findableLocations.count
-                        Text("Loot Boxes Found: \(foundCount)/\(totalCount)")
+                        // Use computed property to ensure reactive updates when locations change
+                        let counter = lootBoxCounter
+                        Text("Loot Boxes Found: \(counter.found)/\(counter.total)")
                             .padding()
                             .background(.ultraThinMaterial)
                             .cornerRadius(10)
@@ -187,6 +195,23 @@ struct ContentView: View {
         }
         .onAppear {
             userLocationManager.requestLocationPermission()
+            
+            // Auto-connect WebSocket on app start
+            WebSocketService.shared.connect()
+        }
+        .onChange(of: userLocationManager.currentLocation) { _, newLocation in
+            // When we get a GPS fix, automatically load shared objects from API
+            if let location = newLocation {
+                // Check if we have a valid GPS fix
+                guard location.horizontalAccuracy >= 0 && location.horizontalAccuracy < 100 else {
+                    return
+                }
+                
+                // Auto-load shared objects from API
+                Task {
+                    await locationManager.loadLocationsFromAPI(userLocation: location)
+                }
+            }
         }
         // No automatic GPS box creation - user must add items manually via map
         // .onChange(of: userLocationManager.currentLocation) { _, newLocation in

@@ -26,6 +26,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var objectRecognizer: ARObjectRecognizer?
     private var distanceTracker: ARDistanceTracker?
     private var tapHandler: ARTapHandler?
+    private var databaseIndicatorService: ARDatabaseIndicatorService?
     
     weak var arView: ARView?
     private var locationManager: LootBoxLocationManager?
@@ -41,36 +42,20 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var lastSpherePlacementTime: Date? // Prevent rapid duplicate sphere placements
     private var sphereModeActive: Bool = false // Track when we're in sphere randomization mode
     private var hasAutoRandomized: Bool = false // Track if we've already auto-randomized spheres
+    private var shouldForceReplacement: Bool = false // Force re-placement after reset when AR is ready
 
     // Arrow direction tracking
     @Published var nearestObjectDirection: Double? = nil // Direction in degrees (0 = north, 90 = east, etc.)
     
     // Viewport visibility tracking for chime sounds
     private var objectsInViewport: Set<String> = [] // Track which objects are currently visible
-    private var viewportChimePlayer: AVAudioPlayer? // Audio player for viewport chime
     
     override init() {
         super.init()
-        initializeChimePlayer()
-    }
-    
-    /// Initialize the audio player for viewport chime sounds
-    private func initializeChimePlayer() {
-        // Try to use the level-up sound as a chime, or fall back to system sound
-        if let url = Bundle.main.url(forResource: "level-up-01", withExtension: "mp3") {
-            do {
-                let player = try AVAudioPlayer(contentsOf: url)
-                player.prepareToPlay()
-                player.volume = 0.5 // Slightly quieter for viewport entry
-                viewportChimePlayer = player
-                Swift.print("🔊 Initialized viewport chime player")
-            } catch {
-                Swift.print("⚠️ Could not create viewport chime player: \(error)")
-            }
-        }
     }
     
     /// Play a chime sound when an object enters the viewport
+    /// Uses a different, gentler sound than the treasure found sound
     private func playViewportChime() {
         // Configure audio session
         do {
@@ -81,19 +66,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             Swift.print("⚠️ Could not configure audio session for chime: \(error)")
         }
         
-        // Play chime using audio player if available, otherwise use system sound
-        if let player = viewportChimePlayer {
-            if player.isPlaying {
-                player.stop()
-            }
-            player.currentTime = 0
-            player.play()
-            Swift.print("🔔 Chime: Object entered viewport")
-        } else {
-            // Fallback to system sound
-            AudioServicesPlaySystemSound(1057) // System notification sound
-            Swift.print("🔔 Chime: Object entered viewport (system sound)")
-        }
+        // Use a gentle system notification sound for viewport entry
+        // System sound 1103 is a soft, pleasant notification chime
+        // This is different from the treasure found sound (level-up-01.mp3)
+        AudioServicesPlaySystemSound(1103) // Soft notification sound for viewport entry
+        Swift.print("🔔 Viewport chime: Object entered viewport")
     }
     
     /// Check if an object is currently visible in the viewport
@@ -130,16 +107,16 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         
         // Check if the projected point is within the viewport bounds
-        let viewWidth = Float(arView.bounds.width)
-        let viewHeight = Float(arView.bounds.height)
+        let viewWidth = CGFloat(arView.bounds.width)
+        let viewHeight = CGFloat(arView.bounds.height)
         
         // Add a small margin to account for object size (objects slightly off-screen still count)
-        let margin: Float = 50.0 // 50 point margin
+        let margin: CGFloat = 50.0 // 50 point margin
         
-        let isInViewport = screenPoint.x >= -margin && 
-                          screenPoint.x <= viewWidth + margin &&
-                          screenPoint.y >= -margin && 
-                          screenPoint.y <= viewHeight + margin
+        // Break down the complex expression into sub-expressions to help compiler type-checking
+        let xInBounds = screenPoint.x >= -margin && screenPoint.x <= viewWidth + margin
+        let yInBounds = screenPoint.y >= -margin && screenPoint.y <= viewHeight + margin
+        let isInViewport = xInBounds && yInBounds
         
         return isInViewport
     }
@@ -161,10 +138,36 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             if isObjectInViewport(locationId: locationId, anchor: anchor) {
                 currentlyVisible.insert(locationId)
                 
-                // If object just entered viewport (wasn't visible before), play chime
+                // If object just entered viewport (wasn't visible before), play chime and log details
                 if !objectsInViewport.contains(locationId) {
                     playViewportChime()
-                    Swift.print("🎯 Object entered viewport: \(locationId)")
+                    
+                    // Get object details for logging
+                    let location = locationManager?.locations.first(where: { $0.id == locationId })
+                    let objectName = location?.name ?? "Unknown"
+                    let objectType = location?.type.displayName ?? "Unknown Type"
+                    
+                    // Calculate distance if user location is available
+                    var distanceInfo = ""
+                    if let userLocation = userLocationManager?.currentLocation,
+                       let location = location {
+                        let distance = userLocation.distance(from: location.location)
+                        distanceInfo = String(format: " (%.1fm away)", distance)
+                    }
+                    
+                    // Get screen position for additional context
+                    let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+                    let objectPosition = SIMD3<Float>(
+                        anchorTransform.columns.3.x,
+                        anchorTransform.columns.3.y,
+                        anchorTransform.columns.3.z
+                    )
+                    if let screenPoint = arView.project(objectPosition) {
+                        Swift.print("👁️ Object entered viewport: '\(objectName)' (\(objectType))\(distanceInfo) [ID: \(locationId)]")
+                        Swift.print("   Screen position: (x: \(String(format: "%.1f", screenPoint.x)), y: \(String(format: "%.1f", screenPoint.y)))")
+                    } else {
+                        Swift.print("👁️ Object entered viewport: '\(objectName)' (\(objectType))\(distanceInfo) [ID: \(locationId)]")
+                    }
                 }
             }
         }
@@ -191,10 +194,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // Initialize managers
         environmentManager = AREnvironmentManager(arView: arView, locationManager: locationManager)
-        objectRecognizer = ARObjectRecognizer()
+        // Only initialize object recognizer if enabled (saves battery/processing)
+        if locationManager.enableObjectRecognition {
+            objectRecognizer = ARObjectRecognizer()
+            Swift.print("🔍 Object recognition enabled")
+        } else {
+            Swift.print("🔍 Object recognition disabled (saves battery/processing)")
+        }
         distanceTracker = ARDistanceTracker(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager)
         occlusionManager = AROcclusionManager(arView: arView, locationManager: locationManager, distanceTracker: distanceTracker)
         tapHandler = ARTapHandler(arView: arView, locationManager: locationManager)
+        databaseIndicatorService = ARDatabaseIndicatorService()
         
         // Configure managers with shared state
         occlusionManager?.placedBoxes = placedBoxes
@@ -258,6 +268,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Also clear found loot boxes tracking
         clearFoundLootBoxes()
         
+        // Set flag to force re-placement when AR tracking is ready
+        shouldForceReplacement = true
+        
         Swift.print("✅ All placed objects removed - ready for re-placement at proper locations")
     }
     
@@ -290,7 +303,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
             // Skip locations that are already placed (double-check to prevent duplicates)
             if placedBoxes[location.id] != nil {
-                Swift.print("⏭️ Skipping \(location.name) - already in placedBoxes")
                 continue
             }
 
@@ -424,8 +436,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             randomX = randomCenter.x + randomDistance * cos(adjustedAngle)
             randomZ = randomCenter.z + randomDistance * sin(adjustedAngle)
 
-            Swift.print("🎲 Random position \(attempts): distance=\(String(format: "%.2f", randomDistance))m, angle=\(String(format: "%.2f", adjustedAngle * 180.0 / .pi))° (+offset), pos=(\(String(format: "%.2f", randomX)), \(String(format: "%.2f", randomZ)))")
-
             // Raycast to find floor
             let raycastOrigin = SIMD3<Float>(randomX, cameraPos.y + 1.0, randomZ)
             let raycastQuery = ARRaycastQuery(
@@ -501,9 +511,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Randomly select object type for variety
             let objectTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .sphere, .cube]
             let selectedType = objectTypes.randomElement() ?? .chalice
+            
+            // Use the factory's itemDescription() to get the proper name for this type
+            // This ensures each type gets its unique description (e.g., "Golden Chalice" not just "Chalice")
+            let factory = selectedType.factory
+            let itemName = factory.itemDescription()
+            
             let newLocation = LootBoxLocation(
                 id: "AR_ITEM_" + UUID().uuidString, // Generic prefix for all AR-only items (not just spheres)
-                name: selectedType.displayName, // Use the type's display name
+                name: itemName, // Use the factory's description to ensure proper naming
                 type: selectedType,
                 latitude: 0, // Not GPS-based
                 longitude: 0, // Not GPS-based
@@ -514,7 +530,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             locationManager.addLocation(newLocation)
 
             // Place the object (will create appropriate type based on location.type)
-            Swift.print("✅ Found valid position at attempt \(attempts) - placing \(selectedType.displayName) at distance: \(String(format: "%.2f", distanceFromCamera))m")
+            Swift.print("✅ Found valid position at attempt \(attempts) - placing \(itemName) (\(selectedType.displayName)) at distance: \(String(format: "%.2f", distanceFromCamera))m")
             placeBoxAtPosition(boxPosition, location: newLocation, in: arView)
             placedCount += 1
         }
@@ -610,7 +626,18 @@ class ARCoordinator: NSObject, ARSessionDelegate {
            let userLocation = userLocationManager?.currentLocation,
            let locationManager = locationManager {
             let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
-            checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+            
+            // Force re-placement after reset if flag is set
+            if shouldForceReplacement {
+                Swift.print("🔄 Force re-placement triggered - re-placing all nearby objects")
+                Swift.print("   📍 Found \(nearby.count) nearby locations within \(locationManager.maxSearchDistance)m")
+                shouldForceReplacement = false
+                // Clear placedBoxes to ensure all objects can be re-placed
+                // (removeAllPlacedObjects already cleared it, but double-check)
+                checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+            } else {
+                checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+            }
 
             // No automatic sphere spawning - user must add items manually via map
             // if !hasAutoRandomized && placedBoxes.isEmpty {
@@ -1079,11 +1106,23 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let sizeMultiplier = Float.random(in: 0.5...1.0) // Vary size for variety
         let factory = location.type.factory
         
-        // Ensure spheres use SphereFactory, not TreasureChestFactory
-        if location.type == .sphere {
-            assert(factory is SphereFactory, "ERROR: Sphere location is using wrong factory: \(type(of: factory))")
-            if !(factory is SphereFactory) {
-                Swift.print("❌ CRITICAL ERROR: Sphere location \(location.id) is using factory \(type(of: factory)) instead of SphereFactory!")
+        // CRITICAL: Verify each type uses its correct factory to ensure proper separation
+        // Check factory type name to ensure correct factory is being used
+        let factoryTypeName = String(describing: type(of: factory))
+        let expectedFactoryNames: [LootBoxType: String] = [
+            .chalice: "ChaliceFactory",
+            .treasureChest: "TreasureChestFactory",
+            .templeRelic: "TempleRelicFactory",
+            .sphere: "SphereFactory",
+            .cube: "CubeFactory"
+        ]
+        
+        if let expectedName = expectedFactoryNames[location.type] {
+            if !factoryTypeName.contains(expectedName) {
+                Swift.print("❌ CRITICAL ERROR: \(location.type.displayName) location \(location.id) is using factory \(factoryTypeName) instead of \(expectedName)!")
+                Swift.print("   This will cause incorrect object rendering and naming!")
+            } else {
+                Swift.print("✅ Verified \(location.type.displayName) is using correct factory: \(factoryTypeName)")
             }
         }
         
@@ -1135,6 +1174,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         findableObjects[location.id] = findableObject
         Swift.print("   ✅ Stored FindableObject in findableObjects dictionary")
+        
+        // Add orange database indicator if this object is from the shared database
+        databaseIndicatorService?.addDatabaseIndicator(to: anchor, location: location, in: arView)
     }
     
     // MARK: - Distance Text Overlay (delegated to ARDistanceTracker)
@@ -1673,8 +1715,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 radius: 100.0 // Large radius since we're not using GPS
             )
             // Add to locationManager so it counts toward the total
+            // Note: AR_SPHERE_ items are temporary and won't sync to API (by design)
             locationManager.addLocation(newLocation)
             Swift.print("✅ Created new location for sphere: \(newLocation.id)")
+            Swift.print("   📍 Note: Temporary AR sphere (AR_SPHERE_ prefix) will NOT sync to API")
         }
 
         // Create sphere directly
@@ -1727,7 +1771,22 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
     // Place any AR item in the current AR room (same size as spheres)
     func placeARItem(_ item: LootBoxLocation) {
-        Swift.print("🎯 placeARItem() called for: \(item.name) at GPS (\(item.latitude), \(item.longitude))")
+        Swift.print("🎯 placeARItem() called for: \(item.name) (ID: \(item.id)) at GPS (\(item.latitude), \(item.longitude))")
+        
+        // Check if this item should sync to API
+        let isTemporaryARItem = item.id.hasPrefix("AR_ITEM_") || 
+                               (item.id.hasPrefix("AR_SPHERE_") && !item.id.hasPrefix("AR_SPHERE_MAP_"))
+        if isTemporaryARItem {
+            Swift.print("   ⏭️ This is a temporary AR item - will NOT sync to API")
+        } else {
+            Swift.print("   🔄 This is a permanent item - should sync to API if API sync is enabled")
+            // Check if item is already in locationManager (which means it should be synced)
+            if let existingLocation = locationManager?.locations.first(where: { $0.id == item.id }) {
+                Swift.print("   ✅ Item already exists in locationManager - API sync status depends on useAPISync setting")
+            } else {
+                Swift.print("   ⚠️ Item not found in locationManager - may need to be added/synced")
+            }
+        }
 
         // CRITICAL: Check if this item is already placed to prevent duplicates
         if placedBoxes[item.id] != nil {

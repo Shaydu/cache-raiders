@@ -64,7 +64,7 @@ struct LocationConfigView: View {
                             .foregroundColor(.secondary)
                         Spacer()
                         if let location = userLocationManager.currentLocation {
-                            Text("📍 \(location.coordinate.latitude, specifier: "%.4f"), \(location.coordinate.longitude, specifier: "%.4f")")
+                            Text("📍 \(location.coordinate.latitude, specifier: "%.8f"), \(location.coordinate.longitude, specifier: "%.8f")")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }

@@ -44,6 +44,7 @@ class LootBoxLocationManager: ObservableObject {
     @Published var showFoundOnMap: Bool = false // Default: don't show found items on map
     @Published var disableOcclusion: Bool = false // Default: occlusion enabled (false = occlusion ON)
     @Published var disableAmbientLight: Bool = false // Default: ambient light enabled (false = ambient light ON)
+    @Published var enableObjectRecognition: Bool = false // Default: object recognition disabled (saves battery/processing)
     @Published var lootBoxMinSize: Double = 0.25 // Default 0.25m (minimum size)
     @Published var lootBoxMaxSize: Double = 1.0 // Default 1.0m (maximum size) - reduced from 3.0m
     @Published var shouldRandomize: Bool = false // Trigger for randomizing loot boxes in AR
@@ -58,8 +59,14 @@ class LootBoxLocationManager: ObservableObject {
     private let showFoundOnMapKey = "showFoundOnMap"
     private let disableOcclusionKey = "disableOcclusion"
     private let disableAmbientLightKey = "disableAmbientLight"
+    private let enableObjectRecognitionKey = "enableObjectRecognition"
     private let lootBoxMinSizeKey = "lootBoxMinSize"
     private let lootBoxMaxSizeKey = "lootBoxMaxSize"
+    
+    // API refresh timer - refreshes from API every 30 seconds when enabled
+    private var apiRefreshTimer: Timer?
+    private let apiRefreshInterval: TimeInterval = 30.0 // 30 seconds
+    private var lastKnownUserLocation: CLLocation?
     
     init() {
         // Don't load existing locations on init - start with clean slate
@@ -69,7 +76,18 @@ class LootBoxLocationManager: ObservableObject {
         loadShowFoundOnMap()
         loadDisableOcclusion()
         loadDisableAmbientLight()
+        loadEnableObjectRecognition()
         loadLootBoxSizes()
+        
+        // API sync is always enabled - start refresh timer
+        startAPIRefreshTimer()
+        
+        // Auto-connect to WebSocket
+        WebSocketService.shared.connect()
+    }
+    
+    deinit {
+        stopAPIRefreshTimer()
     }
     
     // Load locations from JSON file
@@ -364,6 +382,16 @@ class LootBoxLocationManager: ObservableObject {
         disableAmbientLight = UserDefaults.standard.bool(forKey: disableAmbientLightKey)
     }
     
+    // Save enable object recognition preference
+    func saveEnableObjectRecognition() {
+        UserDefaults.standard.set(enableObjectRecognition, forKey: enableObjectRecognitionKey)
+    }
+    
+    // Load enable object recognition preference
+    private func loadEnableObjectRecognition() {
+        enableObjectRecognition = UserDefaults.standard.bool(forKey: enableObjectRecognitionKey)
+    }
+    
     // Save loot box size preferences
     func saveLootBoxSizes() {
         UserDefaults.standard.set(lootBoxMinSize, forKey: lootBoxMinSizeKey)
@@ -405,14 +433,54 @@ class LootBoxLocationManager: ObservableObject {
     
     // MARK: - API Sync Methods
     
-    /// Enable/disable API sync (stored in UserDefaults)
+    /// API sync is always enabled - automatically syncs to shared database
     var useAPISync: Bool {
         get {
-            UserDefaults.standard.bool(forKey: "useAPISync")
+            // Always return true - API sync is always enabled
+            return true
         }
         set {
-            UserDefaults.standard.set(newValue, forKey: "useAPISync")
+            // Ignore attempts to disable - API sync is always enabled
+            // Always start the refresh timer
+            startAPIRefreshTimer()
         }
+    }
+    
+    /// Start the API refresh timer to periodically sync from API
+    private func startAPIRefreshTimer() {
+        stopAPIRefreshTimer() // Stop any existing timer first
+        
+        apiRefreshTimer = Timer.scheduledTimer(withTimeInterval: apiRefreshInterval, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            guard self.useAPISync else {
+                self.stopAPIRefreshTimer()
+                return
+            }
+            
+            print("🔄 Auto-refreshing from API (every \(Int(self.apiRefreshInterval))s)...")
+            Task {
+                await self.loadLocationsFromAPI(userLocation: self.lastKnownUserLocation)
+            }
+        }
+        
+        // Add timer to common run loop modes so it works even when scrolling
+        if let timer = apiRefreshTimer {
+            RunLoop.current.add(timer, forMode: .common)
+        }
+        
+        print("✅ Started API refresh timer (every \(Int(apiRefreshInterval))s)")
+    }
+    
+    /// Stop the API refresh timer
+    private func stopAPIRefreshTimer() {
+        apiRefreshTimer?.invalidate()
+        apiRefreshTimer = nil
+        print("⏹️ Stopped API refresh timer")
+    }
+    
+    /// Update the last known user location (called when location changes)
+    func updateUserLocation(_ location: CLLocation) {
+        lastKnownUserLocation = location
     }
     
     /// Load locations from API instead of local file
@@ -426,7 +494,9 @@ class LootBoxLocationManager: ObservableObject {
             // Check API health first
             let isHealthy = try await APIService.shared.checkHealth()
             guard isHealthy else {
-                print("⚠️ API is not available, falling back to local storage")
+                print("⚠️ API server at \(APIService.shared.baseURL) is not available")
+                print("   Make sure the server is running: cd server && python app.py")
+                print("   Falling back to local storage")
                 loadLocations(userLocation: userLocation)
                 return
             }
@@ -456,7 +526,9 @@ class LootBoxLocationManager: ObservableObject {
             }
             
         } catch {
-            print("⚠️ Error loading locations from API: \(error.localizedDescription)")
+            // Suppress detailed connection errors - they're noisy
+            // Just show a simple message and fall back to local storage
+            print("⚠️ Cannot connect to API server at \(APIService.shared.baseURL)")
             print("   Falling back to local storage")
             // Fallback to local storage
             loadLocations(userLocation: userLocation)
@@ -465,42 +537,204 @@ class LootBoxLocationManager: ObservableObject {
     
     /// Save location to API
     func saveLocationToAPI(_ location: LootBoxLocation) async {
-        guard useAPISync else { return }
+        guard useAPISync else {
+            print("⚠️ API sync is disabled - location '\(location.name)' (ID: \(location.id)) not synced to shared database")
+            return
+        }
+        
+        // Check if this is a temporary AR item that shouldn't be synced
+        let isTemporaryARItem = location.id.hasPrefix("AR_ITEM_") || 
+                               (location.id.hasPrefix("AR_SPHERE_") && !location.id.hasPrefix("AR_SPHERE_MAP_"))
+        
+        if isTemporaryARItem {
+            print("⏭️ Skipping API sync for temporary AR item: '\(location.name)' (ID: \(location.id))")
+            return
+        }
+        
+        print("🔄 Attempting to sync location '\(location.name)' (ID: \(location.id), Type: \(location.type.displayName)) to API...")
+        print("   GPS: (\(String(format: "%.8f", location.latitude)), \(String(format: "%.8f", location.longitude)))")
         
         do {
-            _ = try await APIService.shared.createObject(location)
-            print("✅ Saved location \(location.name) to API")
+            let createdObject = try await APIService.shared.createObject(location)
+            print("✅ Successfully synced location '\(location.name)' (ID: \(location.id)) to shared API database")
+            print("   API returned object ID: \(createdObject.id)")
         } catch {
-            print("⚠️ Error saving location to API: \(error.localizedDescription)")
+            print("❌ Error saving location '\(location.name)' (ID: \(location.id)) to API: \(error.localizedDescription)")
+            print("   Location saved locally but NOT in shared database")
+            if let apiError = error as? APIError {
+                print("   API Error details: \(apiError)")
+            }
         }
     }
     
     /// Mark location as found in API
     func markCollectedInAPI(_ locationId: String) async {
-        guard useAPISync else { return }
+        guard useAPISync else {
+            print("⚠️ API sync is disabled - not marking location \(locationId) as found in API")
+            return
+        }
+        
+        // Find location name for logging
+        let locationName = locations.first(where: { $0.id == locationId })?.name ?? "Unknown"
+        
+        // Check if this is a temporary AR item that shouldn't be synced
+        let isTemporaryARItem = locationId.hasPrefix("AR_ITEM_") || 
+                               (locationId.hasPrefix("AR_SPHERE_") && !locationId.hasPrefix("AR_SPHERE_MAP_"))
+        
+        if isTemporaryARItem {
+            print("⏭️ Skipping API sync for temporary AR item collection: '\(locationName)' (ID: \(locationId))")
+            return
+        }
+        
+        print("🔄 Attempting to mark location '\(locationName)' (ID: \(locationId)) as found in API...")
         
         do {
             try await APIService.shared.markFound(objectId: locationId)
-            print("✅ Marked location \(locationId) as found in API")
+            print("✅ Successfully marked location '\(locationName)' (ID: \(locationId)) as found in API")
         } catch {
-            print("⚠️ Error marking location as found in API: \(error.localizedDescription)")
+            print("❌ Error marking location '\(locationName)' (ID: \(locationId)) as found in API: \(error.localizedDescription)")
+            if let apiError = error as? APIError {
+                print("   API Error details: \(apiError)")
+            }
         }
     }
     
-    /// Sync all local locations to API (useful for migration)
+    /// Sync all local locations to API (useful for migration or if items were created before API sync was enabled)
     func syncAllLocationsToAPI() async {
-        guard useAPISync else { return }
+        guard useAPISync else {
+            print("⚠️ API sync is disabled - enable it in Settings first")
+            return
+        }
         
-        print("🔄 Syncing \(locations.count) locations to API...")
+        print("🔄 Syncing \(locations.count) local locations to shared API database...")
+        
+        var syncedCount = 0
+        var errorCount = 0
         
         for location in locations {
-            await saveLocationToAPI(location)
-            if location.collected {
-                await markCollectedInAPI(location.id)
+            // Skip temporary AR-only items
+            let isTemporaryARItem = location.id.hasPrefix("AR_ITEM_") || 
+                                   (location.id.hasPrefix("AR_SPHERE_") && !location.id.hasPrefix("AR_SPHERE_MAP_"))
+            
+            if isTemporaryARItem {
+                print("⏭️ Skipping temporary AR item: \(location.name)")
+                continue
+            }
+            
+            do {
+                // Check if object already exists in API
+                let existingObject = try? await APIService.shared.getObject(id: location.id)
+                
+                if existingObject == nil {
+                    // Object doesn't exist, create it
+                    await saveLocationToAPI(location)
+                    syncedCount += 1
+                } else {
+                    print("ℹ️ Object '\(location.name)' already exists in API, skipping")
+                }
+                
+                // Sync collected status if needed
+                if location.collected {
+                    await markCollectedInAPI(location.id)
+                }
+            } catch {
+                errorCount += 1
+                print("❌ Failed to sync '\(location.name)': \(error.localizedDescription)")
             }
         }
         
-        print("✅ Finished syncing locations to API")
+        print("✅ Finished syncing: \(syncedCount) new items, \(errorCount) errors")
+    }
+    
+    /// View all objects in the shared database
+    func viewDatabaseContents(userLocation: CLLocation? = nil) async {
+        guard useAPISync else {
+            print("⚠️ API sync is disabled - cannot view database contents")
+            return
+        }
+        
+        print("📊 Querying shared database contents...")
+        
+        do {
+            // Check API health first
+            let isHealthy = try await APIService.shared.checkHealth()
+            guard isHealthy else {
+                print("❌ API server at \(APIService.shared.baseURL) is not available")
+                print("   Make sure the server is running: cd server && python app.py")
+                return
+            }
+            
+            // Get all objects from API
+            let apiObjects: [APIObject]
+            if let userLocation = userLocation {
+                apiObjects = try await APIService.shared.getObjects(
+                    latitude: userLocation.coordinate.latitude,
+                    longitude: userLocation.coordinate.longitude,
+                    radius: 10000.0, // 10km radius to see all nearby objects
+                    includeFound: true // Include found objects too
+                )
+            } else {
+                apiObjects = try await APIService.shared.getObjects(includeFound: true)
+            }
+            
+            print("📊 Database Contents:")
+            print("   Total objects: \(apiObjects.count)")
+            
+            let foundCount = apiObjects.filter { $0.collected }.count
+            let unfoundCount = apiObjects.count - foundCount
+            
+            print("   Found: \(foundCount)")
+            print("   Unfound: \(unfoundCount)")
+            print("")
+            
+            if apiObjects.isEmpty {
+                print("   (Database is empty)")
+            } else {
+                print("   Objects:")
+                for (index, obj) in apiObjects.enumerated() {
+                    let status = obj.collected ? "✅ FOUND" : "🔍 UNFOUND"
+                    let finder = obj.found_by != nil ? " by \(obj.found_by!)" : ""
+                    let foundAt = obj.found_at != nil ? " at \(obj.found_at!)" : ""
+                    
+                    print("   \(index + 1). \(obj.name) (\(obj.type))")
+                    print("      ID: \(obj.id)")
+                    print("      Status: \(status)\(finder)\(foundAt)")
+                    print("      Location: (\(String(format: "%.8f", obj.latitude)), \(String(format: "%.8f", obj.longitude)))")
+                    print("      Radius: \(obj.radius)m")
+                    if let createdAt = obj.created_at {
+                        print("      Created: \(createdAt)")
+                    }
+                    if let createdBy = obj.created_by {
+                        print("      Created by: \(createdBy)")
+                    }
+                    print("")
+                }
+            }
+            
+            // Also get stats
+            do {
+                let stats = try await APIService.shared.getStats()
+                print("📈 Database Statistics:")
+                print("   Total objects: \(stats.total_objects)")
+                print("   Found objects: \(stats.found_objects)")
+                print("   Unfound objects: \(stats.unfound_objects)")
+                print("   Total finds: \(stats.total_finds)")
+                if !stats.top_finders.isEmpty {
+                    print("   Top finders:")
+                    for finder in stats.top_finders {
+                        print("      - \(finder.user): \(finder.count) finds")
+                    }
+                }
+            } catch {
+                print("⚠️ Could not fetch statistics: \(error.localizedDescription)")
+            }
+            
+        } catch {
+            print("❌ Error querying database: \(error.localizedDescription)")
+            if let apiError = error as? APIError {
+                print("   API Error details: \(apiError)")
+            }
+        }
     }
 }
 

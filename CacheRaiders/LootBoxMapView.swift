@@ -239,7 +239,7 @@ struct LootBoxMapView: View {
                         
                         VStack(spacing: 4) {
                             // Coordinates display
-                            Text(String(format: "%.6f, %.6f", crosshairPosition.latitude, crosshairPosition.longitude))
+                            Text(String(format: "%.8f, %.8f", crosshairPosition.latitude, crosshairPosition.longitude))
                                 .font(.system(size: 10, design: .monospaced))
                                 .padding(6)
                                 .background(Color.black.opacity(0.7))
@@ -512,8 +512,9 @@ struct LootBoxMapView: View {
             print("🎯 Triggered sphere placement in AR room and added map marker at (\(coordinate.latitude), \(coordinate.longitude))")
         } else if selectedItemType == .cube {
             // Create AR item location for cube with fixed name
+            // Use MAP_ prefix to indicate user-created from map (should sync to API)
             let arLocation = LootBoxLocation(
-                id: "AR_ITEM_" + UUID().uuidString,
+                id: "MAP_ITEM_" + UUID().uuidString,
                 name: "Mysterious Cube",
                 type: selectedItemType,
                 latitude: coordinate.latitude,
@@ -539,8 +540,9 @@ struct LootBoxMapView: View {
             let randomName = names.randomElement() ?? "Findable Item"
 
             // Create AR item location for placement
+            // Use MAP_ prefix to indicate user-created from map (should sync to API)
             let arLocation = LootBoxLocation(
-                id: "AR_ITEM_" + UUID().uuidString,
+                id: "MAP_ITEM_" + UUID().uuidString,
                 name: randomName,
                 type: selectedItemType,
                 latitude: coordinate.latitude,

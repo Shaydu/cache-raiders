@@ -55,6 +55,9 @@ struct ARLootBoxView: UIViewRepresentable {
         
         // Update nearby locations when user location changes
         if let userLocation = userLocationManager.currentLocation {
+            // Update location manager with current location for API refresh timer
+            locationManager.updateUserLocation(userLocation)
+            
             let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
             DispatchQueue.main.async {
                 nearbyLocations = nearby
@@ -114,12 +117,14 @@ struct ARLootBoxView: UIViewRepresentable {
             // Defer the reset to avoid view update publishing issues
             DispatchQueue.main.async {
                 context.coordinator.removeAllPlacedObjects()
-                // After removing objects, trigger re-placement if we have a user location
+                // Update nearby locations binding so UI reflects reset state
+                // Re-placement will happen automatically on next AR frame update when tracking is ready
                 if let userLocation = userLocationManager.currentLocation {
                     let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
                     DispatchQueue.main.async {
                         nearbyLocations = nearby
-                        context.coordinator.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+                        // Note: Re-placement will be triggered by session(_:didUpdate:) when AR tracking is ready
+                        // The shouldForceReplacement flag in ARCoordinator ensures objects are re-placed
                     }
                 }
             }
