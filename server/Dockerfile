@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app.py .
+COPY admin.html .
 
 # Create directory for database (will be persisted via volume)
 RUN mkdir -p /app/data
@@ -21,6 +22,10 @@ ENV FLASK_ENV=production
 
 # Run the application
 CMD ["python", "app.py"]
+
+
+
+
 
 
 

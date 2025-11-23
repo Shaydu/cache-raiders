@@ -218,9 +218,9 @@ struct LootBoxMapView: View {
                         }
                     : nil
                 )
-                .onChange(of: isAddModeActive) { isActive in
+                .onChange(of: isAddModeActive) {
                     // When entering add mode, initialize crosshair to map center
-                    if isActive {
+                    if isAddModeActive {
                         // Extract center from current map position
                         if let center = getCenterFromPosition(position) {
                             crosshairPosition = center
@@ -419,14 +419,14 @@ struct LootBoxMapView: View {
             userLocationManager.startUpdatingLocation()
             
             // Try to center on user location immediately if available
-            if let userLocation = userLocationManager.currentLocation {
+            if userLocationManager.currentLocation != nil {
                 updateRegion()
                 hasInitialized = true
             }
         }
         .onChange(of: userLocationManager.currentLocation) {
             // On first location update, center the map if not already initialized
-            if !hasInitialized, let userLocation = userLocationManager.currentLocation {
+            if !hasInitialized, userLocationManager.currentLocation != nil {
                 updateRegion()
                 hasInitialized = true
             }
@@ -440,7 +440,7 @@ struct LootBoxMapView: View {
                 }
             }
         }
-        .onChange(of: locationManager.showFoundOnMap) { _ in
+        .onChange(of: locationManager.showFoundOnMap) {
             // Force view update when showFoundOnMap toggle changes
             Swift.print("🗺️ showFoundOnMap changed to: \(locationManager.showFoundOnMap)")
         }

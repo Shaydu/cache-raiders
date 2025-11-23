@@ -38,7 +38,11 @@ class SkullLootContainer {
             lid: lid,
             prize: prize,
             builtInAnimation: nil,
-            open: LootBoxAnimation.openSkull
+            open: { container, onComplete in
+                MainActor.assumeIsolated {
+                    LootBoxAnimation.openSkull(container: container, onComplete: onComplete)
+                }
+            }
         )
     }
     

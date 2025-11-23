@@ -18,6 +18,10 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')  # Ena
 # Database file path
 DB_PATH = os.path.join(os.path.dirname(__file__), 'cache_raiders.db')
 
+# In-memory store for user locations (device_uuid -> latest location)
+# This allows the web map to show where users are currently located
+user_locations: Dict[str, Dict] = {}
+
 def get_db_connection():
     """Get a database connection."""
     conn = sqlite3.connect(DB_PATH)
@@ -44,11 +48,22 @@ def init_db():
         )
     ''')
     
-    # Add grounding_height column if it doesn't exist (for existing databases)
-    try:
-        cursor.execute('ALTER TABLE objects ADD COLUMN grounding_height REAL')
-    except sqlite3.OperationalError:
-        pass  # Column already exists
+    # Add optional columns if they don't exist (for existing databases)
+    optional_columns = [
+        ('grounding_height', 'REAL'),
+        ('ar_origin_latitude', 'REAL'),
+        ('ar_origin_longitude', 'REAL'),
+        ('ar_offset_x', 'REAL'),
+        ('ar_offset_y', 'REAL'),
+        ('ar_offset_z', 'REAL'),
+        ('ar_placement_timestamp', 'TEXT')
+    ]
+    
+    for column_name, column_type in optional_columns:
+        try:
+            cursor.execute(f'ALTER TABLE objects ADD COLUMN {column_name} {column_type}')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
     
     # Finds table - tracks who found which objects
     cursor.execute('''
@@ -94,87 +109,120 @@ def health():
 @app.route('/api/objects', methods=['GET'])
 def get_objects():
     """Get all objects, optionally filtered by location."""
-    latitude = request.args.get('latitude', type=float)
-    longitude = request.args.get('longitude', type=float)
-    radius = request.args.get('radius', type=float, default=10000.0)  # Default 10km
-    include_found = request.args.get('include_found', 'false').lower() == 'true'
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    query = '''
-        SELECT 
-            o.id,
-            o.name,
-            o.type,
-            o.latitude,
-            o.longitude,
-            o.radius,
-            o.created_at,
-            o.created_by,
-            o.grounding_height,
-            CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
-            f.found_by,
-            f.found_at
-        FROM objects o
-        LEFT JOIN finds f ON o.id = f.object_id
-    '''
-    
-    conditions = []
-    params = []
-    
-    # Filter by location if provided
-    if latitude is not None and longitude is not None:
-        # Simple bounding box filter (approximate)
-        # For production, use proper haversine formula
-        lat_range = radius / 111000.0  # Rough conversion: 1 degree ≈ 111km
-        lon_range = radius / (111000.0 * abs(math.cos(math.radians(latitude))))
+    try:
+        latitude = request.args.get('latitude', type=float)
+        longitude = request.args.get('longitude', type=float)
+        radius = request.args.get('radius', type=float, default=10000.0)  # Default 10km
+        include_found = request.args.get('include_found', 'false').lower() == 'true'
         
-        conditions.append('''
-            (o.latitude BETWEEN ? AND ?) 
-            AND (o.longitude BETWEEN ? AND ?)
-        ''')
-        params.extend([
-            latitude - lat_range,
-            latitude + lat_range,
-            longitude - lon_range,
-            longitude + lon_range
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Check which AR columns exist in the database
+        cursor.execute("PRAGMA table_info(objects)")
+        columns_info = cursor.fetchall()
+        column_names = [col[1] for col in columns_info]
+        
+        # Build SELECT clause dynamically based on available columns
+        base_columns = [
+            'o.id', 'o.name', 'o.type', 'o.latitude', 'o.longitude', 
+            'o.radius', 'o.created_at', 'o.created_by', 'o.grounding_height'
+        ]
+        ar_columns = [
+            'ar_origin_latitude', 'ar_origin_longitude', 
+            'ar_offset_x', 'ar_offset_y', 'ar_offset_z', 'ar_placement_timestamp'
+        ]
+        
+        select_columns = base_columns.copy()
+        for ar_col in ar_columns:
+            if ar_col in column_names:
+                select_columns.append(f'o.{ar_col}')
+        
+        select_columns.extend([
+            'CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected',
+            'f.found_by',
+            'f.found_at'
         ])
+        
+        query = f'''
+            SELECT 
+                {', '.join(select_columns)}
+            FROM objects o
+            LEFT JOIN finds f ON o.id = f.object_id
+        '''
+        
+        conditions = []
+        params = []
+        
+        # Filter by location if provided
+        if latitude is not None and longitude is not None:
+            # Simple bounding box filter (approximate)
+            # For production, use proper haversine formula
+            lat_range = radius / 111000.0  # Rough conversion: 1 degree ≈ 111km
+            lon_range = radius / (111000.0 * abs(math.cos(math.radians(latitude))))
+            
+            conditions.append('''
+                (o.latitude BETWEEN ? AND ?) 
+                AND (o.longitude BETWEEN ? AND ?)
+            ''')
+            params.extend([
+                latitude - lat_range,
+                latitude + lat_range,
+                longitude - lon_range,
+                longitude + lon_range
+            ])
+        
+        # Filter out found objects unless include_found is true
+        if not include_found:
+            conditions.append('f.id IS NULL')
+        
+        if conditions:
+            query += ' WHERE ' + ' AND '.join(conditions)
+        
+        query += ' ORDER BY o.created_at DESC'
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        # Group by object_id to handle multiple finds (though we'll only show the first)
+        objects_dict = {}
+        for row in rows:
+            obj_id = row['id']
+            if obj_id not in objects_dict:
+                obj_data = {
+                    'id': row['id'],
+                    'name': row['name'],
+                    'type': row['type'],
+                    'latitude': row['latitude'],
+                    'longitude': row['longitude'],
+                    'radius': row['radius'],
+                    'created_at': row['created_at'],
+                    'created_by': row['created_by'],
+                    'grounding_height': row['grounding_height'],
+                    'collected': bool(row['collected']),
+                    'found_by': row['found_by'],
+                    'found_at': row['found_at']
+                }
+                
+                # Add AR columns if they exist
+                for ar_col in ar_columns:
+                    if ar_col in column_names and ar_col in row.keys():
+                        obj_data[ar_col] = row[ar_col]
+                    else:
+                        obj_data[ar_col] = None
+                
+                objects_dict[obj_id] = obj_data
+        
+        return jsonify(list(objects_dict.values()))
     
-    # Filter out found objects unless include_found is true
-    if not include_found:
-        conditions.append('f.id IS NULL')
-    
-    if conditions:
-        query += ' WHERE ' + ' AND '.join(conditions)
-    
-    query += ' ORDER BY o.created_at DESC'
-    
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
-    
-    # Group by object_id to handle multiple finds (though we'll only show the first)
-    objects_dict = {}
-    for row in rows:
-        obj_id = row['id']
-        if obj_id not in objects_dict:
-            objects_dict[obj_id] = {
-                'id': row['id'],
-                'name': row['name'],
-                'type': row['type'],
-                'latitude': row['latitude'],
-                'longitude': row['longitude'],
-                'radius': row['radius'],
-                'created_at': row['created_at'],
-                'created_by': row['created_by'],
-                'grounding_height': row['grounding_height'],
-                'collected': bool(row['collected']),
-                'found_by': row['found_by'],
-                'found_at': row['found_at']
-            }
-    
-    return jsonify(list(objects_dict.values()))
+    except Exception as e:
+        # Ensure connection is closed on error
+        try:
+            conn.close()
+        except:
+            pass
+        return jsonify({'error': str(e), 'type': type(e).__name__}), 500
 
 @app.route('/api/objects/<object_id>', methods=['GET'])
 def get_object(object_id: str):
@@ -193,6 +241,12 @@ def get_object(object_id: str):
             o.created_at,
             o.created_by,
             o.grounding_height,
+            o.ar_origin_latitude,
+            o.ar_origin_longitude,
+            o.ar_offset_x,
+            o.ar_offset_y,
+            o.ar_offset_z,
+            o.ar_placement_timestamp,
             CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
             f.found_by,
             f.found_at
@@ -265,6 +319,12 @@ def create_object():
                 o.created_at,
                 o.created_by,
                 o.grounding_height,
+                o.ar_origin_latitude,
+                o.ar_origin_longitude,
+                o.ar_offset_x,
+                o.ar_offset_y,
+                o.ar_offset_z,
+                o.ar_placement_timestamp,
                 CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
                 f.found_by,
                 f.found_at
@@ -288,6 +348,12 @@ def create_object():
                 'created_at': row['created_at'],
                 'created_by': row['created_by'],
                 'grounding_height': row['grounding_height'],
+                'ar_origin_latitude': row['ar_origin_latitude'] if 'ar_origin_latitude' in row.keys() else None,
+                'ar_origin_longitude': row['ar_origin_longitude'] if 'ar_origin_longitude' in row.keys() else None,
+                'ar_offset_x': row['ar_offset_x'] if 'ar_offset_x' in row.keys() else None,
+                'ar_offset_y': row['ar_offset_y'] if 'ar_offset_y' in row.keys() else None,
+                'ar_offset_z': row['ar_offset_z'] if 'ar_offset_z' in row.keys() else None,
+                'ar_placement_timestamp': row['ar_placement_timestamp'] if 'ar_placement_timestamp' in row.keys() else None,
                 'collected': bool(row['collected']),
                 'found_by': row['found_by'],
                 'found_at': row['found_at']
@@ -420,6 +486,58 @@ def update_grounding(object_id: str):
         'message': 'Grounding height updated successfully'
     })
 
+@app.route('/api/objects/<object_id>/ar-offset', methods=['PUT', 'PATCH'])
+def update_ar_offset(object_id: str):
+    """Update the AR offset coordinates for an object (cm-level precision for indoor placement)."""
+    data = request.json
+    
+    required_fields = ['ar_origin_latitude', 'ar_origin_longitude', 'ar_offset_x', 'ar_offset_y', 'ar_offset_z']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if object exists
+    cursor.execute('SELECT id FROM objects WHERE id = ?', (object_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'error': 'Object not found'}), 404
+    
+    # Update AR offset coordinates (REAL type supports cm-level precision)
+    cursor.execute('''
+        UPDATE objects 
+        SET ar_origin_latitude = ?,
+            ar_origin_longitude = ?,
+            ar_offset_x = ?,
+            ar_offset_y = ?,
+            ar_offset_z = ?,
+            ar_placement_timestamp = ?
+        WHERE id = ?
+    ''', (
+        data['ar_origin_latitude'],
+        data['ar_origin_longitude'],
+        data['ar_offset_x'],
+        data['ar_offset_y'],
+        data['ar_offset_z'],
+        data.get('ar_placement_timestamp', datetime.utcnow().isoformat()),
+        object_id
+    ))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({
+        'id': object_id,
+        'ar_origin_latitude': data['ar_origin_latitude'],
+        'ar_origin_longitude': data['ar_origin_longitude'],
+        'ar_offset_x': data['ar_offset_x'],
+        'ar_offset_y': data['ar_offset_y'],
+        'ar_offset_z': data['ar_offset_z'],
+        'message': 'AR offset coordinates updated successfully'
+    })
+
 @app.route('/api/objects/<object_id>/found', methods=['DELETE'])
 def unmark_found(object_id: str):
     """Unmark an object as found (for testing/reset)."""
@@ -536,6 +654,95 @@ def get_player(device_uuid: str):
         'created_at': row['created_at'],
         'updated_at': row['updated_at']
     })
+
+@app.route('/api/users/<device_uuid>/location', methods=['POST', 'PUT'])
+def update_user_location(device_uuid: str):
+    """Update the current location of a user (for web map display)."""
+    data = request.json
+    
+    if not data or 'latitude' not in data or 'longitude' not in data:
+        return jsonify({'error': 'Missing required fields: latitude, longitude'}), 400
+    
+    latitude = float(data['latitude'])
+    longitude = float(data['longitude'])
+    accuracy = data.get('accuracy')  # Optional GPS accuracy in meters
+    heading = data.get('heading')  # Optional heading in degrees
+    ar_offset_x = data.get('ar_offset_x')  # Optional AR offset X in meters
+    ar_offset_y = data.get('ar_offset_y')  # Optional AR offset Y in meters
+    ar_offset_z = data.get('ar_offset_z')  # Optional AR offset Z in meters
+    
+    # Store user location with timestamp
+    user_locations[device_uuid] = {
+        'latitude': latitude,
+        'longitude': longitude,
+        'accuracy': accuracy,
+        'heading': heading,
+        'ar_offset_x': ar_offset_x,
+        'ar_offset_y': ar_offset_y,
+        'ar_offset_z': ar_offset_z,
+        'updated_at': datetime.utcnow().isoformat()
+    }
+    
+    # Log AR-enhanced location if available
+    if ar_offset_x is not None:
+        print(f"📍 User location updated (AR-enhanced): {device_uuid[:8]}... at ({latitude:.6f}, {longitude:.6f}), AR offset: ({ar_offset_x:.3f}, {ar_offset_y:.3f}, {ar_offset_z:.3f})m")
+    else:
+        print(f"📍 User location updated: {device_uuid[:8]}... at ({latitude:.6f}, {longitude:.6f})")
+    
+    # Broadcast location update via WebSocket
+    socketio.emit('user_location_updated', {
+        'device_uuid': device_uuid,
+        'latitude': latitude,
+        'longitude': longitude,
+        'accuracy': accuracy,
+        'heading': heading,
+        'ar_offset_x': ar_offset_x,
+        'ar_offset_y': ar_offset_y,
+        'ar_offset_z': ar_offset_z,
+        'updated_at': user_locations[device_uuid]['updated_at']
+    })
+    
+    return jsonify({
+        'device_uuid': device_uuid,
+        'latitude': latitude,
+        'longitude': longitude,
+        'message': 'Location updated successfully'
+    }), 200
+
+@app.route('/api/users/locations', methods=['GET'])
+def get_all_user_locations():
+    """Get all current user locations (for web map display)."""
+    # Optionally filter out stale locations (older than 5 minutes)
+    from datetime import timezone
+    cutoff_time = datetime.utcnow().replace(tzinfo=timezone.utc)
+    active_locations = {}
+    
+    for device_uuid, location_data in user_locations.items():
+        try:
+            # Parse the timestamp - handle both 'Z' suffix and timezone-aware formats
+            updated_at_str = location_data['updated_at']
+            if updated_at_str.endswith('Z'):
+                updated_at_str = updated_at_str.replace('Z', '+00:00')
+            
+            updated_at = datetime.fromisoformat(updated_at_str)
+            # Make both datetimes timezone-aware for comparison
+            if updated_at.tzinfo is None:
+                # If no timezone, assume UTC
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            
+            age_seconds = (cutoff_time - updated_at).total_seconds()
+            
+            # Only include locations updated in the last 5 minutes
+            if age_seconds < 300:  # 5 minutes
+                active_locations[device_uuid] = location_data
+        except Exception as e:
+            # Log parsing errors but continue processing other locations
+            print(f"⚠️ Error parsing location timestamp for {device_uuid}: {e}")
+            # Include the location anyway if we can't parse the timestamp
+            active_locations[device_uuid] = location_data
+    
+    print(f"📍 Returning {len(active_locations)} active user locations (out of {len(user_locations)} total)")
+    return jsonify(active_locations), 200
 
 @app.route('/api/players/<device_uuid>', methods=['POST', 'PUT'])
 def create_or_update_player(device_uuid: str):

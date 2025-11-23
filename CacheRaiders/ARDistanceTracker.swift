@@ -119,10 +119,11 @@ class ARDistanceTracker: ObservableObject {
         }
     }
     
-    /// Updates the direction to the nearest placed object
+    /// Updates the direction to the selected object (if any) or nearest placed object
     func updateNearestObjectDirection() {
         guard let arView = arView,
               let frame = arView.session.currentFrame,
+              let locationManager = locationManager,
               !placedBoxes.isEmpty else {
             nearestObjectDirection = nil
             return
@@ -133,28 +134,99 @@ class ARDistanceTracker: ObservableObject {
 
         // Get forward and up vectors for orientation
         let forward = SIMD3<Float>(-cameraTransform.columns.2.x, -cameraTransform.columns.2.y, -cameraTransform.columns.2.z)
-        let up = SIMD3<Float>(cameraTransform.columns.1.x, cameraTransform.columns.1.y, cameraTransform.columns.1.z)
+        let _ = SIMD3<Float>(cameraTransform.columns.1.x, cameraTransform.columns.1.y, cameraTransform.columns.1.z) // Up vector (unused)
 
-        // Find nearest object
-        var nearestDistance: Float = .infinity
-        var nearestPosition: SIMD3<Float>? = nil
-
-        for (_, anchor) in placedBoxes {
-            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
-            let objectPos = SIMD3<Float>(
-                anchorTransform.columns.3.x,
-                anchorTransform.columns.3.y,
-                anchorTransform.columns.3.z
-            )
-
-            let distance = length(objectPos - cameraPos)
-            if distance < nearestDistance {
-                nearestDistance = distance
-                nearestPosition = objectPos
+        // Check for selected object first, otherwise find nearest
+        var targetPosition: SIMD3<Float>? = nil
+        
+        // Priority 1: Selected object (if one is selected)
+        if let selectedId = locationManager.selectedDatabaseObjectId {
+            if let anchor = placedBoxes[selectedId],
+               let location = locationManager.locations.first(where: { $0.id == selectedId && !$0.collected }) {
+                let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+                var objectPos = SIMD3<Float>(
+                    anchorTransform.columns.3.x,
+                    anchorTransform.columns.3.y,
+                    anchorTransform.columns.3.z
+                )
+                
+                // Find the actual object position (chalice, treasure box, or sphere)
+                for child in anchor.children {
+                    if let modelEntity = child as? ModelEntity {
+                        if modelEntity.name == selectedId {
+                            let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                            objectPos = SIMD3<Float>(
+                                objectTransform.columns.3.x,
+                                objectTransform.columns.3.y,
+                                objectTransform.columns.3.z
+                            )
+                            break
+                        } else if modelEntity.components[PointLightComponent.self] != nil && modelEntity.name == selectedId {
+                            let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                            objectPos = SIMD3<Float>(
+                                objectTransform.columns.3.x,
+                                objectTransform.columns.3.y,
+                                objectTransform.columns.3.z
+                            )
+                            break
+                        }
+                    }
+                }
+                
+                targetPosition = objectPos
+            }
+        }
+        
+        // Priority 2: Nearest uncollected object (if no selected object or selected not found)
+        if targetPosition == nil {
+            var nearestDistance: Float = .infinity
+            
+            for (locationId, anchor) in placedBoxes {
+                // Skip if already collected
+                guard let location = locationManager.locations.first(where: { $0.id == locationId && !$0.collected }) else {
+                    continue
+                }
+                let _ = location // Location checked but unused in this loop
+                
+                let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+                var objectPos = SIMD3<Float>(
+                    anchorTransform.columns.3.x,
+                    anchorTransform.columns.3.y,
+                    anchorTransform.columns.3.z
+                )
+                
+                // Find the actual object position (chalice, treasure box, or sphere)
+                for child in anchor.children {
+                    if let modelEntity = child as? ModelEntity {
+                        if modelEntity.name == locationId {
+                            let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                            objectPos = SIMD3<Float>(
+                                objectTransform.columns.3.x,
+                                objectTransform.columns.3.y,
+                                objectTransform.columns.3.z
+                            )
+                            break
+                        } else if modelEntity.components[PointLightComponent.self] != nil && modelEntity.name == locationId {
+                            let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                            objectPos = SIMD3<Float>(
+                                objectTransform.columns.3.x,
+                                objectTransform.columns.3.y,
+                                objectTransform.columns.3.z
+                            )
+                            break
+                        }
+                    }
+                }
+                
+                let distance = length(objectPos - cameraPos)
+                if distance < nearestDistance {
+                    nearestDistance = distance
+                    targetPosition = objectPos
+                }
             }
         }
 
-        guard let targetPos = nearestPosition else {
+        guard let targetPos = targetPosition else {
             nearestObjectDirection = nil
             return
         }
@@ -249,16 +321,62 @@ class ARDistanceTracker: ObservableObject {
             cameraTransform.columns.3.z
         )
         
-        // Find nearest uncollected loot box in AR world space
-        var nearestBox: (location: LootBoxLocation, distance: Double, anchor: AnchorEntity)? = nil
-        var minDistance: Double = Double.infinity
+        // Priority 1: Check for selected object first
+        var targetBox: (location: LootBoxLocation, distance: Double, anchor: AnchorEntity)? = nil
         
-        // Check all placed boxes in AR space
-        for (locationId, anchor) in placedBoxes {
-            // Find the location for this box
-            guard let location = locationManager.locations.first(where: { $0.id == locationId && !$0.collected }) else {
-                continue
+        if let selectedId = locationManager.selectedDatabaseObjectId,
+           let anchor = placedBoxes[selectedId],
+           let location = locationManager.locations.first(where: { $0.id == selectedId && !$0.collected }) {
+            // Get anchor position in AR world space
+            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+            let anchorPosition = SIMD3<Float>(
+                anchorTransform.columns.3.x,
+                anchorTransform.columns.3.y,
+                anchorTransform.columns.3.z
+            )
+
+            // Find the actual object position (chalice, treasure box, or sphere)
+            var objectPosition = anchorPosition
+            for child in anchor.children {
+                if let modelEntity = child as? ModelEntity {
+                    // Check for loot box containers (chalice or treasure box)
+                    if modelEntity.name == selectedId {
+                        let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                        objectPosition = SIMD3<Float>(
+                            objectTransform.columns.3.x,
+                            objectTransform.columns.3.y,
+                            objectTransform.columns.3.z
+                        )
+                        break
+                    }
+                    // Check for standalone spheres
+                    else if modelEntity.components[PointLightComponent.self] != nil && modelEntity.name == selectedId {
+                        let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                        objectPosition = SIMD3<Float>(
+                            objectTransform.columns.3.x,
+                            objectTransform.columns.3.y,
+                            objectTransform.columns.3.z
+                        )
+                        break
+                    }
+                }
             }
+
+            // Calculate distance in AR world space (meters) - use object position for accuracy
+            let distance = Double(length(objectPosition - cameraPosition))
+            targetBox = (location: location, distance: distance, anchor: anchor)
+        }
+        
+        // Priority 2: If no selected object or selected not found, find nearest uncollected loot box
+        if targetBox == nil {
+            var minDistance: Double = Double.infinity
+            
+            // Check all placed boxes in AR space
+            for (locationId, anchor) in placedBoxes {
+                // Find the location for this box
+                guard let location = locationManager.locations.first(where: { $0.id == locationId && !$0.collected }) else {
+                    continue
+                }
             
             // Get anchor position in AR world space
             let anchorTransform = anchor.transformMatrix(relativeTo: nil)
@@ -295,17 +413,18 @@ class ARDistanceTracker: ObservableObject {
                 }
             }
 
-            // Calculate distance in AR world space (meters) - use object position for accuracy
-            let distance = Double(length(objectPosition - cameraPosition))
-            
-            if distance < minDistance {
-                minDistance = distance
-                nearestBox = (location: location, distance: distance, anchor: anchor)
+                // Calculate distance in AR world space (meters) - use object position for accuracy
+                let distance = Double(length(objectPosition - cameraPosition))
+                
+                if distance < minDistance {
+                    minDistance = distance
+                    targetBox = (location: location, distance: distance, anchor: anchor)
+                }
             }
         }
         
         // If we found a box in AR space, use that
-        if let nearest = nearestBox {
+        if let nearest = targetBox {
             updateTemperatureStatus(currentDistance: nearest.distance, location: nearest.location)
             return
         }
@@ -342,55 +461,69 @@ class ARDistanceTracker: ObservableObject {
             return
         }
         
-        // Find nearest uncollected loot box using GPS
-        let uncollectedLocations = locationManager.locations.filter { !$0.collected }
-        guard !uncollectedLocations.isEmpty else {
-            DispatchQueue.main.async { [weak self] in
-                self?.distanceToNearestBinding?.wrappedValue = nil
-                self?.temperatureStatusBinding?.wrappedValue = nil
-                self?.nearestObjectDirectionBinding?.wrappedValue = nil
+        // Priority 1: Check for selected object first
+        var targetLocation: (location: LootBoxLocation, distance: Double)? = nil
+        
+        if let selectedId = locationManager.selectedDatabaseObjectId,
+           let selectedLocation = locationManager.locations.first(where: { $0.id == selectedId && !$0.collected }) {
+            let distance = userLocation.distance(from: selectedLocation.location)
+            targetLocation = (location: selectedLocation, distance: distance)
+        }
+        
+        // Priority 2: If no selected object or selected not found, find nearest uncollected loot box
+        if targetLocation == nil {
+            let uncollectedLocations = locationManager.locations.filter { !$0.collected }
+            guard !uncollectedLocations.isEmpty else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.distanceToNearestBinding?.wrappedValue = nil
+                    self?.temperatureStatusBinding?.wrappedValue = nil
+                    self?.nearestObjectDirectionBinding?.wrappedValue = nil
+                }
+                return
             }
-            return
-        }
-        
-        let distances = uncollectedLocations.map { location in
-            (location: location, distance: userLocation.distance(from: location.location))
-        }
-        
-        guard let nearest = distances.min(by: { $0.distance < $1.distance }) else {
-            DispatchQueue.main.async { [weak self] in
-                self?.distanceToNearestBinding?.wrappedValue = nil
-                self?.temperatureStatusBinding?.wrappedValue = nil
-                self?.nearestObjectDirectionBinding?.wrappedValue = nil
+            
+            let distances = uncollectedLocations.map { location in
+                (location: location, distance: userLocation.distance(from: location.location))
             }
-            return
+            
+            // Find the nearest location
+            guard let nearest = distances.min(by: { $0.distance < $1.distance }) else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.distanceToNearestBinding?.wrappedValue = nil
+                    self?.temperatureStatusBinding?.wrappedValue = nil
+                    self?.nearestObjectDirectionBinding?.wrappedValue = nil
+                }
+                return
+            }
+            
+            targetLocation = (location: nearest.location, distance: nearest.distance)
         }
         
-        updateTemperatureStatus(currentDistance: nearest.distance, location: nearest.location)
+        // Update with target location (selected or nearest)
+        if let target = targetLocation {
+            updateTemperatureStatus(currentDistance: target.distance, location: target.location)
+        }
     }
     
     private func updateTemperatureStatus(currentDistance: Double, location: LootBoxLocation) {
-        // Update temperature status with distance included (only show distance when we have a comparison)
+        // Update temperature status without distance (distance shown separately in UI)
         var status: String?
         if let previous = previousDistance {
-            // We have a previous distance to compare - show warmer/colder with distance
+            // We have a previous distance to compare - show warmer/colder
             // Use a threshold to avoid flickering (only show change if difference is significant)
             // 1.5 feet threshold (approximately 0.46m)
             let threshold: Double = 0.46 // ~1.5 feet
             if currentDistance < previous - threshold {
-                let distanceStr = formatDistance(currentDistance)
-                status = "🔥 Warmer (\(distanceStr))"
+                status = "🔥 Warmer"
             } else if currentDistance > previous + threshold {
-                let distanceStr = formatDistance(currentDistance)
-                status = "❄️ Colder (\(distanceStr))"
+                status = "❄️ Colder"
             } else {
-                // Within threshold - keep previous status or show same distance
-                let distanceStr = formatDistance(currentDistance)
-                status = "➡️ \(distanceStr)"
+                // Within threshold - don't show anything
+                status = nil
             }
             previousDistance = currentDistance
         } else {
-            // First reading - don't show distance yet, just store it for next comparison
+            // First reading - don't show status yet, just store it for next comparison
             previousDistance = currentDistance
             status = nil // Don't show anything until we have a comparison
         }

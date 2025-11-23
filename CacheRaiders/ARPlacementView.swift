@@ -91,15 +91,29 @@ struct ARPlacementView: View {
                         selectedObject: selectedObject,
                         objectType: isPlacingNew ? selectedObjectType : selectedObject?.type ?? .chalice,
                         isNewObject: isPlacingNew,
-                        onPlace: { gpsCoordinate, groundingHeight, scale in
+                        onPlace: { gpsCoordinate, arPosition, arOrigin, groundingHeight, scale in
                             // Handle placement
                             Task {
                                 if let selected = selectedObject {
                                     // Update existing object
-                                    await updateObjectLocation(objectId: selected.id, coordinate: gpsCoordinate, groundingHeight: groundingHeight, scale: scale)
+                                    await updateObjectLocation(
+                                        objectId: selected.id,
+                                        coordinate: gpsCoordinate,
+                                        arPosition: arPosition,
+                                        arOrigin: arOrigin,
+                                        groundingHeight: groundingHeight,
+                                        scale: scale
+                                    )
                                 } else {
                                     // Create new object
-                                    await createNewObject(type: selectedObjectType, coordinate: gpsCoordinate, groundingHeight: groundingHeight, scale: scale)
+                                    await createNewObject(
+                                        type: selectedObjectType,
+                                        coordinate: gpsCoordinate,
+                                        arPosition: arPosition,
+                                        arOrigin: arOrigin,
+                                        groundingHeight: groundingHeight,
+                                        scale: scale
+                                    )
                                 }
                                 dismiss()
                             }
@@ -130,42 +144,84 @@ struct ARPlacementView: View {
         }
     }
     
-    private func updateObjectLocation(objectId: String, coordinate: CLLocationCoordinate2D, groundingHeight: Double, scale: Float) async {
+    private func updateObjectLocation(objectId: String, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async {
         do {
+            // Update GPS location (fallback)
             try await APIService.shared.updateObjectLocation(
                 objectId: objectId,
                 latitude: coordinate.latitude,
                 longitude: coordinate.longitude
             )
+            
+            // Update AR coordinates for mm-precision (primary)
+            if let arOrigin = arOrigin {
+                try await APIService.shared.updateAROffset(
+                    objectId: objectId,
+                    arOriginLatitude: arOrigin.coordinate.latitude,
+                    arOriginLongitude: arOrigin.coordinate.longitude,
+                    offsetX: Double(arPosition.x),
+                    offsetY: Double(arPosition.y),
+                    offsetZ: Double(arPosition.z)
+                )
+                print("✅ Stored AR coordinates for mm-precision: offset=(\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
+            }
+            
             // Also update grounding height for accurate placement
             try await APIService.shared.updateGroundingHeight(objectId: objectId, height: groundingHeight)
             // Note: Scale is stored locally or could be added to API in the future
             print("📏 Object scale set to \(scale)x (stored locally)")
-            // Reload locations to get updated data
-            await locationManager.loadLocationsFromAPI(userLocation: userLocationManager.currentLocation, includeFound: true)
+            // Don't reload locations immediately - object is already placed correctly in AR
+            // Reloading would trigger checkAndPlaceBoxes which would re-place the object and cause it to move
+            // The coordinates are saved, so the object will be placed correctly on next app launch or manual reload
         } catch {
             print("❌ Failed to update object location: \(error)")
         }
     }
 
-    private func createNewObject(type: LootBoxType, coordinate: CLLocationCoordinate2D, groundingHeight: Double, scale: Float) async {
-        let newLocation = LootBoxLocation(
+    private func createNewObject(type: LootBoxType, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async {
+        var newLocation = LootBoxLocation(
             id: UUID().uuidString,
             name: "New \(type.displayName)",
             type: type,
             latitude: coordinate.latitude,
             longitude: coordinate.longitude,
-            radius: 5.0
+            radius: 5.0,
+            grounding_height: groundingHeight
         )
+        
+        // Store AR coordinates for mm-precision placement
+        if let arOrigin = arOrigin {
+            newLocation.ar_origin_latitude = arOrigin.coordinate.latitude
+            newLocation.ar_origin_longitude = arOrigin.coordinate.longitude
+            newLocation.ar_offset_x = Double(arPosition.x)
+            newLocation.ar_offset_y = Double(arPosition.y)
+            newLocation.ar_offset_z = Double(arPosition.z)
+            newLocation.ar_placement_timestamp = Date()
+            print("✅ Storing AR coordinates for mm-precision: offset=(\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
+        }
 
         do {
             let createdObject = try await APIService.shared.createObject(newLocation)
+            
+            // Update AR coordinates after creation (if API supports it)
+            if let arOrigin = arOrigin {
+                try? await APIService.shared.updateAROffset(
+                    objectId: createdObject.id,
+                    arOriginLatitude: arOrigin.coordinate.latitude,
+                    arOriginLongitude: arOrigin.coordinate.longitude,
+                    offsetX: Double(arPosition.x),
+                    offsetY: Double(arPosition.y),
+                    offsetZ: Double(arPosition.z)
+                )
+            }
+            
             // Update grounding height for the newly created object
             try await APIService.shared.updateGroundingHeight(objectId: createdObject.id, height: groundingHeight)
             // Note: Scale is stored locally or could be added to API in the future
             print("📏 Object scale set to \(scale)x (stored locally)")
-            // Reload locations to get new object
-            await locationManager.loadLocationsFromAPI(userLocation: userLocationManager.currentLocation, includeFound: true)
+            // Don't reload locations immediately - object is already placed correctly in AR
+            // Reloading would trigger checkAndPlaceBoxes which would re-place the object and cause it to move
+            // The coordinates are saved, so the object will be placed correctly on next app launch or manual reload
         } catch {
             print("❌ Failed to create object: \(error)")
         }
@@ -179,7 +235,7 @@ struct ARPlacementARViewWrapper: View {
     let selectedObject: LootBoxLocation?
     let objectType: LootBoxType
     let isNewObject: Bool
-    let onPlace: (CLLocationCoordinate2D, Double, Float) -> Void
+    let onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void
     let onCancel: () -> Void
 
     @StateObject private var placementReticle = ARPlacementReticle(arView: nil)
@@ -206,7 +262,6 @@ struct ARPlacementARViewWrapper: View {
                 isPlacementMode: $isPlacementMode,
                 placementPosition: $placementReticle.currentPosition,
                 placementDistance: $placementReticle.distanceFromCamera,
-                groundHeight: $placementReticle.heightFromGround,
                 scaleMultiplier: $scaleMultiplier,
                 objectType: objectType,
                 onPlaceObject: {
@@ -228,7 +283,7 @@ struct ARPlacementARView: UIViewRepresentable {
     let isNewObject: Bool
     @ObservedObject var placementReticle: ARPlacementReticle
     @Binding var scaleMultiplier: Float
-    let onPlace: (CLLocationCoordinate2D, Double, Float) -> Void
+    let onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void
     let onCancel: () -> Void
     
     func makeUIView(context: Context) -> ARView {
@@ -237,6 +292,13 @@ struct ARPlacementARView: UIViewRepresentable {
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal, .vertical]
         config.environmentTexturing = .automatic
+        
+        // Apply selected lens if available
+        if let selectedLensId = locationManager.selectedARLens,
+           let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
+            config.videoFormat = videoFormat
+            print("📷 Using selected AR lens in placement view: \(selectedLensId)")
+        }
         
         arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
         
@@ -260,10 +322,13 @@ struct ARPlacementARView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: ARView, context: Context) {
-        // Update scale multiplier when it changes
-        context.coordinator.scaleMultiplier = scaleMultiplier
-        // Update wireframe preview scale
-        context.coordinator.updateWireframeScale()
+        // Only update if scale actually changed (avoid expensive updates on every view refresh)
+        let previousScale = context.coordinator.scaleMultiplier
+        if abs(previousScale - scaleMultiplier) > 0.01 { // Only update if change is significant (> 1%)
+            context.coordinator.scaleMultiplier = scaleMultiplier
+            // Update wireframe preview scale
+            context.coordinator.updateWireframeScale()
+        }
     }
     
     func makeCoordinator() -> Coordinator {
@@ -277,7 +342,7 @@ struct ARPlacementARView: UIViewRepresentable {
         var selectedObject: LootBoxLocation?
         var objectType: LootBoxType
         var isNewObject: Bool
-        var onPlace: (CLLocationCoordinate2D, Double, Float) -> Void
+        var onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void
         var onCancel: () -> Void
         var arOriginGPS: CLLocation?
         var crosshairEntity: ModelEntity?
@@ -286,8 +351,10 @@ struct ARPlacementARView: UIViewRepresentable {
         var scaleMultiplier: Float = 1.0
         var previewWireframeEntity: ModelEntity?
         var previewWireframeAnchor: AnchorEntity?
+        var placedObjectAnchor: AnchorEntity? // Track placed object to show immediately
+        var placedObjectEntity: ModelEntity? // Track placed object entity
         
-        init(onPlace: @escaping (CLLocationCoordinate2D, Double, Float) -> Void, onCancel: @escaping () -> Void) {
+        init(onPlace: @escaping (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void, onCancel: @escaping () -> Void) {
             self.onPlace = onPlace
             self.onCancel = onCancel
             self.objectType = .chalice
@@ -314,6 +381,7 @@ struct ARPlacementARView: UIViewRepresentable {
         var draggingWireframeEntity: ModelEntity?
         var draggingAnchor: AnchorEntity?
         var isDragging = false
+        var draggingShadowEntity: ModelEntity?
 
         func setup(arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, selectedObject: LootBoxLocation?, objectType: LootBoxType, isNewObject: Bool, placementReticle: ARPlacementReticle) {
             self.arView = arView
@@ -331,9 +399,14 @@ struct ARPlacementARView: UIViewRepresentable {
             // Initialize precision positioning service
             precisionPositioningService = ARPrecisionPositioningService(arView: arView)
 
-            // Set AR origin on first location update
-            if let userLocation = userLocationManager.currentLocation {
+            // Set AR origin on first location update with good GPS accuracy
+            // For < 6m AR-to-GPS conversion accuracy, we need < 6m GPS accuracy
+            if let userLocation = userLocationManager.currentLocation,
+               userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 6.0 {
                 arOriginGPS = userLocation
+                print("📍 AR Origin set for placement: accuracy=\(String(format: "%.2f", userLocation.horizontalAccuracy))m")
+            } else if arOriginGPS == nil {
+                print("⚠️ Waiting for better GPS accuracy (< 6m) before setting AR origin")
             }
 
             // Set up AR session delegate to update crosshair position and reticle
@@ -383,8 +456,14 @@ struct ARPlacementARView: UIViewRepresentable {
                     let wireframeEntity = createWireframeModel(for: location.type, size: location.type.size)
 
                     // Make it yellow/gold to indicate it's selected
+                    // But preserve the shadow's UnlitMaterial
                     for child in wireframeEntity.children {
                         if let modelEntity = child as? ModelEntity {
+                            // Skip shadow entity - keep its UnlitMaterial
+                            if modelEntity.name == "shadow" {
+                                continue
+                            }
+                            
                             if var model = modelEntity.model {
                                 var material = SimpleMaterial()
                                 material.color = .init(tint: UIColor.systemYellow.withAlphaComponent(0.8))
@@ -493,15 +572,47 @@ struct ARPlacementARView: UIViewRepresentable {
             }
             outlineEntity.scale *= 1.05 // Slightly larger for outline effect
             
+            // Create simple shadow box that scales with the object
+            // Shadow size is proportional to object size
+            let shadowSize = size * 0.8 // Shadow is 80% of object size
+            let shadowThickness: Float = 0.02 // 2cm thick box for visibility
+            
+            // Create a simple box for the shadow (simplified for performance)
+            let shadowMesh = MeshResource.generateBox(width: shadowSize, height: shadowThickness, depth: shadowSize)
+            // Use UnlitMaterial for shadow to ensure it's always visible regardless of lighting
+            var shadowMaterial = UnlitMaterial()
+            shadowMaterial.color = .init(tint: UIColor.black.withAlphaComponent(0.5))
+            let shadowEntity = ModelEntity(mesh: shadowMesh, materials: [shadowMaterial])
+            shadowEntity.name = "shadow" // Tag shadow for easy identification
+            
+            // Position shadow slightly below the object (on the ground)
+            // Position depends on object type - adjust based on object height
+            let shadowYOffset: Float
+            switch type {
+            case .chalice, .templeRelic:
+                shadowYOffset = -size * 0.3 - 0.01 // Cylinder-based objects
+            case .treasureChest, .lootChest, .lootCart:
+                shadowYOffset = -size * 0.3 - 0.01 // Box-based objects
+            case .sphere:
+                shadowYOffset = -size * 0.3 - 0.01 // Spheres
+            case .cube:
+                shadowYOffset = -size * 0.2 - 0.01 // Cubes (smaller)
+            }
+            shadowEntity.position = SIMD3<Float>(0, shadowYOffset, 0)
+            
+            // Ensure shadow is enabled and visible
+            shadowEntity.isEnabled = true
+            
             let container = ModelEntity()
             container.addChild(outlineEntity)
             container.addChild(wireframeEntity)
+            container.addChild(shadowEntity)
             
             return container
         }
         
         func createCrosshairs() {
-            guard let arView = arView else { return }
+            guard arView != nil else { return }
             
             // Create crosshair lines
             let lineLength: Float = 0.1 // 10cm
@@ -609,17 +720,14 @@ struct ARPlacementARView: UIViewRepresentable {
                 raycastResult.worldTransform.columns.3.z
             )
             
-            // Convert AR world position to GPS coordinates
-            if let gpsCoordinate = convertARToGPS(arPosition: tapWorldPos, arOrigin: arOrigin, userLocation: userLocation, cameraTransform: frame.camera.transform) {
-                // Calculate height relative to camera (which represents eye level)
-                // This makes the height portable across different AR sessions
-                let cameraPos = SIMD3<Float>(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
-                let relativeHeight = Double(tapWorldPos.y - cameraPos.y)
-                print("✅ Placing object at GPS: \(gpsCoordinate.latitude), \(gpsCoordinate.longitude), relative height: \(relativeHeight)m from camera, scale: \(scaleMultiplier)x")
-                onPlace(gpsCoordinate, relativeHeight, scaleMultiplier)
-            } else {
-                print("❌ Failed to convert AR position to GPS")
-            }
+            // Convert AR world position to GPS coordinates (fallback)
+            let gpsCoordinate = convertARToGPS(arPosition: tapWorldPos, arOrigin: arOrigin, userLocation: userLocation, cameraTransform: frame.camera.transform)
+            
+            // Always use AR coordinates for mm-precision (primary)
+            // GPS is only for fallback when AR session restarts
+            let surfaceY = Double(tapWorldPos.y)
+            print("✅ Placing object at AR position: \(tapWorldPos) (mm-precision), GPS fallback: \(gpsCoordinate?.latitude ?? 0), \(gpsCoordinate?.longitude ?? 0), Y: \(surfaceY)m, scale: \(scaleMultiplier)x")
+            onPlace(gpsCoordinate ?? arOrigin.coordinate, tapWorldPos, arOrigin, surfaceY, scaleMultiplier)
         }
 
         /// Handles placement button tap from overlay UI
@@ -634,18 +742,78 @@ struct ARPlacementARView: UIViewRepresentable {
             }
 
             print("✅ Placement button tapped - placing at reticle position: \(reticlePosition)")
+            print("   Reticle X: \(String(format: "%.4f", reticlePosition.x)), Y: \(String(format: "%.4f", reticlePosition.y)), Z: \(String(format: "%.4f", reticlePosition.z))")
 
-            // Convert AR world position to GPS coordinates
-            if let gpsCoordinate = convertARToGPS(arPosition: reticlePosition, arOrigin: arOrigin, userLocation: userLocation, cameraTransform: frame.camera.transform) {
-                // Calculate height relative to camera (which represents eye level)
-                // This makes the height portable across different AR sessions
-                let cameraPos = SIMD3<Float>(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
-                let relativeHeight = Double(reticlePosition.y - cameraPos.y)
-                print("✅ Placing object at GPS: \(gpsCoordinate.latitude), \(gpsCoordinate.longitude), relative height: \(relativeHeight)m from camera, scale: \(scaleMultiplier)x")
-                onPlace(gpsCoordinate, relativeHeight, scaleMultiplier)
-            } else {
-                print("❌ Failed to convert AR position to GPS")
-            }
+            // Use reticle position directly - it's already at the correct X/Z, just adjust Y for grounding
+            // The reticle anchor position is at ground level, reticle entity is +0.01m above for visibility
+            let adjustedPosition = SIMD3<Float>(
+                reticlePosition.x,
+                reticlePosition.y, // Use anchor Y (ground level), not reticle entity Y
+                reticlePosition.z
+            )
+            
+            print("   Adjusted position: X: \(String(format: "%.4f", adjustedPosition.x)), Y: \(String(format: "%.4f", adjustedPosition.y)), Z: \(String(format: "%.4f", adjustedPosition.z))")
+
+            // Convert AR world position to GPS coordinates (fallback)
+            let gpsCoordinate = convertARToGPS(arPosition: adjustedPosition, arOrigin: arOrigin, userLocation: userLocation, cameraTransform: frame.camera.transform)
+            
+            // Always use AR coordinates for mm-precision (primary)
+            // GPS is only for fallback when AR session restarts
+            let surfaceY = Double(adjustedPosition.y)
+            print("✅ Placing object at AR position: \(adjustedPosition) (mm-precision, adjusted for reticle offset), GPS fallback: \(gpsCoordinate?.latitude ?? 0), \(gpsCoordinate?.longitude ?? 0), Y: \(surfaceY)m, scale: \(scaleMultiplier)x")
+            
+            // Immediately place the object in AR scene so user can see it
+            let objectId = selectedObject?.id ?? UUID().uuidString
+            let locationName = selectedObject?.name ?? "New \(objectType.displayName)"
+            let tempLocation = LootBoxLocation(
+                id: objectId,
+                name: locationName,
+                type: objectType,
+                latitude: gpsCoordinate?.latitude ?? arOrigin.coordinate.latitude,
+                longitude: gpsCoordinate?.longitude ?? arOrigin.coordinate.longitude,
+                radius: 5.0,
+                grounding_height: surfaceY
+            )
+            
+            placeObjectImmediately(at: adjustedPosition, location: tempLocation, in: arView)
+            
+            // Then save to API and dismiss (object already visible)
+            onPlace(gpsCoordinate ?? arOrigin.coordinate, adjustedPosition, arOrigin, surfaceY, scaleMultiplier)
+        }
+        
+        /// Immediately places the object in AR scene at the specified position
+        func placeObjectImmediately(at position: SIMD3<Float>, location: LootBoxLocation, in arView: ARView) {
+            // Remove any previously placed preview object
+            placedObjectAnchor?.removeFromParent()
+            placedObjectAnchor = nil
+            placedObjectEntity = nil
+            
+            // Get factory for this object type
+            let factory = LootBoxFactoryRegistry.factory(for: location.type)
+            
+            // Create anchor at placement position
+            let anchor = AnchorEntity(world: position)
+            
+            // Create the actual object entity using factory
+            let (entity, _) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: scaleMultiplier)
+            
+            // Ensure entity is enabled and visible
+            entity.isEnabled = true
+            
+            // Add entity to anchor
+            anchor.addChild(entity)
+            
+            // Add anchor to scene
+            arView.scene.addAnchor(anchor)
+            
+            // Start loop animation if available
+            factory.animateLoop(entity: entity)
+            
+            // Track for cleanup
+            placedObjectAnchor = anchor
+            placedObjectEntity = entity
+            
+            print("✅ Object '\(location.name)' placed immediately in AR at position: \(position)")
         }
 
         @objc func handleLongPress(_ sender: UILongPressGestureRecognizer) {
@@ -693,9 +861,15 @@ struct ARPlacementARView: UIViewRepresentable {
             let wireframeContainer = createWireframeModel(for: objectType, size: objectType.size * scaleMultiplier)
             
             // Make it more visible when dragging (brighter, larger)
-            // Update materials on all children to make them yellow
+            // Update materials on all children to make them yellow (except shadow)
             for child in wireframeContainer.children {
                 if let modelEntity = child as? ModelEntity {
+                    // Skip shadow entity - keep it black
+                    if modelEntity.position.y < -0.01 { // Shadow is positioned below
+                        draggingShadowEntity = modelEntity
+                        continue
+                    }
+                    
                     if var model = modelEntity.model {
                         var material = SimpleMaterial()
                         material.color = .init(tint: UIColor.yellow.withAlphaComponent(0.8))
@@ -742,12 +916,45 @@ struct ARPlacementARView: UIViewRepresentable {
             // Remove old scale multiplier (1.2) and apply new scale
             let baseScale: Float = 1.2 // The drag preview scale
             wireframe.scale = SIMD3<Float>(baseScale * scaleMultiplier, baseScale * scaleMultiplier, baseScale * scaleMultiplier)
+            
+            // Update shadow scale to match object scale
+            updateShadowScale()
         }
         
         func updateWireframeScale() {
             guard let wireframe = draggingWireframeEntity else { return }
             let baseScale: Float = 1.2 // The drag preview scale
             wireframe.scale = SIMD3<Float>(baseScale * scaleMultiplier, baseScale * scaleMultiplier, baseScale * scaleMultiplier)
+            
+            // Update shadow scale to match object scale
+            updateShadowScale()
+        }
+        
+        func updateShadowScale() {
+            // Shadow scales automatically with the container, so we just need to update position
+            // Avoid expensive recursive search - shadow is a direct child of the container
+            guard let wireframeContainer = draggingWireframeEntity else { return }
+            
+            // Find shadow directly (it's a child of the container, no need for recursion)
+            guard let shadow = wireframeContainer.children.first(where: { ($0 as? ModelEntity)?.name == "shadow" }) as? ModelEntity else {
+                return
+            }
+            
+            // Only update shadow position to match scaled object height
+            // The shadow mesh will scale automatically with the parent container
+            let scaledObjectSize = objectType.size * scaleMultiplier
+            let shadowYOffset: Float
+            switch objectType {
+            case .chalice, .templeRelic:
+                shadowYOffset = -scaledObjectSize * 0.3 - 0.01
+            case .treasureChest, .lootChest, .lootCart:
+                shadowYOffset = -scaledObjectSize * 0.3 - 0.01
+            case .sphere:
+                shadowYOffset = -scaledObjectSize * 0.3 - 0.01
+            case .cube:
+                shadowYOffset = -scaledObjectSize * 0.2 - 0.01
+            }
+            shadow.position = SIMD3<Float>(0, shadowYOffset, 0)
         }
         
         func endDragging(at location: CGPoint, in arView: ARView, frame: ARFrame, userLocation: CLLocation, arOrigin: CLLocation) {
@@ -759,35 +966,39 @@ struct ARPlacementARView: UIViewRepresentable {
             // Get final position
             let finalWorldPos = anchor.position
             
-            // Convert AR world position to GPS coordinates
-            if let gpsCoordinate = convertARToGPS(arPosition: finalWorldPos, arOrigin: arOrigin, userLocation: userLocation, cameraTransform: frame.camera.transform) {
-                // Calculate height relative to camera (which represents eye level)
-                // This makes the height portable across different AR sessions
-                let cameraPos = SIMD3<Float>(frame.camera.transform.columns.3.x, frame.camera.transform.columns.3.y, frame.camera.transform.columns.3.z)
-                let relativeHeight = Double(finalWorldPos.y - cameraPos.y)
-                print("✅ Placing object at GPS after drag: \(gpsCoordinate.latitude), \(gpsCoordinate.longitude), relative height: \(relativeHeight)m from camera, scale: \(scaleMultiplier)x")
+            // Convert AR world position to GPS coordinates (fallback)
+            let gpsCoordinate = convertARToGPS(arPosition: finalWorldPos, arOrigin: arOrigin, userLocation: userLocation, cameraTransform: frame.camera.transform)
+            
+            // Always use AR coordinates for mm-precision (primary)
+            // GPS is only for fallback when AR session restarts
+            let surfaceY = Double(finalWorldPos.y)
+            print("✅ Placing object at AR position after drag: \(finalWorldPos) (mm-precision), GPS fallback: \(gpsCoordinate?.latitude ?? 0), \(gpsCoordinate?.longitude ?? 0), Y: \(surfaceY)m, scale: \(scaleMultiplier)x")
 
-                // Remove dragging wireframe
-                anchor.removeFromParent()
-                draggingWireframeEntity = nil
-                draggingAnchor = nil
-                isDragging = false
+            // Remove dragging wireframe
+            anchor.removeFromParent()
+            draggingWireframeEntity = nil
+            draggingAnchor = nil
+            isDragging = false
 
-                // Place the object
-                onPlace(gpsCoordinate, relativeHeight, scaleMultiplier)
-            } else {
-                print("❌ Failed to convert AR position to GPS after drag")
-                // Clean up anyway
-                anchor.removeFromParent()
-                draggingWireframeEntity = nil
-                draggingAnchor = nil
-                isDragging = false
-            }
+            // Place the object using AR coordinates (primary) with GPS fallback
+            onPlace(gpsCoordinate ?? arOrigin.coordinate, finalWorldPos, arOrigin, surfaceY, scaleMultiplier)
         }
         
         // Convert AR world position back to GPS coordinates
         // Uses AR origin GPS for maximum accuracy (matches ARPrecisionPositioningService approach)
+        // NOTE: For indoor placement (< 12m), GPS is only used as fallback. AR coordinates are primary.
         func convertARToGPS(arPosition: SIMD3<Float>, arOrigin: CLLocation, userLocation: CLLocation, cameraTransform: simd_float4x4) -> CLLocationCoordinate2D? {
+            // Calculate distance from AR origin
+            let distanceFromOrigin = length(arPosition)
+            
+            // For indoor placement (< 12m), GPS is only a fallback - AR coordinates are primary
+            // For outdoor placement (>= 12m), GPS accuracy is acceptable
+            if distanceFromOrigin < 12.0 {
+                print("📍 INDOOR placement (< 12m): GPS used only as fallback, AR coordinates are primary")
+            } else {
+                print("🌍 OUTDOOR placement (>= 12m): GPS accuracy acceptable")
+            }
+            
             // CRITICAL: Calculate position relative to AR origin GPS location (not current user location)
             // This matches the precision used in ARPrecisionPositioningService.convertGPSToARPosition
             // and ensures objects stay fixed in space when camera/user moves

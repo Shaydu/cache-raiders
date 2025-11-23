@@ -98,8 +98,15 @@ class ARPlacementReticle: ObservableObject {
     /// Gets the current placement position (where object would be placed)
     func getPlacementPosition() -> SIMD3<Float>? {
         guard let anchor = reticleAnchor else { return nil }
+        // Get anchor's world position using transform matrix
+        // The reticle entity has a Y offset of 0.01m for visibility, but X/Z are at anchor origin
         let transform = anchor.transformMatrix(relativeTo: nil)
-        return SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
+        let anchorWorldPos = SIMD3<Float>(
+            transform.columns.3.x,
+            transform.columns.3.y, // Anchor Y (ground level)
+            transform.columns.3.z
+        )
+        return anchorWorldPos
     }
 
     /// Gets the distance from camera to placement point
@@ -137,7 +144,7 @@ class ARPlacementReticle: ObservableObject {
     private func createReticleVisual() -> ModelEntity {
         // Create a ring shape for the reticle
         let outerRadius: Float = 0.15
-        let innerRadius: Float = 0.12
+        let _: Float = 0.12 // Inner radius (unused - box mesh used instead of ring)
         let thickness: Float = 0.01
 
         // Create ring mesh (torus)

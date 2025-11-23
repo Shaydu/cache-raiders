@@ -413,6 +413,24 @@
         .modal-actions .btn-danger:hover {
             background: #b71c1c;
         }
+        
+        /* User location label styling */
+        .user-location-label {
+            background: rgba(33, 150, 243, 0.9) !important;
+            color: #fff !important;
+            border: 2px solid #fff !important;
+            border-radius: 4px !important;
+            padding: 4px 8px !important;
+            font-size: 12px !important;
+            font-weight: bold !important;
+            white-space: nowrap !important;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+            text-align: center !important;
+        }
+        
+        .user-location-label::before {
+            border-top-color: rgba(33, 150, 243, 0.9) !important;
+        }
     </style>
 </head>
 <body>
@@ -526,13 +544,20 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     
+    <!-- Socket.IO Client -->
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    
     <script>
         // Configuration
         const API_BASE = window.location.origin;
         let map;
         let markers = {};
+        let userLocationMarkers = {}; // Track user location markers
+        let userLocationCircles = {}; // Track user location accuracy circles
         let selectedLocation = null;
         let selectedMarker = null;
+        let socket = null; // WebSocket connection
+        let playerMap = {}; // Cache of player names by device UUID
         
         // Initialize map
         function initMap() {
@@ -561,6 +586,177 @@
             // Load existing objects
             loadObjects();
             refreshStats();
+            
+            // Load and update user locations
+            loadUserLocations();
+            
+            // Update user locations every 5 seconds (matches location push interval)
+            setInterval(loadUserLocations, 5000);
+            
+            // Connect to WebSocket for real-time updates
+            connectWebSocket();
+        }
+        
+        // Connect to WebSocket for real-time user location updates
+        function connectWebSocket() {
+            try {
+                socket = io(API_BASE, {
+                    transports: ['websocket', 'polling']
+                });
+                
+                socket.on('connect', () => {
+                    console.log('✅ Connected to WebSocket for real-time updates');
+                });
+                
+                socket.on('disconnect', () => {
+                    console.log('❌ Disconnected from WebSocket');
+                });
+                
+                socket.on('connect_error', (error) => {
+                    console.warn('⚠️ WebSocket connection error:', error);
+                    // Fallback to polling only
+                });
+                
+                // Listen for real-time user location updates
+                socket.on('user_location_updated', (data) => {
+                    console.log('📨 Received user_location_updated event:', data);
+                    updateUserLocationMarker(data);
+                });
+            } catch (error) {
+                console.warn('⚠️ Failed to initialize WebSocket:', error);
+                // Continue with polling only
+            }
+        }
+        
+        // Update or create user location marker from WebSocket event
+        function updateUserLocationMarker(data) {
+            const deviceUuid = data.device_uuid;
+            const lat = data.latitude;
+            const lng = data.longitude;
+            const accuracy = data.accuracy;
+            const heading = data.heading;
+            const updatedAt = new Date(data.updated_at).toLocaleTimeString();
+            
+            // Get player name (load if not cached)
+            if (!playerMap[deviceUuid]) {
+                fetch(`${API_BASE}/api/players/${deviceUuid}`)
+                    .then(response => response.ok ? response.json() : null)
+                    .then(player => {
+                        if (player) {
+                            playerMap[deviceUuid] = player.player_name || `Player ${deviceUuid.substring(0, 8)}`;
+                        } else {
+                            playerMap[deviceUuid] = `User ${deviceUuid.substring(0, 8)}`;
+                        }
+                        createOrUpdateUserMarker(deviceUuid, lat, lng, accuracy, heading, updatedAt, playerMap[deviceUuid]);
+                    })
+                    .catch(() => {
+                        playerMap[deviceUuid] = `User ${deviceUuid.substring(0, 8)}`;
+                        createOrUpdateUserMarker(deviceUuid, lat, lng, accuracy, heading, updatedAt, playerMap[deviceUuid]);
+                    });
+            } else {
+                createOrUpdateUserMarker(deviceUuid, lat, lng, accuracy, heading, updatedAt, playerMap[deviceUuid]);
+            }
+        }
+        
+        // Helper function to create or update user marker
+        function createOrUpdateUserMarker(deviceUuid, lat, lng, accuracy, heading, updatedAt, playerName) {
+            // Update or create marker
+            if (userLocationMarkers[deviceUuid]) {
+                // Update existing marker position
+                userLocationMarkers[deviceUuid].setLatLng([lat, lng]);
+                if (heading !== null && heading !== undefined) {
+                    // Update rotation if heading is available
+                    const icon = L.divIcon({
+                        className: 'user-location-marker',
+                        html: createUserLocationIcon(heading),
+                        iconSize: [22, 22],
+                        iconAnchor: [11, 11]
+                    });
+                    userLocationMarkers[deviceUuid].setIcon(icon);
+                }
+                // Update popup
+                userLocationMarkers[deviceUuid].setPopupContent(`
+                    <strong>📍 ${playerName}</strong><br>
+                    <span style="color: #2196F3; font-weight: bold;">● User Location</span><br>
+                    Location: ${lat.toFixed(6)}, ${lng.toFixed(6)}<br>
+                    ${accuracy ? `Accuracy: ${accuracy.toFixed(1)}m<br>` : ''}
+                    ${heading !== null && heading !== undefined ? `Heading: ${heading.toFixed(0)}°<br>` : ''}
+                    Updated: ${updatedAt}
+                `);
+                // Update tooltip (always visible label)
+                const existingTooltip = userLocationMarkers[deviceUuid].getTooltip();
+                if (existingTooltip) {
+                    existingTooltip.setContent(playerName);
+                } else {
+                    userLocationMarkers[deviceUuid].bindTooltip(playerName, {
+                        permanent: true,
+                        direction: 'bottom',
+                        offset: [0, 10],
+                        className: 'user-location-label',
+                        opacity: 0.9
+                    });
+                }
+            } else {
+                // Create new marker - blue dot to contrast with green/red object markers
+                const icon = L.divIcon({
+                    className: 'user-location-marker',
+                    html: createUserLocationIcon(heading),
+                    iconSize: [22, 22],
+                    iconAnchor: [11, 11]
+                });
+                
+                const marker = L.marker([lat, lng], { 
+                    icon: icon,
+                    zIndexOffset: 1000  // Ensure user markers appear above object markers
+                })
+                    .addTo(map)
+                    .bindPopup(`
+                        <strong>📍 ${playerName}</strong><br>
+                        <span style="color: #2196F3; font-weight: bold;">● User Location</span><br>
+                        Location: ${lat.toFixed(6)}, ${lng.toFixed(6)}<br>
+                        ${accuracy ? `Accuracy: ${accuracy.toFixed(1)}m<br>` : ''}
+                        ${heading !== null && heading !== undefined ? `Heading: ${heading.toFixed(0)}°<br>` : ''}
+                        Updated: ${updatedAt}
+                    `)
+                    .bindTooltip(playerName, {
+                        permanent: true,
+                        direction: 'bottom',
+                        offset: [0, 10],
+                        className: 'user-location-label',
+                        opacity: 0.9
+                    });
+                
+                userLocationMarkers[deviceUuid] = marker;
+                console.log(`✅ Added blue dot for user: ${playerName} at (${lat}, ${lng})`);
+            }
+            
+            // Update or create accuracy circle
+            if (accuracy && accuracy > 0) {
+                if (userLocationCircles[deviceUuid]) {
+                    // Update existing circle
+                    userLocationCircles[deviceUuid].setLatLng([lat, lng]);
+                    userLocationCircles[deviceUuid].setRadius(accuracy);
+                } else {
+                    // Create new blue circle for GPS accuracy
+                    const circle = L.circle([lat, lng], {
+                        radius: accuracy,
+                        color: '#2196F3',
+                        fillColor: '#2196F3',
+                        fillOpacity: 0.2,
+                        weight: 2,
+                        opacity: 0.6
+                    }).addTo(map);
+                    
+                    userLocationCircles[deviceUuid] = circle;
+                    console.log(`✅ Added blue circle for user: ${playerName} with accuracy: ${accuracy.toFixed(1)}m`);
+                }
+            } else {
+                // Remove circle if accuracy is not available or invalid
+                if (userLocationCircles[deviceUuid]) {
+                    map.removeLayer(userLocationCircles[deviceUuid]);
+                    delete userLocationCircles[deviceUuid];
+                }
+            }
         }
         
         // Set selected location from map click
@@ -1077,6 +1273,105 @@
         
         // Load players on page load
         loadPlayers();
+        
+        // Load user locations from API
+        async function loadUserLocations() {
+            try {
+                const response = await fetch(`${API_BASE}/api/users/locations`);
+                if (!response.ok) {
+                    console.warn('Failed to load user locations:', response.status, response.statusText);
+                    return; // Silently fail if endpoint not available
+                }
+                
+                const locations = await response.json();
+                console.log('Loaded user locations:', Object.keys(locations).length, 'active users');
+                
+                // Get player names for device UUIDs
+                const playersResponse = await fetch(`${API_BASE}/api/players`);
+                const players = playersResponse.ok ? await playersResponse.json() : [];
+                // Update global playerMap cache
+                players.forEach(player => {
+                    playerMap[player.device_uuid] = player.player_name || `Player ${player.device_uuid.substring(0, 8)}`;
+                });
+                
+                // Remove markers and circles for users that are no longer active
+                const activeDeviceUuids = new Set(Object.keys(locations));
+                Object.keys(userLocationMarkers).forEach(deviceUuid => {
+                    if (!activeDeviceUuids.has(deviceUuid)) {
+                        map.removeLayer(userLocationMarkers[deviceUuid]);
+                        delete userLocationMarkers[deviceUuid];
+                    }
+                });
+                Object.keys(userLocationCircles).forEach(deviceUuid => {
+                    if (!activeDeviceUuids.has(deviceUuid)) {
+                        map.removeLayer(userLocationCircles[deviceUuid]);
+                        delete userLocationCircles[deviceUuid];
+                    }
+                });
+                
+                // Add or update markers for active users
+                Object.entries(locations).forEach(([deviceUuid, location]) => {
+                    const playerName = playerMap[deviceUuid] || `User ${deviceUuid.substring(0, 8)}`;
+                    const lat = location.latitude;
+                    const lng = location.longitude;
+                    const accuracy = location.accuracy;
+                    const heading = location.heading;
+                    const updatedAt = new Date(location.updated_at).toLocaleTimeString();
+                    
+                    // Create or update marker and circle using the helper function
+                    createOrUpdateUserMarker(deviceUuid, lat, lng, accuracy, heading, updatedAt, playerName);
+                });
+            } catch (error) {
+                // Log error for debugging - user locations are optional
+                console.warn('Error loading user locations:', error);
+            }
+        }
+        
+        // Create user location icon with optional heading arrow
+        // Blue dot to contrast with green (available) and red (found) object markers
+        function createUserLocationIcon(heading) {
+            if (heading !== null && heading !== undefined) {
+                // Show arrow pointing in direction of travel
+                return `
+                    <div style="
+                        width: 22px;
+                        height: 22px;
+                        background: #2196F3;
+                        border: 3px solid #fff;
+                        border-radius: 50%;
+                        box-shadow: 0 0 12px rgba(33, 150, 243, 0.8), 0 0 6px rgba(33, 150, 243, 0.4);
+                        position: relative;
+                        transform: rotate(${heading}deg);
+                        z-index: 1000;
+                    ">
+                        <div style="
+                            position: absolute;
+                            top: -2px;
+                            left: 50%;
+                            transform: translateX(-50%);
+                            width: 0;
+                            height: 0;
+                            border-left: 4px solid transparent;
+                            border-right: 4px solid transparent;
+                            border-top: 8px solid #fff;
+                        "></div>
+                    </div>
+                `;
+            } else {
+                // Simple blue dot - larger and more visible than object markers
+                return `
+                    <div style="
+                        background: #2196F3;
+                        width: 22px;
+                        height: 22px;
+                        border-radius: 50%;
+                        border: 3px solid #fff;
+                        box-shadow: 0 0 12px rgba(33, 150, 243, 0.8), 0 0 6px rgba(33, 150, 243, 0.4);
+                        z-index: 1000;
+                    "></div>
+                `;
+            }
+        }
         
         // Auto-refresh every 30 seconds
         setInterval(() => {

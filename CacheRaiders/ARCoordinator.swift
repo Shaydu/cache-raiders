@@ -130,7 +130,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // CRITICAL: Check if object is in front of camera (not behind)
         // Calculate vector from camera to object
         let cameraToObject = bestPosition - cameraPos
-        let distanceToObject = length(cameraToObject)
+        let _ = length(cameraToObject) // Distance check (unused but calculated for future use)
         
         // Normalize camera forward direction for dot product
         let normalizedForward = normalize(cameraForward)
@@ -297,7 +297,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     /// Handle when an object is collected by another user - remove it from AR scene
     private func handleObjectCollectedByOtherUser(objectId: String) {
-        guard let arView = arView else { return }
+        guard arView != nil else { return }
         
         // Check if this object is currently placed in AR
         guard let anchor = placedBoxes[objectId] else {
@@ -338,7 +338,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     // Remove all placed objects from AR scene and clear tracking dictionaries
     // This allows objects to be re-placed at their proper GPS locations after reset
     func removeAllPlacedObjects() {
-        guard let arView = arView else { return }
+        guard arView != nil else { return }
         
         Swift.print("🔄 Removing all \(placedBoxes.count) placed objects from AR scene...")
         
@@ -525,7 +525,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let nearbyLocationIds = Set(nearbyLocations.map { $0.id })
         var objectsToRemove: [String] = []
 
-        for (locationId, anchor) in placedBoxes {
+        for (locationId, _) in placedBoxes {
             // If this placed object is not in the current nearby locations list, mark it for removal
             if !nearbyLocationIds.contains(locationId) {
                 objectsToRemove.append(locationId)
@@ -917,10 +917,18 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     // MARK: - ARSessionDelegate
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         // Set AR origin on first frame if not set
+        // Only use GPS with good accuracy (< 6m) for precise AR-to-GPS conversion
         if arOriginLocation == nil,
            let userLocation = userLocationManager?.currentLocation {
-            arOriginLocation = userLocation
-            Swift.print("📍 AR Origin set at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+            // Check GPS accuracy - for < 6m resolution, we need < 6m GPS accuracy
+            if userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 6.0 {
+                arOriginLocation = userLocation
+                Swift.print("📍 AR Origin set at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+                Swift.print("   GPS accuracy: \(String(format: "%.2f", userLocation.horizontalAccuracy))m (good for < 6m AR-to-GPS conversion)")
+            } else {
+                Swift.print("⚠️ GPS accuracy too low for precise AR origin: \(String(format: "%.2f", userLocation.horizontalAccuracy))m")
+                Swift.print("   Will wait for better GPS fix before setting AR origin")
+            }
         }
         
         // Perform object recognition on camera frame
@@ -1075,7 +1083,78 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
         
-        // Use GPS-based placement if location has GPS coordinates
+        // CRITICAL: Use AR coordinates first for mm-precision (primary)
+        // Only fall back to GPS if AR coordinates aren't available
+        if let arOriginLat = location.ar_origin_latitude,
+           let arOriginLon = location.ar_origin_longitude,
+           let arOffsetX = location.ar_offset_x,
+           let arOffsetY = location.ar_offset_y,
+           let arOffsetZ = location.ar_offset_z {
+            // AR coordinates available - use them for mm-precision placement
+            let arOriginGPS = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
+            
+            // INDOOR vs OUTDOOR placement strategy:
+            // - < 12m from AR origin: INDOOR - Use AR coordinates for mm/cm precision
+            // - >= 12m from AR origin: OUTDOOR - Use GPS coordinates (acceptable GPS accuracy)
+            let useARCoordinates: Bool
+            let arPosition = SIMD3<Float>(Float(arOffsetX), Float(arOffsetY), Float(arOffsetZ))
+            let distanceFromOrigin = length(arPosition)
+            
+            if let currentAROrigin = arOriginLocation {
+                // Compare AR origins - if they match, we can use AR coordinates directly
+                let originDistance = currentAROrigin.distance(from: arOriginGPS)
+                
+                // Use AR coordinates if:
+                // 1. AR origin matches (same session) AND object is < 12m (indoor precision)
+                // 2. OR object is < 12m from stored AR origin (indoor placement)
+                useARCoordinates = (originDistance < 1.0 && distanceFromOrigin < 12.0) || distanceFromOrigin < 12.0
+                
+                if useARCoordinates {
+                    if originDistance < 1.0 {
+                        Swift.print("✅ INDOOR placement (< 12m): Using AR coordinates for mm/cm-precision")
+                        Swift.print("   AR origin match: distance=\(String(format: "%.3f", originDistance))m (same session)")
+                    } else {
+                        Swift.print("✅ INDOOR placement (< 12m): Using stored AR coordinates for mm/cm-precision")
+                    }
+                    Swift.print("   Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m")
+                    Swift.print("   AR offset: (\(String(format: "%.4f", arOffsetX)), \(String(format: "%.4f", arOffsetY)), \(String(format: "%.4f", arOffsetZ)))m")
+                } else {
+                    Swift.print("🌍 OUTDOOR placement (>= 12m): Using GPS coordinates")
+                    Swift.print("   Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m")
+                    Swift.print("   GPS accuracy acceptable for outdoor distances")
+                }
+            } else {
+                // No current AR origin - check if object is within 12m of stored AR origin
+                useARCoordinates = distanceFromOrigin < 12.0
+                
+                if useARCoordinates {
+                    Swift.print("✅ INDOOR placement (< 12m): Using stored AR coordinates for mm/cm-precision")
+                    Swift.print("   Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m")
+                } else {
+                    Swift.print("🌍 OUTDOOR placement (>= 12m): Using GPS coordinates")
+                    Swift.print("   Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m")
+                }
+            }
+            
+            if useARCoordinates {
+                // Use stored AR coordinates directly (mm-precision) - NO re-grounding
+                // This preserves the exact placement position where the user placed it
+                let arPosition = SIMD3<Float>(
+                    Float(arOffsetX),
+                    Float(arOffsetY),
+                    Float(arOffsetZ)
+                )
+                
+                // Use exact stored position - don't re-ground to preserve user's placement
+                Swift.print("✅ Using exact stored AR coordinates for \(location.type.displayName) (mm-precision, no re-grounding)")
+                Swift.print("   Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
+                
+                placeBoxAtPosition(arPosition, location: location, in: arView)
+                return
+            }
+        }
+        
+        // Fallback to GPS-based placement if AR coordinates not available
         if location.latitude != 0 || location.longitude != 0 {
             // Use precision positioning service for inch-level accuracy
             let targetLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
@@ -1090,29 +1169,19 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 cameraTransform: cameraTransform,
                 arOriginGPS: arOriginLocation
             ) {
-                // Check if we have a stored grounding height from database
+                // Always re-detect the surface to ensure objects are placed on the ground
+                // Objects should always be placed directly on the detected surface, not at a stored height
                 let finalPosition: SIMD3<Float>
                 
-                if let storedRelativeHeight = location.grounding_height {
-                    // Use stored relative height (height offset from camera/eye level)
-                    // Add it to current camera Y position to get world position
-                    let absoluteHeight = cameraPos.y + Float(storedRelativeHeight)
-                    finalPosition = SIMD3<Float>(precisePosition.x, absoluteHeight, precisePosition.z)
-                    Swift.print("✅ Using stored relative height: \(String(format: "%.4f", storedRelativeHeight))m (absolute: \(String(format: "%.4f", absoluteHeight))m) for \(location.name)")
-                } else if distance < 5.0 {
+                if distance < 5.0 {
                     // Close proximity: precision service already handled surface detection
-                    finalPosition = precisePosition
-                    Swift.print("✅ Placed \(location.type.displayName) using precision positioning at (\(String(format: "%.4f", precisePosition.x)), \(String(format: "%.4f", precisePosition.y)), \(String(format: "%.4f", precisePosition.z)))")
-
-                    // Store the relative grounding height (offset from camera) for future use
-                    Task {
-                        do {
-                            let relativeHeight = Double(precisePosition.y - cameraPos.y)
-                            try await APIService.shared.updateGroundingHeight(objectId: location.id, height: relativeHeight)
-                            Swift.print("💾 Stored relative grounding height \(String(format: "%.4f", relativeHeight))m for \(location.name)")
-                        } catch {
-                            Swift.print("⚠️ Failed to store grounding height: \(error.localizedDescription)")
-                        }
+                    // Always re-detect surface to ensure object is on ground
+                    if let surfaceY = groundingService?.findHighestBlockingSurface(x: precisePosition.x, z: precisePosition.z, cameraPos: cameraPos) {
+                        finalPosition = SIMD3<Float>(precisePosition.x, surfaceY, precisePosition.z)
+                        Swift.print("✅ Placed \(location.type.displayName) on ground surface at (\(String(format: "%.4f", finalPosition.x)), \(String(format: "%.4f", finalPosition.y)), \(String(format: "%.4f", finalPosition.z)))")
+                    } else {
+                        finalPosition = precisePosition
+                        Swift.print("✅ Placed \(location.type.displayName) using precision positioning at (\(String(format: "%.4f", precisePosition.x)), \(String(format: "%.4f", precisePosition.y)), \(String(format: "%.4f", precisePosition.z)))")
                     }
                 } else {
                     // Far distance: use precision service position but still find surface
@@ -1122,34 +1191,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         cameraPos: cameraPos
                     ) {
                         finalPosition = SIMD3<Float>(precisePosition.x, surfaceY, precisePosition.z)
-                        Swift.print("✅ Placed \(location.type.displayName) on surface at GPS-based AR position (Y: \(String(format: "%.4f", surfaceY)))")
-
-                        // Store the relative grounding height (offset from camera) for future use
-                        Task {
-                            do {
-                                let relativeHeight = Double(surfaceY - cameraPos.y)
-                                try await APIService.shared.updateGroundingHeight(objectId: location.id, height: relativeHeight)
-                                Swift.print("💾 Stored relative grounding height \(String(format: "%.4f", relativeHeight))m for \(location.name)")
-                            } catch {
-                                Swift.print("⚠️ Failed to store grounding height: \(error.localizedDescription)")
-                            }
-                        }
+                        Swift.print("✅ Placed \(location.type.displayName) on ground surface at GPS-based AR position (Y: \(String(format: "%.4f", surfaceY)))")
                     } else {
                         // Fallback to standard grounding service
                         if let surfaceY = groundingService?.findHighestBlockingSurface(x: precisePosition.x, z: precisePosition.z, cameraPos: cameraPos) {
                             finalPosition = SIMD3<Float>(precisePosition.x, surfaceY, precisePosition.z)
-                            Swift.print("✅ Placed \(location.type.displayName) on surface (fallback) (Y: \(String(format: "%.2f", surfaceY)))")
-
-                            // Store the relative grounding height (offset from camera) for future use
-                            Task {
-                                do {
-                                    let relativeHeight = Double(surfaceY - cameraPos.y)
-                                    try await APIService.shared.updateGroundingHeight(objectId: location.id, height: relativeHeight)
-                                    Swift.print("💾 Stored relative grounding height \(String(format: "%.2f", relativeHeight))m for \(location.name)")
-                                } catch {
-                                    Swift.print("⚠️ Failed to store grounding height: \(error.localizedDescription)")
-                                }
-                            }
+                            Swift.print("✅ Placed \(location.type.displayName) on ground surface (fallback) (Y: \(String(format: "%.2f", surfaceY)))")
                         } else {
                             finalPosition = precisePosition
                             Swift.print("⚠️ No surface found - using GPS position directly")
@@ -1253,12 +1300,96 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
-        // Use precision positioning service for inch-level accuracy
-        let locationCLLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
         
-        // Get precise AR position using precision positioning service
+        // CRITICAL: Use AR coordinates first for mm-precision (primary)
+        // Only fall back to GPS if AR coordinates aren't available
+        if let arOriginLat = location.ar_origin_latitude,
+           let arOriginLon = location.ar_origin_longitude,
+           let arOffsetX = location.ar_offset_x,
+           let arOffsetY = location.ar_offset_y,
+           let arOffsetZ = location.ar_offset_z {
+            // AR coordinates available - use them for mm-precision placement
+            let arOriginGPS = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
+            
+            // Check if AR origin matches current AR session origin
+            let useARCoordinates: Bool
+            if let currentAROrigin = arOriginLocation {
+                let originDistance = currentAROrigin.distance(from: arOriginGPS)
+                useARCoordinates = originDistance < 1.0 // Within 1m = same AR session origin
+                
+                if useARCoordinates {
+                    Swift.print("✅ Using AR coordinates for mm-precision sphere placement: \(location.name)")
+                    Swift.print("   AR offset: (\(String(format: "%.4f", arOffsetX)), \(String(format: "%.4f", arOffsetY)), \(String(format: "%.4f", arOffsetZ)))m")
+                }
+            } else {
+                useARCoordinates = true
+            }
+            
+            if useARCoordinates {
+                // Use stored AR coordinates directly (mm-precision) - NO re-grounding
+                // This preserves the exact placement position where the user placed it
+                let arPosition = SIMD3<Float>(
+                    Float(arOffsetX),
+                    Float(arOffsetY),
+                    Float(arOffsetZ)
+                )
+                
+                // Use exact stored Y position - don't re-ground to preserve user's placement
+                Swift.print("✅ Using exact stored AR coordinates for sphere (mm-precision, no re-grounding)")
+                Swift.print("   Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
+                
+                // Create sphere at exact AR position
+                let sphereRadius: Float = 0.15
+                let sphereMesh = MeshResource.generateSphere(radius: sphereRadius)
+                var sphereMaterial = SimpleMaterial()
+                sphereMaterial.color = .init(tint: .orange)
+                sphereMaterial.roughness = 0.2
+                sphereMaterial.metallic = 0.3
+                
+                let sphere = ModelEntity(mesh: sphereMesh, materials: [sphereMaterial])
+                sphere.name = location.id
+                
+                // Place anchor at exact AR position - sphere base will be at arPosition.y
+                let anchor = AnchorEntity(world: arPosition)
+                // Position sphere so its base (bottom) is at the anchor position (center of shadow X)
+                sphere.position = SIMD3<Float>(0, sphereRadius, 0)
+                
+                let light = PointLightComponent(color: .orange, intensity: 200)
+                sphere.components.set(light)
+                
+                anchor.addChild(sphere)
+                arView.scene.addAnchor(anchor)
+                placedBoxes[location.id] = anchor
+                
+                environmentManager?.applyUniformLuminanceToNewEntity(anchor)
+                
+                findableObjects[location.id] = FindableObject(
+                    locationId: location.id,
+                    anchor: anchor,
+                    sphereEntity: sphere,
+                    container: nil,
+                    location: location
+                )
+                
+                findableObjects[location.id]?.onFoundCallback = { [weak self] id in
+                    DispatchQueue.main.async {
+                        if let locationManager = self?.locationManager {
+                            locationManager.markCollected(id)
+                        }
+                    }
+                }
+                
+                Swift.print("✅ Placed AR sphere '\(location.name)' using stored AR coordinates at (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
+                return
+            }
+        }
+        
+        // Fallback to GPS-based placement if AR coordinates not available
+        let locationCLLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
+        
+        // Use precision positioning service for inch-level accuracy
         guard let precisePosition = precisionPositioningService?.convertGPSToARPosition(
             targetGPS: locationCLLocation,
             userGPS: userLocation,
@@ -1690,7 +1821,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // (containers are typically the main child entity)
             if container == nil {
                 for child in anchor.children {
-                    if let modelEntity = child as? ModelEntity,
+                    if child is ModelEntity,
                        child.name == locationId || child.name.contains("container") {
                         // This might be a container - check if it has prize/lid children
                         // For now, we'll create a minimal container structure if needed
@@ -2158,7 +2289,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         } else {
             Swift.print("   🔄 This is a permanent item - should sync to API if API sync is enabled")
             // Check if item is already in locationManager (which means it should be synced)
-            if let existingLocation = locationManager?.locations.first(where: { $0.id == item.id }) {
+            if locationManager?.locations.first(where: { $0.id == item.id }) != nil {
                 Swift.print("   ✅ Item already exists in locationManager - API sync status depends on useAPISync setting")
             } else {
                 Swift.print("   ⚠️ Item not found in locationManager - may need to be added/synced")
@@ -2173,11 +2304,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         guard let arView = arView,
               let frame = arView.session.currentFrame,
-              let locationManager = locationManager,
               let userLocation = userLocationManager?.currentLocation else {
             Swift.print("⚠️ Cannot place AR item: AR not ready or no user location")
             return
         }
+        let _ = locationManager // Location manager checked but unused in this scope
 
         // Limit to maximum objects
         guard placedBoxes.count < 6 else {
@@ -2245,7 +2376,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let targetPos = cameraPos + rightDir * offsetX + forwardDir * offsetZ
         
         // Clamp distance to reasonable AR space (max 10m)
-        let clampedDistance = min(distance, 10.0)
         if distance > 10.0 {
             Swift.print("⚠️ GPS distance \(String(format: "%.2f", distance))m exceeds 10m, clamping to 10m for AR placement")
             let scale = Float(10.0 / distance)

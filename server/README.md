@@ -21,6 +21,44 @@ docker-compose up -d
 
 2. The API will be available at `http://localhost:5000`
 
+### Docker Compose Commands
+
+**Start containers:**
+```bash
+docker compose up -d
+```
+
+**Stop and remove containers:**
+```bash
+docker compose down
+```
+
+**Restart containers (without removing):**
+```bash
+docker compose restart
+```
+
+**Stop containers (keep them):**
+```bash
+docker compose stop
+```
+
+**Start stopped containers:**
+```bash
+docker compose start
+```
+
+**Rebuild and restart (after code changes):**
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+**View logs:**
+```bash
+docker compose logs -f api
+```
+
 ### Manual Setup
 
 1. Install dependencies:

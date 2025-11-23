@@ -7,7 +7,6 @@ struct ObjectPlacementOverlay: View {
     @Binding var isPlacementMode: Bool
     @Binding var placementPosition: SIMD3<Float>?
     @Binding var placementDistance: Float?
-    @Binding var groundHeight: Float?
     @Binding var scaleMultiplier: Float
 
     let objectType: LootBoxType
@@ -23,14 +22,6 @@ struct ObjectPlacementOverlay: View {
             VStack {
                 // Top info panel
                 VStack(spacing: 8) {
-                    Text("Object Placement Mode")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(Color.blue.opacity(0.8))
-                        .cornerRadius(8)
-
                     // Coordinates and height display
                     if let position = placementPosition {
                         VStack(spacing: 4) {
@@ -50,32 +41,53 @@ struct ObjectPlacementOverlay: View {
                                     .cornerRadius(6)
                             }
 
-                            if let height = groundHeight {
-                                Text("Height from ground: \(String(format: "%.2f", abs(height)))m")
-                                    .font(.caption)
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(Color.black.opacity(0.6))
-                                    .cornerRadius(6)
-                            }
+                            Text("Placed on ground")
+                                .font(.caption)
+                                .foregroundColor(.green)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color.black.opacity(0.6))
+                                .cornerRadius(6)
                         }
                         .padding()
                         .background(Color.black.opacity(0.5))
                         .cornerRadius(12)
                     }
+                    
+                    // Scale control slider - moved up under header
+                    VStack(spacing: 8) {
+                        Text("Scale: \(String(format: "%.2fx", scaleMultiplier))")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        
+                        Slider(
+                            value: $scaleMultiplier,
+                            in: 0.1...5.0,
+                            step: 0.1
+                        )
+                        .accentColor(.cyan)
+                        
+                        HStack {
+                            Text("0.1x")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.7))
+                            Spacer()
+                            Text("5.0x")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(Color.black.opacity(0.6))
+                    .cornerRadius(12)
                 }
                 .padding(.top, 60)
 
                 Spacer()
 
-                // Center crosshair/reticle indicator
+                // Center instruction text (reticle crosshairs shown on shadow in AR)
                 VStack {
-                    Image(systemName: "plus.circle")
-                        .font(.system(size: 40))
-                        .foregroundColor(.cyan)
-                        .opacity(0.7)
-
                     Text("Point camera at placement location")
                         .font(.caption)
                         .foregroundColor(.white)
@@ -87,37 +99,8 @@ struct ObjectPlacementOverlay: View {
 
                 Spacer()
 
-                // Bottom: Scale control and placement button
+                // Bottom: Placement button
                 VStack(spacing: 16) {
-                    // Scale control slider
-                    VStack(spacing: 8) {
-                        Text("Scale: \(String(format: "%.2fx", scaleMultiplier))")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                        
-                        Slider(
-                            value: $scaleMultiplier,
-                            in: 0.5...3.0,
-                            step: 0.1
-                        )
-                        .accentColor(.cyan)
-                        
-                        HStack {
-                            Text("0.5x")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.7))
-                            Spacer()
-                            Text("3.0x")
-                                .font(.caption)
-                                .foregroundColor(.white.opacity(0.7))
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
-                    .background(Color.black.opacity(0.6))
-                    .cornerRadius(12)
-                    
-                    // Placement button
                     // Placement button
                     Button(action: onPlaceObject) {
                         VStack(spacing: 8) {
@@ -227,7 +210,6 @@ struct ObjectPlacementOverlay_Previews: PreviewProvider {
             isPlacementMode: .constant(true),
             placementPosition: .constant(SIMD3<Float>(2.5, -0.8, -3.2)),
             placementDistance: .constant(4.2),
-            groundHeight: .constant(0.8),
             scaleMultiplier: .constant(1.0),
             objectType: .sphere,
             onPlaceObject: {},

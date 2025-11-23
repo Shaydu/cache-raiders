@@ -87,6 +87,14 @@ class ARTapHandler {
             var closestScreenDistance: CGFloat = CGFloat.infinity
             let maxScreenDistance: CGFloat = 150.0 // Maximum screen distance in points to consider a tap "on" the box
             
+            // Get camera forward direction for fallback checks
+            let cameraForward = SIMD3<Float>(
+                -cameraTransform.columns.2.x,
+                -cameraTransform.columns.2.y,
+                -cameraTransform.columns.2.z
+            )
+            let normalizedCameraForward = normalize(cameraForward)
+            
             // Use ARView's project method to convert world positions to screen coordinates
             for (boxId, anchor) in placedBoxes {
                 let anchorTransform = anchor.transformMatrix(relativeTo: nil)
@@ -96,27 +104,53 @@ class ARTapHandler {
                     anchorTransform.columns.3.z
                 )
                 
-                // Project the box's world position to screen coordinates
-                guard let optionalScreenPoint = arView.project(anchorWorldPos) else {
-                    // Box is not visible (behind camera or outside view)
-                    continue
-                }
-                let screenPoint = optionalScreenPoint
+                // Calculate world-space distance from camera to object
+                let cameraToObject = anchorWorldPos - cameraPos
+                let worldDistanceFromCamera = length(cameraToObject)
+                let normalizedToObject = normalize(cameraToObject)
                 
-                // Check if the projection is valid (box is visible on screen)
-                let viewWidth = CGFloat(arView.bounds.width)
-                let viewHeight = CGFloat(arView.bounds.height)
-                let pointX = screenPoint.x
-                let pointY = screenPoint.y
-                let isOnScreen = pointX >= 0 && pointX <= viewWidth &&
+                // Check if object is in front of camera (dot product > 0)
+                let dotProduct = dot(normalizedCameraForward, normalizedToObject)
+                let isInFrontOfCamera = dotProduct > 0.0
+                
+                // Try to project the box's world position to screen coordinates
+                var screenPoint: CGPoint? = nil
+                var isOnScreen = false
+                
+                if let projectedPoint = arView.project(anchorWorldPos) {
+                    // Projection succeeded - use it
+                    screenPoint = projectedPoint
+                    
+                    // Check if the projection is valid (box is visible on screen)
+                    let viewWidth = CGFloat(arView.bounds.width)
+                    let viewHeight = CGFloat(arView.bounds.height)
+                    let pointX = projectedPoint.x
+                    let pointY = projectedPoint.y
+                    isOnScreen = pointX >= 0 && pointX <= viewWidth &&
                                  pointY >= 0 && pointY <= viewHeight
+                } else {
+                    // Projection failed - this can happen for very close objects
+                    // Use fallback: check if object is very close and in front of camera
+                    if isInFrontOfCamera && worldDistanceFromCamera < 3.0 {
+                        // Object is very close (< 3m) and in front of camera
+                        // Use center of screen as estimated position for very close objects
+                        let viewWidth = CGFloat(arView.bounds.width)
+                        let viewHeight = CGFloat(arView.bounds.height)
+                        screenPoint = CGPoint(x: viewWidth / 2.0, y: viewHeight / 2.0)
+                        isOnScreen = true
+                        Swift.print("🎯 Using fallback for close object \(boxId): distance=\(String(format: "%.2f", worldDistanceFromCamera))m, projection failed")
+                    } else {
+                        // Object is not close or behind camera - skip it
+                        continue
+                    }
+                }
                 
-                if isOnScreen {
+                if isOnScreen, let screenPos = screenPoint {
                     // Calculate screen-space distance from tap to box
                     let tapX = CGFloat(tapLocation.x)
                     let tapY = CGFloat(tapLocation.y)
-                    let dx = tapX - screenPoint.x
-                    let dy = tapY - screenPoint.y
+                    let dx = tapX - screenPos.x
+                    let dy = tapY - screenPos.y
                     let screenDistance = sqrt(dx * dx + dy * dy)
                     
                     // Also check world-space distance if we have tap world position (for validation)
@@ -125,19 +159,25 @@ class ARTapHandler {
                         worldDistance = length(anchorWorldPos - tapPos)
                     }
                     
+                    // For very close objects (< 1m), use a more lenient screen distance threshold
+                    // because screen projection can be inaccurate for close objects
+                    let effectiveMaxScreenDistance = worldDistanceFromCamera < 1.0 ? maxScreenDistance * 1.5 : maxScreenDistance
+                    
                     // If screen distance is within threshold, consider it a hit
-                    if screenDistance < maxScreenDistance {
+                    if screenDistance < effectiveMaxScreenDistance {
                         // If we have world position, prefer boxes that are also close in world space
-                        let isCloseInWorld = worldDistance < 10.0
+                        // For very close objects, be more lenient with world distance check
+                        let worldDistanceThreshold: Float = worldDistanceFromCamera < 1.0 ? 2.0 : 10.0
+                        let isCloseInWorld = worldDistance < worldDistanceThreshold
                         let shouldSelect = worldDistance == Float.infinity || isCloseInWorld
                         
                         if shouldSelect && screenDistance < closestScreenDistance {
                             closestScreenDistance = screenDistance
                             closestBoxId = boxId
                             if worldDistance != Float.infinity {
-                                Swift.print("🎯 Found candidate box \(boxId): screen dist=\(String(format: "%.1f", screenDistance))px, world dist=\(String(format: "%.2f", worldDistance))m")
+                                Swift.print("🎯 Found candidate box \(boxId): screen dist=\(String(format: "%.1f", screenDistance))px, world dist=\(String(format: "%.2f", worldDistance))m, camera dist=\(String(format: "%.2f", worldDistanceFromCamera))m")
                             } else {
-                                Swift.print("🎯 Found candidate box \(boxId): screen dist=\(String(format: "%.1f", screenDistance))px")
+                                Swift.print("🎯 Found candidate box \(boxId): screen dist=\(String(format: "%.1f", screenDistance))px, camera dist=\(String(format: "%.2f", worldDistanceFromCamera))m")
                             }
                         }
                     }

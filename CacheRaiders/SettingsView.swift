@@ -95,77 +95,6 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                 }
                 
-                Section("Loot Box Size") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        // Min Size Slider
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Minimum Size: \(String(format: "%.2f", locationManager.lootBoxMinSize))m")
-                                .font(.headline)
-                            
-                            Slider(
-                                value: Binding(
-                                    get: { locationManager.lootBoxMinSize },
-                                    set: { newValue in
-                                        // Ensure min doesn't exceed max
-                                        let clampedValue = min(newValue, locationManager.lootBoxMaxSize)
-                                        locationManager.lootBoxMinSize = clampedValue
-                                        locationManager.saveLootBoxSizes()
-                                        // This will trigger onSizeChanged callback in ARCoordinator
-                                    }
-                                ),
-                                in: 0.25...1.5,
-                                step: 0.05
-                            )
-                            
-                            HStack {
-                                Text("0.25m")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("1.5m")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        
-                        // Max Size Slider
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Maximum Size: \(String(format: "%.2f", locationManager.lootBoxMaxSize))m")
-                                .font(.headline)
-                            
-                            Slider(
-                                value: Binding(
-                                    get: { locationManager.lootBoxMaxSize },
-                                    set: { newValue in
-                                        // Ensure max doesn't go below min
-                                        let clampedValue = max(newValue, locationManager.lootBoxMinSize)
-                                        locationManager.lootBoxMaxSize = clampedValue
-                                        locationManager.saveLootBoxSizes()
-                                        // This will trigger onSizeChanged callback in ARCoordinator
-                                    }
-                                ),
-                                in: 0.25...1.5,
-                                step: 0.05
-                            )
-                            
-                            HStack {
-                                Text("0.25m")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("1.5m")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        
-                        Text("Loot boxes will randomly vary in size between min and max")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                }
-                
                 Section("Findable Types") {
                     ForEach(Array(groupedFindableTypes.enumerated()), id: \.offset) { index, group in
                         // If group has multiple types, show each separately so they can have their own icons
@@ -226,6 +155,44 @@ struct SettingsView: View {
                     Text("When enabled, found items appear in deep red and unfound items appear in green on the map")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                }
+                
+                Section("AR Zoom") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Zoom Level: \(String(format: "%.1f", locationManager.arZoomLevel))x")
+                            .font(.headline)
+                        
+                        Slider(
+                            value: Binding(
+                                get: { locationManager.arZoomLevel },
+                                set: { newValue in
+                                    locationManager.arZoomLevel = newValue
+                                    locationManager.saveARZoomLevel()
+                                }
+                            ),
+                            in: 0.5...3.0,
+                            step: 0.1
+                        )
+                        
+                        HStack {
+                            Text("0.5x")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("1.0x")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text("3.0x")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Text("Adjust the zoom level of the AR camera view. Lower values show more area, higher values zoom in closer.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
                 }
                 
                 Section("AR Debug") {
@@ -463,21 +430,12 @@ struct SettingsView: View {
                             isLoading = true
                             if let userLocation = userLocationManager.currentLocation {
                                 Task {
-                                    do {
-                                        await locationManager.loadLocationsFromAPI(userLocation: userLocation)
-                                        await MainActor.run {
-                                            alertTitle = "Success"
-                                            alertMessage = "Refreshed locations from API. Check console for details."
-                                            showAlert = true
-                                            isLoading = false
-                                        }
-                                    } catch {
-                                        await MainActor.run {
-                                            alertTitle = "Error"
-                                            alertMessage = "Failed to refresh from API: \(error.localizedDescription)"
-                                            showAlert = true
-                                            isLoading = false
-                                        }
+                                    await locationManager.loadLocationsFromAPI(userLocation: userLocation)
+                                    await MainActor.run {
+                                        alertTitle = "Success"
+                                        alertMessage = "Refreshed locations from API. Check console for details."
+                                        showAlert = true
+                                        isLoading = false
                                     }
                                 }
                             } else {
@@ -504,21 +462,12 @@ struct SettingsView: View {
                             guard !isLoading else { return }
                             isLoading = true
                             Task {
-                                do {
-                                    await locationManager.syncAllLocationsToAPI()
-                                    await MainActor.run {
-                                        alertTitle = "Success"
-                                        alertMessage = "Sync completed. Check console for details."
-                                        showAlert = true
-                                        isLoading = false
-                                    }
-                                } catch {
-                                    await MainActor.run {
-                                        alertTitle = "Error"
-                                        alertMessage = "Failed to sync to API: \(error.localizedDescription)"
-                                        showAlert = true
-                                        isLoading = false
-                                    }
+                                await locationManager.syncAllLocationsToAPI()
+                                await MainActor.run {
+                                    alertTitle = "Success"
+                                    alertMessage = "Sync completed. Check console for details."
+                                    showAlert = true
+                                    isLoading = false
                                 }
                             }
                         }) {
@@ -543,21 +492,12 @@ struct SettingsView: View {
                             guard !isLoading else { return }
                             isLoading = true
                             Task {
-                                do {
-                                    await locationManager.viewDatabaseContents(userLocation: userLocationManager.currentLocation)
-                                    await MainActor.run {
-                                        alertTitle = "Database Contents"
-                                        alertMessage = "Database contents logged to console. Check Xcode console for full details."
-                                        showAlert = true
-                                        isLoading = false
-                                    }
-                                } catch {
-                                    await MainActor.run {
-                                        alertTitle = "Error"
-                                        alertMessage = "Failed to view database contents: \(error.localizedDescription)"
-                                        showAlert = true
-                                        isLoading = false
-                                    }
+                                await locationManager.viewDatabaseContents(userLocation: userLocationManager.currentLocation)
+                                await MainActor.run {
+                                    alertTitle = "Database Contents"
+                                    alertMessage = "Database contents logged to console. Check Xcode console for full details."
+                                    showAlert = true
+                                    isLoading = false
                                 }
                             }
                         }) {

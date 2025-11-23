@@ -12,6 +12,7 @@ struct ARLootBoxView: UIViewRepresentable {
     @Binding var collectionNotification: String?
     @Binding var nearestObjectDirection: Double?
     @State private var arView: ARView?
+    @State private var lastLocationsCount: Int = 0 // Track location count to detect new additions
     
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
@@ -25,6 +26,13 @@ struct ARLootBoxView: UIViewRepresentable {
         // These warnings (e.g., 'arInPlacePostProcessCombinedPermute14.rematerial') can be safely ignored
         // They are internal framework materials used for AR post-processing effects
         config.environmentTexturing = .automatic
+        
+        // Apply selected lens if available
+        if let selectedLensId = locationManager.selectedARLens,
+           let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
+            config.videoFormat = videoFormat
+            print("📷 Using selected AR lens: \(selectedLensId)")
+        }
         
         // Check if AR is supported
         guard ARWorldTrackingConfiguration.isSupported else {
@@ -48,17 +56,41 @@ struct ARLootBoxView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: ARView, context: Context) {
-        // Ensure AR session is running
-        if uiView.session.configuration == nil {
+        // Check if lens has changed and update AR configuration if needed
+        let currentConfig = uiView.session.configuration as? ARWorldTrackingConfiguration
+        let currentLensId = locationManager.selectedARLens
+        let currentVideoFormat = ARLensHelper.getVideoFormat(for: currentLensId)
+        let needsLensUpdate = currentConfig?.videoFormat != currentVideoFormat
+        
+        // Ensure AR session is running or update if lens changed
+        if uiView.session.configuration == nil || needsLensUpdate {
             let config = ARWorldTrackingConfiguration()
             config.planeDetection = [.horizontal, .vertical] // Horizontal for ground, vertical for walls (occlusion)
             // Note: environmentTexturing may produce harmless warnings about internal RealityKit materials
             // These warnings (e.g., 'arInPlacePostProcessCombinedPermute14.rematerial') can be safely ignored
+            // They are internal framework materials used for AR post-processing effects
             config.environmentTexturing = .automatic
-            uiView.session.run(config, options: [.resetTracking])
+            
+            // Apply selected lens if available
+            if let selectedLensId = currentLensId,
+               let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
+                config.videoFormat = videoFormat
+                print("📷 Updating AR lens to: \(selectedLensId)")
+            }
+            
+            let options: ARSession.RunOptions = needsLensUpdate ? [.resetTracking] : [.resetTracking]
+            uiView.session.run(config, options: options)
         }
         
-        // Update nearby locations when user location changes
+        // Check if locations have changed (new object added)
+        let currentLocationsCount = locationManager.locations.count
+        let locationsChanged = currentLocationsCount != lastLocationsCount
+        if locationsChanged {
+            lastLocationsCount = currentLocationsCount
+            print("🔄 Detected location change: count changed to \(currentLocationsCount)")
+        }
+        
+        // Update nearby locations when user location changes OR when locations change
         if let userLocation = userLocationManager.currentLocation {
             // Update location manager with current location for API refresh timer
             locationManager.updateUserLocation(userLocation)
@@ -67,7 +99,14 @@ struct ARLootBoxView: UIViewRepresentable {
             DispatchQueue.main.async {
                 nearbyLocations = nearby
             }
+            
+            // Always check and place boxes when we have a user location
+            // This ensures newly placed objects appear immediately
             context.coordinator.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+            
+            if locationsChanged {
+                print("✅ Triggered placement check due to location change (new object may have been added)")
+            }
         }
         
         // Handle randomization trigger

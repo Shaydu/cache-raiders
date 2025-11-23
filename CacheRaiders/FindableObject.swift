@@ -90,7 +90,7 @@ class FindableObject: Findable {
             return
         }
         
-        let objectName = itemDescription()
+        let _ = itemDescription() // Object name (unused but kept for potential logging)
         
         // Get anchor world position for cleanup
         let anchorTransform = anchor.transformMatrix(relativeTo: nil)

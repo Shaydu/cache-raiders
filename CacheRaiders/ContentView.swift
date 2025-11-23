@@ -29,6 +29,19 @@ struct ContentView: View {
         return (found: foundCount, total: totalCount)
     }
     
+    // Helper function to convert meters to feet and inches
+    private func formatDistanceInFeetInches(_ meters: Double) -> String {
+        let totalInches = meters * 39.3701 // Convert meters to inches
+        let feet = Int(totalInches / 12)
+        let inches = Int(totalInches.truncatingRemainder(dividingBy: 12))
+        
+        if feet > 0 {
+            return "\(feet)'\(inches)\""
+        } else {
+            return "\(inches)\""
+        }
+    }
+    
     var body: some View {
         ZStack {
             ARLootBoxView(
@@ -63,10 +76,10 @@ struct ContentView: View {
                     
                     Spacer()
                     
-                    // Arrows and distance to nearest box
+                    // Direction indicator, temperature, and distance to nearest box
                     if let distance = distanceToNearest {
-                        HStack(spacing: 8) {
-                            // Rotated pointer icon pointing to nearest object
+                        VStack(alignment: .center, spacing: 4) {
+                            // Rotated pointer icon pointing to selected/nearest object (on top)
                             if let direction = nearestObjectDirection {
                                 Image(systemName: "location.north.line.fill")
                                     .font(.caption)
@@ -78,14 +91,24 @@ struct ContentView: View {
                                     .foregroundColor(.white)
                             }
                             
-                            Text(String(format: "%.1fm", distance))
+                            // Temperature status (warmer/colder) - below arrow
+                            if let temperature = temperatureStatus {
+                                Text(temperature)
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                            }
+                            
+                            // Distance in feet/inches - on separate line
+                            Text(formatDistanceInFeetInches(distance))
                                 .font(.caption)
+                                .fontWeight(.semibold)
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(.ultraThinMaterial)
-                                .cornerRadius(8)
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(8)
                         .padding(.top)
                     }
                     
@@ -122,13 +145,7 @@ struct ContentView: View {
                 Spacer()
                 
                 VStack(spacing: 8) {
-                    if nearbyLocations.isEmpty && !locationManager.locations.isEmpty {
-                        Text("Walk to a loot box location!")
-                            .font(.headline)
-                            .padding()
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(10)
-                    } else {
+                    if !nearbyLocations.isEmpty {
                         Text("🎯 \(nearbyLocations.count) loot box\(nearbyLocations.count == 1 ? "" : "es") nearby!")
                             .font(.headline)
                             .padding()
@@ -148,27 +165,35 @@ struct ContentView: View {
                             .transition(.opacity)
                             .animation(.easeInOut, value: collectionNotification)
                     }
-                    
-                    // Temperature indicator with distance
-                    if let status = temperatureStatus {
-                        Text(status)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .padding()
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(10)
-                    }
-                    
-                    if !locationManager.locations.isEmpty {
-                        // Use computed property to ensure reactive updates when locations change
-                        let counter = lootBoxCounter
-                        Text("Loot Boxes Found: \(counter.found)/\(counter.total)")
-                            .padding()
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(10)
-                    }
                 }
                 .padding()
+                .padding(.bottom, -20)
+            }
+            
+            // Bottom overlay: Loot boxes found (left) and lens selector (right)
+            VStack {
+                Spacer()
+                HStack {
+                    // Loot boxes found counter - bottom left, 50% smaller
+                    if !locationManager.locations.isEmpty {
+                        let counter = lootBoxCounter
+                        Text("Loot Boxes Found: \(counter.found)/\(counter.total)")
+                            .font(.caption) // 50% smaller (was .body/default, now .caption)
+                            .padding(.horizontal, 8) // 50% smaller padding
+                            .padding(.vertical, 4) // 50% smaller padding
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(8) // Slightly smaller corner radius
+                            .padding(.leading, 16)
+                            .padding(.bottom, 16)
+                    }
+                    
+                    Spacer()
+                    
+                    // Lens selector - bottom right
+                    ARLensSelector(locationManager: locationManager)
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 16)
+                }
             }
         }
         .sheet(isPresented: $showLocationConfig) {

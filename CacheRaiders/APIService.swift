@@ -14,6 +14,12 @@ struct APIObject: Codable {
     let created_at: String?
     let created_by: String?
     let grounding_height: Double?
+    let ar_origin_latitude: Double?
+    let ar_origin_longitude: Double?
+    let ar_offset_x: Double?
+    let ar_offset_y: Double?
+    let ar_offset_z: Double?
+    let ar_placement_timestamp: String?
     let collected: Bool
     let found_by: String?
     let found_at: String?
@@ -398,20 +404,80 @@ class APIService {
         guard let url = URL(string: "\(baseURL)/api/objects/\(objectId)") else {
             throw APIError.invalidURL
         }
-        
+
         struct LocationUpdate: Codable {
             let latitude: Double
             let longitude: Double
         }
-        
+
         struct UpdateResponse: Codable {
             let success: Bool?
         }
-        
+
         let body = LocationUpdate(latitude: latitude, longitude: longitude)
         let encoder = JSONEncoder()
         let bodyData = try encoder.encode(body)
-        
+
+        let _: UpdateResponse = try await makeRequest(url: url, method: "PUT", body: bodyData)
+    }
+
+    /// Update AR coordinates for mm-precision positioning (alias for updateAROffset)
+    func updateARCoordinates(
+        objectId: String,
+        arOriginLatitude: Double,
+        arOriginLongitude: Double,
+        arOffsetX: Double,
+        arOffsetY: Double,
+        arOffsetZ: Double
+    ) async throws {
+        try await updateAROffset(
+            objectId: objectId,
+            arOriginLatitude: arOriginLatitude,
+            arOriginLongitude: arOriginLongitude,
+            offsetX: arOffsetX,
+            offsetY: arOffsetY,
+            offsetZ: arOffsetZ
+        )
+    }
+    
+    /// Update AR offset positioning data for centimeter-level accuracy
+    func updateAROffset(
+        objectId: String,
+        arOriginLatitude: Double,
+        arOriginLongitude: Double,
+        offsetX: Double,
+        offsetY: Double,
+        offsetZ: Double
+    ) async throws {
+        guard let url = URL(string: "\(baseURL)/api/objects/\(objectId)/ar-offset") else {
+            throw APIError.invalidURL
+        }
+
+        struct AROffsetUpdate: Codable {
+            let ar_origin_latitude: Double
+            let ar_origin_longitude: Double
+            let ar_offset_x: Double
+            let ar_offset_y: Double
+            let ar_offset_z: Double
+            let ar_placement_timestamp: String
+        }
+
+        struct UpdateResponse: Codable {
+            let success: Bool?
+        }
+
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let body = AROffsetUpdate(
+            ar_origin_latitude: arOriginLatitude,
+            ar_origin_longitude: arOriginLongitude,
+            ar_offset_x: offsetX,
+            ar_offset_y: offsetY,
+            ar_offset_z: offsetZ,
+            ar_placement_timestamp: timestamp
+        )
+        let encoder = JSONEncoder()
+        let bodyData = try encoder.encode(body)
+
         let _: UpdateResponse = try await makeRequest(url: url, method: "PUT", body: bodyData)
     }
     
@@ -422,7 +488,7 @@ class APIService {
             return nil
         }
         
-        return LootBoxLocation(
+        var location = LootBoxLocation(
             id: apiObject.id,
             name: apiObject.name,
             type: type,
@@ -431,6 +497,22 @@ class APIService {
             radius: apiObject.radius,
             collected: apiObject.collected
         )
+        
+        // Set AR coordinates if available (for cm-level precision indoor placement)
+        location.grounding_height = apiObject.grounding_height
+        location.ar_origin_latitude = apiObject.ar_origin_latitude
+        location.ar_origin_longitude = apiObject.ar_origin_longitude
+        location.ar_offset_x = apiObject.ar_offset_x
+        location.ar_offset_y = apiObject.ar_offset_y
+        location.ar_offset_z = apiObject.ar_offset_z
+        
+        // Parse AR placement timestamp if available
+        if let timestampString = apiObject.ar_placement_timestamp {
+            let formatter = ISO8601DateFormatter()
+            location.ar_placement_timestamp = formatter.date(from: timestampString)
+        }
+        
+        return location
     }
 }
 

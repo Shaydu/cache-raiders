@@ -39,7 +39,11 @@ class BoxLootContainer {
             lid: doorLid, // Lid/door from model or dummy
             prize: prize,
             builtInAnimation: builtInAnimation, // Store built-in animation if available
-            open: LootBoxAnimation.openBox
+            open: { container, onComplete in
+                MainActor.assumeIsolated {
+                    LootBoxAnimation.openBox(container: container, onComplete: onComplete)
+                }
+            }
         )
     }
     
@@ -93,8 +97,8 @@ class BoxLootContainer {
             // Entity.loadModel returns an Entity, but for model files it should be a ModelEntity
             // Try to cast it directly, and if that fails, search for ModelEntity in children
             let modelEntity: ModelEntity
-            if let directModel = loadedEntity as? ModelEntity {
-                modelEntity = directModel
+            if loadedEntity is ModelEntity {
+                modelEntity = loadedEntity as! ModelEntity
             } else {
                 // Search for the main chest model in children
                 if let chest = findFirstModelEntity(in: loadedEntity) {

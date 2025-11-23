@@ -52,6 +52,14 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     var collected: Bool = false
     var grounding_height: Double? // Optional: stored grounding height in meters (AR world space Y coordinate)
     var source: ItemSource = .api // Default to API source for backward compatibility
+
+    // AR-offset based positioning for centimeter-level accuracy
+    var ar_origin_latitude: Double? // GPS location where AR session originated
+    var ar_origin_longitude: Double? // GPS location where AR session originated
+    var ar_offset_x: Double? // X offset from AR origin in meters
+    var ar_offset_y: Double? // Y offset from AR origin in meters (height)
+    var ar_offset_z: Double? // Z offset from AR origin in meters
+    var ar_placement_timestamp: Date? // When the object was placed in AR
     
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -173,6 +181,8 @@ class LootBoxLocationManager: ObservableObject {
     @Published var enableAudioMode: Bool = false // Default: audio mode disabled
     @Published var lootBoxMinSize: Double = 0.25 // Default 0.25m (minimum size)
     @Published var lootBoxMaxSize: Double = 1.0 // Default 1.0m (maximum size) - reduced from 3.0m
+    @Published var arZoomLevel: Double = 1.0 // Default 1.0x zoom (normal view)
+    @Published var selectedARLens: String? = nil // Selected AR camera lens identifier (nil = default/wide)
     @Published var shouldRandomize: Bool = false // Trigger for randomizing loot boxes in AR
     @Published var shouldPlaceSphere: Bool = false // Trigger for placing a single sphere in AR
     @Published var pendingSphereLocationId: String? // ID of the map marker location to use for the sphere
@@ -193,6 +203,8 @@ class LootBoxLocationManager: ObservableObject {
     private let lootBoxMinSizeKey = "lootBoxMinSize"
     private let lootBoxMaxSizeKey = "lootBoxMaxSize"
     private let selectedDatabaseObjectIdKey = "selectedDatabaseObjectId"
+    private let arZoomLevelKey = "arZoomLevel"
+    private let selectedARLensKey = "selectedARLens"
     
     // API refresh timer - refreshes from API every 30 seconds when enabled
     private var apiRefreshTimer: Timer?
@@ -211,6 +223,8 @@ class LootBoxLocationManager: ObservableObject {
         loadEnableAudioMode()
         loadLootBoxSizes()
         loadSelectedDatabaseObjectId()
+        loadARZoomLevel()
+        loadSelectedARLens()
         
         // API sync is always enabled - start refresh timer
         startAPIRefreshTimer()
@@ -630,6 +644,22 @@ class LootBoxLocationManager: ObservableObject {
         return Double.random(in: lootBoxMinSize...lootBoxMaxSize)
     }
     
+    // Save AR zoom level preference
+    func saveARZoomLevel() {
+        UserDefaults.standard.set(arZoomLevel, forKey: arZoomLevelKey)
+    }
+    
+    // Load AR zoom level preference
+    private func loadARZoomLevel() {
+        if let saved = UserDefaults.standard.object(forKey: arZoomLevelKey) as? Double {
+            arZoomLevel = saved
+        } else {
+            arZoomLevel = 1.0 // Default to 1.0x (normal view)
+        }
+        // Clamp zoom level to valid range (0.5x to 3.0x)
+        arZoomLevel = max(0.5, min(3.0, arZoomLevel))
+    }
+    
     // Save selected database object ID
     func saveSelectedDatabaseObjectId() {
         if let objectId = selectedDatabaseObjectId {
@@ -664,6 +694,31 @@ class LootBoxLocationManager: ObservableObject {
                 await loadLocationsFromAPI(userLocation: userLocation)
             }
         }
+    }
+    
+    // Save selected AR lens preference
+    func saveSelectedARLens() {
+        if let lensId = selectedARLens {
+            UserDefaults.standard.set(lensId, forKey: selectedARLensKey)
+            print("✅ Saved selected AR lens: \(lensId)")
+        } else {
+            UserDefaults.standard.removeObject(forKey: selectedARLensKey)
+            print("✅ Cleared selected AR lens (using default)")
+        }
+    }
+    
+    // Load selected AR lens preference
+    private func loadSelectedARLens() {
+        selectedARLens = UserDefaults.standard.string(forKey: selectedARLensKey)
+        if let lensId = selectedARLens {
+            print("✅ Loaded selected AR lens: \(lensId)")
+        }
+    }
+    
+    // Set selected AR lens (and save)
+    func setSelectedARLens(_ lensId: String?) {
+        selectedARLens = lensId
+        saveSelectedARLens()
     }
     
     // Check if user is at a specific location
@@ -970,7 +1025,7 @@ class LootBoxLocationManager: ObservableObject {
                 if location.collected {
                     await markCollectedInAPI(location.id)
                 }
-            } catch {
+            } catch let error {
                 errorCount += 1
                 print("❌ Failed to sync '\(location.name)': \(error.localizedDescription)")
             }

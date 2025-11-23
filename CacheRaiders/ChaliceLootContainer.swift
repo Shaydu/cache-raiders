@@ -36,7 +36,11 @@ class ChaliceLootContainer {
             lid: dummyLid,
             prize: prize,
             builtInAnimation: nil,
-            open: LootBoxAnimation.openChalice
+            open: { container, onComplete in
+                MainActor.assumeIsolated {
+                    LootBoxAnimation.openChalice(container: container, onComplete: onComplete)
+                }
+            }
         )
     }
     

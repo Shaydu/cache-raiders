@@ -40,7 +40,7 @@ class ARPrecisionPositioningService {
         cameraTransform: simd_float4x4,
         arOriginGPS: CLLocation?
     ) -> SIMD3<Float>? {
-        guard let arView = arView else {
+        guard arView != nil else {
             Swift.print("⚠️ ARPrecisionPositioningService: No AR view available")
             return nil
         }
@@ -251,4 +251,5 @@ class ARPrecisionPositioningService {
         return avgHeight
     }
 }
+
 

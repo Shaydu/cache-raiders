@@ -4,7 +4,7 @@ services:
   api:
     build: .
     ports:
-      - "5000:5000"
+      - "5001:5001"
     volumes:
       # Persist database across container restarts
       - ./data:/app/data
@@ -12,10 +12,10 @@ services:
       - ./cache_raiders.db:/app/cache_raiders.db
     environment:
       - FLASK_ENV=production
-      - PORT=5000
+      - PORT=5001
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
       interval: 30s
       timeout: 10s
       retries: 3

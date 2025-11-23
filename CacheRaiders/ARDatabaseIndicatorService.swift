@@ -12,7 +12,7 @@ class ARDatabaseIndicatorService {
         // Check if this object exists in the API database
         Task {
             do {
-                let apiObject = try await APIService.shared.getObject(id: location.id)
+                let _ = try await APIService.shared.getObject(id: location.id)
                 // Object exists in database - add fuchsia indicator
                 await MainActor.run {
                     self.createIndicatorEntity(for: location, on: anchor)

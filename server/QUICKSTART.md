@@ -8,6 +8,12 @@ cd server
 docker-compose up -d
 ```
 
+**To stop the containers:**
+```bash
+cd server
+docker compose down
+```
+
 ### Option B: Manual Python Setup
 ```bash
 cd server
@@ -85,6 +91,11 @@ curl http://localhost:5000/api/stats
 - **API not responding**: Check if the server is running and accessible
 - **CORS errors**: The server has CORS enabled, but make sure your API URL is correct
 - **Database issues**: The database file is created automatically. Make sure the container has write permissions.
+
+
+
+
+
 
 
 
