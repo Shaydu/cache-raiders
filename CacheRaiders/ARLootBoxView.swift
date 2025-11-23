@@ -79,12 +79,15 @@ struct ARLootBoxView: UIViewRepresentable {
         // Handle single sphere placement trigger
         if locationManager.shouldPlaceSphere {
             print("🎯 Single sphere placement triggered in ARLootBoxView...")
+            // Get the location ID if one was provided (from map marker)
+            let locationId = locationManager.pendingSphereLocationId
             // Defer the sphere placement to avoid view update publishing issues
             DispatchQueue.main.async {
-                context.coordinator.placeSingleSphere()
-                // Reset the flag after placement is complete
+                context.coordinator.placeSingleSphere(locationId: locationId)
+                // Reset the flags after placement is complete
                 DispatchQueue.main.async {
                     locationManager.shouldPlaceSphere = false
+                    locationManager.pendingSphereLocationId = nil
                     print("🔄 Single sphere flag reset")
                 }
             }

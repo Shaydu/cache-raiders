@@ -789,6 +789,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         arView.scene.addAnchor(anchor)
         placedBoxes[location.id] = anchor
+        
+        // Apply uniform luminance if ambient light is disabled
+        environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
         // Set callback to increment found count
         findableObjects[location.id] = FindableObject(
@@ -948,6 +951,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Store the anchor and findable object
         arView.scene.addAnchor(anchor)
         placedBoxes[location.id] = anchor
+        
+        // Apply uniform luminance if ambient light is disabled
+        environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
         // DEBUG: Log final world positions
         let finalAnchorTransform = anchor.transformMatrix(relativeTo: nil)
@@ -1439,7 +1445,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
 
     // Place a single sphere in the current AR room
-    func placeSingleSphere() {
+    func placeSingleSphere(locationId: String? = nil) {
         Swift.print("🎯 placeSingleSphere() called - checking if already placed recently...")
 
         // Prevent multiple placements from rapid view updates
@@ -1494,18 +1500,27 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             Swift.print("⚠️ No ground plane detected, placing at camera height")
         }
 
-        // Create a temporary location for this sphere
-        let newLocation = LootBoxLocation(
-            id: "AR_SPHERE_" + UUID().uuidString,
-            name: "Mysterious Sphere",
-            type: .sphere,
-            latitude: 0, // Not GPS-based
-            longitude: 0, // Not GPS-based
-            radius: 100.0 // Large radius since we're not using GPS
-        )
-
-        // Add to locationManager so it counts toward the total
-        locationManager.addLocation(newLocation)
+        // Use provided location ID (from map marker) or create a new one
+        let newLocation: LootBoxLocation
+        if let existingLocationId = locationId,
+           let existingLocation = locationManager.locations.first(where: { $0.id == existingLocationId }) {
+            // Use the existing map marker location
+            newLocation = existingLocation
+            Swift.print("✅ Using existing map marker location: \(existingLocationId)")
+        } else {
+            // Create a new location (fallback for manual sphere placement)
+            newLocation = LootBoxLocation(
+                id: "AR_SPHERE_" + UUID().uuidString,
+                name: "Mysterious Sphere",
+                type: .sphere,
+                latitude: 0, // Not GPS-based
+                longitude: 0, // Not GPS-based
+                radius: 100.0 // Large radius since we're not using GPS
+            )
+            // Add to locationManager so it counts toward the total
+            locationManager.addLocation(newLocation)
+            Swift.print("✅ Created new location for sphere: \(newLocation.id)")
+        }
 
         // Create sphere directly
         let sphereRadius: Float = 0.15
@@ -1531,6 +1546,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         arView.scene.addAnchor(anchor)
         placedBoxes[newLocation.id] = anchor
+        
+        // Apply uniform luminance if ambient light is disabled
+        environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
         // Set callback to mark as collected when found
         findableObjects[newLocation.id] = FindableObject(
@@ -1718,6 +1736,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         arView.scene.addAnchor(anchor)
         placedBoxes[item.id] = anchor
+        
+        // Apply uniform luminance if ambient light is disabled
+        environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
         // Set callback to mark as collected when found
         findableObjects[item.id] = FindableObject(
@@ -1766,6 +1787,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         arView.scene.addAnchor(anchor)
         placedBoxes[item.id] = anchor
+        
+        // Apply uniform luminance if ambient light is disabled
+        environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
         // Set callback to mark as collected when found
         findableObjects[item.id] = FindableObject(

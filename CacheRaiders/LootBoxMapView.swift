@@ -36,7 +36,14 @@ struct LootBoxMapView: View {
     @State private var lastAddTime = Date()
     
     // Combine user location and loot boxes into a single annotation array
+    // Explicitly depend on showFoundOnMap and collected status to ensure view updates
     private var allAnnotations: [MapAnnotationItem] {
+        // Access showFoundOnMap to create explicit dependency for SwiftUI updates
+        let showFound = locationManager.showFoundOnMap
+        // Also access collected count to force updates when items are found
+        let collectedCount = locationManager.locations.filter { $0.collected }.count
+        _ = collectedCount // Explicitly use to create dependency
+        
         var annotations: [MapAnnotationItem] = []
         
         // Add user location pin
@@ -71,7 +78,8 @@ struct LootBoxMapView: View {
         // Exclude AR-only locations (AR_SPHERE_ prefix but not AR_SPHERE_MAP_) and locations with invalid coordinates (0,0)
         let filteredLocations = locationManager.locations.filter { location in
             // If showFoundOnMap is disabled, exclude collected items
-            if !locationManager.showFoundOnMap && location.collected {
+            if !showFound && location.collected {
+                Swift.print("🗺️ Filtering out collected item '\(location.name)' (showFoundOnMap=\(showFound))")
                 return false
             }
             
@@ -103,6 +111,8 @@ struct LootBoxMapView: View {
                     lootBoxLocation: location
                 )
             })
+        
+        Swift.print("🗺️ Map annotations: \(annotations.count) total (showFoundOnMap=\(showFound), collected items filtered: \(!showFound))")
         
         return annotations
     }
@@ -294,9 +304,10 @@ struct LootBoxMapView: View {
                                 }
                             }
                             .pickerStyle(.menu)
-                            .background(Color.white.opacity(0.9))
+                            .frame(maxWidth: .infinity)
+                            .foregroundColor(.white)
+                            .background(Color.black.opacity(0.8))
                             .cornerRadius(8)
-                            .padding(.horizontal)
 
                             // Add button
                             Button(action: {
@@ -408,6 +419,10 @@ struct LootBoxMapView: View {
                 }
             }
         }
+        .onChange(of: locationManager.showFoundOnMap) { _ in
+            // Force view update when showFoundOnMap toggle changes
+            Swift.print("🗺️ showFoundOnMap changed to: \(locationManager.showFoundOnMap)")
+        }
     }
     
     // Helper function to extract center coordinate from MapCameraPosition
@@ -457,10 +472,7 @@ struct LootBoxMapView: View {
 
     private func addFindableItem(at coordinate: CLLocationCoordinate2D) {
         if selectedItemType == .sphere {
-            // For spheres, trigger placement in the current AR room AND create a map marker
-            locationManager.shouldPlaceSphere = true
-
-            // Also create a map location for the sphere so it shows on the map
+            // Create a map location for the sphere FIRST (this will be used for both map and AR)
             let sphereLocation = LootBoxLocation(
                 id: "AR_SPHERE_MAP_" + UUID().uuidString, // Special prefix to identify map-only spheres
                 name: "Mysterious Sphere",
@@ -471,6 +483,12 @@ struct LootBoxMapView: View {
             )
 
             locationManager.addLocation(sphereLocation)
+            
+            // Set the location ID to use when placing the sphere in AR
+            locationManager.pendingSphereLocationId = sphereLocation.id
+            
+            // Trigger placement in the current AR room using the same location ID
+            locationManager.shouldPlaceSphere = true
             
             // Debug: Verify the location was added correctly
             print("🗺️ Added sphere location to map:")

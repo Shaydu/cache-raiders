@@ -48,6 +48,7 @@ class LootBoxLocationManager: ObservableObject {
     @Published var lootBoxMaxSize: Double = 1.0 // Default 1.0m (maximum size) - reduced from 3.0m
     @Published var shouldRandomize: Bool = false // Trigger for randomizing loot boxes in AR
     @Published var shouldPlaceSphere: Bool = false // Trigger for placing a single sphere in AR
+    @Published var pendingSphereLocationId: String? // ID of the map marker location to use for the sphere
     @Published var pendingARItem: LootBoxLocation? // Item to place in AR room
     var onSizeChanged: (() -> Void)? // Callback when size settings change
     private let locationsFileName = "lootBoxLocations.json"
@@ -222,9 +223,14 @@ class LootBoxLocationManager: ObservableObject {
             updatedLocation.collected = true
             locations[index] = updatedLocation
 
-            // Only save non-AR spheres (GPS locations should persist, AR spheres are temporary)
-            if !locationId.hasPrefix("AR_SPHERE_") {
+            // Save all locations except temporary AR-only spheres (AR_SPHERE_ without MAP)
+            // AR_SPHERE_MAP_ locations should be saved because they're map markers
+            let isTemporaryARSphere = locationId.hasPrefix("AR_SPHERE_") && !locationId.hasPrefix("AR_SPHERE_MAP_")
+            if !isTemporaryARSphere {
                 saveLocations()
+                print("💾 Saved locations (including collected status for \(locationId))")
+            } else {
+                print("⏭️ Skipping save for temporary AR sphere: \(locationId)")
             }
 
             // Explicitly notify observers (in case @Published doesn't catch the change)
