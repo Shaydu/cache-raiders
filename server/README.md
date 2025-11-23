@@ -77,6 +77,25 @@ The SQLite database (`cache_raiders.db`) is created automatically on first run. 
 - `objects` table: All loot box objects
 - `finds` table: Records of who found what and when
 
+## iOS App Integration
+
+The iOS app includes `APIService.swift` which provides methods to communicate with this API. To enable API sync:
+
+1. Set the API base URL in your app (or use the default `http://localhost:5000` for local development)
+2. Enable API sync in `LootBoxLocationManager`:
+   ```swift
+   locationManager.useAPISync = true
+   ```
+3. Load locations from API:
+   ```swift
+   await locationManager.loadLocationsFromAPI(userLocation: currentLocation)
+   ```
+
+The app will automatically sync when:
+- Loading locations
+- Marking objects as found
+- Creating new objects
+
 ## Deployment
 
 The Docker container can be deployed to any container hosting service:
@@ -92,4 +111,6 @@ For production, consider:
 - Using PostgreSQL instead of SQLite for better concurrency
 - Adding rate limiting
 - Setting up proper logging
+- Using HTTPS
+- Adding CORS restrictions to specific domains
 

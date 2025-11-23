@@ -45,8 +45,132 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     // Arrow direction tracking
     @Published var nearestObjectDirection: Double? = nil // Direction in degrees (0 = north, 90 = east, etc.)
     
+    // Viewport visibility tracking for chime sounds
+    private var objectsInViewport: Set<String> = [] // Track which objects are currently visible
+    private var viewportChimePlayer: AVAudioPlayer? // Audio player for viewport chime
+    
     override init() {
         super.init()
+        initializeChimePlayer()
+    }
+    
+    /// Initialize the audio player for viewport chime sounds
+    private func initializeChimePlayer() {
+        // Try to use the level-up sound as a chime, or fall back to system sound
+        if let url = Bundle.main.url(forResource: "level-up-01", withExtension: "mp3") {
+            do {
+                let player = try AVAudioPlayer(contentsOf: url)
+                player.prepareToPlay()
+                player.volume = 0.5 // Slightly quieter for viewport entry
+                viewportChimePlayer = player
+                Swift.print("🔊 Initialized viewport chime player")
+            } catch {
+                Swift.print("⚠️ Could not create viewport chime player: \(error)")
+            }
+        }
+    }
+    
+    /// Play a chime sound when an object enters the viewport
+    private func playViewportChime() {
+        // Configure audio session
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try audioSession.setActive(true)
+        } catch {
+            Swift.print("⚠️ Could not configure audio session for chime: \(error)")
+        }
+        
+        // Play chime using audio player if available, otherwise use system sound
+        if let player = viewportChimePlayer {
+            if player.isPlaying {
+                player.stop()
+            }
+            player.currentTime = 0
+            player.play()
+            Swift.print("🔔 Chime: Object entered viewport")
+        } else {
+            // Fallback to system sound
+            AudioServicesPlaySystemSound(1057) // System notification sound
+            Swift.print("🔔 Chime: Object entered viewport (system sound)")
+        }
+    }
+    
+    /// Check if an object is currently visible in the viewport
+    private func isObjectInViewport(locationId: String, anchor: AnchorEntity) -> Bool {
+        guard let arView = arView else { return false }
+        
+        // Get the object's world position
+        let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+        let objectPosition = SIMD3<Float>(
+            anchorTransform.columns.3.x,
+            anchorTransform.columns.3.y,
+            anchorTransform.columns.3.z
+        )
+        
+        // Try to find a more specific position from child entities (like the actual box/chalice)
+        var bestPosition = objectPosition
+        for child in anchor.children {
+            if let modelEntity = child as? ModelEntity {
+                let childTransform = modelEntity.transformMatrix(relativeTo: nil)
+                let childPosition = SIMD3<Float>(
+                    childTransform.columns.3.x,
+                    childTransform.columns.3.y,
+                    childTransform.columns.3.z
+                )
+                // Use the first child entity's position as it's likely the visible part
+                bestPosition = childPosition
+                break
+            }
+        }
+        
+        // Project the position to screen coordinates
+        guard let screenPoint = arView.project(bestPosition) else {
+            return false // Object is behind camera or outside view
+        }
+        
+        // Check if the projected point is within the viewport bounds
+        let viewWidth = Float(arView.bounds.width)
+        let viewHeight = Float(arView.bounds.height)
+        
+        // Add a small margin to account for object size (objects slightly off-screen still count)
+        let margin: Float = 50.0 // 50 point margin
+        
+        let isInViewport = screenPoint.x >= -margin && 
+                          screenPoint.x <= viewWidth + margin &&
+                          screenPoint.y >= -margin && 
+                          screenPoint.y <= viewHeight + margin
+        
+        return isInViewport
+    }
+    
+    /// Check viewport visibility for all placed objects and play chime when objects enter
+    private func checkViewportVisibility() {
+        guard let arView = arView else { return }
+        
+        var currentlyVisible: Set<String> = []
+        
+        // Check visibility for each placed object
+        for (locationId, anchor) in placedBoxes {
+            // Skip if already found/collected
+            if distanceTracker?.foundLootBoxes.contains(locationId) ?? false {
+                continue
+            }
+            
+            // Check if object is in viewport
+            if isObjectInViewport(locationId: locationId, anchor: anchor) {
+                currentlyVisible.insert(locationId)
+                
+                // If object just entered viewport (wasn't visible before), play chime
+                if !objectsInViewport.contains(locationId) {
+                    playViewportChime()
+                    Swift.print("🎯 Object entered viewport: \(locationId)")
+                }
+            }
+        }
+        
+        // Update tracked visible objects
+        objectsInViewport = currentlyVisible
     }
     
     func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>, nearestObjectDirection: Binding<Double?>) {
@@ -127,6 +251,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Clear tracking dictionaries
         placedBoxes.removeAll()
         findableObjects.removeAll()
+        
+        // Clear viewport visibility tracking
+        objectsInViewport.removeAll()
         
         // Also clear found loot boxes tracking
         clearFoundLootBoxes()
@@ -490,6 +617,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             //     Swift.print("🎯 AR tracking stable - auto-spawning 3 spheres")
             //     randomizeLootBoxes()
             // }
+            
+            // Check viewport visibility and play chime when objects enter
+            checkViewportVisibility()
         }
     }
     
@@ -1202,6 +1332,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Cleanup after find completes
             self?.placedBoxes.removeValue(forKey: locationId)
             self?.findableObjects.removeValue(forKey: locationId)
+            self?.objectsInViewport.remove(locationId) // Also remove from viewport tracking
             
             // Remove randomized AR items from locationManager when found (they're AR-only, not GPS-based)
             // This keeps the counter accurate - only shows items that are actually placed on screen

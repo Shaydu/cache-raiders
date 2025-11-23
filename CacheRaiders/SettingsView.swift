@@ -250,6 +250,42 @@ struct SettingsView: View {
                         .foregroundColor(.secondary)
                 }
                 
+                Section("API Sync") {
+                    Toggle("Enable API Sync", isOn: Binding(
+                        get: { locationManager.useAPISync },
+                        set: { newValue in
+                            locationManager.useAPISync = newValue
+                            // If enabling, try to load from API
+                            if newValue, let userLocation = userLocationManager.currentLocation {
+                                Task {
+                                    await locationManager.loadLocationsFromAPI(userLocation: userLocation)
+                                }
+                            }
+                        }
+                    ))
+                    .padding(.vertical, 4)
+                    
+                    Text("When enabled, objects and their found status are synced with the shared API server. This allows multiple devices to see the same objects and track who found what.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    if locationManager.useAPISync {
+                        Button(action: {
+                            if let userLocation = userLocationManager.currentLocation {
+                                Task {
+                                    await locationManager.loadLocationsFromAPI(userLocation: userLocation)
+                                }
+                            }
+                        }) {
+                            HStack {
+                                Image(systemName: "arrow.clockwise")
+                                Text("Refresh from API")
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                
                 Section("About") {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Cache Raiders")

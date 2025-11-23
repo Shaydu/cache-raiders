@@ -56,7 +56,7 @@ class APIService {
         if let customURL = UserDefaults.standard.string(forKey: "apiBaseURL"), !customURL.isEmpty {
             return customURL
         }
-        return "http://localhost:5000"
+        return "http://localhost:5001"
     }
     
     // User identifier - in production, this should be a proper user ID

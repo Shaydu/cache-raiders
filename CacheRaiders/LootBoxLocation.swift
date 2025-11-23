@@ -157,6 +157,8 @@ class LootBoxLocationManager: ObservableObject {
     }
     
     // Create default locations randomly within maxSearchDistance of user location
+    // NOTE: These auto-generated objects are LOCAL ONLY and do NOT sync to API
+    // Only manually added objects (via addLocation) sync to the shared API database
     func createDefaultLocations(near userLocation: CLLocation) {
         let lootBoxTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest]
         let lootBoxNames = ["Chalice", "Temple Relic", "Treasure Chest"]
@@ -204,7 +206,8 @@ class LootBoxLocationManager: ObservableObject {
         print("✅ Created 3 random loot boxes within \(maxSearchDistance)m of your location")
     }
     
-    // Add a new location
+    // Add a new location (manually added by user)
+    // NOTE: Manually added objects ARE synced to the shared API database when useAPISync is enabled
     func addLocation(_ location: LootBoxLocation) {
         // Check if location with same ID already exists (prevent duplicates)
         if locations.contains(where: { $0.id == location.id }) {
@@ -213,6 +216,14 @@ class LootBoxLocationManager: ObservableObject {
         }
         locations.append(location)
         saveLocations()
+        
+        // Sync to shared API database if enabled (manual additions are shared)
+        if useAPISync {
+            Task {
+                await saveLocationToAPI(location)
+                print("✅ Synced manually added object '\(location.name)' to shared API database")
+            }
+        }
     }
     
     /// Returns only findable locations (excludes map markers and temporary AR items)
@@ -260,6 +271,13 @@ class LootBoxLocationManager: ObservableObject {
             if !isTemporaryARItem {
                 saveLocations()
                 print("💾 Saved locations (including collected status for \(locationId))")
+                
+                // Also sync to API if enabled
+                if useAPISync {
+                    Task {
+                        await markCollectedInAPI(locationId)
+                    }
+                }
             } else {
                 print("⏭️ Skipping save for temporary AR item: \(locationId)")
             }
@@ -383,6 +401,106 @@ class LootBoxLocationManager: ObservableObject {
     func isAtLocation(_ location: LootBoxLocation, userLocation: CLLocation) -> Bool {
         let distance = userLocation.distance(from: location.location)
         return distance <= location.radius
+    }
+    
+    // MARK: - API Sync Methods
+    
+    /// Enable/disable API sync (stored in UserDefaults)
+    var useAPISync: Bool {
+        get {
+            UserDefaults.standard.bool(forKey: "useAPISync")
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "useAPISync")
+        }
+    }
+    
+    /// Load locations from API instead of local file
+    func loadLocationsFromAPI(userLocation: CLLocation? = nil) async {
+        guard useAPISync else {
+            print("ℹ️ API sync is disabled, using local storage")
+            return
+        }
+        
+        do {
+            // Check API health first
+            let isHealthy = try await APIService.shared.checkHealth()
+            guard isHealthy else {
+                print("⚠️ API is not available, falling back to local storage")
+                loadLocations(userLocation: userLocation)
+                return
+            }
+            
+            // Get objects from API
+            let apiObjects: [APIObject]
+            if let userLocation = userLocation {
+                apiObjects = try await APIService.shared.getObjects(
+                    latitude: userLocation.coordinate.latitude,
+                    longitude: userLocation.coordinate.longitude,
+                    radius: maxSearchDistance,
+                    includeFound: false
+                )
+            } else {
+                apiObjects = try await APIService.shared.getObjects(includeFound: false)
+            }
+            
+            // Convert API objects to LootBoxLocations
+            let loadedLocations = apiObjects.compactMap { apiObject in
+                APIService.shared.convertToLootBoxLocation(apiObject)
+            }
+            
+            await MainActor.run {
+                self.locations = loadedLocations
+                let collectedCount = loadedLocations.filter { $0.collected }.count
+                print("✅ Loaded \(loadedLocations.count) loot box locations from API (\(collectedCount) collected)")
+            }
+            
+        } catch {
+            print("⚠️ Error loading locations from API: \(error.localizedDescription)")
+            print("   Falling back to local storage")
+            // Fallback to local storage
+            loadLocations(userLocation: userLocation)
+        }
+    }
+    
+    /// Save location to API
+    func saveLocationToAPI(_ location: LootBoxLocation) async {
+        guard useAPISync else { return }
+        
+        do {
+            _ = try await APIService.shared.createObject(location)
+            print("✅ Saved location \(location.name) to API")
+        } catch {
+            print("⚠️ Error saving location to API: \(error.localizedDescription)")
+        }
+    }
+    
+    /// Mark location as found in API
+    func markCollectedInAPI(_ locationId: String) async {
+        guard useAPISync else { return }
+        
+        do {
+            try await APIService.shared.markFound(objectId: locationId)
+            print("✅ Marked location \(locationId) as found in API")
+        } catch {
+            print("⚠️ Error marking location as found in API: \(error.localizedDescription)")
+        }
+    }
+    
+    /// Sync all local locations to API (useful for migration)
+    func syncAllLocationsToAPI() async {
+        guard useAPISync else { return }
+        
+        print("🔄 Syncing \(locations.count) locations to API...")
+        
+        for location in locations {
+            await saveLocationToAPI(location)
+            if location.collected {
+                await markCollectedInAPI(location.id)
+            }
+        }
+        
+        print("✅ Finished syncing locations to API")
     }
 }
 
