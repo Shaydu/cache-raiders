@@ -107,6 +107,15 @@ class LootBoxLocationManager: ObservableObject {
         createDefaultLocations(near: userLocation)
         print("🔄 Regenerated 3 random loot boxes near your location")
     }
+
+    // Reset all locations to not collected (for testing/debugging)
+    func resetAllLocations() {
+        for i in 0..<locations.count {
+            locations[i].collected = false
+        }
+        saveLocations()
+        print("🔄 Reset all \(locations.count) loot boxes to not collected")
+    }
     
     // Save locations to JSON file
     func saveLocations() {

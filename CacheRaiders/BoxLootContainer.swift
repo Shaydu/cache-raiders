@@ -73,11 +73,11 @@ class BoxLootContainer {
             // Load the model entity - this might return a scene with multiple entities
             let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
             
-            // If it's a ModelEntity, use it directly
-            // If it's a scene with children, find the main chest entity
+            // Entity.loadModel returns an Entity, but for model files it should be a ModelEntity
+            // Try to cast it directly, and if that fails, search for ModelEntity in children
             let modelEntity: ModelEntity
-            if loadedEntity is ModelEntity {
-                modelEntity = loadedEntity as! ModelEntity
+            if let directModel = loadedEntity as? ModelEntity {
+                modelEntity = directModel
             } else {
                 // Search for the main chest model in children
                 if let chest = findFirstModelEntity(in: loadedEntity) {

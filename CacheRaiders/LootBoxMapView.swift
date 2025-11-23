@@ -14,10 +14,10 @@ struct MapAnnotationItem: Identifiable {
 struct LootBoxMapView: View {
     @ObservedObject var locationManager: LootBoxLocationManager
     @ObservedObject var userLocationManager: UserLocationManager
-    @State private var region = MKCoordinateRegion(
+    @State private var position = MapCameraPosition.region(MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
         span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-    )
+    ))
     
     // Combine user location and loot boxes into a single annotation array
     private var allAnnotations: [MapAnnotationItem] {
@@ -48,38 +48,42 @@ struct LootBoxMapView: View {
     }
     
     var body: some View {
-        Map(coordinateRegion: $region, annotationItems: allAnnotations) { annotation in
-            MapAnnotation(coordinate: annotation.coordinate) {
+        Map(position: $position) {
+            ForEach(allAnnotations, id: \.id) { annotation in
                 if annotation.isUserLocation {
                     // User location pin
-                    VStack(spacing: 4) {
-                        Image(systemName: "location.fill")
-                            .foregroundColor(.blue)
-                            .font(.title2)
-                            .background(Circle().fill(.white))
-                            .shadow(radius: 3)
-                        
-                        Text("You")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .padding(4)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(4)
+                    Annotation("", coordinate: annotation.coordinate) {
+                        VStack(spacing: 4) {
+                            Image(systemName: "location.fill")
+                                .foregroundColor(.blue)
+                                .font(.title2)
+                                .background(Circle().fill(.white))
+                                .shadow(radius: 3)
+
+                            Text("You")
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .padding(4)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(4)
+                        }
                     }
                 } else if let location = annotation.lootBoxLocation {
                     // Loot box pin
-                    VStack(spacing: 4) {
-                        Image(systemName: location.collected ? "checkmark.circle.fill" : "mappin.circle.fill")
-                            .foregroundColor(location.collected ? .green : .red)
-                            .font(.title)
-                            .background(Circle().fill(.white))
-                            .shadow(radius: 3)
-                        
-                        Text(location.name)
-                            .font(.caption)
-                            .padding(4)
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(4)
+                    Annotation(location.name, coordinate: annotation.coordinate) {
+                        VStack(spacing: 4) {
+                            Image(systemName: location.collected ? "checkmark.circle.fill" : "mappin.circle.fill")
+                                .foregroundColor(location.collected ? .green : .red)
+                                .font(.title)
+                                .background(Circle().fill(.white))
+                                .shadow(radius: 3)
+
+                            Text(location.name)
+                                .font(.caption)
+                                .padding(4)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(4)
+                        }
                     }
                 }
             }
@@ -87,10 +91,10 @@ struct LootBoxMapView: View {
         .onAppear {
             updateRegion()
         }
-        .onChange(of: locationManager.locations) { _ in
+        .onChange(of: locationManager.locations) {
             updateRegion()
         }
-        .onChange(of: userLocationManager.currentLocation) { _ in
+        .onChange(of: userLocationManager.currentLocation) {
             updateRegion()
         }
     }
@@ -99,17 +103,17 @@ struct LootBoxMapView: View {
         // Center on user location if available, otherwise use default
         if let userLocation = userLocationManager.currentLocation {
             // Center on user location with a reasonable zoom level
-            region = MKCoordinateRegion(
+            position = .region(MKCoordinateRegion(
                 center: userLocation.coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01) // ~1km view
-            )
+            ))
         } else if !locationManager.locations.isEmpty {
             // Fallback: center on first loot box if no user location
             let firstLocation = locationManager.locations[0]
-            region = MKCoordinateRegion(
+            position = .region(MKCoordinateRegion(
                 center: firstLocation.coordinate,
                 span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
-            )
+            ))
         }
     }
 }

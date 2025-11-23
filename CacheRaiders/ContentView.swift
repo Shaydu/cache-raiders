@@ -127,6 +127,21 @@ struct ContentView: View {
                         .background(Color.orange)
                         .cornerRadius(10)
                     }
+
+                    // Reset collected status button
+                    Button(action: {
+                        locationManager.resetAllLocations()
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.clockwise")
+                            Text("Reset All to Not Found")
+                        }
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.red)
+                        .cornerRadius(10)
+                    }
                     .padding(.top, 4)
                 }
                 .padding()

@@ -5,6 +5,7 @@ import CoreLocation
 import AVFoundation
 import AudioToolbox
 import Vision
+import Combine
 
 // Findable protocol and base class are now in FindableObject.swift
 
@@ -39,6 +40,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var occlusionPlanes: [UUID: AnchorEntity] = [:] // Track occlusion planes for walls
     private var occlusionCheckTimer: Timer? // Timer for checking occlusion
     private var distanceTextEntities: [String: ModelEntity] = [:] // Track distance text entities for each loot box
+    private var sphereModeActive: Bool = false // Track when we're in sphere randomization mode
+    private var hasAutoRandomized: Bool = false // Track if we've already auto-randomized spheres
+
+    // Arrow direction tracking
+    @Published var nearestObjectDirection: Double? = nil // Direction in degrees (0 = north, 90 = east, etc.)
     
     override init() {
         super.init()
@@ -47,7 +53,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
     private func setupObjectRecognition() {
         // Configure image classification request
-        objectClassificationRequest.usesCPUOnly = false // Use GPU for better performance
+        // Note: usesCPUOnly was deprecated in iOS 17+ - Vision now auto-selects optimal processing unit
 
         // Use built-in classification model for general object recognition
         print("🔍 Object recognition initialized - will classify objects every \(recognitionInterval) seconds")
@@ -240,25 +246,25 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             let direction = objectPosition - cameraPosition
             let distance = length(direction)
 
-            // PROXIMITY DETECTION: Auto-find when within 1m of object
-            let findDistance: Float = 1.0 // 1 meter threshold for finding
+            // PROXIMITY DETECTION DISABLED: Objects can only be found by tapping
+            // let findDistance: Float = 1.0 // 1 meter threshold for finding
 
-            // Check if camera is within 1m of the object
-            if distance <= findDistance && !foundLootBoxes.contains(locationId) {
-                // Find the sphere/point light entity for animation (if it exists)
-                var sphereEntity: ModelEntity? = nil
-                for child in anchor.children {
-                    if let modelEntity = child as? ModelEntity,
-                       modelEntity.components[PointLightComponent.self] != nil {
-                        sphereEntity = modelEntity
-                        break
-                    }
-                }
-
-                // Trigger finding (sound, confetti, animation, increment count)
-                findLootBox(locationId: locationId, anchor: anchor, cameraPosition: cameraPosition, sphereEntity: sphereEntity)
-                continue // Skip occlusion check
-            }
+            // DISABLED: Check if camera is within 1m of the object
+            // if distance <= findDistance && !foundLootBoxes.contains(locationId) {
+            //     // Find the sphere/point light entity for animation (if it exists)
+            //     var sphereEntity: ModelEntity? = nil
+            //     for child in anchor.children {
+            //         if let modelEntity = child as? ModelEntity,
+            //            modelEntity.components[PointLightComponent.self] != nil {
+            //             sphereEntity = modelEntity
+            //             break
+            //         }
+            //     }
+            //
+            //     // Trigger finding (sound, confetti, animation, increment count)
+            //     findLootBox(locationId: locationId, anchor: anchor, cameraPosition: cameraPosition, sphereEntity: sphereEntity)
+            //     continue // Skip occlusion check
+            // }
 
             // COLLISION DETECTION: Hide objects when camera is too close (within their boundary)
             // Different object types have different sizes
@@ -594,6 +600,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
         guard let arView = arView else { return }
 
+        // Don't place GPS-based loot boxes if we're in sphere mode
+        if sphereModeActive {
+            Swift.print("🎯 Sphere mode active - skipping GPS-based loot box placement")
+            return
+        }
+
         // Limit to maximum 3 objects at a time
         guard placedBoxes.count < 3 else {
             Swift.print("🎯 Maximum 3 objects reached - not placing more (current: \(placedBoxes.count))")
@@ -623,6 +635,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
+        // Enter sphere mode - prevent GPS boxes
+        sphereModeActive = true
+        hasAutoRandomized = true // Mark as having randomized (whether auto or manual)
+
         print("🗑️ Removing \(placedBoxes.count) existing spheres...")
         // Remove all existing placed boxes
         for (_, anchor) in placedBoxes {
@@ -635,6 +651,20 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let numberOfBoxes = 3
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+
+        // Add time-based offset to ensure different results each randomization
+        let timeOffset = Float(Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 100.0))
+        Swift.print("🎲 Time-based randomization offset: \(String(format: "%.2f", timeOffset))")
+
+        // Create a virtual "random center" that's offset from the actual camera position
+        // This ensures different placement patterns even when starting from the same location
+        let centerOffsetDistance = Float.random(in: 0...2.0) // Up to 2m offset
+        let centerOffsetAngle = Float.random(in: 0...(2 * Float.pi))
+        let randomCenterX = cameraPos.x + centerOffsetDistance * cos(centerOffsetAngle)
+        let randomCenterZ = cameraPos.z + centerOffsetDistance * sin(centerOffsetAngle)
+        let randomCenter = SIMD3<Float>(randomCenterX, cameraPos.y, randomCenterZ)
+
+        Swift.print("🎲 Using random center at (\(String(format: "%.2f", randomCenterX)), \(String(format: "%.2f", randomCenterZ))) instead of camera position")
 
         // TEMPORARILY DISABLE indoor detection to ensure spheres spawn
         // TODO: Re-enable with better logic once spheres are working reliably
@@ -660,8 +690,16 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Simplified placement for reliable sphere spawning
             let randomDistance = Float.random(in: minDistance...maxDistance)
             let randomAngle = Float.random(in: 0...(2 * Float.pi))
-            randomX = cameraPos.x + randomDistance * cos(randomAngle)
-            randomZ = cameraPos.z + randomDistance * sin(randomAngle)
+
+            // Add time-based variation to ensure different results each session
+            let angleOffset = timeOffset * 0.1 // Small angle variation based on time
+            let adjustedAngle = randomAngle + angleOffset
+
+            // Use random center instead of camera position for more varied placement
+            randomX = randomCenter.x + randomDistance * cos(adjustedAngle)
+            randomZ = randomCenter.z + randomDistance * sin(adjustedAngle)
+
+            Swift.print("🎲 Random position \(attempts): distance=\(String(format: "%.2f", randomDistance))m, angle=\(String(format: "%.2f", adjustedAngle * 180.0 / .pi))° (+offset), pos=(\(String(format: "%.2f", randomX)), \(String(format: "%.2f", randomZ)))")
 
             // Raycast to find floor
             let raycastOrigin = SIMD3<Float>(randomX, cameraPos.y + 1.0, randomZ)
@@ -758,32 +796,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
 
-    // Detect if we're indoors by checking for vertical planes (walls)
-    private func detectIndoorEnvironment(frame: ARFrame) -> Bool {
-        guard let arView = arView else { return false }
-
-        // Look for vertical planes in the scene
-        let verticalPlanes = arView.scene.anchors.compactMap { anchor -> ARPlaneAnchor? in
-            if let planeAnchor = anchor.anchor as? ARPlaneAnchor,
-               planeAnchor.alignment == .vertical {
-                return planeAnchor
-            }
-            return nil
-        }
-
-        // Be very conservative about indoor detection - only if we have clear evidence of an indoor space
-        // Require at least 4 significant walls AND substantial total wall area
-        let significantPlanes = verticalPlanes.filter { $0.planeExtent.width > 3.0 && $0.planeExtent.height > 2.5 }
-        let totalWallArea = significantPlanes.reduce(0.0) { $0 + ($1.planeExtent.width * $1.planeExtent.height) }
-
-        let isIndoors = significantPlanes.count >= 4 && totalWallArea > 20.0 // At least 20m² of wall area and 4+ walls
-        Swift.print("🏗️ Found \(verticalPlanes.count) vertical planes (\(significantPlanes.count) significant, \(String(format: "%.1f", totalWallArea))m² total) -> \(isIndoors ? "INDOORS" : "OUTDOORS")")
-        if verticalPlanes.isEmpty {
-            Swift.print("   ℹ️ No walls detected yet - move camera around to scan environment")
-        }
-
-        return isIndoors
-    }
 
     // Generate position for indoor placement (simplified approach)
     private func generateIndoorPosition(cameraPos: SIMD3<Float>, minDistance: Float, maxDistance: Float) -> (x: Float, z: Float) {
@@ -942,6 +954,16 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         // ARKit will handle cleanup
                     } else {
                         Swift.print("✅ Keeping horizontal plane anchor (floor/table): Y=\(String(format: "%.2f", planeY)), size=\(String(format: "%.2f", planeWidth))x\(String(format: "%.2f", planeHeight))")
+
+                        // Auto-randomize spheres when we have a good surface available
+                        if !hasAutoRandomized && placedBoxes.isEmpty {
+                            Swift.print("🎯 Auto-randomizing spheres on detected surface!")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                                // Small delay to let AR settle
+                                self?.hasAutoRandomized = true
+                                self?.randomizeLootBoxes()
+                            }
+                        }
                     }
                 }
                 // Disabled: Don't create occlusion planes for vertical planes (was causing dark boxes everywhere)
@@ -1139,9 +1161,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         let anchor = AnchorEntity(world: boxTransform)
         
-        // Randomly choose what type of object to place (chalice, treasure box, or sphere)
-        let objectTypes: [PlacedObjectType] = [.chalice, .treasureBox, .sphere]
-        let selectedObjectType = objectTypes.randomElement()!
+        // Always place spheres - no chalices or treasure boxes
+        let selectedObjectType: PlacedObjectType = .sphere
 
         Swift.print("🎲 Placing \(selectedObjectType) for \(location.name)")
 
@@ -1255,6 +1276,80 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
     
+    // MARK: - Direction Arrow Helper
+    /// Updates the direction to the nearest placed object
+    private func updateNearestObjectDirection() {
+        guard let arView = arView,
+              let frame = arView.session.currentFrame,
+              !placedBoxes.isEmpty else {
+            nearestObjectDirection = nil
+            return
+        }
+
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+
+        // Get forward and up vectors for orientation
+        let forward = SIMD3<Float>(-cameraTransform.columns.2.x, -cameraTransform.columns.2.y, -cameraTransform.columns.2.z)
+        let up = SIMD3<Float>(cameraTransform.columns.1.x, cameraTransform.columns.1.y, cameraTransform.columns.1.z)
+
+        // Find nearest object
+        var nearestDistance: Float = .infinity
+        var nearestPosition: SIMD3<Float>? = nil
+
+        for (_, anchor) in placedBoxes {
+            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+            let objectPos = SIMD3<Float>(
+                anchorTransform.columns.3.x,
+                anchorTransform.columns.3.y,
+                anchorTransform.columns.3.z
+            )
+
+            let distance = length(objectPos - cameraPos)
+            if distance < nearestDistance {
+                nearestDistance = distance
+                nearestPosition = objectPos
+            }
+        }
+
+        guard let targetPos = nearestPosition else {
+            nearestObjectDirection = nil
+            return
+        }
+
+        // Calculate direction vector from camera to target
+        let directionVector = targetPos - cameraPos
+        let horizontalDirection = SIMD3<Float>(directionVector.x, 0, directionVector.z)
+
+        if length(horizontalDirection) < 0.1 {
+            // Directly above/below - can't determine horizontal direction
+            nearestObjectDirection = nil
+            return
+        }
+
+        // Normalize the horizontal direction
+        let normalizedDirection = normalize(horizontalDirection)
+
+        // Calculate angle in camera's local space
+        // Forward direction is -Z in camera space
+        let cameraForward = normalize(SIMD3<Float>(forward.x, 0, forward.z))
+        let cameraRight = normalize(cross(up, cameraForward))
+
+        // Project direction onto camera's right and forward vectors
+        let forwardDot = dot(normalizedDirection, cameraForward)
+        let rightDot = dot(normalizedDirection, cameraRight)
+
+        // Calculate angle from forward direction (clockwise, 0 = forward)
+        var angle = atan2(rightDot, forwardDot) * 180.0 / .pi
+
+        // Normalize to 0-360 range
+        if angle < 0 {
+            angle += 360
+        }
+
+        nearestObjectDirection = Double(angle)
+    }
+
     // MARK: - Distance Text Overlay
     /// Creates a 3D text entity for displaying distance
     private func createDistanceTextEntity() -> ModelEntity {
@@ -1454,6 +1549,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // CRITICAL: Must be at least 3m away (preferably more)
             boxPosition = cameraPos + forward * max(fallbackMinDistance, 3.0)
             boxPosition.y = cameraPos.y - 1.5
+
+            // DEBUG: Log placement details
+            Swift.print("📍 Fallback placement: camera at (\(String(format: "%.1f", cameraPos.x)), \(String(format: "%.1f", cameraPos.y)), \(String(format: "%.1f", cameraPos.z)))")
+            Swift.print("📍 Forward direction: (\(String(format: "%.2f", forward.x)), \(String(format: "%.2f", forward.y)), \(String(format: "%.2f", forward.z)))")
+            Swift.print("📍 Placing at: (\(String(format: "%.1f", boxPosition.x)), \(String(format: "%.1f", boxPosition.y)), \(String(format: "%.1f", boxPosition.z)))")
         }
 
         // CRITICAL: Final safety check - enforce ABSOLUTE minimum 3m distance from camera
@@ -1468,6 +1568,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             let direction = normalize(boxPosition - cameraPos)
             boxPosition = cameraPos + direction * 5.0
             Swift.print("⚠️ Adjusted \(location.name) placement to 5m minimum distance from camera")
+        }
+
+        // ADDITIONAL SAFETY: Ensure box is below camera level and not too high
+        if boxPosition.y > cameraPos.y - 0.5 {
+            boxPosition.y = cameraPos.y - 1.5 // Ensure it's at least 1.5m below camera
+            Swift.print("⚠️ Adjusted \(location.name) to be below camera level")
         }
         
         // Use the standard placement function instead of duplicating logic
@@ -1543,6 +1649,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             self?.placedBoxes.removeValue(forKey: locationId)
             self?.findableObjects.removeValue(forKey: locationId)
             Swift.print("🎉 Collected: \(objectName)")
+
+            // Check if all spheres are found and disable sphere mode
+            if let self = self, self.sphereModeActive {
+                let remainingSpheres = self.placedBoxes.keys.filter { $0.hasPrefix("AR_SPHERE_") }
+                if remainingSpheres.isEmpty {
+                    Swift.print("🎯 All spheres collected - exiting sphere mode")
+                    self.sphereModeActive = false
+                }
+            }
         }
     }
     
@@ -1560,7 +1675,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
         
         Swift.print("👆 Tap detected at screen: (\(tapLocation.x), \(tapLocation.y))")
-        Swift.print("   Placed boxes count: \(placedBoxes.count)")
+        Swift.print("   Placed boxes count: \(placedBoxes.count), keys: \(placedBoxes.keys.sorted())")
         
         // Get tap world position using raycast
         var tapWorldPosition: SIMD3<Float>? = nil
@@ -1660,7 +1775,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // UNIFIED FINDABLE BEHAVIOR: All objects in placedBoxes are findable and clickable
         // If we found a location ID (tapped on any findable object), trigger find behavior
+        Swift.print("🎯 Tap result: locationId = \(locationId ?? "nil")")
         if let idString = locationId {
+            Swift.print("🎯 Processing tap on: \(idString)")
             // Try to find in location manager first
             if let location = locationManager.locations.first(where: { $0.id == idString }) {
                 // Check if already collected
@@ -1677,12 +1794,16 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     
                     // Find the orange orb/sphere
                     var orangeOrb: ModelEntity? = nil
+                    Swift.print("🔍 Looking for sphere in anchor children: \(anchor.children.count) children")
                     for child in anchor.children {
-                        if let modelEntity = child as? ModelEntity,
-                           modelEntity.components[PointLightComponent.self] != nil {
-                            // This is the sphere/orb
-                                    orangeOrb = modelEntity
-                                    break
+                        if let modelEntity = child as? ModelEntity {
+                            Swift.print("   Child: \(modelEntity.name), has PointLight: \(modelEntity.components[PointLightComponent.self] != nil)")
+                            if modelEntity.components[PointLightComponent.self] != nil {
+                                // This is the sphere/orb
+                                orangeOrb = modelEntity
+                                Swift.print("   ✅ Found sphere: \(modelEntity.name)")
+                                break
+                            }
                         }
                     }
                     
@@ -1708,16 +1829,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     
                     Swift.print("🎯 Randomized treasure box tapped - triggering find!")
                     
-                    // For randomized boxes, we need to handle them differently since they're not in locationManager
-                    // But we can still trigger the find animation and effects
-                    guard var info = anchor.components[LootBoxInfoComponent.self],
-                          let container = info.container,
-                          !info.isOpening else {
-                        return
-                    }
-                    
-                    info.isOpening = true
-                    anchor.components[LootBoxInfoComponent.self] = info
+                    // For randomized spheres, use FindableObject.find() instead of container logic
                     
                     // Mark as found to prevent duplicate finds
                     foundLootBoxes.insert(idString)
@@ -1766,22 +1878,19 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         self?.collectionNotificationBinding?.wrappedValue = nil
                     }
                     
-                    // Animate sphere "find" animation (+25% for 0.5s, ease out, then pop by shrinking 100%)
+                    // Animate sphere "find" animation - spheres just disappear with confetti
                     if let orb = orangeOrb {
                         LootBoxAnimation.animateSphereFind(orb: orb) {
-                            // Open the loot box with confetti
-                            LootBoxAnimation.openLootBox(container: container, location: tempLocation, tapWorldPosition: anchorWorldPos) { [weak self] in
-                                anchor.removeFromParent()
-                                self?.placedBoxes.removeValue(forKey: idString)
-                                Swift.print("🎉 Collected: \(tempLocation.name)")
-                            }
+                            // Sphere collection complete
+                            anchor.removeFromParent()
+                            self.placedBoxes.removeValue(forKey: idString)
+                            Swift.print("🎉 Collected sphere: \(tempLocation.name)")
                         }
                     } else {
-                        LootBoxAnimation.openLootBox(container: container, location: tempLocation, tapWorldPosition: anchorWorldPos) { [weak self] in
-                            anchor.removeFromParent()
-                            self?.placedBoxes.removeValue(forKey: idString)
-                            Swift.print("🎉 Collected: \(tempLocation.name)")
-                        }
+                        // No sphere found, just remove the anchor
+                        anchor.removeFromParent()
+                        self.placedBoxes.removeValue(forKey: idString)
+                        Swift.print("🎉 Collected sphere (no animation): \(tempLocation.name)")
                     }
                 }
                 return
