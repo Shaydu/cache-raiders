@@ -10,6 +10,7 @@ struct ARLootBoxView: UIViewRepresentable {
     @Binding var distanceToNearest: Double?
     @Binding var temperatureStatus: String?
     @Binding var collectionNotification: String?
+    @Binding var nearestObjectDirection: Double?
     @State private var arView: ARView?
     
     func makeUIView(context: Context) -> ARView {
@@ -39,7 +40,7 @@ struct ARLootBoxView: UIViewRepresentable {
         // Uncomment the line below to enable debug visuals (green feature points, anchor origins)
         // arView.debugOptions = [.showFeaturePoints, .showAnchorOrigins]
         
-        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification)
+        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection)
         return arView
     }
     
@@ -92,14 +93,13 @@ struct ARLootBoxView: UIViewRepresentable {
         // Handle pending AR item placement
         if let pendingItem = locationManager.pendingARItem {
             print("🎯 Pending AR item placement triggered: \(pendingItem.name)")
+            // Clear the pending item IMMEDIATELY to prevent duplicate placements
+            // This prevents updateUIView from calling placeARItem multiple times
+            locationManager.pendingARItem = nil
+            print("🔄 Pending AR item cleared immediately to prevent duplicates")
             // Defer the actual placement to avoid view update publishing issues
             DispatchQueue.main.async {
                 context.coordinator.placeARItem(pendingItem)
-                // Clear the pending item after placement is complete
-                DispatchQueue.main.async {
-                    locationManager.pendingARItem = nil
-                    print("🔄 Pending AR item cleared")
-                }
             }
         }
     }

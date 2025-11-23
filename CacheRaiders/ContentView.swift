@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var distanceToNearest: Double?
     @State private var temperatureStatus: String?
     @State private var collectionNotification: String?
+    @State private var nearestObjectDirection: Double?
     
     var body: some View {
         ZStack {
@@ -20,7 +21,8 @@ struct ContentView: View {
                 nearbyLocations: $nearbyLocations,
                 distanceToNearest: $distanceToNearest,
                 temperatureStatus: $temperatureStatus,
-                collectionNotification: $collectionNotification
+                collectionNotification: $collectionNotification,
+                nearestObjectDirection: $nearestObjectDirection
             )
             .ignoresSafeArea()
             
@@ -33,6 +35,34 @@ struct ContentView: View {
                             .cornerRadius(10)
                     }
                     .padding(.top)
+                    
+                    Spacer()
+                    
+                    // Arrows and distance to nearest box
+                    if let distance = distanceToNearest {
+                        HStack(spacing: 8) {
+                            // Rotated pointer icon pointing to nearest object
+                            if let direction = nearestObjectDirection {
+                                Image(systemName: "location.north.line.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                                    .rotationEffect(.degrees(direction))
+                            } else {
+                                Image(systemName: "location.north.line.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.white)
+                            }
+                            
+                            Text(String(format: "%.1fm", distance))
+                                .font(.caption)
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(8)
+                        }
+                        .padding(.top)
+                    }
                     
                     Spacer()
                     
@@ -75,12 +105,6 @@ struct ContentView: View {
                             .padding()
                             .background(.ultraThinMaterial)
                             .cornerRadius(10)
-                        
-                        Text("💡 Tap on a loot box to discover and collect it")
-                            .font(.caption)
-                            .padding()
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(10)
                     }
                     
                     // Collection notification
@@ -113,36 +137,40 @@ struct ContentView: View {
                             .cornerRadius(10)
                     }
                     
-                    // Randomize button
-                    Button(action: {
-                        locationManager.shouldRandomize = true
-                    }) {
-                        HStack {
-                            Image(systemName: "shuffle")
-                            Text("Randomize Loot Boxes")
+                    // Randomize and Reset buttons side by side
+                    HStack(spacing: 8) {
+                        // Randomize button
+                        Button(action: {
+                            locationManager.shouldRandomize = true
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "shuffle")
+                                Text("Randomize")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.orange)
+                            .cornerRadius(8)
                         }
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .padding()
-                        .background(Color.orange)
-                        .cornerRadius(10)
-                    }
 
-                    // Reset collected status button
-                    Button(action: {
-                        locationManager.resetAllLocations()
-                    }) {
-                        HStack {
-                            Image(systemName: "arrow.clockwise")
-                            Text("Reset All to Not Found")
+                        // Reset collected status button
+                        Button(action: {
+                            locationManager.resetAllLocations()
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.clockwise")
+                                Text("Reset")
+                            }
+                            .font(.caption)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.red)
+                            .cornerRadius(8)
                         }
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .padding()
-                        .background(Color.red)
-                        .cornerRadius(10)
                     }
-                    .padding(.top, 4)
                 }
                 .padding()
             }

@@ -78,8 +78,8 @@ class ChaliceLootContainer {
             wrapperEntity.addChild(loadedEntity)
 
             // Scale the wrapper to match desired size
-            // For USDZ models, we need to be more conservative with scaling
-            wrapperEntity.scale = SIMD3<Float>(repeating: size * 0.3) // Reduced from 0.5 - USDZ models are often already scaled
+            // For USDZ models, scale to make chalice more visible
+            wrapperEntity.scale = SIMD3<Float>(repeating: size * 0.8) // Increased from 0.3 to make chalice more visible
 
             // Ensure wrapper is right-side up (not upside down)
             wrapperEntity.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))

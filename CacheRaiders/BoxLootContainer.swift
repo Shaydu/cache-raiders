@@ -13,7 +13,7 @@ class BoxLootContainer {
         let baseSize = type.size * sizeMultiplier
         
         // Load the treasure chest model
-        let (box, lid) = loadTreasureChestModel(size: baseSize, type: type)
+        let (box, lid, builtInAnimation) = loadTreasureChestModel(size: baseSize, type: type, id: id)
         
         // Create prize that sits inside the box
         let prize = createPrize(type: type, size: baseSize)
@@ -37,18 +37,25 @@ class BoxLootContainer {
             container: container,
             box: box,
             lid: doorLid, // Lid/door from model or dummy
-            prize: prize
+            prize: prize,
+            builtInAnimation: builtInAnimation // Store built-in animation if available
         )
     }
     
     /// Loads a treasure chest USDZ model (randomly chooses between available models)
     /// Note: Make sure "Stylised_Treasure_Chest.usdz" and "Treasure_Chest.usdz" are added to the Xcode project and included in the app bundle
-    private static func loadTreasureChestModel(size: Float, type: LootBoxType) -> (box: ModelEntity, lid: ModelEntity?) {
-        // List of available treasure chest models (in order of preference)
-        let chestModels = ["Stylised_Treasure_Chest", "Treasure_Chest"]
+    private static func loadTreasureChestModel(size: Float, type: LootBoxType, id: String) -> (box: ModelEntity, lid: ModelEntity?, animation: AnimationResource?) {
+        // For treasureChest type, always use Treasure_Chest.usdz
+        // For other types, randomly choose between available models
+        let chestModels: [String]
+        if case .treasureChest = type {
+            chestModels = ["Treasure_Chest"] // Always use Treasure_Chest for treasure chest type
+        } else {
+            chestModels = ["Stylised_Treasure_Chest", "Treasure_Chest"] // Random for other types
+        }
         
-        // Randomly select a model (or try them in order if random fails)
-        let selectedModel = chestModels.randomElement() ?? chestModels[0]
+        // Select model (for treasureChest, use first; for others, random)
+        let selectedModel = type == .treasureChest ? chestModels[0] : (chestModels.randomElement() ?? chestModels[0])
         
         // Try to load the selected model
         guard let modelURL = Bundle.main.url(forResource: selectedModel, withExtension: "usdz") else {
@@ -58,17 +65,17 @@ class BoxLootContainer {
                 print("⚠️ Could not find any treasure chest model in bundle")
                 print("   Make sure Stylised_Treasure_Chest.usdz and/or Treasure_Chest.usdz are added to the Xcode project")
                 print("   Using fallback procedural box")
-                return (createFallbackBox(size: size, color: type.color, glowColor: type.glowColor), createDoor(size: size, color: type.color, glowColor: type.glowColor))
+                return (createFallbackBox(size: size, color: type.color, glowColor: type.glowColor, id: id), createDoor(size: size, color: type.color, glowColor: type.glowColor), nil)
             }
             
-            return loadChestModelFromURL(fallbackURL, size: size, type: type, modelName: fallbackModel)
+            return loadChestModelFromURL(fallbackURL, size: size, type: type, modelName: fallbackModel, id: id)
         }
         
-        return loadChestModelFromURL(modelURL, size: size, type: type, modelName: selectedModel)
+        return loadChestModelFromURL(modelURL, size: size, type: type, modelName: selectedModel, id: id)
     }
     
     /// Helper function to load a chest model from a URL
-    private static func loadChestModelFromURL(_ modelURL: URL, size: Float, type: LootBoxType, modelName: String) -> (box: ModelEntity, lid: ModelEntity?) {
+    private static func loadChestModelFromURL(_ modelURL: URL, size: Float, type: LootBoxType, modelName: String, id: String) -> (box: ModelEntity, lid: ModelEntity?, animation: AnimationResource?) {
         do {
             // Load the model entity - this might return a scene with multiple entities
             let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
@@ -90,8 +97,12 @@ class BoxLootContainer {
             }
             
             // Scale the model to match desired size
-            // Adjust scale based on model's original size (you may need to tweak this)
-            modelEntity.scale = SIMD3<Float>(repeating: size * 0.5) // Adjust multiplier as needed
+            // USDZ models are typically 1 unit = 1 meter, so scale directly by size
+            // The 'size' parameter is already the desired final size (baseSize = type.size * sizeMultiplier)
+            // ALL boxes (treasure chest, ancient artifact, puzzle box, etc.) use the same uniform scale
+            // Scale by size * 0.03 (40% reduction from 0.05) to make boxes smaller
+            // This gives us final sizes of approximately 0.0045-0.009m (4.5-9mm) which is small but visible
+            modelEntity.scale = SIMD3<Float>(repeating: size * 0.03)
             
             // Ensure model is right-side up (not upside down)
             // Some models may load with incorrect orientation
@@ -110,28 +121,40 @@ class BoxLootContainer {
                        findEntity(named: "chest_lid", in: modelEntity) ??
                        findEntity(named: "Chest_Lid", in: modelEntity)
             
+            // Check for built-in animations BEFORE extracting lid (animations might be on the whole model)
+            var builtInAnimation: AnimationResource? = nil
+            let availableAnimations = modelEntity.availableAnimations
+            if !availableAnimations.isEmpty {
+                // Use the first available animation (typically the opening animation)
+                builtInAnimation = availableAnimations[0]
+                print("✅ Found \(availableAnimations.count) built-in animation(s) in model \(modelName) - will use for opening")
+            }
+            
             // If lid found, remove it from parent so we can animate it separately
             if let lid = lidEntity {
                 lid.removeFromParent()
                 print("✅ Found and extracted lid from treasure chest model: \(modelName)")
             } else {
                 print("ℹ️ No lid found in model \(modelName) - chest may open differently or lid is part of main mesh")
-                // If the model has built-in animations, we might want to use those instead
-                // Check for available animations
-                let availableAnimations = modelEntity.availableAnimations
-                if !availableAnimations.isEmpty {
-                    print("   Model has \(availableAnimations.count) available animation(s) - may use built-in animations")
-                }
             }
             
             // Apply materials/colors if needed
             applyMaterials(to: modelEntity, color: type.color, glowColor: type.glowColor)
             
-            return (modelEntity, lidEntity)
+            // Set name on the box entity for tap detection (same as container ID)
+            // This ensures taps on the box itself (not just the container) are detected
+            // The tap handler walks up the hierarchy, so it will find the container with matching ID
+            modelEntity.name = id
+            
+            // Store animation in a custom component or return it separately
+            // For now, we'll need to modify the return type to include the animation
+            // But since we can't change the return type easily, let's store it in the model entity
+            // We'll access it later through the container
+            return (modelEntity, lidEntity, builtInAnimation)
         } catch {
             print("❌ Error loading treasure chest model \(modelName): \(error)")
             print("   Using fallback procedural box")
-            return (createFallbackBox(size: size, color: type.color, glowColor: type.glowColor), createDoor(size: size, color: type.color, glowColor: type.glowColor))
+            return (createFallbackBox(size: size, color: type.color, glowColor: type.glowColor, id: id), createDoor(size: size, color: type.color, glowColor: type.glowColor), nil)
         }
     }
     
@@ -190,8 +213,10 @@ class BoxLootContainer {
     }
     
     /// Fallback: creates a procedural box if model can't be loaded
-    private static func createFallbackBox(size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
-        return createBox(size: size, color: color, glowColor: glowColor)
+    private static func createFallbackBox(size: Float, color: UIColor, glowColor: UIColor, id: String) -> ModelEntity {
+        let box = createBox(size: size, color: color, glowColor: glowColor)
+        box.name = id // Set name for tap detection
+        return box
     }
     
     private static func createBox(size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
@@ -366,8 +391,8 @@ class BoxLootContainer {
         let light = PointLightComponent(color: type.glowColor, intensity: 400)
         entity.components.set(light)
         
-        // Add floating animation
-        addFloatingAnimation(to: entity)
+        // DISABLED: Floating animation causes objects to float above ground
+        // addFloatingAnimation(to: entity)
     }
     
     private static func addFloatingAnimation(to entity: ModelEntity) {

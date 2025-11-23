@@ -19,7 +19,10 @@ class LootBoxAnimation {
         tapWorldPosition: SIMD3<Float>? = nil,
         onComplete: @escaping () -> Void
     ) {
+        Swift.print("🎬 openLootBox called for: \(location.name), type: \(location.type)")
+        
         // Play opening sound
+        Swift.print("🔊 Playing opening sound...")
         playOpeningSound()
         
         // Create confetti effect at tap position if provided, otherwise at container position
@@ -37,16 +40,21 @@ class LootBoxAnimation {
         } else {
             confettiPosition = container.container.position
         }
+        Swift.print("🎊 Creating confetti effect...")
         createConfettiEffect(at: confettiPosition, parent: parentEntity)
         
         // Determine animation type based on loot box type
+        Swift.print("🎭 Determining animation type for: \(location.type)")
         switch location.type {
-        case .goldenIdol:
+        case .goldenIdol, .chalice:
+            Swift.print("   → Using chalice animation")
             openChalice(container: container, onComplete: onComplete)
-        case .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet:
+        case .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet, .treasureChest:
+            Swift.print("   → Using box animation")
             openBox(container: container, onComplete: onComplete)
         case .sphere:
             // Spheres don't need opening animation - just complete immediately
+            Swift.print("   → Sphere (no animation needed)")
             onComplete()
         }
     }
@@ -237,35 +245,128 @@ class LootBoxAnimation {
         // Rotate prize as it rises
         animatePrizeRotation(prize: container.prize, duration: 1.0)
         
+        // Safety: ensure completion is called even if animation fails
+        var completionCalled = false
+        let safeCompletion = {
+            if !completionCalled {
+                completionCalled = true
+                onComplete()
+            }
+        }
+        
+        // Call completion after animation duration
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            onComplete()
+            safeCompletion()
+        }
+        
+        // Safety timeout: ensure completion is called after 2 seconds maximum
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            safeCompletion()
         }
     }
     
-    /// Opens a box container - door swings open
+    /// Opens a box container - uses built-in animation if available (looped), otherwise custom animation
     private static func openBox(container: LootBoxContainer, onComplete: @escaping () -> Void) {
-        // Animate door swinging open (rotate around Y axis on the left side)
-        let doorRotationAngle = Float.pi / 2.2 // Open door about 82 degrees
+        // First, try to use built-in animation from the USDZ model if available
+        if let animation = container.builtInAnimation {
+            Swift.print("🎬 Playing built-in animation from USDZ model (will loop continuously)")
+            
+            // Play the built-in animation on the box entity
+            let _ = container.box.playAnimation(
+                animation,
+                transitionDuration: 0.2,
+                startsPaused: false
+            )
+            
+            // Loop the animation by restarting it when it completes
+            // Get animation duration (estimate 2 seconds if not available)
+            let estimatedDuration: TimeInterval = 2.0
+            var isLooping = true
+            
+            // Function to loop the animation continuously
+            func loopAnimation() {
+                guard isLooping else { return }
+                
+                // Restart the animation
+                let _ = container.box.playAnimation(
+                    animation,
+                    transitionDuration: 0.1,
+                    startsPaused: false
+                )
+                
+                // Schedule next loop
+                DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration) {
+                    loopAnimation()
+                }
+            }
+            
+            // Start looping after first play completes
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration) {
+                loopAnimation()
+            }
+            
+            // After animation plays for a bit (2-3 loops), show prize and then disappear
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration * 2.5) {
+                isLooping = false // Stop looping
+                container.prize.isEnabled = true
+                animatePrizeReveal(container: container, onComplete: onComplete)
+            }
+            
+            // Safety timeout: ensure completion is called
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration * 4.0) {
+                isLooping = false
+                onComplete()
+            }
+            return
+        }
         
-        // Get door's current position and calculate pivot (left edge)
-        let doorPos = container.lid.position
+        // Fallback to custom animation if no built-in animation available
+        print("🎬 Using custom animation (no built-in animation found)")
         
-        // Create rotation around the pivot point
-        let doorOpenTransform = Transform(
-            scale: container.lid.scale,
-            rotation: simd_quatf(angle: doorRotationAngle, axis: SIMD3<Float>(0, 1, 0)),
-            translation: doorPos
-        )
+        // Check if this is a treasure chest by checking if lid exists and is positioned on top
+        // Treasure chests have lids that open upward (rotate around X axis at the back edge)
+        // Other boxes have doors that swing open (rotate around Y axis)
         
-        // Animate door opening
-        container.lid.move(
-            to: doorOpenTransform,
-            relativeTo: container.container,
-            duration: 0.8,
-            timingFunction: .easeOut
-        )
+        // For treasure chests: lid opens upward like a chest
+        // For other boxes: door swings open like a door
+        let lidPos = container.lid.position
+        let isTreasureChest = lidPos.y > 0.1 // Treasure chest lids are typically on top (positive Y)
         
-        // After door opens, show and animate prize
+        if isTreasureChest {
+            // Treasure chest: lid opens upward (rotate around X axis at the back edge)
+            let lidRotationAngle = -Float.pi / 2.5 // Open lid about 72 degrees upward
+            
+            let lidOpenTransform = Transform(
+                scale: container.lid.scale,
+                rotation: simd_quatf(angle: lidRotationAngle, axis: SIMD3<Float>(1, 0, 0)),
+                translation: lidPos
+            )
+            
+            container.lid.move(
+                to: lidOpenTransform,
+                relativeTo: container.container,
+                duration: 0.8,
+                timingFunction: .easeOut
+            )
+        } else {
+            // Other boxes: door swings open (rotate around Y axis on the left side)
+            let doorRotationAngle = Float.pi / 2.2 // Open door about 82 degrees
+            
+            let doorOpenTransform = Transform(
+                scale: container.lid.scale,
+                rotation: simd_quatf(angle: doorRotationAngle, axis: SIMD3<Float>(0, 1, 0)),
+                translation: lidPos
+            )
+            
+            container.lid.move(
+                to: doorOpenTransform,
+                relativeTo: container.container,
+                duration: 0.8,
+                timingFunction: .easeOut
+            )
+        }
+        
+        // After lid/door opens, show and animate prize
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             container.prize.isEnabled = true
             animatePrizeReveal(container: container, onComplete: onComplete)

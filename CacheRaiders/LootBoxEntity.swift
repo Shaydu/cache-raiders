@@ -6,10 +6,12 @@ import AVFoundation
 // MARK: - Loot Box Type (Archaeological Artifacts)
 enum LootBoxType: String, CaseIterable, Codable {
     case goldenIdol = "Golden Idol"
+    case chalice = "Chalice"
     case ancientArtifact = "Ancient Artifact"
     case templeRelic = "Temple Relic"
     case puzzleBox = "Puzzle Box"
     case stoneTablet = "Stone Tablet"
+    case treasureChest = "Treasure Chest"
     case sphere = "Mysterious Sphere"
 
     var displayName: String {
@@ -19,10 +21,12 @@ enum LootBoxType: String, CaseIterable, Codable {
     var color: UIColor {
         switch self {
         case .goldenIdol: return UIColor(red: 0.85, green: 0.65, blue: 0.13, alpha: 1.0) // Gold
+        case .chalice: return UIColor(red: 0.8, green: 0.7, blue: 0.5, alpha: 1.0) // Metallic bronze/gold
         case .ancientArtifact: return UIColor(red: 0.6, green: 0.4, blue: 0.2, alpha: 1.0) // Bronze
         case .templeRelic: return UIColor(red: 0.4, green: 0.3, blue: 0.2, alpha: 1.0) // Dark stone
         case .puzzleBox: return UIColor(red: 0.7, green: 0.5, blue: 0.3, alpha: 1.0) // Weathered wood
         case .stoneTablet: return UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1.0) // Stone gray
+        case .treasureChest: return UIColor(red: 0.6, green: 0.4, blue: 0.2, alpha: 1.0) // Brown/wooden
         case .sphere: return UIColor(red: 0.9, green: 0.1, blue: 0.1, alpha: 1.0) // Red/orange sphere
         }
     }
@@ -30,10 +34,12 @@ enum LootBoxType: String, CaseIterable, Codable {
     var glowColor: UIColor {
         switch self {
         case .goldenIdol: return UIColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 1.0) // Amber
+        case .chalice: return UIColor(red: 1.0, green: 0.85, blue: 0.5, alpha: 1.0) // Warm golden glow
         case .ancientArtifact: return UIColor(red: 1.0, green: 0.6, blue: 0.2, alpha: 1.0) // Orange glow
         case .templeRelic: return UIColor(red: 0.8, green: 0.6, blue: 0.4, alpha: 1.0) // Warm stone
         case .puzzleBox: return UIColor(red: 0.9, green: 0.7, blue: 0.3, alpha: 1.0) // Golden
         case .stoneTablet: return UIColor(red: 0.6, green: 0.8, blue: 0.9, alpha: 1.0) // Mystical blue
+        case .treasureChest: return UIColor(red: 1.0, green: 0.8, blue: 0.4, alpha: 1.0) // Golden glow
         case .sphere: return UIColor(red: 1.0, green: 0.3, blue: 0.1, alpha: 1.0) // Bright orange glow
         }
     }
@@ -41,10 +47,12 @@ enum LootBoxType: String, CaseIterable, Codable {
     var size: Float {
         switch self {
         case .goldenIdol: return 0.3
+        case .chalice: return 0.3 // Same size as golden idol (chalice container)
         case .ancientArtifact: return 0.4
         case .templeRelic: return 0.45
         case .puzzleBox: return 0.38
         case .stoneTablet: return 0.5
+        case .treasureChest: return 0.61 // 2 feet = 0.61 meters (width/height), depth handled separately
         case .sphere: return 0.15 // Smaller sphere
         }
     }
@@ -56,6 +64,7 @@ struct LootBoxContainer {
     let box: ModelEntity
     let lid: ModelEntity
     let prize: ModelEntity
+    var builtInAnimation: AnimationResource? = nil // Optional built-in animation from USDZ model
 }
 
 // MARK: - Loot Box Entity
@@ -64,9 +73,9 @@ class LootBoxEntity {
         // Determine container type based on loot box type
         // Use chalice for golden idol, box for others
         switch type {
-        case .goldenIdol:
+        case .goldenIdol, .chalice:
             return ChaliceLootContainer.create(type: type, id: id, sizeMultiplier: sizeMultiplier)
-        case .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet:
+        case .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet, .treasureChest:
             return BoxLootContainer.create(type: type, id: id, sizeMultiplier: sizeMultiplier)
         case .sphere:
             // Spheres don't use containers - they are handled directly in ARCoordinator
@@ -129,6 +138,12 @@ class LootBoxEntity {
             prizeMaterial.color = .init(tint: type.color)
             prizeMaterial.roughness = 0.2
             prizeMaterial.metallic = 0.8
+        case .chalice:
+            // Chalice prize - similar to golden idol
+            prizeMesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.6, depth: size * 0.3, cornerRadius: 0.05)
+            prizeMaterial.color = .init(tint: type.color)
+            prizeMaterial.roughness = 0.2
+            prizeMaterial.metallic = 0.8
         case .ancientArtifact:
             prizeMesh = MeshResource.generateBox(width: size * 0.5, height: size * 0.4, depth: size * 0.4, cornerRadius: 0.03)
             prizeMaterial.color = .init(tint: type.color)
@@ -149,6 +164,12 @@ class LootBoxEntity {
             prizeMaterial.color = .init(tint: type.color)
             prizeMaterial.roughness = 0.6
             prizeMaterial.metallic = 0.3
+        case .treasureChest:
+            // Treasure chest prize - golden coins/treasure
+            prizeMesh = MeshResource.generateBox(width: size * 0.5, height: size * 0.3, depth: size * 0.5, cornerRadius: 0.03)
+            prizeMaterial.color = .init(tint: type.color)
+            prizeMaterial.roughness = 0.2
+            prizeMaterial.metallic = 0.9
         case .sphere:
             // Spheres don't have prizes - they are handled directly in ARCoordinator
             fatalError("Spheres should not be created using LootBoxEntity.createPrize")

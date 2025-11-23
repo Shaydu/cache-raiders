@@ -228,7 +228,23 @@ class LootBoxLocationManager: ObservableObject {
     // Get nearby locations within radius
     func getNearbyLocations(userLocation: CLLocation) -> [LootBoxLocation] {
         return locations.filter { location in
-            !location.collected && userLocation.distance(from: location.location) <= maxSearchDistance
+            // Only include uncollected locations
+            guard !location.collected else { return false }
+            
+            // Exclude AR-only locations (AR_SPHERE_ prefix) - these are AR-only and shouldn't be counted as "nearby" for GPS
+            // They're placed in AR space, not GPS space, so they don't have meaningful GPS coordinates
+            if location.id.hasPrefix("AR_SPHERE_") {
+                return false
+            }
+            
+            // Exclude locations with invalid GPS coordinates (lat: 0, lon: 0) - these are AR-only or tap-created
+            // They don't have real GPS positions, so distance calculation is meaningless
+            if location.latitude == 0 && location.longitude == 0 {
+                return false
+            }
+            
+            // Check if within search distance
+            return userLocation.distance(from: location.location) <= maxSearchDistance
         }
     }
     

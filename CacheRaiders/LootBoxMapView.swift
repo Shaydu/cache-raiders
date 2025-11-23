@@ -15,14 +15,15 @@ struct LootBoxMapView: View {
     @ObservedObject var locationManager: LootBoxLocationManager
     @ObservedObject var userLocationManager: UserLocationManager
     @State private var position = MapCameraPosition.region(MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+        center: CLLocationCoordinate2D(latitude: 0, longitude: 0), // Will be updated when user location is available
         span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
     ))
+    @State private var hasInitialized = false
 
     // Add mode state
     @State private var isAddModeActive = false
     @State private var selectedItemType: LootBoxType = .goldenIdol
-    @State private var crosshairPosition: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194)
+    @State private var crosshairPosition: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 0, longitude: 0)
     @State private var crosshairScreenPosition: CGPoint = .zero
 
     // Map stability controls
@@ -65,9 +66,32 @@ struct LootBoxMapView: View {
             ))
         }
         
-        // Add all uncollected loot box locations
-        annotations.append(contentsOf: locationManager.locations
-            .filter { !$0.collected }
+        // Add all uncollected loot box locations that have valid GPS coordinates
+        // Exclude AR-only locations (AR_SPHERE_ prefix but not AR_SPHERE_MAP_) and locations with invalid coordinates (0,0)
+        let filteredLocations = locationManager.locations.filter { location in
+            guard !location.collected else { 
+                return false 
+            }
+            guard !(location.latitude == 0 && location.longitude == 0) else { 
+                return false // Exclude invalid GPS coordinates
+            }
+            
+            // Include map-added spheres (AR_SPHERE_MAP_ prefix)
+            if location.id.hasPrefix("AR_SPHERE_MAP_") {
+                print("🗺️ Including map sphere: \(location.name) at (\(location.latitude), \(location.longitude))")
+                return true
+            }
+            
+            // Exclude AR-only spheres (AR_SPHERE_ prefix without MAP)
+            if location.id.hasPrefix("AR_SPHERE_") {
+                return false
+            }
+            
+            // Include all other items (AR_ITEM_, GPS-based, etc.)
+            return true
+        }
+        
+        annotations.append(contentsOf: filteredLocations
             .map { location in
                 return MapAnnotationItem(
                     id: location.id,
@@ -357,14 +381,25 @@ struct LootBoxMapView: View {
             }
         }
         .onAppear {
-            // Only set initial region if we don't have a user location and no locations exist
-            if shouldAutoCenter && userLocationManager.currentLocation == nil && locationManager.locations.isEmpty {
+            // Request location permission and start updating location
+            userLocationManager.requestLocationPermission()
+            userLocationManager.startUpdatingLocation()
+            
+            // Try to center on user location immediately if available
+            if let userLocation = userLocationManager.currentLocation {
                 updateRegion()
+                hasInitialized = true
             }
         }
         .onChange(of: userLocationManager.currentLocation) {
+            // On first location update, center the map if not already initialized
+            if !hasInitialized, let userLocation = userLocationManager.currentLocation {
+                updateRegion()
+                hasInitialized = true
+            }
+            
             // Only auto-center if enabled and debounce to prevent rapid updates
-            if shouldAutoCenter {
+            if shouldAutoCenter && hasInitialized {
                 let now = Date()
                 if now.timeIntervalSince(lastUpdateTime) > 1.0 { // Minimum 1 second between updates
                     lastUpdateTime = now
@@ -435,6 +470,14 @@ struct LootBoxMapView: View {
             )
 
             locationManager.addLocation(sphereLocation)
+            
+            // Debug: Verify the location was added correctly
+            print("🗺️ Added sphere location to map:")
+            print("   ID: \(sphereLocation.id)")
+            print("   Name: \(sphereLocation.name)")
+            print("   Coordinates: (\(sphereLocation.latitude), \(sphereLocation.longitude))")
+            print("   Collected: \(sphereLocation.collected)")
+            print("   Total locations in manager: \(locationManager.locations.count)")
 
             // Show success message
             successMessage = "Sphere added to AR room!"
@@ -450,10 +493,12 @@ struct LootBoxMapView: View {
             // For other items, queue them for AR placement
             let itemNames = [
                 LootBoxType.goldenIdol: ["Golden Idol", "Golden Statue", "Gold Relic"],
+                LootBoxType.chalice: ["Sacred Chalice", "Ancient Chalice", "Golden Chalice"],
                 LootBoxType.ancientArtifact: ["Ancient Artifact", "Ancient Pottery", "Ancient Scroll"],
-                LootBoxType.templeRelic: ["Temple Relic", "Sacred Chalice", "Temple Treasure"],
+                LootBoxType.templeRelic: ["Temple Relic", "Sacred Relic", "Temple Treasure"],
                 LootBoxType.puzzleBox: ["Puzzle Box", "Mystery Box", "Enigma Container"],
-                LootBoxType.stoneTablet: ["Stone Tablet", "Ancient Tablet", "Carved Stone"]
+                LootBoxType.stoneTablet: ["Stone Tablet", "Ancient Tablet", "Carved Stone"],
+                LootBoxType.treasureChest: ["Treasure Chest", "Ancient Chest", "Locked Chest"]
             ]
 
             let names = itemNames[selectedItemType] ?? ["Unknown Item"]
