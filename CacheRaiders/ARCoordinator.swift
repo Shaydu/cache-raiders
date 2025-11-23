@@ -48,7 +48,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private func setupObjectRecognition() {
         // Configure image classification request
         objectClassificationRequest.usesCPUOnly = false // Use GPU for better performance
-        objectClassificationRequest.revision = VNClassifyImageRequestRevisionLatest
 
         // Use built-in classification model for general object recognition
         print("🔍 Object recognition initialized - will classify objects every \(recognitionInterval) seconds")
@@ -615,6 +614,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     // Regenerate loot boxes at random locations in the AR room
     func randomizeLootBoxes() {
+        print("🎲 RANDOMIZE TRIGGERED - Starting sphere placement...")
+
         guard let arView = arView,
               let frame = arView.session.currentFrame,
               let locationManager = locationManager else {
@@ -622,11 +623,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
+        print("🗑️ Removing \(placedBoxes.count) existing spheres...")
         // Remove all existing placed boxes
         for (_, anchor) in placedBoxes {
             anchor.removeFromParent()
         }
         placedBoxes.removeAll()
+        findableObjects.removeAll() // Also clear findable objects
 
         // Generate exactly 3 new loot boxes at random positions (since we only allow 3 total)
         let numberOfBoxes = 3
@@ -741,7 +744,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             placedCount += 1
         }
         
-        Swift.print("✅ Randomized and placed \(placedCount) loot boxes")
+        Swift.print("✅ Randomized and placed \(placedCount) spheres!")
+        if placedCount == 0 {
+            Swift.print("⚠️ WARNING: No spheres were placed! Check debug logs above for placement failures.")
+        }
     }
 
     // Detect if we're indoors by checking for vertical planes (walls)

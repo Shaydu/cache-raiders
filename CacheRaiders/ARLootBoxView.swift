@@ -63,9 +63,11 @@ struct ARLootBoxView: UIViewRepresentable {
         
         // Handle randomization trigger
         if locationManager.shouldRandomize {
+            print("🎯 Randomize button pressed - triggering sphere placement...")
             context.coordinator.randomizeLootBoxes()
             DispatchQueue.main.async {
                 locationManager.shouldRandomize = false
+                print("🔄 Randomize flag reset")
             }
         }
     }
