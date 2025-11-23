@@ -249,12 +249,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
             // COLLISION DETECTION: Hide objects when camera is too close (within their boundary)
             // Different object types have different sizes
-            let buffer: Float = 0.1 // Safety buffer
+            let buffer: Float = 0.5 // Safety buffer (increased for larger objects)
             var minDistanceForObject: Float
 
+            // Get the actual object size from the container
+            // Objects can be 0.3m to 1.0m in size, so we need to calculate based on actual size
             if hasContainer {
-                // Chalice or treasure box - use larger collision radius
-                minDistanceForObject = 0.25 + buffer // 0.25m radius + buffer
+                // For containers (chalice or treasure box), get the actual size
+                // The container's scale or bounds would give us the actual size
+                // For now, use a safe estimate based on max possible size (1.0m)
+                // Using half the max size (0.5m) as radius, plus buffer
+                minDistanceForObject = 0.5 + buffer // Max object half-size + buffer = 1.0m total
             } else {
                 // Standalone sphere - use sphere radius
                 minDistanceForObject = 0.15 + buffer // 0.15m radius + buffer
@@ -611,7 +616,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // Get search distance for placement range
         let searchDistance = Float(locationManager.maxSearchDistance)
-        let minDistance: Float = 5.0 // Minimum 5 meters from camera
+        let minDistance: Float = 5.0 // Minimum 5 meters from camera (for initial placement attempt)
         let maxDistance: Float = min(searchDistance * 0.8, 50.0)
         
         Swift.print("🎲 Randomizing \(numberOfBoxes) loot boxes in AR room...")
@@ -656,8 +661,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             let boxPosition = SIMD3<Float>(randomX, hitY, randomZ)
             let distanceFromCamera = length(boxPosition - cameraPos)
 
-            // CRITICAL: Enforce MINIMUM 1m distance from camera to prevent large objects spawning on/near camera
-            if distanceFromCamera < 1.0 {
+            // CRITICAL: Enforce MINIMUM 3m distance from camera to prevent large objects spawning on/near camera
+            if distanceFromCamera < 3.0 {
                 // Too close to camera - skip this position
                 continue
             }
@@ -675,7 +680,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     existingTransform.columns.3.y,
                     existingTransform.columns.3.z
                 )
-                if length(boxPosition - existingPos) < 1.5 {
+                if length(boxPosition - existingPos) < 3.0 {
                     tooClose = true
                     break
                 }
@@ -862,7 +867,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
             // Generate random position around camera using settings from maxSearchDistance
             // Use min 5m to avoid being too close to camera, max 80% of search distance to stay within room
-            let minDistance: Float = 5.0 // Minimum 5 meters from camera
+            let minDistance: Float = 5.0 // Minimum 5 meters from camera (for initial placement attempt)
             let searchDistance = Float(locationManager?.maxSearchDistance ?? 100.0)
             let maxDistance: Float = min(searchDistance * 0.8, 50.0) // Cap at 50m for practical AR limits
             let randomDistance = Float.random(in: minDistance...maxDistance)
@@ -905,9 +910,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             
             var boxPosition = SIMD3<Float>(randomX, hitY, randomZ)
 
-            // CRITICAL: Enforce MINIMUM 1m distance from camera to prevent large objects spawning on/near camera
+            // CRITICAL: Enforce MINIMUM 3m distance from camera to prevent large objects spawning on/near camera
             let distanceFromCamera = length(boxPosition - cameraPos)
-            if distanceFromCamera < 1.0 {
+            if distanceFromCamera < 3.0 {
                 // Too close to camera - skip this position
                 continue
             }
@@ -937,7 +942,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     existingTransform.columns.3.z
                 )
                 let distanceToExisting = length(boxPosition - existingPos)
-                if distanceToExisting < 1.5 {
+                if distanceToExisting < 3.0 {
                     tooCloseToOtherBox = true
                     break
                 }
@@ -959,7 +964,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     // Helper method to place a randomly selected object at a specific position
     private func placeBoxAtPosition(_ boxPosition: SIMD3<Float>, location: LootBoxLocation, in arView: ARView) {
-        // CRITICAL: Final safety check - ensure minimum 1m distance from camera
+        // CRITICAL: Final safety check - ensure minimum 3m distance from camera
         guard let frame = arView.session.currentFrame else {
             Swift.print("⚠️ Cannot place box: no AR frame available")
             return
@@ -968,7 +973,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
         let distanceFromCamera = length(boxPosition - cameraPos)
 
-        if distanceFromCamera < 1.0 {
+        if distanceFromCamera < 3.0 {
             Swift.print("⚠️ Rejected placement of \(location.name) - too close to camera (\(String(format: "%.2f", distanceFromCamera))m)")
             return
         }
@@ -978,9 +983,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         let anchor = AnchorEntity(world: boxTransform)
         
-        // Randomly choose what type of object to place (chalice, treasure box, or sphere)
-        let objectTypes: [PlacedObjectType] = [.chalice, .treasureBox, .sphere]
-        let selectedObjectType = objectTypes.randomElement()!
+        // Only place spheres (disable chalices and treasure boxes for now)
+        let selectedObjectType = PlacedObjectType.sphere
 
         Swift.print("🎲 Placing \(selectedObjectType) for \(location.name)")
 
@@ -1246,7 +1250,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let forward = SIMD3<Float>(-cameraTransform.columns.2.x, -cameraTransform.columns.2.y, -cameraTransform.columns.2.z)
         
         // Try to raycast to find ground plane at least 6m away (further than normal placement)
-        // CRITICAL: Use at least 1m minimum distance (preferably more for fallback)
+        // CRITICAL: Use at least 3m minimum distance (preferably more for fallback)
         let fallbackMinDistance: Float = 6.0 // Prefer 6m for fallback placement
         let targetPosition = cameraPos + forward * fallbackMinDistance
         let raycastOrigin = SIMD3<Float>(targetPosition.x, cameraPos.y, targetPosition.z)
@@ -1275,10 +1279,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 Swift.print("⚠️ Raycast landed on ceiling-like plane. Falling back to estimated ground placement.")
             } else {
                 let distanceFromCamera = length(hitPoint - cameraPos)
-                // CRITICAL: Enforce minimum 1m distance (preferably 5m for fallback)
-                if distanceFromCamera < 1.0 {
+                // CRITICAL: Enforce minimum 3m distance (preferably 5m for fallback)
+                if distanceFromCamera < 3.0 {
                     let direction = normalize(hitPoint - cameraPos)
-                    boxPosition = cameraPos + direction * max(fallbackMinDistance, 1.0)
+                    boxPosition = cameraPos + direction * max(fallbackMinDistance, 3.0)
                     boxPosition.y = hitPoint.y
                 } else if distanceFromCamera < 5.0 {
                     let direction = normalize(hitPoint - cameraPos)
@@ -1290,18 +1294,18 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         } else {
             // No plane detected, place at fallback distance in front at estimated ground level
-            // CRITICAL: Must be at least 1m away (preferably more)
-            boxPosition = cameraPos + forward * max(fallbackMinDistance, 1.0)
+            // CRITICAL: Must be at least 3m away (preferably more)
+            boxPosition = cameraPos + forward * max(fallbackMinDistance, 3.0)
             boxPosition.y = cameraPos.y - 1.5
         }
 
-        // CRITICAL: Final safety check - enforce ABSOLUTE minimum 1m distance from camera
+        // CRITICAL: Final safety check - enforce ABSOLUTE minimum 3m distance from camera
         let finalDistance = length(boxPosition - cameraPos)
-        if finalDistance < 1.0 {
-            // If somehow too close, move it to exactly 1m away (absolute minimum)
+        if finalDistance < 3.0 {
+            // If somehow too close, move it to exactly 3m away (absolute minimum)
             let direction = normalize(boxPosition - cameraPos)
-            boxPosition = cameraPos + direction * 1.0
-            Swift.print("⚠️ CRITICAL: Adjusted \(location.name) placement to 1m MINIMUM distance from camera")
+            boxPosition = cameraPos + direction * 3.0
+            Swift.print("⚠️ CRITICAL: Adjusted \(location.name) placement to 3m MINIMUM distance from camera")
         } else if finalDistance < 5.0 {
             // Prefer 5m for fallback placement
             let direction = normalize(boxPosition - cameraPos)
@@ -1866,7 +1870,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             let t = anchor.transformMatrix(relativeTo: nil)
             let pos = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
             let d = length(pos - cameraPos)
-            if d < 1.5 { // within 1.5m of camera
+            if d < 3.0 { // within 3m of camera
                 Swift.print("🗑️ Removing box too close to camera: \(id), distance: \(String(format: "%.2f", d))m")
                 anchor.removeFromParent()
                 toRemove.append(id)
