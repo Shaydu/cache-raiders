@@ -617,13 +617,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
 
-        // Detect if we're indoors by checking for vertical planes (walls)
-        // NOTE: This only works if user has moved camera around to scan environment
-        let isIndoors = detectIndoorEnvironment(frame: frame)
-        Swift.print("🏠 Environment detection: \(isIndoors ? "INDOORS" : "OUTDOORS")")
-        if !isIndoors {
-            Swift.print("   💡 TIP: Move camera around to scan walls, then randomize again for indoor placement")
-        }
+        // TEMPORARILY DISABLE indoor detection to ensure spheres spawn
+        // TODO: Re-enable with better logic once spheres are working reliably
+        let isIndoors = false // Always use outdoor placement for now
+        Swift.print("🏠 Environment detection: DISABLED (using outdoor placement)")
         Swift.print("   Starting placement...")
 
         // Adjust placement strategy based on environment
@@ -641,16 +638,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             var randomX: Float
             var randomZ: Float
 
-            if isIndoors {
-                // Indoor placement: try to place within detected room boundaries
-                (randomX, randomZ) = generateIndoorPosition(cameraPos: cameraPos, minDistance: minDistance, maxDistance: maxDistance)
-            } else {
-                // Outdoor placement: random around camera
-                let randomDistance = Float.random(in: minDistance...maxDistance)
-                let randomAngle = Float.random(in: 0...(2 * Float.pi))
-                randomX = cameraPos.x + randomDistance * cos(randomAngle)
-                randomZ = cameraPos.z + randomDistance * sin(randomAngle)
-            }
+            // Simplified placement for reliable sphere spawning
+            let randomDistance = Float.random(in: minDistance...maxDistance)
+            let randomAngle = Float.random(in: 0...(2 * Float.pi))
+            randomX = cameraPos.x + randomDistance * cos(randomAngle)
+            randomZ = cameraPos.z + randomDistance * sin(randomAngle)
 
             // Raycast to find floor
             let raycastOrigin = SIMD3<Float>(randomX, cameraPos.y + 1.0, randomZ)
@@ -815,23 +807,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         return true // Position is within bounds or no clear boundary violation
     }
 
-    // Get placement strategy based on environment
+    // Get placement strategy - simplified for reliable sphere spawning
     private func getPlacementStrategy(isIndoors: Bool, searchDistance: Float) -> (minDistance: Float, maxDistance: Float, strategy: String) {
-        if isIndoors {
-            // Indoors: closer placement, smaller room assumed
-            return (
-                minDistance: 1.0, // Minimum 1 meter (safer for indoor)
-                maxDistance: min(searchDistance * 0.3, 8.0), // Max 8m, closer for indoor
-                strategy: "INDOOR MODE - close placement within walls"
-            )
-        } else {
-            // Outdoors: normal placement
-            return (
-                minDistance: 3.0, // Minimum 3 meters
-                maxDistance: min(searchDistance * 0.8, 50.0), // Normal range
-                strategy: "OUTDOOR MODE - normal placement range"
-            )
-        }
+        // Use indoor-like distances for reliable sphere spawning
+        return (
+            minDistance: 1.0, // Minimum 1 meter
+            maxDistance: 8.0,  // Maximum 8 meters (reasonable for indoor spaces)
+            strategy: "INDOOR-FRIENDLY MODE - close placement for spheres"
+        )
     }
 
     // MARK: - ARSessionDelegate
