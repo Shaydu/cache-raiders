@@ -9,6 +9,7 @@ struct ARLootBoxView: UIViewRepresentable {
     @Binding var nearbyLocations: [LootBoxLocation]
     @Binding var distanceToNearest: Double?
     @Binding var temperatureStatus: String?
+    @Binding var collectionNotification: String?
     @State private var arView: ARView?
     
     func makeUIView(context: Context) -> ARView {
@@ -16,7 +17,9 @@ struct ARLootBoxView: UIViewRepresentable {
         
         // AR session configuration
         let config = ARWorldTrackingConfiguration()
-        config.planeDetection = [.horizontal, .vertical] // Detect both floors and walls
+        // Detect both horizontal (ground) and vertical (walls) planes
+        // Vertical planes are used for occlusion (hiding loot boxes behind walls)
+        config.planeDetection = [.horizontal, .vertical]
         config.environmentTexturing = .automatic
         
         // Check if AR is supported
@@ -36,7 +39,7 @@ struct ARLootBoxView: UIViewRepresentable {
         // Uncomment the line below to enable debug visuals (green feature points, anchor origins)
         // arView.debugOptions = [.showFeaturePoints, .showAnchorOrigins]
         
-        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus)
+        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification)
         return arView
     }
     
@@ -44,7 +47,7 @@ struct ARLootBoxView: UIViewRepresentable {
         // Ensure AR session is running
         if uiView.session.configuration == nil {
             let config = ARWorldTrackingConfiguration()
-            config.planeDetection = [.horizontal, .vertical] // Detect both floors and walls
+            config.planeDetection = [.horizontal, .vertical] // Horizontal for ground, vertical for walls (occlusion)
             config.environmentTexturing = .automatic
             uiView.session.run(config, options: [.resetTracking])
         }
@@ -56,6 +59,14 @@ struct ARLootBoxView: UIViewRepresentable {
                 nearbyLocations = nearby
             }
             context.coordinator.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+        }
+        
+        // Handle randomization trigger
+        if locationManager.shouldRandomize {
+            context.coordinator.randomizeLootBoxes()
+            DispatchQueue.main.async {
+                locationManager.shouldRandomize = false
+            }
         }
     }
     

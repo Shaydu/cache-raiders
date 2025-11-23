@@ -39,10 +39,11 @@ extension CLLocation {
 // MARK: - Loot Box Location Manager
 class LootBoxLocationManager: ObservableObject {
     @Published var locations: [LootBoxLocation] = []
-    @Published var maxSearchDistance: Double = 10.0 // Default 10 meters (minimum)
+    @Published var maxSearchDistance: Double = 100.0 // Default 100 meters
     @Published var showARDebugVisuals: Bool = false // Default: debug visuals disabled
     @Published var lootBoxMinSize: Double = 0.25 // Default 0.25m (minimum size)
     @Published var lootBoxMaxSize: Double = 1.0 // Default 1.0m (maximum size) - reduced from 3.0m
+    @Published var shouldRandomize: Bool = false // Trigger for randomizing loot boxes in AR
     var onSizeChanged: (() -> Void)? // Callback when size settings change
     private let locationsFileName = "lootBoxLocations.json"
     private let maxDistanceKey = "maxSearchDistance"
@@ -83,7 +84,12 @@ class LootBoxLocationManager: ObservableObject {
             locations = loadedLocations
             print("✅ Loaded \(locations.count) loot box locations")
         } catch {
-            print("⚠️ Could not load locations, creating random defaults: \(error)")
+            // This is expected on first run - no saved locations file exists yet
+            if (error as NSError).code == 260 { // File not found
+                print("ℹ️ No saved locations found (first run) - will create default locations when GPS is available")
+            } else {
+                print("⚠️ Could not load locations: \(error.localizedDescription)")
+            }
             // Only create defaults if we have a user location
             if let userLocation = userLocation {
                 createDefaultLocations(near: userLocation)
@@ -125,13 +131,13 @@ class LootBoxLocationManager: ObservableObject {
     
     // Create default locations randomly within maxSearchDistance of user location
     func createDefaultLocations(near userLocation: CLLocation) {
-        let lootBoxTypes: [LootBoxType] = [.crystalSkull, .goldenIdol, .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet]
-        let lootBoxNames = ["Crystal Skull", "Golden Idol", "Ancient Artifact", "Temple Relic", "Puzzle Box", "Stone Tablet"]
+        let lootBoxTypes: [LootBoxType] = [.goldenIdol, .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet]
+        let lootBoxNames = ["Golden Idol", "Ancient Artifact", "Temple Relic", "Puzzle Box", "Stone Tablet"]
         
         locations = []
         
         // Generate 3 random loot boxes within maxSearchDistance
-        for i in 0..<3 {
+        for _ in 0..<3 {
             // Generate random distance (between 10% and 90% of maxSearchDistance)
             // Ensure minimum distance is at least 5 meters
             let minDistance = max(maxSearchDistance * 0.1, 5.0)
@@ -188,8 +194,14 @@ class LootBoxLocationManager: ObservableObject {
     // Mark location as collected
     func markCollected(_ locationId: String) {
         if let index = locations.firstIndex(where: { $0.id == locationId }) {
-            locations[index].collected = true
+            // Create a new location with collected = true to trigger @Published update
+            var updatedLocation = locations[index]
+            updatedLocation.collected = true
+            locations[index] = updatedLocation
             saveLocations()
+            
+            // Explicitly notify observers (in case @Published doesn't catch the change)
+            objectWillChange.send()
         }
     }
     

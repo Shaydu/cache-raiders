@@ -8,7 +8,7 @@ struct LocationConfigView: View {
     @Environment(\.dismiss) var dismiss
     
     @State private var newLocationName = ""
-    @State private var newLocationType: LootBoxType = .crystalSkull
+    @State private var newLocationType: LootBoxType = .goldenIdol
     @State private var newLatitude = ""
     @State private var newLongitude = ""
     @State private var newRadius = "5.0"

@@ -76,8 +76,8 @@ class BoxLootContainer {
             // If it's a ModelEntity, use it directly
             // If it's a scene with children, find the main chest entity
             let modelEntity: ModelEntity
-            if let directModel = loadedEntity as? ModelEntity {
-                modelEntity = directModel
+            if loadedEntity is ModelEntity {
+                modelEntity = loadedEntity as! ModelEntity
             } else {
                 // Search for the main chest model in children
                 if let chest = findFirstModelEntity(in: loadedEntity) {

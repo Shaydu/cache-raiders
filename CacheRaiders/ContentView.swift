@@ -10,6 +10,7 @@ struct ContentView: View {
     @State private var nearbyLocations: [LootBoxLocation] = []
     @State private var distanceToNearest: Double?
     @State private var temperatureStatus: String?
+    @State private var collectionNotification: String?
     
     var body: some View {
         ZStack {
@@ -18,7 +19,8 @@ struct ContentView: View {
                 userLocationManager: userLocationManager,
                 nearbyLocations: $nearbyLocations,
                 distanceToNearest: $distanceToNearest,
-                temperatureStatus: $temperatureStatus
+                temperatureStatus: $temperatureStatus,
+                collectionNotification: $collectionNotification
             )
             .ignoresSafeArea()
             
@@ -74,11 +76,24 @@ struct ContentView: View {
                             .background(.ultraThinMaterial)
                             .cornerRadius(10)
                         
-                        Text("💡 Tap on a loot box to collect it (must be within 5m)")
+                        Text("💡 Tap on a loot box to discover and collect it")
                             .font(.caption)
                             .padding()
                             .background(.ultraThinMaterial)
                             .cornerRadius(10)
+                    }
+                    
+                    // Collection notification
+                    if let notification = collectionNotification {
+                        Text(notification)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .foregroundColor(.green)
+                            .padding()
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(10)
+                            .transition(.opacity)
+                            .animation(.easeInOut, value: collectionNotification)
                     }
                     
                     // Temperature indicator with distance
@@ -97,6 +112,22 @@ struct ContentView: View {
                             .background(.ultraThinMaterial)
                             .cornerRadius(10)
                     }
+                    
+                    // Randomize button
+                    Button(action: {
+                        locationManager.shouldRandomize = true
+                    }) {
+                        HStack {
+                            Image(systemName: "shuffle")
+                            Text("Randomize Loot Boxes")
+                        }
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.orange)
+                        .cornerRadius(10)
+                    }
+                    .padding(.top, 4)
                 }
                 .padding()
             }
@@ -110,7 +141,7 @@ struct ContentView: View {
         .onAppear {
             userLocationManager.requestLocationPermission()
         }
-        .onChange(of: userLocationManager.currentLocation) { newLocation in
+        .onChange(of: userLocationManager.currentLocation) { _, newLocation in
             // When we get a GPS fix, check if we need to create/regenerate locations
             if let location = newLocation {
                 // Check if we have a valid GPS fix

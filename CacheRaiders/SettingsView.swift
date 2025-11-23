@@ -30,7 +30,7 @@ struct SettingsView: View {
                                     previousDistance = newValue
                                 }
                             ),
-                            in: 10...10000,
+                            in: 10...100,
                             step: 10
                         )
                         
@@ -39,7 +39,7 @@ struct SettingsView: View {
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                             Spacer()
-                            Text("10,000m")
+                            Text("100m")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }

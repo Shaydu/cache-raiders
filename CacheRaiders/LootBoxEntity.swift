@@ -5,7 +5,6 @@ import AVFoundation
 
 // MARK: - Loot Box Type (Archaeological Artifacts)
 enum LootBoxType: String, CaseIterable, Codable {
-    case crystalSkull = "Crystal Skull"
     case goldenIdol = "Golden Idol"
     case ancientArtifact = "Ancient Artifact"
     case templeRelic = "Temple Relic"
@@ -14,7 +13,6 @@ enum LootBoxType: String, CaseIterable, Codable {
     
     var color: UIColor {
         switch self {
-        case .crystalSkull: return UIColor(red: 0.9, green: 0.95, blue: 1.0, alpha: 1.0) // Crystal/ice blue
         case .goldenIdol: return UIColor(red: 0.85, green: 0.65, blue: 0.13, alpha: 1.0) // Gold
         case .ancientArtifact: return UIColor(red: 0.6, green: 0.4, blue: 0.2, alpha: 1.0) // Bronze
         case .templeRelic: return UIColor(red: 0.4, green: 0.3, blue: 0.2, alpha: 1.0) // Dark stone
@@ -25,7 +23,6 @@ enum LootBoxType: String, CaseIterable, Codable {
     
     var glowColor: UIColor {
         switch self {
-        case .crystalSkull: return UIColor(red: 0.4, green: 0.7, blue: 1.0, alpha: 1.0) // Bright blue
         case .goldenIdol: return UIColor(red: 1.0, green: 0.8, blue: 0.0, alpha: 1.0) // Amber
         case .ancientArtifact: return UIColor(red: 1.0, green: 0.6, blue: 0.2, alpha: 1.0) // Orange glow
         case .templeRelic: return UIColor(red: 0.8, green: 0.6, blue: 0.4, alpha: 1.0) // Warm stone
@@ -36,7 +33,6 @@ enum LootBoxType: String, CaseIterable, Codable {
     
     var size: Float {
         switch self {
-        case .crystalSkull: return 0.35
         case .goldenIdol: return 0.3
         case .ancientArtifact: return 0.4
         case .templeRelic: return 0.45
@@ -58,10 +54,8 @@ struct LootBoxContainer {
 class LootBoxEntity {
     static func createLootBox(type: LootBoxType, id: String, sizeMultiplier: Float = 1.0) -> LootBoxContainer {
         // Determine container type based on loot box type
-        // Use skull for crystal skull, chalice for golden idol, box for others
+        // Use chalice for golden idol, box for others
         switch type {
-        case .crystalSkull:
-            return SkullLootContainer.create(type: type, id: id, sizeMultiplier: sizeMultiplier)
         case .goldenIdol:
             return ChaliceLootContainer.create(type: type, id: id, sizeMultiplier: sizeMultiplier)
         case .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet:
@@ -119,11 +113,6 @@ class LootBoxEntity {
         var prizeMaterial = SimpleMaterial()
         
         switch type {
-        case .crystalSkull:
-            prizeMesh = MeshResource.generateSphere(radius: size * 0.3)
-            prizeMaterial.color = .init(tint: type.color)
-            prizeMaterial.roughness = 0.1
-            prizeMaterial.metallic = 0.9
         case .goldenIdol:
             prizeMesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.6, depth: size * 0.3, cornerRadius: 0.05)
             prizeMaterial.color = .init(tint: type.color)
@@ -565,7 +554,7 @@ class LootBoxEntity {
     // MARK: - Detail Additions
     private static func addCrystalFacets(to entity: ModelEntity, size: Float) {
         // Add geometric crystal patterns
-        let glowColor = LootBoxType.crystalSkull.glowColor
+        let glowColor = LootBoxType.stoneTablet.glowColor // Use stoneTablet's mystical blue glow
         for i in 0..<8 {
             let facet = MeshResource.generateBox(size: size * 0.05)
             var facetMaterial = SimpleMaterial()

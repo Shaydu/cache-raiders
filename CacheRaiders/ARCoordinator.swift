@@ -7,6 +7,13 @@ import AudioToolbox
 
 // Findable protocol and base class are now in FindableObject.swift
 
+// MARK: - Object Types for Random Placement
+enum PlacedObjectType {
+    case chalice
+    case treasureBox
+    case sphere
+}
+
 // MARK: - AR Coordinator
 class ARCoordinator: NSObject, ARSessionDelegate {
     weak var arView: ARView?
@@ -930,7 +937,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         placeLootBoxInFrontOfCamera(location: location, in: arView)
     }
     
-    // Helper method to place a box at a specific position
+    // Helper method to place a randomly selected object at a specific position
     private func placeBoxAtPosition(_ boxPosition: SIMD3<Float>, location: LootBoxLocation, in arView: ARView) {
         // CRITICAL: Final safety check - ensure minimum 1m distance from camera
         guard let frame = arView.session.currentFrame else {
@@ -951,66 +958,95 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         let anchor = AnchorEntity(world: boxTransform)
         
-        // Use random size between 0.3m to 1.0m (capped at 1 meter maximum)
-        // Ensure no object renders larger than 1 meter
-        let minSize: Float = 0.3  // Minimum size (30cm)
-        let maxSize: Float = 1.0  // Maximum size (1 meter) - cap at 1m
-        let targetSize = Float.random(in: minSize...maxSize) // Random size between 0.3-1.0m
-        let baseSize = Float(location.type.size) // Base size (0.3-0.5m)
-        let sizeMultiplier = min(targetSize / baseSize, 1.0 / baseSize) // Calculate multiplier, cap to ensure max 1m
-        
-        let lootBoxContainer = LootBoxEntity.createLootBox(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
+        // Randomly choose what type of object to place (chalice, treasure box, or sphere)
+        let objectTypes: [PlacedObjectType] = [.chalice, .treasureBox, .sphere]
+        let selectedObjectType = objectTypes.randomElement()!
 
-        // Position object so bottom sits on ground plane
-        // Different object types have different heights and coordinate systems
-        let objectHeight: Float
-        let yOffset: Float
-        switch location.type {
-        case .goldenIdol:
-            objectHeight = targetSize * 0.6 // Chalice is roughly 0.6x its total size in height
-            // For chalice, match the sphere positioning to ensure it's at the right height
-            yOffset = objectHeight / 2.0 // Use same logic as other boxes for now
-            Swift.print("🎯 Positioning chalice: targetSize=\(String(format: "%.2f", targetSize)), objectHeight=\(String(format: "%.2f", objectHeight)), yOffset=\(String(format: "%.2f", yOffset))")
-        default:
-            objectHeight = targetSize * 0.6 // Boxes are roughly 0.6x their total size in height
-            yOffset = objectHeight / 2.0 // Center of box should be half height above ground
+        Swift.print("🎲 Placing \(selectedObjectType) for \(location.name)")
+
+        var placedEntity: ModelEntity? = nil
+        var findableObject: FindableObject? = nil
+
+        switch selectedObjectType {
+        case .chalice:
+            // Place a chalice
+            let targetSize = Float.random(in: 0.3...1.0) // Random size
+            let sizeMultiplier = targetSize / 0.3 // Base size for golden idol
+            let lootBoxContainer = ChaliceLootContainer.create(type: .goldenIdol, id: location.id, sizeMultiplier: sizeMultiplier)
+
+            // Position chalice so bottom sits on ground
+            let objectHeight = targetSize * 0.6
+            lootBoxContainer.container.position.y = objectHeight / 2.0
+            lootBoxContainer.container.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
+
+            placedEntity = lootBoxContainer.container
+
+            findableObject = FindableObject(
+                locationId: location.id,
+                anchor: anchor,
+                sphereEntity: nil, // No sphere for chalice-only placement
+                container: lootBoxContainer,
+                location: location
+            )
+
+        case .treasureBox:
+            // Place a treasure box
+            let targetSize = Float.random(in: 0.3...1.0) // Random size
+            let randomBoxType: LootBoxType = [.ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet].randomElement()!
+            let sizeMultiplier = targetSize / Float(randomBoxType.size)
+            let lootBoxContainer = LootBoxEntity.createLootBox(type: randomBoxType, id: location.id, sizeMultiplier: sizeMultiplier)
+
+            // Position treasure box so bottom sits on ground
+            let objectHeight = targetSize * 0.6
+            lootBoxContainer.container.position.y = objectHeight / 2.0
+            lootBoxContainer.container.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
+
+            placedEntity = lootBoxContainer.container
+
+            findableObject = FindableObject(
+                locationId: location.id,
+                anchor: anchor,
+                sphereEntity: nil, // No sphere for treasure box-only placement
+                container: lootBoxContainer,
+                location: location
+            )
+
+        case .sphere:
+            // Place just a sphere indicator (no loot box)
+            let indicatorSize: Float = 0.15 // 15cm sphere
+            let indicatorMesh = MeshResource.generateSphere(radius: indicatorSize)
+            var indicatorMaterial = SimpleMaterial()
+            indicatorMaterial.color = .init(tint: .orange)
+            indicatorMaterial.roughness = 0.2
+            indicatorMaterial.metallic = 0.3
+
+            let orangeIndicator = ModelEntity(mesh: indicatorMesh, materials: [indicatorMaterial])
+            orangeIndicator.name = location.id
+
+            // Position sphere at ground level (no loot box underneath)
+            orangeIndicator.position = SIMD3<Float>(0, indicatorSize, 0) // Bottom of sphere touches ground
+
+            // Add point light to make it visible
+            let light = PointLightComponent(color: .orange, intensity: 200)
+            orangeIndicator.components.set(light)
+
+            placedEntity = orangeIndicator
+
+            findableObject = FindableObject(
+                locationId: location.id,
+                anchor: anchor,
+                sphereEntity: orangeIndicator, // The sphere itself is the findable object
+                container: nil, // No loot box container
+                location: location
+            )
         }
-        // Position so bottom touches ground
-        lootBoxContainer.container.position.y = yOffset
 
-        Swift.print("📍 Loot box container positioned at Y=\(String(format: "%.2f", yOffset)) relative to anchor")
-        
-        // Ensure object is right-side up (not upside down)
-        lootBoxContainer.container.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
-        
-        // Create orange sphere indicator (same size as before - 0.15m radius)
-        let indicatorSize: Float = 0.15 // 15cm sphere - same size as loot boxes
-        let indicatorMesh = MeshResource.generateSphere(radius: indicatorSize)
-        var indicatorMaterial = SimpleMaterial()
-        indicatorMaterial.color = .init(tint: .orange)
-        indicatorMaterial.roughness = 0.2
-        indicatorMaterial.metallic = 0.3
-        
-        let orangeIndicator = ModelEntity(mesh: indicatorMesh, materials: [indicatorMaterial])
-        orangeIndicator.name = location.id // Set name for tap detection
-        // Position sphere above the loot box (at the top of the box height)
-        orangeIndicator.position = SIMD3<Float>(0, objectHeight + indicatorSize, 0)
-        
-        // Add a point light to make it more visible
-        let light = PointLightComponent(color: .orange, intensity: 200)
-        orangeIndicator.components.set(light)
-        
-        // Add both the loot box container and the orange sphere indicator
-        anchor.addChild(lootBoxContainer.container)
-        anchor.addChild(orangeIndicator)
-        
-        // Create distance text overlay above the sphere
-        let distanceTextEntity = createDistanceTextEntity()
-        // Position text above the sphere (sphere is at objectHeight + indicatorSize, so text goes above that)
-        distanceTextEntity.position = SIMD3<Float>(0, objectHeight + indicatorSize + 0.3, 0)
-        anchor.addChild(distanceTextEntity)
-        distanceTextEntities[location.id] = distanceTextEntity
-        
+        // Add the placed entity to the anchor
+        if let entity = placedEntity {
+            anchor.addChild(entity)
+        }
+
+        // Store the anchor and findable object
         arView.scene.addAnchor(anchor)
         placedBoxes[location.id] = anchor
 
@@ -1022,32 +1058,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             finalAnchorTransform.columns.3.z
         )
 
-        let finalSphereTransform = orangeIndicator.transformMatrix(relativeTo: nil)
-        let finalSpherePos = SIMD3<Float>(
-            finalSphereTransform.columns.3.x,
-            finalSphereTransform.columns.3.y,
-            finalSphereTransform.columns.3.z
-        )
-
-        Swift.print("✅ Placed \(location.name) at AR position: \(finalAnchorPos)")
-        Swift.print("   Sphere at: \(finalSpherePos)")
-
-        // Store container info for opening animation
-        var info = LootBoxInfoComponent()
-        info.container = lootBoxContainer
-        anchor.components[LootBoxInfoComponent.self] = info
-
-        // Create FindableObject to encapsulate findable behavior
-        let findableObject = FindableObject(
-            locationId: location.id,
-            anchor: anchor,
-            sphereEntity: orangeIndicator,
-            container: lootBoxContainer,
-            location: location
-        )
+        Swift.print("✅ Placed \(selectedObjectType) at AR position: \(finalAnchorPos)")
 
         // Set callback to increment found count
-        findableObject.onFoundCallback = { [weak self] id in
+        findableObject?.onFoundCallback = { [weak self] id in
             DispatchQueue.main.async {
                 if let locationManager = self?.locationManager {
                     locationManager.markCollected(id)
@@ -1055,7 +1069,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
 
-        findableObjects[location.id] = findableObject
+        if let findableObj = findableObject {
+            findableObjects[location.id] = findableObj
+        }
     }
     
     // MARK: - Distance Text Overlay
