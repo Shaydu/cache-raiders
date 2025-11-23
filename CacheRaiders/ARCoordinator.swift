@@ -4,6 +4,7 @@ import ARKit
 import CoreLocation
 import AVFoundation
 import AudioToolbox
+import Vision
 
 // Findable protocol and base class are now in FindableObject.swift
 
@@ -16,6 +17,11 @@ enum PlacedObjectType {
 
 // MARK: - AR Coordinator
 class ARCoordinator: NSObject, ARSessionDelegate {
+
+    // Vision object recognition
+    private let objectClassificationRequest = VNClassifyImageRequest()
+    private var lastRecognitionTime = Date.distantPast
+    private let recognitionInterval: TimeInterval = 3.0 // Classify every 3 seconds
     weak var arView: ARView?
     private var locationManager: LootBoxLocationManager?
     private var userLocationManager: UserLocationManager?
@@ -36,6 +42,16 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     override init() {
         super.init()
+        setupObjectRecognition()
+    }
+
+    private func setupObjectRecognition() {
+        // Configure image classification request
+        objectClassificationRequest.usesCPUOnly = false // Use GPU for better performance
+        objectClassificationRequest.revision = VNClassifyImageRequestRevisionLatest
+
+        // Use built-in classification model for general object recognition
+        print("🔍 Object recognition initialized - will classify objects every \(recognitionInterval) seconds")
     }
     
     func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>) {
@@ -817,6 +833,53 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         )
     }
 
+    // MARK: - Object Recognition
+    private func performObjectRecognition(on pixelBuffer: CVPixelBuffer) {
+        // Throttle recognition to avoid excessive processing
+        let now = Date()
+        guard now.timeIntervalSince(lastRecognitionTime) >= recognitionInterval else { return }
+        lastRecognitionTime = now
+
+        // Create Vision image request handler
+        let imageRequestHandler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up, options: [:])
+
+        do {
+            try imageRequestHandler.perform([objectClassificationRequest])
+
+            // Process results
+            if let results = objectClassificationRequest.results {
+                processObjectRecognitionResults(results)
+            }
+        } catch {
+            print("❌ Object recognition failed: \(error.localizedDescription)")
+        }
+    }
+
+    private func processObjectRecognitionResults(_ results: [VNClassificationObservation]) {
+        // Filter for high-confidence results (> 0.5) and limit to top 5
+        let topResults = results
+            .filter { $0.confidence > 0.3 } // Lower threshold for more results
+            .sorted { $0.confidence > $1.confidence }
+            .prefix(5)
+
+        guard !topResults.isEmpty else {
+            print("🔍 No objects classified in current frame (low confidence)")
+            return
+        }
+
+        print("🔍 Object Classification Results (top \(topResults.count)):")
+
+        for (index, result) in topResults.enumerated() {
+            let objectName = result.identifier
+            let confidence = result.confidence
+
+            // Clean up the identifier (remove underscores, capitalize)
+            let cleanName = objectName.replacingOccurrences(of: "_", with: " ").capitalized
+
+            print("   \(index + 1). \(cleanName) - \(String(format: "%.1f", confidence * 100))% confidence")
+        }
+    }
+
     // MARK: - ARSessionDelegate
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         // Set AR origin on first frame if not set
@@ -826,6 +889,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             Swift.print("📍 AR Origin set at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
         }
         
+        // Perform object recognition on camera frame
+        performObjectRecognition(on: frame.capturedImage)
+
         // Check for nearby locations when AR is tracking
         if frame.camera.trackingState == .normal,
            let userLocation = userLocationManager?.currentLocation,
