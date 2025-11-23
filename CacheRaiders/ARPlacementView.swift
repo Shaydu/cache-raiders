@@ -84,8 +84,8 @@ struct ARPlacementView: View {
                         }
                     }
                 } else {
-                    // AR placement view with crosshairs
-                    ARPlacementARView(
+                    // AR placement view with placement reticle and overlay
+                    ARPlacementARViewWrapper(
                         locationManager: locationManager,
                         userLocationManager: userLocationManager,
                         selectedObject: selectedObject,
@@ -164,6 +164,53 @@ struct ARPlacementView: View {
     }
 }
 
+// MARK: - AR Placement AR View Wrapper (combines AR view + overlay)
+struct ARPlacementARViewWrapper: View {
+    @ObservedObject var locationManager: LootBoxLocationManager
+    @ObservedObject var userLocationManager: UserLocationManager
+    let selectedObject: LootBoxLocation?
+    let objectType: LootBoxType
+    let isNewObject: Bool
+    let onPlace: (CLLocationCoordinate2D) -> Void
+    let onCancel: () -> Void
+
+    @StateObject private var placementReticle = ARPlacementReticle(arView: nil)
+    @State private var isPlacementMode = true
+
+    var body: some View {
+        ZStack {
+            // AR View
+            ARPlacementARView(
+                locationManager: locationManager,
+                userLocationManager: userLocationManager,
+                selectedObject: selectedObject,
+                objectType: objectType,
+                isNewObject: isNewObject,
+                placementReticle: placementReticle,
+                onPlace: onPlace,
+                onCancel: onCancel
+            )
+
+            // Placement overlay UI
+            ObjectPlacementOverlay(
+                isPlacementMode: $isPlacementMode,
+                placementPosition: $placementReticle.currentPosition,
+                placementDistance: $placementReticle.distanceFromCamera,
+                groundHeight: $placementReticle.heightFromGround,
+                objectType: objectType,
+                onPlaceObject: {
+                    // Get placement position and convert to GPS
+                    if let position = placementReticle.getPlacementPosition() {
+                        // This will be handled by the coordinator
+                        print("✅ Place button tapped at position: \(position)")
+                    }
+                },
+                onCancel: onCancel
+            )
+        }
+    }
+}
+
 // MARK: - AR Placement AR View
 struct ARPlacementARView: UIViewRepresentable {
     @ObservedObject var locationManager: LootBoxLocationManager
@@ -171,6 +218,7 @@ struct ARPlacementARView: UIViewRepresentable {
     let selectedObject: LootBoxLocation?
     let objectType: LootBoxType
     let isNewObject: Bool
+    @ObservedObject var placementReticle: ARPlacementReticle
     let onPlace: (CLLocationCoordinate2D) -> Void
     let onCancel: () -> Void
     
@@ -186,8 +234,9 @@ struct ARPlacementARView: UIViewRepresentable {
         // Add tap gesture for placement
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleTap(_:)))
         arView.addGestureRecognizer(tapGesture)
-        
-        context.coordinator.setup(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, selectedObject: selectedObject, objectType: objectType, isNewObject: isNewObject, onPlace: onPlace)
+
+        context.coordinator.setup(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, selectedObject: selectedObject, objectType: objectType, isNewObject: isNewObject, placementReticle: placementReticle)
+        context.coordinator.onPlace = onPlace
         
         return arView
     }
@@ -213,6 +262,7 @@ struct ARPlacementARView: UIViewRepresentable {
         var arOriginGPS: CLLocation?
         var crosshairEntity: ModelEntity?
         var crosshairAnchor: AnchorEntity?
+        var placementReticle: ARPlacementReticle?
         
         init(onPlace: @escaping (CLLocationCoordinate2D) -> Void, onCancel: @escaping () -> Void) {
             self.onPlace = onPlace
@@ -223,29 +273,34 @@ struct ARPlacementARView: UIViewRepresentable {
         
         var wireframeAnchors: [String: AnchorEntity] = [:]
         var precisionPositioningService: ARPrecisionPositioningService?
-        
-        func setup(arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, selectedObject: LootBoxLocation?, objectType: LootBoxType, isNewObject: Bool) {
+
+        func setup(arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, selectedObject: LootBoxLocation?, objectType: LootBoxType, isNewObject: Bool, placementReticle: ARPlacementReticle) {
             self.arView = arView
             self.locationManager = locationManager
             self.userLocationManager = userLocationManager
             self.selectedObject = selectedObject
             self.objectType = objectType
             self.isNewObject = isNewObject
-            
+            self.placementReticle = placementReticle
+
+            // Initialize placement reticle with AR view
+            placementReticle.arView = arView
+            placementReticle.show()
+
             // Initialize precision positioning service
             precisionPositioningService = ARPrecisionPositioningService(arView: arView)
-            
+
             // Set AR origin on first location update
             if let userLocation = userLocationManager.currentLocation {
                 arOriginGPS = userLocation
             }
-            
-            // Set up AR session delegate to update crosshair position
+
+            // Set up AR session delegate to update crosshair position and reticle
             arView.session.delegate = self
-            
-            // Create crosshairs
+
+            // Create crosshairs (keeping old system for now)
             createCrosshairs()
-            
+
             // Place all existing objects as wireframes
             placeAllObjectsAsWireframes()
         }
@@ -317,7 +372,6 @@ struct ARPlacementARView: UIViewRepresentable {
             wireframeMaterial.color = .init(tint: UIColor.cyan.withAlphaComponent(0.6))
             wireframeMaterial.roughness = 1.0
             wireframeMaterial.metallic = 0.0
-            wireframeMaterial.isMetallic = false
             
             // Create wireframe based on object type
             let wireframeEntity: ModelEntity
@@ -328,7 +382,7 @@ struct ARPlacementARView: UIViewRepresentable {
                 let mesh = MeshResource.generateCylinder(height: size * 0.6, radius: size * 0.3)
                 wireframeEntity = ModelEntity(mesh: mesh, materials: [wireframeMaterial])
                 
-            case .treasureChest, .lootChest:
+            case .treasureChest, .lootChest, .lootCart:
                 // Box wireframe for chest
                 let mesh = MeshResource.generateBox(width: size * 0.6, height: size * 0.6, depth: size * 0.6)
                 wireframeEntity = ModelEntity(mesh: mesh, materials: [wireframeMaterial])
@@ -371,16 +425,25 @@ struct ARPlacementARView: UIViewRepresentable {
             let lineThickness: Float = 0.002 // 2mm
             
             // Horizontal line
+            var horizontalMaterial = SimpleMaterial()
+            horizontalMaterial.color = .init(tint: .red)
+            horizontalMaterial.metallic = 0.0
             let horizontalMesh = MeshResource.generateBox(width: lineLength, height: lineThickness, depth: lineThickness)
-            let horizontalEntity = ModelEntity(mesh: horizontalMesh, materials: [SimpleMaterial(color: .red, isMetallic: false)])
+            let horizontalEntity = ModelEntity(mesh: horizontalMesh, materials: [horizontalMaterial])
             
             // Vertical line
+            var verticalMaterial = SimpleMaterial()
+            verticalMaterial.color = .init(tint: .red)
+            verticalMaterial.metallic = 0.0
             let verticalMesh = MeshResource.generateBox(width: lineThickness, height: lineLength, depth: lineThickness)
-            let verticalEntity = ModelEntity(mesh: verticalMesh, materials: [SimpleMaterial(color: .red, isMetallic: false)])
+            let verticalEntity = ModelEntity(mesh: verticalMesh, materials: [verticalMaterial])
             
             // Center circle
+            var circleMaterial = SimpleMaterial()
+            circleMaterial.color = .init(tint: .red)
+            circleMaterial.metallic = 0.0
             let circleMesh = MeshResource.generateSphere(radius: 0.01) // 1cm radius
-            let circleEntity = ModelEntity(mesh: circleMesh, materials: [SimpleMaterial(color: .red, isMetallic: false)])
+            let circleEntity = ModelEntity(mesh: circleMesh, materials: [circleMaterial])
             
             // Create parent entity
             let crosshairEntity = ModelEntity()

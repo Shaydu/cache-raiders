@@ -649,6 +649,23 @@ class LootBoxLocationManager: ObservableObject {
 
                 if apiObjects.isEmpty {
                     print("⚠️ Selected database object ID '\(selectedId)' not found in API results")
+                    print("   Clearing selection to show all objects")
+                    // Clear selection so user can see other objects
+                    await MainActor.run {
+                        self.selectedDatabaseObjectId = nil
+                        self.saveSelectedDatabaseObjectId()
+                    }
+                    // Re-fetch without selection filter
+                    if let userLocation = userLocation {
+                        apiObjects = try await APIService.shared.getObjects(
+                            latitude: userLocation.coordinate.latitude,
+                            longitude: userLocation.coordinate.longitude,
+                            radius: maxSearchDistance,
+                            includeFound: includeFound
+                        )
+                    } else {
+                        apiObjects = try await APIService.shared.getObjects(includeFound: includeFound)
+                    }
                 } else {
                     let selectedName = apiObjects.first?.name ?? "Unknown"
                     print("🎯 Found selected database object: \(selectedName) (ID: \(selectedId))")

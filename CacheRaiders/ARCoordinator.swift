@@ -762,6 +762,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Find the highest blocking surface (floor or table above floor)
             // If no surface detected, use default height and rely on periodic grounding to fix later
             let surfaceY: Float
+            var usedDefaultHeight = false
             if let detectedY = groundingService?.findHighestBlockingSurface(x: randomX, z: randomZ, cameraPos: cameraPos) {
                 surfaceY = detectedY
                 Swift.print("✅ Found surface at attempt \(attempts) - Y: \(String(format: "%.2f", surfaceY))")
@@ -770,14 +771,16 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 let objectTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .sphere, .cube]
                 let selectedType = objectTypes.randomElement() ?? .sphere
                 surfaceY = groundingService?.getDefaultGroundHeight(for: selectedType, cameraPos: cameraPos) ?? (cameraPos.y - 1.5)
+                usedDefaultHeight = true
                 Swift.print("⚠️ No surface at attempt \(attempts) - using default height Y=\(String(format: "%.2f", surfaceY)) (will auto-adjust later)")
             }
 
             let cameraY = cameraPos.y
 
             // Reject surfaces too far away (more than 2m above or below camera)
+            // BUT allow default heights since they're calculated relative to camera
             let heightDiff = abs(surfaceY - cameraY)
-            if heightDiff > 2.0 {
+            if !usedDefaultHeight && heightDiff > 2.0 {
                 Swift.print("⚠️ Surface too far rejected at attempt \(attempts) - surfaceY: \(String(format: "%.2f", surfaceY)), cameraY: \(String(format: "%.2f", cameraY)), diff: \(String(format: "%.2f", heightDiff))")
                 continue
             }

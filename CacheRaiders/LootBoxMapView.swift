@@ -78,12 +78,10 @@ struct LootBoxMapView: View {
         
         // Add loot box locations that have valid GPS coordinates
         // Filter by selection: if an item is selected, show only that item; otherwise show ALL items
-        let selectedId = locationManager.selectedDatabaseObjectId
-        
         let filteredLocations = locationManager.locations.filter { location in
             // If an item is selected, only show that item
-            if let selectedId = selectedId {
-                if location.id != selectedId {
+            if let selected = selectedId {
+                if location.id != selected {
                     return false // Filter out non-selected items
                 }
                 // Selected item: continue with other filters
