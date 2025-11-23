@@ -580,8 +580,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
         guard let arView = arView else { return }
-        
+
+        // Limit to maximum 3 objects at a time
+        guard placedBoxes.count < 3 else {
+            Swift.print("🎯 Maximum 3 objects reached - not placing more (current: \(placedBoxes.count))")
+            return
+        }
+
         for location in nearbyLocations {
+            // Stop if we've reached the limit
+            guard placedBoxes.count < 3 else { break }
+
             // Place box if it's nearby (within maxSearchDistance), hasn't been placed, and isn't collected
             // The box will appear in AR when you're within the search distance
             if placedBoxes[location.id] == nil && !location.collected {
@@ -605,12 +614,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         placedBoxes.removeAll()
         
-        // Get available loot box types
-        let lootBoxTypes: [LootBoxType] = [.goldenIdol, .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet]
-        let lootBoxNames = ["Golden Idol", "Ancient Artifact", "Temple Relic", "Puzzle Box", "Stone Tablet"]
-        
-        // Generate 3-5 new loot boxes at random positions
-        let numberOfBoxes = Int.random(in: 3...5)
+        // Generate exactly 3 new loot boxes at random positions (since we only allow 3 total)
+        let numberOfBoxes = 3
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
         
@@ -953,6 +958,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
             
             // Found a good position! Place the box here
+            Swift.print("🎯 Placing object at position (total objects: \(placedBoxes.count + 1)/3)")
             placeBoxAtPosition(boxPosition, location: location, in: arView)
             return
         }
@@ -1840,6 +1846,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // If no location-based system or not at a location, allow manual placement
         // Place a test loot box where user taps (for testing without locations)
+        if placedBoxes.count >= 3 {
+            Swift.print("🎯 Maximum 3 objects reached - cannot place more via tap")
+            return
+        }
+
         if let result = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .horizontal).first,
            let frame = arView.session.currentFrame {
             let cameraY = frame.camera.transform.columns.3.y
