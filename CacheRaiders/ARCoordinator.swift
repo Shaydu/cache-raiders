@@ -27,6 +27,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var distanceTracker: ARDistanceTracker?
     private var tapHandler: ARTapHandler?
     private var databaseIndicatorService: ARDatabaseIndicatorService?
+    private var groundingService: ARGroundingService?
     
     weak var arView: ARView?
     private var locationManager: LootBoxLocationManager?
@@ -205,6 +206,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         occlusionManager = AROcclusionManager(arView: arView, locationManager: locationManager, distanceTracker: distanceTracker)
         tapHandler = ARTapHandler(arView: arView, locationManager: locationManager)
         databaseIndicatorService = ARDatabaseIndicatorService()
+        groundingService = ARGroundingService(arView: arView)
         
         // Configure managers with shared state
         occlusionManager?.placedBoxes = placedBoxes
@@ -317,6 +319,56 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             if location.collected {
                 Swift.print("⏭️ Skipping \(location.name) - already collected")
                 continue
+            }
+            
+            // CRITICAL: Check for GPS collision - if another object with same/similar GPS coordinates is already placed OR in the current batch
+            // This prevents stacking when multiple objects share GPS coordinates
+            if location.latitude != 0 && location.longitude != 0 {
+                var hasGPSCollision = false
+                let newLoc = CLLocation(latitude: location.latitude, longitude: location.longitude)
+                
+                // First check against already-placed objects
+                for (existingId, _) in placedBoxes {
+                    // Find the location for this existing object
+                    if let existingLocation = nearbyLocations.first(where: { $0.id == existingId }) {
+                        // Check if GPS coordinates are very close (within 1 meter)
+                        let existingLoc = CLLocation(latitude: existingLocation.latitude, longitude: existingLocation.longitude)
+                        let gpsDistance = existingLoc.distance(from: newLoc)
+                        
+                        if gpsDistance < 1.0 {
+                            Swift.print("⏭️ Skipping \(location.name) - GPS collision with already-placed '\(existingLocation.name)'")
+                            Swift.print("   GPS distance: \(String(format: "%.2f", gpsDistance))m (too close)")
+                            hasGPSCollision = true
+                            break
+                        }
+                    }
+                }
+                
+                // Also check against other locations in the current batch (to prevent placing duplicates in same loop)
+                if !hasGPSCollision {
+                    for otherLocation in nearbyLocations {
+                        // Skip self and already-placed objects (we checked those above)
+                        if otherLocation.id == location.id || placedBoxes[otherLocation.id] != nil {
+                            continue
+                        }
+                        
+                        // Check if GPS coordinates are very close (within 1 meter)
+                        let otherLoc = CLLocation(latitude: otherLocation.latitude, longitude: otherLocation.longitude)
+                        let gpsDistance = newLoc.distance(from: otherLoc)
+                        
+                        if gpsDistance < 1.0 {
+                            Swift.print("⏭️ Skipping \(location.name) - GPS collision with '\(otherLocation.name)' in current batch")
+                            Swift.print("   GPS distance: \(String(format: "%.2f", gpsDistance))m (too close)")
+                            Swift.print("   💡 Multiple objects at same GPS location - only placing first one")
+                            hasGPSCollision = true
+                            break
+                        }
+                    }
+                }
+                
+                if hasGPSCollision {
+                    continue
+                }
             }
 
             // Place box if it's nearby (within maxSearchDistance), hasn't been placed, and isn't collected
@@ -436,42 +488,27 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             randomX = randomCenter.x + randomDistance * cos(adjustedAngle)
             randomZ = randomCenter.z + randomDistance * sin(adjustedAngle)
 
-            // Raycast to find floor
-            let raycastOrigin = SIMD3<Float>(randomX, cameraPos.y + 1.0, randomZ)
-            let raycastQuery = ARRaycastQuery(
-                origin: raycastOrigin,
-                direction: SIMD3<Float>(0, -1, 0),
-                allowing: .estimatedPlane,
-                alignment: .horizontal
-            )
-
-            let raycastResults = arView.session.raycast(raycastQuery)
-
-            guard let result = raycastResults.first else {
+            // Find the highest blocking surface (floor or table above floor)
+            guard let surfaceY = groundingService?.findHighestBlockingSurface(x: randomX, z: randomZ, cameraPos: cameraPos) else {
                 if attempts <= 3 { // Only log first few failures to avoid spam
-                    Swift.print("⚠️ Raycast failed - no floor/table detected at attempt \(attempts)")
+                    Swift.print("⚠️ No surface detected at attempt \(attempts)")
                     Swift.print("   💡 Try moving camera to scan more surfaces, or place objects manually by tapping")
                 }
                 continue
             }
 
-            Swift.print("✅ Raycast succeeded - found surface at attempt \(attempts)")
+            Swift.print("✅ Found surface at attempt \(attempts) - Y: \(String(format: "%.2f", surfaceY))")
 
-            let hitY = result.worldTransform.columns.3.y
             let cameraY = cameraPos.y
 
-            // Reject ceiling hits or floors too far away
-            if hitY > cameraY - 0.2 {
-                Swift.print("⚠️ Ceiling hit rejected at attempt \(attempts) - hitY: \(String(format: "%.2f", hitY)), cameraY: \(String(format: "%.2f", cameraY))")
-                continue
-            }
-            let heightDiff = abs(hitY - cameraY)
+            // Reject surfaces too far away (more than 2m above or below camera)
+            let heightDiff = abs(surfaceY - cameraY)
             if heightDiff > 2.0 {
-                Swift.print("⚠️ Floor too far rejected at attempt \(attempts) - hitY: \(String(format: "%.2f", hitY)), cameraY: \(String(format: "%.2f", cameraY)), diff: \(String(format: "%.2f", heightDiff))")
+                Swift.print("⚠️ Surface too far rejected at attempt \(attempts) - surfaceY: \(String(format: "%.2f", surfaceY)), cameraY: \(String(format: "%.2f", cameraY)), diff: \(String(format: "%.2f", heightDiff))")
                 continue
             }
             
-            let boxPosition = SIMD3<Float>(randomX, hitY, randomZ)
+            let boxPosition = SIMD3<Float>(randomX, surfaceY, randomZ)
             let distanceFromCamera = length(boxPosition - cameraPos)
 
             // CRITICAL: Enforce MINIMUM 1m distance from camera to prevent objects spawning on camera
@@ -804,46 +841,28 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 let scale = Float(20.0 / distance)
                 let adjustedTargetPos = cameraPos + (targetPos - cameraPos) * scale
                 
-                // Raycast to find ground at adjusted position
-                let raycastOrigin = SIMD3<Float>(adjustedTargetPos.x, cameraPos.y + 1.0, adjustedTargetPos.z)
-                let raycastQuery = ARRaycastQuery(
-                    origin: raycastOrigin,
-                    direction: SIMD3<Float>(0, -1, 0),
-                    allowing: .estimatedPlane,
-                    alignment: .horizontal
-                )
-                
-                if let raycastResult = arView.session.raycast(raycastQuery).first {
-                    let groundY = raycastResult.worldTransform.columns.3.y
-                    let itemPosition = SIMD3<Float>(adjustedTargetPos.x, groundY, adjustedTargetPos.z)
-                    Swift.print("✅ Placed \(location.type.displayName) on ground at GPS-based AR position")
+                // Find the highest blocking surface at adjusted position
+                if let surfaceY = groundingService?.findHighestBlockingSurface(x: adjustedTargetPos.x, z: adjustedTargetPos.z, cameraPos: cameraPos) {
+                    let itemPosition = SIMD3<Float>(adjustedTargetPos.x, surfaceY, adjustedTargetPos.z)
+                    Swift.print("✅ Placed \(location.type.displayName) on surface at GPS-based AR position (Y: \(String(format: "%.2f", surfaceY)))")
                     placeBoxAtPosition(itemPosition, location: location, in: arView)
                     return
                 } else {
-                    // Fallback: use adjusted position at camera height
+                    // Fallback: use adjusted position (placeBoxAtPosition will try to ground it)
                     placeBoxAtPosition(adjustedTargetPos, location: location, in: arView)
                     return
                 }
             }
             
-            // Try to find ground plane by raycasting downward from above the target position
-            let raycastOrigin = SIMD3<Float>(targetPos.x, cameraPos.y + 1.0, targetPos.z)
-            let raycastQuery = ARRaycastQuery(
-                origin: raycastOrigin,
-                direction: SIMD3<Float>(0, -1, 0),
-                allowing: .estimatedPlane,
-                alignment: .horizontal
-            )
-            
-            if let raycastResult = arView.session.raycast(raycastQuery).first {
-                let groundY = raycastResult.worldTransform.columns.3.y
-                let itemPosition = SIMD3<Float>(targetPos.x, groundY, targetPos.z)
-                Swift.print("✅ Placed \(location.type.displayName) on ground at GPS-based AR position")
+            // Try to find the highest horizontal surface that blocks the floor
+            if let surfaceY = groundingService?.findHighestBlockingSurface(x: targetPos.x, z: targetPos.z, cameraPos: cameraPos) {
+                let itemPosition = SIMD3<Float>(targetPos.x, surfaceY, targetPos.z)
+                Swift.print("✅ Placed \(location.type.displayName) on surface at GPS-based AR position (Y: \(String(format: "%.2f", surfaceY)))")
                 placeBoxAtPosition(itemPosition, location: location, in: arView)
                 return
             } else {
                 // Fallback: Try wider search before giving up
-                Swift.print("⚠️ No ground plane detected for GPS location, trying wider search...")
+                Swift.print("⚠️ No surface detected for GPS location, trying wider search...")
                 let searchOffsets: [SIMD3<Float>] = [
                     SIMD3<Float>(0, 0, 0),
                     SIMD3<Float>(0.5, 0, 0),
@@ -853,30 +872,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 ]
                 
                 var foundSurface = false
-                for offset in searchOffsets {
-                    let searchPos = targetPos + offset
-                    let searchOrigin = SIMD3<Float>(searchPos.x, cameraPos.y + 1.0, searchPos.z)
-                    let searchQuery = ARRaycastQuery(
-                        origin: searchOrigin,
-                        direction: SIMD3<Float>(0, -1, 0),
-                        allowing: .estimatedPlane,
-                        alignment: .horizontal
-                    )
-                    
-                    if let result = arView.session.raycast(searchQuery).first {
-                        let surfaceY = result.worldTransform.columns.3.y
-                        if surfaceY < cameraPos.y - 0.2 {
-                            let groundedPos = SIMD3<Float>(targetPos.x, surfaceY, targetPos.z)
-                            Swift.print("✅ Found surface at offset position - grounding object")
-                            placeBoxAtPosition(groundedPos, location: location, in: arView)
-                            foundSurface = true
-                            break
-                        }
-                    }
+                if let surfaceY = groundingService?.findSurfaceWithFallback(centerX: targetPos.x, centerZ: targetPos.z, cameraPos: cameraPos) {
+                    let groundedPos = SIMD3<Float>(targetPos.x, surfaceY, targetPos.z)
+                    Swift.print("✅ Found surface at offset position - grounding object")
+                    placeBoxAtPosition(groundedPos, location: location, in: arView)
+                    foundSurface = true
                 }
                 
                 if !foundSurface {
-                    Swift.print("⚠️ No ground plane found after extended search - object may float")
+                    Swift.print("⚠️ No surface found after extended search - object may float")
                     Swift.print("   💡 Try moving camera to scan surfaces before placing")
                     // Still place it, but placeBoxAtPosition will try to ground it
                     placeBoxAtPosition(targetPos, location: location, in: arView)
@@ -914,16 +918,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Adjust position to be at minimum distance
             let direction = normalize(boxPosition - cameraPos)
             boxPosition = cameraPos + direction * minDistance
-            // Recalculate Y from raycast at new position
-            let raycastOrigin = SIMD3<Float>(boxPosition.x, cameraPos.y + 1.0, boxPosition.z)
-            let raycastQuery = ARRaycastQuery(
-                origin: raycastOrigin,
-                direction: SIMD3<Float>(0, -1, 0),
-                allowing: .estimatedPlane,
-                alignment: .horizontal
-            )
-            if let newResult = arView.session.raycast(raycastQuery).first {
-                boxPosition.y = newResult.worldTransform.columns.3.y
+            // Recalculate Y from highest blocking surface at new position
+            if let surfaceY = groundingService?.findHighestBlockingSurface(x: boxPosition.x, z: boxPosition.z, cameraPos: cameraPos) {
+                boxPosition.y = surfaceY
             }
         }
         
@@ -987,15 +984,29 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let sphere = ModelEntity(mesh: sphereMesh, materials: [sphereMaterial])
         sphere.name = location.id
 
-        // Position sphere so bottom sits flat on ground
-        sphere.position = SIMD3<Float>(x, sphereRadius, z) // Bottom of sphere touches ground
+        // Get camera position for grounding
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        
+        // Find the highest blocking surface to ground the sphere
+        let groundY: Float
+        if let surfaceY = groundingService?.findHighestBlockingSurface(x: x, z: z, cameraPos: cameraPos) {
+            groundY = surfaceY
+        } else {
+            // Fallback to camera height - 1.5m if no surface found
+            groundY = cameraPos.y - 1.5
+            Swift.print("⚠️ No surface found for sphere - using fallback height")
+        }
+        
+        // Position sphere so bottom sits flat on surface
+        sphere.position = SIMD3<Float>(x, sphereRadius, z) // Bottom of sphere touches surface
 
         // Add point light to make it visible
         let light = PointLightComponent(color: .orange, intensity: 200)
         sphere.components.set(light)
 
-        // Create anchor and add sphere
-        let anchor = AnchorEntity(world: SIMD3<Float>(x, 0, z))
+        // Create anchor at grounded position
+        let anchor = AnchorEntity(world: SIMD3<Float>(x, groundY, z))
         anchor.addChild(sphere)
 
         arView.scene.addAnchor(anchor)
@@ -1033,6 +1044,43 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
         
+        // CRITICAL: Check for collision with already placed objects (minimum 2m horizontal separation, 0.5m vertical)
+        let minHorizontalSeparation: Float = 2.0 // Minimum 2 meters horizontal distance between objects
+        let minVerticalSeparation: Float = 0.5 // Minimum 0.5 meters vertical distance (prevents stacking)
+        for (existingId, existingAnchor) in placedBoxes {
+            let existingTransform = existingAnchor.transformMatrix(relativeTo: nil)
+            let existingPos = SIMD3<Float>(
+                existingTransform.columns.3.x,
+                existingTransform.columns.3.y,
+                existingTransform.columns.3.z
+            )
+            
+            // Calculate horizontal distance (X-Z plane)
+            let horizontalDistance = sqrt(
+                pow(boxPosition.x - existingPos.x, 2) +
+                pow(boxPosition.z - existingPos.z, 2)
+            )
+            
+            // Calculate vertical distance (Y-axis)
+            let verticalDistance = abs(boxPosition.y - existingPos.y)
+            
+            // Check both horizontal and vertical separation
+            if horizontalDistance < minHorizontalSeparation {
+                Swift.print("⚠️ Rejected placement of \(location.name) - too close horizontally to existing object '\(existingId)'")
+                Swift.print("   Horizontal distance: \(String(format: "%.2f", horizontalDistance))m (minimum: \(minHorizontalSeparation)m)")
+                Swift.print("   Vertical distance: \(String(format: "%.2f", verticalDistance))m")
+                return
+            }
+            
+            // Also check if objects are stacking vertically (same X-Z position but different Y)
+            if horizontalDistance < 0.5 && verticalDistance < minVerticalSeparation {
+                Swift.print("⚠️ Rejected placement of \(location.name) - stacking detected with existing object '\(existingId)'")
+                Swift.print("   Horizontal distance: \(String(format: "%.2f", horizontalDistance))m")
+                Swift.print("   Vertical distance: \(String(format: "%.2f", verticalDistance))m (minimum: \(minVerticalSeparation)m)")
+                return
+            }
+        }
+        
         // CRITICAL: Final safety check - ensure minimum 3m distance from camera
         guard let frame = arView.session.currentFrame else {
             Swift.print("⚠️ Cannot place box: no AR frame available")
@@ -1047,26 +1095,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
-        // CRITICAL: Ensure object is grounded on a horizontal surface (floor/table)
-        // Raycast downward from above the target position to find the actual surface
+        // CRITICAL: Ensure object is grounded on the highest horizontal surface that blocks the floor
+        // This places objects on tables/raised surfaces if they block the floor, otherwise on the floor
         var groundedPosition = boxPosition
-        let raycastOrigin = SIMD3<Float>(boxPosition.x, cameraPos.y + 1.0, boxPosition.z)
-        let raycastQuery = ARRaycastQuery(
-            origin: raycastOrigin,
-            direction: SIMD3<Float>(0, -1, 0),
-            allowing: .estimatedPlane,
-            alignment: .horizontal
-        )
-        
-        if let raycastResult = arView.session.raycast(raycastQuery).first {
-            let surfaceY = raycastResult.worldTransform.columns.3.y
-            // Reject if surface is above camera (likely a ceiling)
-            if surfaceY < cameraPos.y - 0.2 {
-                groundedPosition = SIMD3<Float>(boxPosition.x, surfaceY, boxPosition.z)
-                Swift.print("✅ Found horizontal surface at Y: \(String(format: "%.2f", surfaceY)) - grounding object")
-            } else {
-                Swift.print("⚠️ Raycast hit surface above camera (likely ceiling) at Y: \(String(format: "%.2f", surfaceY)) - using original position")
-            }
+        if let surfaceY = groundingService?.findHighestBlockingSurface(x: boxPosition.x, z: boxPosition.z, cameraPos: cameraPos) {
+            groundedPosition = SIMD3<Float>(boxPosition.x, surfaceY, boxPosition.z)
+            Swift.print("✅ Grounded object on surface at Y: \(String(format: "%.2f", surfaceY))")
         } else {
             Swift.print("⚠️ No horizontal surface detected at position - object may float")
             Swift.print("   💡 Try moving camera to scan more surfaces before placing objects")
@@ -1873,23 +1907,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             Swift.print("⚠️ GPS distance \(String(format: "%.2f", distance))m exceeds 10m, clamping to 10m for AR placement")
             let scale = Float(10.0 / distance)
             let adjustedTargetPos = cameraPos + (targetPos - cameraPos) * scale
-            // Use adjusted position for raycast
-            let raycastOrigin = SIMD3<Float>(adjustedTargetPos.x, cameraPos.y + 1.0, adjustedTargetPos.z)
-            let raycastQuery = ARRaycastQuery(
-                origin: raycastOrigin,
-                direction: SIMD3<Float>(0, -1, 0),
-                allowing: .estimatedPlane,
-                alignment: .horizontal
-            )
-            
+            // Find the highest blocking surface at adjusted position
             var itemPosition: SIMD3<Float>
-            if let raycastResult = arView.session.raycast(raycastQuery).first {
-                let groundY = raycastResult.worldTransform.columns.3.y
-                itemPosition = SIMD3<Float>(adjustedTargetPos.x, groundY, adjustedTargetPos.z)
-                Swift.print("✅ Placed \(item.type.displayName) on ground at AR position (\(String(format: "%.2f", adjustedTargetPos.x)), \(String(format: "%.2f", groundY)), \(String(format: "%.2f", adjustedTargetPos.z)))")
+            if let surfaceY = groundingService?.findHighestBlockingSurface(x: adjustedTargetPos.x, z: adjustedTargetPos.z, cameraPos: cameraPos) {
+                itemPosition = SIMD3<Float>(adjustedTargetPos.x, surfaceY, adjustedTargetPos.z)
+                Swift.print("✅ Placed \(item.type.displayName) on surface at AR position (\(String(format: "%.2f", adjustedTargetPos.x)), \(String(format: "%.2f", surfaceY)), \(String(format: "%.2f", adjustedTargetPos.z)))")
             } else {
                 itemPosition = adjustedTargetPos
-                Swift.print("⚠️ No ground plane detected, placing at camera height")
+                Swift.print("⚠️ No surface detected, placing at camera height")
             }
             
             // Location is already added to locationManager in addFindableItem, no need to add again
@@ -1898,26 +1923,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
-        // Try to find ground plane by raycasting downward from above the target position
-        let raycastOrigin = SIMD3<Float>(targetPos.x, cameraPos.y + 1.0, targetPos.z)
-        let raycastQuery = ARRaycastQuery(
-            origin: raycastOrigin,
-            direction: SIMD3<Float>(0, -1, 0),
-            allowing: .estimatedPlane,
-            alignment: .horizontal
-        )
-
+        // Find the highest blocking surface at target position
         var itemPosition: SIMD3<Float>
-
-        if let raycastResult = arView.session.raycast(raycastQuery).first {
-            // Place on detected ground plane at the target position
-            let groundY = raycastResult.worldTransform.columns.3.y
-            itemPosition = SIMD3<Float>(targetPos.x, groundY, targetPos.z)
-            Swift.print("✅ Placed \(item.type.displayName) on ground at AR position (\(String(format: "%.2f", targetPos.x)), \(String(format: "%.2f", groundY)), \(String(format: "%.2f", targetPos.z))) based on GPS offset")
+        if let surfaceY = groundingService?.findHighestBlockingSurface(x: targetPos.x, z: targetPos.z, cameraPos: cameraPos) {
+            itemPosition = SIMD3<Float>(targetPos.x, surfaceY, targetPos.z)
+            Swift.print("✅ Placed \(item.type.displayName) on surface at AR position (\(String(format: "%.2f", targetPos.x)), \(String(format: "%.2f", surfaceY)), \(String(format: "%.2f", targetPos.z))) based on GPS offset")
         } else {
             // Fallback: place at target position at current camera height
             itemPosition = targetPos
-            Swift.print("⚠️ No ground plane detected, placing \(item.type.displayName) at camera height")
+            Swift.print("⚠️ No surface detected, placing \(item.type.displayName) at camera height")
         }
 
         // Location is already added to locationManager in addFindableItem, no need to add again

@@ -15,18 +15,36 @@ pip install -r requirements.txt
 python app.py
 ```
 
-The API will be available at `http://localhost:5000`
+The API will be available at `http://localhost:5001`
+
+## 1.5. Access the Admin Web UI
+
+Once the server is running, you can access the map-based admin interface at:
+
+```
+http://localhost:5001/admin
+```
+
+This web UI allows you to:
+- View all objects on an interactive map
+- Click on the map to place new objects
+- Set object name, type, and radius
+- View statistics (total objects, found objects, etc.)
+- Delete objects
+- See which objects have been collected
+
+The admin UI automatically refreshes every 30 seconds to show the latest data.
 
 ## 2. Test the API
 
 ### Health Check
 ```bash
-curl http://localhost:5000/health
+curl http://localhost:5001/health
 ```
 
 ### Create an Object
 ```bash
-curl -X POST http://localhost:5000/api/objects \
+curl -X POST http://localhost:5001/api/objects \
   -H "Content-Type: application/json" \
   -d '{
     "id": "test-123",
@@ -41,19 +59,24 @@ curl -X POST http://localhost:5000/api/objects \
 
 ### Get All Objects
 ```bash
-curl http://localhost:5000/api/objects
+curl http://localhost:5001/api/objects
 ```
 
 ### Mark Object as Found
 ```bash
-curl -X POST http://localhost:5000/api/objects/test-123/found \
+curl -X POST http://localhost:5001/api/objects/test-123/found \
   -H "Content-Type: application/json" \
   -d '{"found_by": "user1"}'
 ```
 
 ### Get Statistics
 ```bash
-curl http://localhost:5000/api/stats
+curl http://localhost:5001/api/stats
+```
+
+### Delete an Object
+```bash
+curl -X DELETE http://localhost:5001/api/objects/test-123
 ```
 
 ## 3. Configure iOS App

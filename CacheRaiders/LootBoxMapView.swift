@@ -113,6 +113,8 @@ struct LootBoxMapView: View {
             })
         
         Swift.print("🗺️ Map annotations: \(annotations.count) total (showFoundOnMap=\(showFound), collected items filtered: \(!showFound))")
+        Swift.print("   Total locations in manager: \(locationManager.locations.count)")
+        Swift.print("   Filtered locations count: \(filteredLocations.count)")
         
         return annotations
     }

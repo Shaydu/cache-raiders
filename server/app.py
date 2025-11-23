@@ -2,7 +2,7 @@
 CacheRaiders API Server
 Simple REST API for tracking loot box objects, their locations, and who found them.
 """
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 import sqlite3
@@ -440,6 +440,49 @@ def reset_all_finds():
         'message': 'All finds have been reset',
         'finds_removed': deleted_count
     }), 200
+
+@app.route('/api/objects/<object_id>', methods=['DELETE'])
+def delete_object(object_id: str):
+    """Delete an object and all associated finds."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if object exists
+    cursor.execute('SELECT id FROM objects WHERE id = ?', (object_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'error': 'Object not found'}), 404
+    
+    # Delete associated finds first (foreign key constraint)
+    cursor.execute('DELETE FROM finds WHERE object_id = ?', (object_id,))
+    finds_deleted = cursor.rowcount
+    
+    # Delete the object
+    cursor.execute('DELETE FROM objects WHERE id = ?', (object_id,))
+    object_deleted = cursor.rowcount
+    
+    conn.commit()
+    conn.close()
+    
+    if object_deleted == 0:
+        return jsonify({'error': 'Failed to delete object'}), 500
+    
+    # Broadcast object deleted event to all connected clients
+    socketio.emit('object_deleted', {
+        'object_id': object_id
+    })
+    
+    return jsonify({
+        'object_id': object_id,
+        'message': 'Object deleted successfully',
+        'finds_deleted': finds_deleted
+    }), 200
+
+@app.route('/admin')
+@app.route('/admin/')
+def admin_ui():
+    """Serve the admin web UI."""
+    return send_from_directory(os.path.dirname(__file__), 'admin.html')
 
 # WebSocket event handlers
 @socketio.on('connect')

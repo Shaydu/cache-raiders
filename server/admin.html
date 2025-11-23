@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CacheRaiders - Object Admin</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        #sidebar {
+            width: 350px;
+            background: #1a1a1a;
+            color: #fff;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        
+        h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            color: #ffd700;
+        }
+        
+        .section {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        
+        .section h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #ffd700;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+            color: #ccc;
+        }
+        
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #444;
+            border-radius: 4px;
+            background: #1a1a1a;
+            color: #fff;
+            font-size: 14px;
+        }
+        
+        input:focus, select:focus {
+            outline: none;
+            border-color: #ffd700;
+        }
+        
+        button {
+            width: 100%;
+            padding: 12px;
+            background: #ffd700;
+            color: #1a1a1a;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        button:hover {
+            background: #ffed4e;
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        
+        .btn-secondary {
+            background: #444;
+            color: #fff;
+            margin-top: 10px;
+        }
+        
+        .btn-secondary:hover {
+            background: #555;
+        }
+        
+        #map {
+            flex: 1;
+            height: 100vh;
+        }
+        
+        .info-box {
+            background: #2a2a2a;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #ccc;
+            margin-top: 10px;
+        }
+        
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+        
+        .status.success {
+            background: #2d5a2d;
+            color: #90ee90;
+        }
+        
+        .status.error {
+            background: #5a2d2d;
+            color: #ff6b6b;
+        }
+        
+        .status.info {
+            background: #2d3a5a;
+            color: #6b9fff;
+        }
+        
+        .objects-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .object-item {
+            background: #1a1a1a;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+            border-left: 3px solid #ffd700;
+            font-size: 12px;
+        }
+        
+        .object-item.collected {
+            border-left-color: #4caf50;
+            opacity: 0.7;
+        }
+        
+        .object-item h3 {
+            font-size: 14px;
+            margin-bottom: 5px;
+            color: #ffd700;
+        }
+        
+        .object-item.collected h3 {
+            color: #4caf50;
+        }
+        
+        .object-item .meta {
+            color: #999;
+            font-size: 11px;
+        }
+        
+        .object-item button {
+            margin-top: 8px;
+            padding: 6px;
+            font-size: 12px;
+        }
+        
+        .stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .stat-item {
+            background: #1a1a1a;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ffd700;
+        }
+        
+        .stat-label {
+            font-size: 11px;
+            color: #999;
+            margin-top: 5px;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #999;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <div>
+            <h1>🗺️ CacheRaiders Admin</h1>
+            <p style="color: #999; font-size: 12px;">Click on the map to place new objects</p>
+        </div>
+        
+        <div class="section">
+            <h2>Create New Object</h2>
+            <form id="objectForm">
+                <div class="form-group">
+                    <label for="objectName">Name</label>
+                    <input type="text" id="objectName" placeholder="e.g., Ancient Chalice" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="objectType">Type</label>
+                    <select id="objectType" required>
+                        <option value="">Select type...</option>
+                        <option value="Chalice">Chalice</option>
+                        <option value="Temple Relic">Temple Relic</option>
+                        <option value="Treasure Chest">Treasure Chest</option>
+                        <option value="Mysterious Sphere">Mysterious Sphere</option>
+                        <option value="Mysterious Cube">Mysterious Cube</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="objectRadius">Radius (meters)</label>
+                    <input type="number" id="objectRadius" value="5.0" min="1" max="100" step="0.5" required>
+                </div>
+                
+                <div class="info-box">
+                    <strong>Location:</strong><br>
+                    <span id="locationInfo">Click on map to set location</span>
+                </div>
+                
+                <button type="submit" id="createBtn">Create Object</button>
+            </form>
+            
+            <div id="statusMessage"></div>
+        </div>
+        
+        <div class="section">
+            <h2>Statistics</h2>
+            <div class="stats" id="stats">
+                <div class="stat-item">
+                    <div class="stat-value" id="totalObjects">-</div>
+                    <div class="stat-label">Total Objects</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="foundObjects">-</div>
+                    <div class="stat-label">Found</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="unfoundObjects">-</div>
+                    <div class="stat-label">Unfound</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="totalFinds">-</div>
+                    <div class="stat-label">Total Finds</div>
+                </div>
+            </div>
+            <button class="btn-secondary" onclick="refreshStats()">Refresh Stats</button>
+        </div>
+        
+        <div class="section">
+            <h2>Existing Objects</h2>
+            <button class="btn-secondary" onclick="loadObjects()">Refresh List</button>
+            <div class="objects-list" id="objectsList">
+                <div class="loading">Loading objects...</div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="map"></div>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // Configuration
+        const API_BASE = window.location.origin;
+        let map;
+        let markers = {};
+        let selectedLocation = null;
+        let selectedMarker = null;
+        
+        // Initialize map
+        function initMap() {
+            map = L.map('map').setView([40.0758, -105.3008], 15);
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(map);
+            
+            // Handle map clicks
+            map.on('click', function(e) {
+                const { lat, lng } = e.latlng;
+                setSelectedLocation(lat, lng);
+            });
+            
+            // Load existing objects
+            loadObjects();
+            refreshStats();
+        }
+        
+        // Set selected location from map click
+        function setSelectedLocation(lat, lng) {
+            selectedLocation = { lat, lng };
+            
+            // Remove previous selection marker
+            if (selectedMarker) {
+                map.removeLayer(selectedMarker);
+            }
+            
+            // Add new selection marker
+            selectedMarker = L.marker([lat, lng], {
+                icon: L.divIcon({
+                    className: 'selected-marker',
+                    html: '<div style="background: #ffd700; width: 20px; height: 20px; border-radius: 50%; border: 3px solid #1a1a1a; box-shadow: 0 0 10px rgba(255, 215, 0, 0.8);"></div>',
+                    iconSize: [20, 20]
+                })
+            }).addTo(map);
+            
+            document.getElementById('locationInfo').textContent = 
+                `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+        }
+        
+        // Load objects from API
+        async function loadObjects() {
+            try {
+                const response = await fetch(`${API_BASE}/api/objects?include_found=true`);
+                const objects = await response.json();
+                
+                // Clear existing markers
+                Object.values(markers).forEach(marker => map.removeLayer(marker));
+                markers = {};
+                
+                // Add markers for each object
+                objects.forEach(obj => {
+                    const icon = L.divIcon({
+                        className: 'object-marker',
+                        html: `<div style="background: ${obj.collected ? '#4caf50' : '#ff6b6b'}; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 8px rgba(0,0,0,0.5);"></div>`,
+                        iconSize: [16, 16]
+                    });
+                    
+                    const marker = L.marker([obj.latitude, obj.longitude], { icon })
+                        .addTo(map)
+                        .bindPopup(`
+                            <strong>${obj.name}</strong><br>
+                            Type: ${obj.type}<br>
+                            Radius: ${obj.radius}m<br>
+                            ${obj.collected ? `<span style="color: #4caf50;">✓ Collected</span>` : '<span style="color: #ff6b6b;">Available</span>'}
+                        `);
+                    
+                    markers[obj.id] = marker;
+                });
+                
+                // Update objects list
+                updateObjectsList(objects);
+            } catch (error) {
+                console.error('Error loading objects:', error);
+                showStatus('Error loading objects: ' + error.message, 'error');
+            }
+        }
+        
+        // Update objects list in sidebar
+        function updateObjectsList(objects) {
+            const listEl = document.getElementById('objectsList');
+            
+            if (objects.length === 0) {
+                listEl.innerHTML = '<div class="loading">No objects found</div>';
+                return;
+            }
+            
+            listEl.innerHTML = objects.map(obj => `
+                <div class="object-item ${obj.collected ? 'collected' : ''}">
+                    <h3>${obj.name}</h3>
+                    <div class="meta">
+                        Type: ${obj.type}<br>
+                        Location: ${obj.latitude.toFixed(6)}, ${obj.longitude.toFixed(6)}<br>
+                        Radius: ${obj.radius}m<br>
+                        ${obj.collected ? `Found by: ${obj.found_by || 'Unknown'}<br>Found at: ${new Date(obj.found_at).toLocaleString()}` : 'Status: Available'}
+                    </div>
+                    <button onclick="deleteObject('${obj.id}')" style="background: #d32f2f; margin-top: 8px;">Delete</button>
+                </div>
+            `).join('');
+        }
+        
+        // Refresh statistics
+        async function refreshStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/stats`);
+                const stats = await response.json();
+                
+                document.getElementById('totalObjects').textContent = stats.total_objects;
+                document.getElementById('foundObjects').textContent = stats.found_objects;
+                document.getElementById('unfoundObjects').textContent = stats.unfound_objects;
+                document.getElementById('totalFinds').textContent = stats.total_finds;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+        
+        // Handle form submission
+        document.getElementById('objectForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            if (!selectedLocation) {
+                showStatus('Please click on the map to select a location', 'error');
+                return;
+            }
+            
+            const name = document.getElementById('objectName').value;
+            const type = document.getElementById('objectType').value;
+            const radius = parseFloat(document.getElementById('objectRadius').value);
+            
+            // Generate UUID for object ID
+            const id = 'obj-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+            
+            const objectData = {
+                id: id,
+                name: name,
+                type: type,
+                latitude: selectedLocation.lat,
+                longitude: selectedLocation.lng,
+                radius: radius,
+                created_by: 'admin-web-ui'
+            };
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/objects`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(objectData)
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    showStatus(`Object "${name}" created successfully!`, 'success');
+                    
+                    // Reset form
+                    document.getElementById('objectForm').reset();
+                    document.getElementById('objectRadius').value = '5.0';
+                    selectedLocation = null;
+                    if (selectedMarker) {
+                        map.removeLayer(selectedMarker);
+                        selectedMarker = null;
+                    }
+                    document.getElementById('locationInfo').textContent = 'Click on map to set location';
+                    
+                    // Reload objects and stats
+                    loadObjects();
+                    refreshStats();
+                } else {
+                    const error = await response.json();
+                    showStatus(`Error: ${error.error || 'Failed to create object'}`, 'error');
+                }
+            } catch (error) {
+                showStatus('Error creating object: ' + error.message, 'error');
+            }
+        });
+        
+        // Delete object
+        async function deleteObject(objectId) {
+            if (!confirm('Are you sure you want to delete this object? This action cannot be undone.')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/objects/${objectId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    showStatus('Object deleted successfully', 'success');
+                    loadObjects();
+                    refreshStats();
+                } else {
+                    const error = await response.json();
+                    showStatus(`Error: ${error.error || 'Failed to delete object'}`, 'error');
+                }
+            } catch (error) {
+                showStatus('Error deleting object: ' + error.message, 'error');
+            }
+        }
+        
+        // Show status message
+        function showStatus(message, type = 'info') {
+            const statusEl = document.getElementById('statusMessage');
+            statusEl.innerHTML = `<div class="status ${type}">${message}</div>`;
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                statusEl.innerHTML = '';
+            }, 5000);
+        }
+        
+        // Initialize on page load
+        initMap();
+        
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+            loadObjects();
+            refreshStats();
+        }, 30000);
+    </script>
+</body>
+</html>
+

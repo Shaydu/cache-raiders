@@ -26,11 +26,13 @@ class ARDistanceTracker: ObservableObject {
     
     private var distanceLogger: Timer?
     private var previousDistance: Double?
+    private var audioPingService: AudioPingService?
     
     init(arView: ARView?, locationManager: LootBoxLocationManager?, userLocationManager: UserLocationManager?) {
         self.arView = arView
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
+        self.audioPingService = AudioPingService()
     }
     
     /// Start distance logging
@@ -44,6 +46,7 @@ class ARDistanceTracker: ObservableObject {
     /// Stop distance logging
     func stopDistanceLogging() {
         distanceLogger?.invalidate()
+        audioPingService?.stop()
     }
     
     /// Clear found loot boxes set
@@ -378,6 +381,15 @@ class ARDistanceTracker: ObservableObject {
         
         // Update direction to nearest object
         updateNearestObjectDirection()
+        
+        // Update audio ping service if audio mode is enabled
+        if let locationManager = locationManager, locationManager.enableAudioMode {
+            audioPingService?.updateDistance(currentDistance)
+            // Start if not already running (will be checked internally)
+            audioPingService?.start()
+        } else {
+            audioPingService?.stop()
+        }
         
         // Update bindings
         DispatchQueue.main.async { [weak self] in

@@ -143,3 +143,4 @@ func createDefaultLocations(near userLocation: CLLocation) async {
 3. Or generate objects on server
 
 
+

@@ -31,25 +31,14 @@ struct LocationConfigView: View {
                 // Bottom controls
                 VStack(spacing: 12) {
                     if let userLocation = userLocationManager.currentLocation {
-                        HStack(spacing: 20) {
-                            Button("🔄 Regenerate Loot Boxes") {
-                                locationManager.regenerateLocations(near: userLocation)
-                            }
-                            .foregroundColor(.blue)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Color.blue.opacity(0.1))
-                            .cornerRadius(8)
-
-                            Button("❌ Reset All Found") {
-                                locationManager.resetAllLocations()
-                            }
-                            .foregroundColor(.red)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 8)
-                            .background(Color.red.opacity(0.1))
-                            .cornerRadius(8)
+                        Button("🔄 Regenerate Loot Boxes") {
+                            locationManager.regenerateLocations(near: userLocation)
                         }
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(8)
                     }
 
                     // Stats - count both GPS boxes and AR spheres

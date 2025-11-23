@@ -87,3 +87,4 @@ curl http://localhost:5000/api/stats
 - **Database issues**: The database file is created automatically. Make sure the container has write permissions.
 
 
+

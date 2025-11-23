@@ -1,6 +1,7 @@
 import SwiftUI
 import CoreLocation
 import SystemConfiguration
+import Combine
 
 // MARK: - Settings View
 struct SettingsView: View {
@@ -271,6 +272,19 @@ struct SettingsView: View {
                     Text("When enabled, uses Vision framework to classify objects in camera view. Disabled by default to save battery and processing power.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                    
+                    Toggle("Enable Audio Mode", isOn: Binding(
+                        get: { locationManager.enableAudioMode },
+                        set: { newValue in
+                            locationManager.enableAudioMode = newValue
+                            locationManager.saveEnableAudioMode()
+                        }
+                    ))
+                    .padding(.vertical, 4)
+                    
+                    Text("When enabled, plays a ping sound once per second. The pitch increases as you get closer to objects, reaching maximum pitch when you're on top of them.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
                 
                 Section("API Sync") {
@@ -497,20 +511,21 @@ struct SettingsView: View {
                             Task {
                                 do {
                                     let response = try await APIService.shared.resetAllFinds()
-                                    let findsRemoved = response["finds_removed"] as? Int ?? 0
                                     
                                     // Reload locations from API to update local state
+                                    // Use includeFound: true to ensure we get all objects after reset
                                     if let userLocation = userLocationManager.currentLocation {
-                                        await locationManager.loadLocationsFromAPI(userLocation: userLocation)
+                                        await locationManager.loadLocationsFromAPI(userLocation: userLocation, includeFound: true)
                                     }
                                     
                                     await MainActor.run {
                                         alertTitle = "Reset Complete"
-                                        alertMessage = "All objects have been reset to unfound status.\n\n\(findsRemoved) find record(s) removed."
+                                        alertMessage = "All objects have been reset to unfound status.\n\n\(response.finds_removed) find record(s) removed."
                                         showAlert = true
                                         isLoading = false
                                         // Refresh database list
                                         loadDatabaseObjects()
+                                        // Note: Map view will update automatically via @Published properties
                                     }
                                 } catch {
                                     await MainActor.run {

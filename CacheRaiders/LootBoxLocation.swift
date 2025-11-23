@@ -45,6 +45,7 @@ class LootBoxLocationManager: ObservableObject {
     @Published var disableOcclusion: Bool = false // Default: occlusion enabled (false = occlusion ON)
     @Published var disableAmbientLight: Bool = false // Default: ambient light enabled (false = ambient light ON)
     @Published var enableObjectRecognition: Bool = false // Default: object recognition disabled (saves battery/processing)
+    @Published var enableAudioMode: Bool = false // Default: audio mode disabled
     @Published var lootBoxMinSize: Double = 0.25 // Default 0.25m (minimum size)
     @Published var lootBoxMaxSize: Double = 1.0 // Default 1.0m (maximum size) - reduced from 3.0m
     @Published var shouldRandomize: Bool = false // Trigger for randomizing loot boxes in AR
@@ -60,6 +61,7 @@ class LootBoxLocationManager: ObservableObject {
     private let disableOcclusionKey = "disableOcclusion"
     private let disableAmbientLightKey = "disableAmbientLight"
     private let enableObjectRecognitionKey = "enableObjectRecognition"
+    private let enableAudioModeKey = "enableAudioMode"
     private let lootBoxMinSizeKey = "lootBoxMinSize"
     private let lootBoxMaxSizeKey = "lootBoxMaxSize"
     
@@ -77,6 +79,7 @@ class LootBoxLocationManager: ObservableObject {
         loadDisableOcclusion()
         loadDisableAmbientLight()
         loadEnableObjectRecognition()
+        loadEnableAudioMode()
         loadLootBoxSizes()
         
         // API sync is always enabled - start refresh timer
@@ -244,22 +247,15 @@ class LootBoxLocationManager: ObservableObject {
         }
     }
     
-    /// Returns only findable locations (excludes map markers and temporary AR items)
+    /// Returns only findable locations (excludes map markers, but includes AR items for counter)
     var findableLocations: [LootBoxLocation] {
         return locations.filter { location in
             // Exclude map-only markers - these are just visual markers, not findable items
             if location.id.hasPrefix("AR_SPHERE_MAP_") {
                 return false
             }
-            // Exclude temporary AR-only items (AR_ITEM_ and AR_SPHERE_ without MAP)
-            // These are randomized AR items that get removed when randomizing again
-            // They shouldn't be counted in the main loot box counter
-            if location.id.hasPrefix("AR_ITEM_") {
-                return false
-            }
-            if location.id.hasPrefix("AR_SPHERE_") && !location.id.hasPrefix("AR_SPHERE_MAP_") {
-                return false
-            }
+            // Include AR_ITEM_ items - these are randomized AR items that should be counted
+            // Include AR_SPHERE_ items (but not AR_SPHERE_MAP_ which are map markers)
             // Include all other locations (GPS-based locations with real coordinates)
             return true
         }
@@ -392,6 +388,18 @@ class LootBoxLocationManager: ObservableObject {
         enableObjectRecognition = UserDefaults.standard.bool(forKey: enableObjectRecognitionKey)
     }
     
+    // Save enable audio mode preference
+    func saveEnableAudioMode() {
+        UserDefaults.standard.set(enableAudioMode, forKey: enableAudioModeKey)
+    }
+    
+    // Load enable audio mode preference
+    // Always defaults to false (OFF) when app loads
+    private func loadEnableAudioMode() {
+        // Don't load from UserDefaults - always default to false (OFF)
+        enableAudioMode = false
+    }
+    
     // Save loot box size preferences
     func saveLootBoxSizes() {
         UserDefaults.standard.set(lootBoxMinSize, forKey: lootBoxMinSizeKey)
@@ -484,7 +492,7 @@ class LootBoxLocationManager: ObservableObject {
     }
     
     /// Load locations from API instead of local file
-    func loadLocationsFromAPI(userLocation: CLLocation? = nil) async {
+    func loadLocationsFromAPI(userLocation: CLLocation? = nil, includeFound: Bool = false) async {
         guard useAPISync else {
             print("ℹ️ API sync is disabled, using local storage")
             return
@@ -508,10 +516,10 @@ class LootBoxLocationManager: ObservableObject {
                     latitude: userLocation.coordinate.latitude,
                     longitude: userLocation.coordinate.longitude,
                     radius: maxSearchDistance,
-                    includeFound: false
+                    includeFound: includeFound
                 )
             } else {
-                apiObjects = try await APIService.shared.getObjects(includeFound: false)
+                apiObjects = try await APIService.shared.getObjects(includeFound: includeFound)
             }
             
             // Convert API objects to LootBoxLocations
@@ -523,6 +531,8 @@ class LootBoxLocationManager: ObservableObject {
                 self.locations = loadedLocations
                 let collectedCount = loadedLocations.filter { $0.collected }.count
                 print("✅ Loaded \(loadedLocations.count) loot box locations from API (\(collectedCount) collected)")
+                // Force SwiftUI update
+                self.objectWillChange.send()
             }
             
         } catch {

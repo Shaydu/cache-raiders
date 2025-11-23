@@ -45,6 +45,11 @@ struct TopFinder: Codable {
     let count: Int
 }
 
+struct ResetFindsResponse: Codable {
+    let message: String
+    let finds_removed: Int
+}
+
 // MARK: - API Service
 class APIService {
     static let shared = APIService()
@@ -276,7 +281,7 @@ class APIService {
     }
     
     /// Reset all finds (make all objects unfound)
-    func resetAllFinds() async throws -> [String: Any] {
+    func resetAllFinds() async throws -> ResetFindsResponse {
         guard let url = URL(string: "\(baseURL)/api/finds/reset") else {
             throw APIError.invalidURL
         }
