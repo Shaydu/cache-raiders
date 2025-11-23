@@ -2,6 +2,45 @@ import Foundation
 import CoreLocation
 import Combine
 
+// MARK: - Item Source Enum
+/// Represents where a loot box location came from
+enum ItemSource: String, Codable {
+    case api = "api"              // From the shared API database
+    case map = "map"              // Added from map (has GPS, should be saved)
+    case arRandomized = "ar_randomized"  // Randomized in AR (temporary, no GPS)
+    case arManual = "ar_manual"   // Manually placed in AR (temporary, no GPS)
+    
+    /// Whether this source should be persisted to disk
+    var shouldPersist: Bool {
+        switch self {
+        case .api, .map:
+            return true
+        case .arRandomized, .arManual:
+            return false
+        }
+    }
+    
+    /// Whether this source should sync to API
+    var shouldSyncToAPI: Bool {
+        switch self {
+        case .api, .map:
+            return true
+        case .arRandomized, .arManual:
+            return false
+        }
+    }
+    
+    /// Whether this source should appear on the map
+    var shouldShowOnMap: Bool {
+        switch self {
+        case .api, .map:
+            return true
+        case .arRandomized, .arManual:
+            return false
+        }
+    }
+}
+
 // MARK: - Loot Box Location Model
 struct LootBoxLocation: Codable, Identifiable, Equatable {
     let id: String
@@ -12,6 +51,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     let radius: Double // meters - how close user needs to be
     var collected: Bool = false
     var grounding_height: Double? // Optional: stored grounding height in meters (AR world space Y coordinate)
+    var source: ItemSource = .api // Default to API source for backward compatibility
     
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -19,6 +59,90 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     
     var location: CLLocation {
         CLLocation(latitude: latitude, longitude: longitude)
+    }
+    
+    // MARK: - Computed Properties (replaces prefix checks)
+    
+    /// Whether this is a temporary AR-only item (not persisted)
+    var isTemporary: Bool {
+        return !source.shouldPersist
+    }
+    
+    /// Whether this item should be saved to disk
+    var shouldPersist: Bool {
+        return source.shouldPersist
+    }
+    
+    /// Whether this item should sync to API
+    var shouldSyncToAPI: Bool {
+        return source.shouldSyncToAPI
+    }
+    
+    /// Whether this item should appear on the map
+    var shouldShowOnMap: Bool {
+        return source.shouldShowOnMap
+    }
+    
+    /// Whether this is an AR-only item (no GPS coordinates)
+    var isAROnly: Bool {
+        return latitude == 0 && longitude == 0
+    }
+    
+    /// Whether this has valid GPS coordinates
+    var hasGPSCoordinates: Bool {
+        return !isAROnly
+    }
+    
+    // MARK: - Initializers
+    
+    /// Normal initializer for creating new locations
+    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api) {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.latitude = latitude
+        self.longitude = longitude
+        self.radius = radius
+        self.collected = collected
+        self.grounding_height = grounding_height
+        self.source = source
+    }
+    
+    // MARK: - Custom Decoding (backward compatibility with prefix-based IDs)
+    
+    /// Initialize from decoder with backward compatibility for prefix-based IDs
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        type = try container.decode(LootBoxType.self, forKey: .type)
+        latitude = try container.decode(Double.self, forKey: .latitude)
+        longitude = try container.decode(Double.self, forKey: .longitude)
+        radius = try container.decode(Double.self, forKey: .radius)
+        collected = try container.decodeIfPresent(Bool.self, forKey: .collected) ?? false
+        grounding_height = try container.decodeIfPresent(Double.self, forKey: .grounding_height)
+        
+        // Try to decode source, but if not present, infer from ID prefix (backward compatibility)
+        if let decodedSource = try? container.decode(ItemSource.self, forKey: .source) {
+            source = decodedSource
+        } else {
+            // Infer source from ID prefix for backward compatibility
+            if id.hasPrefix("AR_SPHERE_MAP_") {
+                source = .map
+            } else if id.hasPrefix("MAP_ITEM_") {
+                source = .map
+            } else if id.hasPrefix("AR_ITEM_") {
+                source = .arRandomized
+            } else if id.hasPrefix("AR_SPHERE_") {
+                source = .arRandomized
+            } else {
+                source = .api // Default to API for regular IDs
+            }
+        }
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, latitude, longitude, radius, collected, grounding_height, source
     }
 }
 
@@ -331,14 +455,7 @@ class LootBoxLocationManager: ObservableObject {
     /// Returns only findable locations (excludes temporary AR-only items, but includes map-added spheres)
     var findableLocations: [LootBoxLocation] {
         return locations.filter { location in
-            // Include AR_SPHERE_MAP_ items - these are findable spheres added from the map
-            // They appear both on the map AND in AR, so they should be counted
-            if location.id.hasPrefix("AR_SPHERE_MAP_") {
-                return true
-            }
-            // Include AR_ITEM_ items - these are randomized AR items that should be counted
-            // Include AR_SPHERE_ items (but not AR_SPHERE_MAP_ which are handled above)
-            // Include all other locations (GPS-based locations with real coordinates)
+            // All locations are findable (filtering happens elsewhere)
             return true
         }
     }
@@ -361,10 +478,7 @@ class LootBoxLocationManager: ObservableObject {
             locations[index] = updatedLocation
 
             // Save all locations except temporary AR-only items
-            // AR_SPHERE_MAP_ locations should be saved because they're map markers
-            // AR_ITEM_ and AR_SPHERE_ (without MAP) are temporary and don't need to be saved
-            let isTemporaryARItem = (locationId.hasPrefix("AR_SPHERE_") && !locationId.hasPrefix("AR_SPHERE_MAP_")) || locationId.hasPrefix("AR_ITEM_")
-            if !isTemporaryARItem {
+            if updatedLocation.shouldPersist {
                 saveLocations()
                 print("💾 Saved locations (including collected status for \(locationId))")
                 
@@ -391,15 +505,9 @@ class LootBoxLocationManager: ObservableObject {
             // Only include uncollected locations
             guard !location.collected else { return false }
 
-            // Exclude AR-only locations (AR_SPHERE_ prefix) - these are AR-only and shouldn't be counted as "nearby" for GPS
+            // Exclude AR-only locations - these are AR-only and shouldn't be counted as "nearby" for GPS
             // They're placed in AR space, not GPS space, so they don't have meaningful GPS coordinates
-            if location.id.hasPrefix("AR_SPHERE_") {
-                return false
-            }
-
-            // Exclude locations with invalid GPS coordinates (lat: 0, lon: 0) - these are AR-only or tap-created
-            // They don't have real GPS positions, so distance calculation is meaningless
-            if location.latitude == 0 && location.longitude == 0 {
+            if location.isAROnly {
                 return false
             }
 
@@ -712,12 +820,10 @@ class LootBoxLocationManager: ObservableObject {
                 let apiLocationIds = Set(loadedLocations.map { $0.id })
                 let localOnlyItems = self.locations.filter { location in
                     // Keep local items that:
-                    // 1. Are temporary AR-only items (AR_SPHERE_, AR_ITEM_ without MAP prefix)
-                    // 2. Are map-created items (MAP_ITEM_, AR_SPHERE_MAP_) that aren't in API yet
-                    let isTemporaryAR = (location.id.hasPrefix("AR_SPHERE_") && !location.id.hasPrefix("AR_SPHERE_MAP_")) ||
-                                       (location.id.hasPrefix("AR_ITEM_") && location.latitude == 0 && location.longitude == 0)
-                    let isMapCreatedNotSynced = (location.id.hasPrefix("MAP_ITEM_") || location.id.hasPrefix("AR_SPHERE_MAP_")) &&
-                                               !apiLocationIds.contains(location.id)
+                    // 1. Are temporary AR-only items (not persisted, not synced)
+                    // 2. Are map-created items that aren't in API yet
+                    let isTemporaryAR = location.isTemporary && location.isAROnly
+                    let isMapCreatedNotSynced = location.source == .map && !apiLocationIds.contains(location.id)
                     return isTemporaryAR || isMapCreatedNotSynced
                 }
                 
@@ -779,10 +885,7 @@ class LootBoxLocationManager: ObservableObject {
         }
 
         // Check if this is a temporary AR-only item that shouldn't be synced
-        // Temporary items are those without real GPS coordinates (placed in AR room only)
-        let hasGPSCoordinates = !(location.latitude == 0 && location.longitude == 0)
-
-        if !hasGPSCoordinates {
+        if !location.shouldSyncToAPI {
             print("⏭️ Skipping API sync for AR-only item (no GPS): '\(location.name)' (ID: \(location.id))")
             return
         }
@@ -814,10 +917,7 @@ class LootBoxLocationManager: ObservableObject {
         let locationName = locations.first(where: { $0.id == locationId })?.name ?? "Unknown"
         
         // Check if this is a temporary AR item that shouldn't be synced
-        let isTemporaryARItem = locationId.hasPrefix("AR_ITEM_") || 
-                               (locationId.hasPrefix("AR_SPHERE_") && !locationId.hasPrefix("AR_SPHERE_MAP_"))
-        
-        if isTemporaryARItem {
+        if let location = locations.first(where: { $0.id == locationId }), !location.shouldSyncToAPI {
             print("⏭️ Skipping API sync for temporary AR item collection: '\(locationName)' (ID: \(locationId))")
             return
         }
@@ -849,10 +949,7 @@ class LootBoxLocationManager: ObservableObject {
         
         for location in locations {
             // Skip temporary AR-only items
-            let isTemporaryARItem = location.id.hasPrefix("AR_ITEM_") || 
-                                   (location.id.hasPrefix("AR_SPHERE_") && !location.id.hasPrefix("AR_SPHERE_MAP_"))
-            
-            if isTemporaryARItem {
+            if location.isTemporary {
                 print("⏭️ Skipping temporary AR item: \(location.name)")
                 continue
             }

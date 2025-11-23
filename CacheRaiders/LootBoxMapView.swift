@@ -98,18 +98,18 @@ struct LootBoxMapView: View {
                 return false // Exclude invalid GPS coordinates
             }
             
-            // Include map-added spheres (AR_SPHERE_MAP_ prefix)
-            if location.id.hasPrefix("AR_SPHERE_MAP_") {
+            // Include items that should show on map
+            if !location.shouldShowOnMap {
+                return false
+            }
+            
+            // Include map-added spheres
+            if location.type == .sphere && location.source == .map {
                 print("🗺️ Including map sphere: \(location.name) at (\(location.latitude), \(location.longitude))")
                 return true
             }
             
-            // Exclude AR-only spheres (AR_SPHERE_ prefix without MAP)
-            if location.id.hasPrefix("AR_SPHERE_") {
-                return false
-            }
-            
-            // Include all other items (AR_ITEM_, GPS-based, etc.)
+            // Include all other items that should show on map
             return true
         }
         
@@ -495,12 +495,13 @@ struct LootBoxMapView: View {
         if selectedItemType == .sphere {
             // Create a map location for the sphere FIRST (this will be used for both map and AR)
             let sphereLocation = LootBoxLocation(
-                id: "AR_SPHERE_MAP_" + UUID().uuidString, // Special prefix to identify map-only spheres
+                id: UUID().uuidString,
                 name: "Mysterious Sphere",
                 type: .sphere,
                 latitude: coordinate.latitude,
                 longitude: coordinate.longitude,
-                radius: 5.0
+                radius: 5.0,
+                source: .map // Map-added sphere
             )
 
             locationManager.addLocation(sphereLocation)
@@ -531,14 +532,14 @@ struct LootBoxMapView: View {
             print("🎯 Triggered sphere placement in AR room and added map marker at (\(coordinate.latitude), \(coordinate.longitude))")
         } else if selectedItemType == .cube {
             // Create AR item location for cube with fixed name
-            // Use MAP_ prefix to indicate user-created from map (should sync to API)
             let arLocation = LootBoxLocation(
-                id: "MAP_ITEM_" + UUID().uuidString,
+                id: UUID().uuidString,
                 name: "Mysterious Cube",
                 type: selectedItemType,
                 latitude: coordinate.latitude,
                 longitude: coordinate.longitude,
-                radius: 5.0
+                radius: 5.0,
+                source: .map // Map-added item
             )
 
             // Queue it for AR placement
@@ -555,14 +556,14 @@ struct LootBoxMapView: View {
             let randomName = names.randomElement() ?? "Findable Item"
 
             // Create AR item location for placement
-            // Use MAP_ prefix to indicate user-created from map (should sync to API)
             let arLocation = LootBoxLocation(
-                id: "MAP_ITEM_" + UUID().uuidString,
+                id: UUID().uuidString,
                 name: randomName,
                 type: selectedItemType,
                 latitude: coordinate.latitude,
                 longitude: coordinate.longitude,
-                radius: 5.0
+                radius: 5.0,
+                source: .map // Map-added item
             )
 
             // Queue it for AR placement

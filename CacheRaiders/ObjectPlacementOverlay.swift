@@ -8,6 +8,7 @@ struct ObjectPlacementOverlay: View {
     @Binding var placementPosition: SIMD3<Float>?
     @Binding var placementDistance: Float?
     @Binding var groundHeight: Float?
+    @Binding var scaleMultiplier: Float
 
     let objectType: LootBoxType
     let onPlaceObject: () -> Void
@@ -86,8 +87,37 @@ struct ObjectPlacementOverlay: View {
 
                 Spacer()
 
-                // Bottom: Circular placement button with object preview
+                // Bottom: Scale control and placement button
                 VStack(spacing: 16) {
+                    // Scale control slider
+                    VStack(spacing: 8) {
+                        Text("Scale: \(String(format: "%.2fx", scaleMultiplier))")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        
+                        Slider(
+                            value: $scaleMultiplier,
+                            in: 0.5...3.0,
+                            step: 0.1
+                        )
+                        .accentColor(.cyan)
+                        
+                        HStack {
+                            Text("0.5x")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.7))
+                            Spacer()
+                            Text("3.0x")
+                                .font(.caption)
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(Color.black.opacity(0.6))
+                    .cornerRadius(12)
+                    
+                    // Placement button
                     // Placement button
                     Button(action: onPlaceObject) {
                         VStack(spacing: 8) {
@@ -198,6 +228,7 @@ struct ObjectPlacementOverlay_Previews: PreviewProvider {
             placementPosition: .constant(SIMD3<Float>(2.5, -0.8, -3.2)),
             placementDistance: .constant(4.2),
             groundHeight: .constant(0.8),
+            scaleMultiplier: .constant(1.0),
             objectType: .sphere,
             onPlaceObject: {},
             onCancel: {}

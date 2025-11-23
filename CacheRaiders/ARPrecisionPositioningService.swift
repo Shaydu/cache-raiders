@@ -44,20 +44,24 @@ class ARPrecisionPositioningService {
             Swift.print("⚠️ ARPrecisionPositioningService: No AR view available")
             return nil
         }
-        
+
+        // CRITICAL: Use AR origin for positioning, not current user location
+        // This ensures objects stay fixed when camera/user moves
+        let originGPS = arOriginGPS ?? userGPS
+
         let distance = userGPS.distance(from: targetGPS)
         let cameraPos = SIMD3<Float>(
             cameraTransform.columns.3.x,
             cameraTransform.columns.3.y,
             cameraTransform.columns.3.z
         )
-        
+
         // For close proximity (<5m), use high-precision AR-based positioning
         if distance < arRefinementThreshold {
             Swift.print("🎯 Using AR precision positioning (distance: \(String(format: "%.2f", distance))m < \(arRefinementThreshold)m)")
             return refinePositionWithAR(
                 targetGPS: targetGPS,
-                userGPS: userGPS,
+                originGPS: originGPS,
                 cameraPos: cameraPos,
                 cameraTransform: cameraTransform,
                 arOriginGPS: arOriginGPS
@@ -67,7 +71,7 @@ class ARPrecisionPositioningService {
             Swift.print("📍 Using GPS-based positioning (distance: \(String(format: "%.2f", distance))m >= \(arRefinementThreshold)m)")
             return convertGPSToARStandard(
                 targetGPS: targetGPS,
-                userGPS: userGPS,
+                originGPS: originGPS,
                 cameraPos: cameraPos,
                 cameraTransform: cameraTransform
             )
@@ -78,7 +82,7 @@ class ARPrecisionPositioningService {
     /// Uses multiple raycasts in a grid pattern and averages results for sub-inch accuracy
     private func refinePositionWithAR(
         targetGPS: CLLocation,
-        userGPS: CLLocation,
+        originGPS: CLLocation,
         cameraPos: SIMD3<Float>,
         cameraTransform: simd_float4x4,
         arOriginGPS: CLLocation?
@@ -86,7 +90,7 @@ class ARPrecisionPositioningService {
         // Step 1: Get initial rough position using GPS
         guard let roughPosition = convertGPSToARStandard(
             targetGPS: targetGPS,
-            userGPS: userGPS,
+            originGPS: originGPS,
             cameraPos: cameraPos,
             cameraTransform: cameraTransform
         ) else {
@@ -181,40 +185,30 @@ class ARPrecisionPositioningService {
     /// Standard GPS-to-AR coordinate conversion (for distances >5m)
     private func convertGPSToARStandard(
         targetGPS: CLLocation,
-        userGPS: CLLocation,
+        originGPS: CLLocation,
         cameraPos: SIMD3<Float>,
         cameraTransform: simd_float4x4
     ) -> SIMD3<Float>? {
-        let distance = userGPS.distance(from: targetGPS)
-        let bearing = userGPS.bearing(to: targetGPS)
-        
-        // Get camera's forward and right directions
-        let cameraForward = SIMD3<Float>(
-            -cameraTransform.columns.2.x,
-            0,
-            -cameraTransform.columns.2.z
-        )
-        let cameraRight = SIMD3<Float>(
-            cameraTransform.columns.0.x,
-            0,
-            cameraTransform.columns.0.z
-        )
-        
-        // Normalize directions
-        let forwardDir = normalize(cameraForward)
-        let rightDir = normalize(cameraRight)
-        
-        // Convert bearing to radians
+        // CRITICAL: Calculate position relative to AR origin GPS location
+        // This ensures objects stay fixed in space when camera/user moves
+
+        // Calculate distance and bearing from AR origin (not current user position)
+        let distance = originGPS.distance(from: targetGPS)
+        let bearing = originGPS.bearing(to: targetGPS)
+
+        // Convert GPS bearing (0° = North, clockwise) to AR coordinates
+        // In AR: +X = East, +Z = North
         let bearingRad = Float(bearing * .pi / 180.0)
-        
-        // Calculate offset in AR space
-        let offsetX = Float(distance) * sin(bearingRad)
-        let offsetZ = Float(distance) * cos(bearingRad)
-        
-        // Apply offset relative to camera's orientation
-        let targetPos = cameraPos + rightDir * offsetX + forwardDir * offsetZ
-        
-        return targetPos
+
+        // Calculate position in AR world space (relative to AR origin at 0,0,0)
+        // North/South = Z axis, East/West = X axis
+        let x = Float(distance) * sin(bearingRad)  // East-West offset from origin
+        let z = Float(distance) * cos(bearingRad)  // North-South offset from origin
+
+        // Y coordinate: use default ground height (camera height - 1.5m for floor)
+        let y = cameraPos.y - 1.5
+
+        return SIMD3<Float>(x, y, z)
     }
     
     /// Calculates variance for precision metrics

@@ -631,41 +631,29 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // (location.collected check already done above, so we know it's not collected)
             Swift.print("🎯 Attempting to place: \(location.name) (ID: \(location.id), Type: \(location.type.displayName))")
 
-            if location.id.hasPrefix("AR_SPHERE_MAP_") {
-                Swift.print("   → Placement path: AR_SPHERE_MAP_ (map-added sphere)")
-                // This is a map-added sphere with GPS coordinates - place it as a sphere using GPS-based placement
+            // Skip AR-only items that are already placed (they're placed directly in randomizeLootBoxes)
+            // BUT: Don't skip spheres with valid GPS coordinates - they should be placed via GPS
+            // Spheres from the API/map have GPS coordinates and should appear in AR
+            if location.isAROnly && location.type != .sphere {
+                Swift.print("⏭️ Skipping \(location.name) - AR-only item (should be placed via randomizeLootBoxes)")
+                continue
+            }
+            
+            // Determine placement method based on type
+            if location.type == .sphere {
+                // Spheres with GPS coordinates should be placed via GPS positioning
                 if location.latitude != 0 || location.longitude != 0 {
-                    // Has GPS coordinates - place as sphere using GPS-based placement
+                    Swift.print("   → Placement path: Sphere (GPS-based)")
                     Swift.print("   → Calling placeARSphereAtLocation()")
                     placeARSphereAtLocation(location, in: arView)
                 } else {
-                    // No GPS coordinates - skip (shouldn't happen for map-added spheres)
-                    Swift.print("⚠️ Skipping \(location.name) - AR_SPHERE_MAP_ item has no GPS coordinates")
+                    // Sphere with no GPS - skip it (should be placed via randomizeLootBoxes)
+                    Swift.print("⏭️ Skipping \(location.name) - AR-only sphere (should be placed via randomizeLootBoxes)")
                     continue
                 }
-            } else if location.id.hasPrefix("AR_ITEM_") {
-                Swift.print("   → Placement path: AR_ITEM_ (randomized AR item)")
-                // This is a randomized AR item - place it based on its type (not just as sphere)
-                // Use placeBoxAtPosition which respects location.type and creates appropriate object
-                // But first check if we need GPS-based placement or if it's already AR-only
-                if location.latitude == 0 && location.longitude == 0 {
-                    // AR-only item - need to find position via raycast
-                    // For now, skip - these are placed directly in randomizeLootBoxes
-                    Swift.print("⏭️ Skipping \(location.name) - AR-only item (should be placed via randomizeLootBoxes)")
-                    continue
-                } else {
-                    // Has GPS coordinates - place using GPS-based placement
-                    placeLootBoxAtLocation(location, in: arView)
-                }
-            } else if location.id.hasPrefix("AR_SPHERE_") {
-                Swift.print("   → Placement path: AR_SPHERE_ (AR sphere)")
-                Swift.print("   → Calling placeARSphereAtLocation()")
-                // This is an AR sphere location - place a sphere instead of treasure box
-                placeARSphereAtLocation(location, in: arView)
             } else {
                 Swift.print("   → Placement path: Regular GPS treasure box")
                 Swift.print("   → Calling placeLootBoxAtLocation()")
-                // Regular GPS treasure box
                 placeLootBoxAtLocation(location, in: arView)
             }
         }
@@ -696,13 +684,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         findableObjects.removeAll() // Also clear findable objects
 
         // Also remove old randomly-generated AR item locations from locationManager to reset the counter
-        // Keep GPS-based locations and manually-added spheres (AR_SPHERE_MAP_ prefix)
+        // Keep GPS-based locations and manually-added map markers
         let oldCount = locationManager.locations.count
         locationManager.locations.removeAll { location in
-            // Remove both AR_SPHERE_ (old sphere locations) and AR_ITEM_ (new randomized locations)
-            // But keep manually-added map markers (AR_SPHERE_MAP_)
-            (location.id.hasPrefix("AR_SPHERE_") && !location.id.hasPrefix("AR_SPHERE_MAP_")) ||
-            location.id.hasPrefix("AR_ITEM_")
+            // Remove temporary AR-only items (randomized), but keep map-added items
+            location.isTemporary && location.isAROnly
         }
         let removedCount = oldCount - locationManager.locations.count
         print("🗑️ Removed \(removedCount) old random AR item locations from locationManager")
@@ -836,12 +822,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             let itemName = "\(baseName) #\(placedCount + 1)"
             
             let newLocation = LootBoxLocation(
-                id: "AR_ITEM_" + UUID().uuidString, // Generic prefix for all AR-only items (not just spheres)
+                id: UUID().uuidString,
                 name: itemName, // Use the factory's description to ensure proper naming
                 type: selectedType,
                 latitude: 0, // Not GPS-based
                 longitude: 0, // Not GPS-based
-                radius: 100.0 // Large radius since we're not using GPS
+                radius: 100.0, // Large radius since we're not using GPS
+                source: .arRandomized // Randomized AR item
             )
             
             // Add the location to locationManager so it shows up in the counter
@@ -1106,20 +1093,23 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 // Check if we have a stored grounding height from database
                 let finalPosition: SIMD3<Float>
                 
-                if let storedHeight = location.grounding_height {
-                    // Use stored grounding height from database
-                    finalPosition = SIMD3<Float>(precisePosition.x, Float(storedHeight), precisePosition.z)
-                    Swift.print("✅ Using stored grounding height: \(String(format: "%.4f", storedHeight))m for \(location.name)")
+                if let storedRelativeHeight = location.grounding_height {
+                    // Use stored relative height (height offset from camera/eye level)
+                    // Add it to current camera Y position to get world position
+                    let absoluteHeight = cameraPos.y + Float(storedRelativeHeight)
+                    finalPosition = SIMD3<Float>(precisePosition.x, absoluteHeight, precisePosition.z)
+                    Swift.print("✅ Using stored relative height: \(String(format: "%.4f", storedRelativeHeight))m (absolute: \(String(format: "%.4f", absoluteHeight))m) for \(location.name)")
                 } else if distance < 5.0 {
                     // Close proximity: precision service already handled surface detection
                     finalPosition = precisePosition
                     Swift.print("✅ Placed \(location.type.displayName) using precision positioning at (\(String(format: "%.4f", precisePosition.x)), \(String(format: "%.4f", precisePosition.y)), \(String(format: "%.4f", precisePosition.z)))")
-                    
-                    // Store the grounding height for future use
+
+                    // Store the relative grounding height (offset from camera) for future use
                     Task {
                         do {
-                            try await APIService.shared.updateGroundingHeight(objectId: location.id, height: Double(precisePosition.y))
-                            Swift.print("💾 Stored grounding height \(String(format: "%.4f", precisePosition.y))m for \(location.name)")
+                            let relativeHeight = Double(precisePosition.y - cameraPos.y)
+                            try await APIService.shared.updateGroundingHeight(objectId: location.id, height: relativeHeight)
+                            Swift.print("💾 Stored relative grounding height \(String(format: "%.4f", relativeHeight))m for \(location.name)")
                         } catch {
                             Swift.print("⚠️ Failed to store grounding height: \(error.localizedDescription)")
                         }
@@ -1133,12 +1123,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     ) {
                         finalPosition = SIMD3<Float>(precisePosition.x, surfaceY, precisePosition.z)
                         Swift.print("✅ Placed \(location.type.displayName) on surface at GPS-based AR position (Y: \(String(format: "%.4f", surfaceY)))")
-                        
-                        // Store the grounding height for future use
+
+                        // Store the relative grounding height (offset from camera) for future use
                         Task {
                             do {
-                                try await APIService.shared.updateGroundingHeight(objectId: location.id, height: Double(surfaceY))
-                                Swift.print("💾 Stored grounding height \(String(format: "%.4f", surfaceY))m for \(location.name)")
+                                let relativeHeight = Double(surfaceY - cameraPos.y)
+                                try await APIService.shared.updateGroundingHeight(objectId: location.id, height: relativeHeight)
+                                Swift.print("💾 Stored relative grounding height \(String(format: "%.4f", relativeHeight))m for \(location.name)")
                             } catch {
                                 Swift.print("⚠️ Failed to store grounding height: \(error.localizedDescription)")
                             }
@@ -1148,12 +1139,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         if let surfaceY = groundingService?.findHighestBlockingSurface(x: precisePosition.x, z: precisePosition.z, cameraPos: cameraPos) {
                             finalPosition = SIMD3<Float>(precisePosition.x, surfaceY, precisePosition.z)
                             Swift.print("✅ Placed \(location.type.displayName) on surface (fallback) (Y: \(String(format: "%.2f", surfaceY)))")
-                            
-                            // Store the grounding height for future use
+
+                            // Store the relative grounding height (offset from camera) for future use
                             Task {
                                 do {
-                                    try await APIService.shared.updateGroundingHeight(objectId: location.id, height: Double(surfaceY))
-                                    Swift.print("💾 Stored grounding height \(String(format: "%.2f", surfaceY))m for \(location.name)")
+                                    let relativeHeight = Double(surfaceY - cameraPos.y)
+                                    try await APIService.shared.updateGroundingHeight(objectId: location.id, height: relativeHeight)
+                                    Swift.print("💾 Stored relative grounding height \(String(format: "%.2f", relativeHeight))m for \(location.name)")
                                 } catch {
                                     Swift.print("⚠️ Failed to store grounding height: \(error.localizedDescription)")
                                 }
@@ -1773,9 +1765,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
             // Check if all randomized AR items are found and disable sphere mode
             if let self = self, self.sphereModeActive {
-                // Check for both old AR_SPHERE_ prefix and new AR_ITEM_ prefix
-                let remainingItems = self.placedBoxes.keys.filter { 
-                    $0.hasPrefix("AR_SPHERE_") || $0.hasPrefix("AR_ITEM_")
+                // Check for remaining temporary AR items
+                let remainingItems = self.placedBoxes.keys.filter { locationId in
+                    if let location = self.locationManager?.locations.first(where: { $0.id == locationId }) {
+                        return location.isTemporary && location.isAROnly
+                    }
+                    return false
                 }
                 if remainingItems.isEmpty {
                     Swift.print("🎯 All randomized AR items collected - exiting sphere mode")
@@ -2088,18 +2083,19 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         } else {
             // Create a new location (fallback for manual sphere placement)
             newLocation = LootBoxLocation(
-                id: "AR_SPHERE_" + UUID().uuidString,
+                id: UUID().uuidString,
                 name: "Mysterious Sphere",
                 type: .sphere,
                 latitude: 0, // Not GPS-based
                 longitude: 0, // Not GPS-based
-                radius: 100.0 // Large radius since we're not using GPS
+                radius: 100.0, // Large radius since we're not using GPS
+                source: .arManual // Manually placed AR sphere
             )
             // Add to locationManager so it counts toward the total
-            // Note: AR_SPHERE_ items are temporary and won't sync to API (by design)
+            // Note: Temporary AR items won't sync to API (by design)
             locationManager.addLocation(newLocation)
             Swift.print("✅ Created new location for sphere: \(newLocation.id)")
-            Swift.print("   📍 Note: Temporary AR sphere (AR_SPHERE_ prefix) will NOT sync to API")
+            Swift.print("   📍 Note: Temporary AR sphere will NOT sync to API")
         }
 
         // Create sphere directly
