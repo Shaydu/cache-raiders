@@ -39,9 +39,16 @@ def init_db():
             longitude REAL NOT NULL,
             radius REAL NOT NULL,
             created_at TEXT NOT NULL,
-            created_by TEXT
+            created_by TEXT,
+            grounding_height REAL
         )
     ''')
+    
+    # Add grounding_height column if it doesn't exist (for existing databases)
+    try:
+        cursor.execute('ALTER TABLE objects ADD COLUMN grounding_height REAL')
+    except sqlite3.OperationalError:
+        pass  # Column already exists
     
     # Finds table - tracks who found which objects
     cursor.execute('''
@@ -57,6 +64,22 @@ def init_db():
     # Create index for faster lookups
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_object_id ON finds(object_id)
+    ''')
+    
+    # Players table - maps device UUID to player name
+    # Device UUID is the unique identifier, player names can be duplicated
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS players (
+            device_uuid TEXT PRIMARY KEY,
+            player_name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    ''')
+    
+    # Create index for faster lookups by player name (non-unique, allows duplicates)
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_player_name ON players(player_name)
     ''')
     
     conn.commit()
@@ -89,6 +112,7 @@ def get_objects():
             o.radius,
             o.created_at,
             o.created_by,
+            o.grounding_height,
             CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
             f.found_by,
             f.found_at
@@ -144,6 +168,7 @@ def get_objects():
                 'radius': row['radius'],
                 'created_at': row['created_at'],
                 'created_by': row['created_by'],
+                'grounding_height': row['grounding_height'],
                 'collected': bool(row['collected']),
                 'found_by': row['found_by'],
                 'found_at': row['found_at']
@@ -167,6 +192,7 @@ def get_object(object_id: str):
             o.radius,
             o.created_at,
             o.created_by,
+            o.grounding_height,
             CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
             f.found_by,
             f.found_at
@@ -190,6 +216,7 @@ def get_object(object_id: str):
         'radius': row['radius'],
         'created_at': row['created_at'],
         'created_by': row['created_by'],
+        'grounding_height': row['grounding_height'],
         'collected': bool(row['collected']),
         'found_by': row['found_by'],
         'found_at': row['found_at']
@@ -210,8 +237,8 @@ def create_object():
     
     try:
         cursor.execute('''
-            INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             data['id'],
             data['name'],
@@ -220,7 +247,8 @@ def create_object():
             data['longitude'],
             data['radius'],
             datetime.utcnow().isoformat(),
-            data.get('created_by', 'unknown')
+            data.get('created_by', 'unknown'),
+            data.get('grounding_height')  # Optional - can be None
         ))
         
         conn.commit()
@@ -236,6 +264,7 @@ def create_object():
                 o.radius,
                 o.created_at,
                 o.created_by,
+                o.grounding_height,
                 CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
                 f.found_by,
                 f.found_at
@@ -258,6 +287,7 @@ def create_object():
                 'radius': row['radius'],
                 'created_at': row['created_at'],
                 'created_by': row['created_by'],
+                'grounding_height': row['grounding_height'],
                 'collected': bool(row['collected']),
                 'found_by': row['found_by'],
                 'found_at': row['found_at']
@@ -315,6 +345,80 @@ def mark_found(object_id: str):
         'found_by': found_by,
         'message': 'Object marked as found'
     }), 200
+
+@app.route('/api/objects/<object_id>', methods=['PUT', 'PATCH'])
+def update_object(object_id: str):
+    """Update an object's location (latitude/longitude)."""
+    data = request.json
+    
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Build update query dynamically based on provided fields
+    updates = []
+    params = []
+    
+    if 'latitude' in data:
+        updates.append('latitude = ?')
+        params.append(data['latitude'])
+    
+    if 'longitude' in data:
+        updates.append('longitude = ?')
+        params.append(data['longitude'])
+    
+    if not updates:
+        conn.close()
+        return jsonify({'error': 'No valid fields to update'}), 400
+    
+    params.append(object_id)
+    
+    cursor.execute(f'''
+        UPDATE objects
+        SET {', '.join(updates)}
+        WHERE id = ?
+    ''', params)
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({'success': True, 'message': 'Object updated successfully'}), 200
+
+@app.route('/api/objects/<object_id>/grounding', methods=['PUT', 'PATCH'])
+def update_grounding(object_id: str):
+    """Update the grounding height for an object."""
+    data = request.json
+    grounding_height = data.get('grounding_height')
+    
+    if grounding_height is None:
+        return jsonify({'error': 'grounding_height is required'}), 400
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if object exists
+    cursor.execute('SELECT id FROM objects WHERE id = ?', (object_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'error': 'Object not found'}), 404
+    
+    # Update grounding height
+    cursor.execute('''
+        UPDATE objects 
+        SET grounding_height = ?
+        WHERE id = ?
+    ''', (grounding_height, object_id))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({
+        'id': object_id,
+        'grounding_height': grounding_height,
+        'message': 'Grounding height updated successfully'
+    })
 
 @app.route('/api/objects/<object_id>/found', methods=['DELETE'])
 def unmark_found(object_id: str):
@@ -375,6 +479,118 @@ def get_user_finds(user_id: str):
     
     return jsonify(finds)
 
+@app.route('/api/players', methods=['GET'])
+def get_all_players():
+    """Get all players with their find counts."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get all players with their find counts
+    cursor.execute('''
+        SELECT 
+            p.device_uuid,
+            p.player_name,
+            p.created_at,
+            p.updated_at,
+            COUNT(f.id) as find_count
+        FROM players p
+        LEFT JOIN finds f ON p.device_uuid = f.found_by
+        GROUP BY p.device_uuid, p.player_name, p.created_at, p.updated_at
+        ORDER BY find_count DESC, p.updated_at DESC
+    ''')
+    
+    rows = cursor.fetchall()
+    conn.close()
+    
+    players = [{
+        'device_uuid': row['device_uuid'],
+        'player_name': row['player_name'],
+        'created_at': row['created_at'],
+        'updated_at': row['updated_at'],
+        'find_count': row['find_count']
+    } for row in rows]
+    
+    return jsonify(players)
+
+@app.route('/api/players/<device_uuid>', methods=['GET'])
+def get_player(device_uuid: str):
+    """Get player name for a device UUID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT device_uuid, player_name, created_at, updated_at
+        FROM players
+        WHERE device_uuid = ?
+    ''', (device_uuid,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return jsonify({'error': 'Player not found'}), 404
+    
+    return jsonify({
+        'device_uuid': row['device_uuid'],
+        'player_name': row['player_name'],
+        'created_at': row['created_at'],
+        'updated_at': row['updated_at']
+    })
+
+@app.route('/api/players/<device_uuid>', methods=['POST', 'PUT'])
+def create_or_update_player(device_uuid: str):
+    """Create or update player name for a device UUID."""
+    data = request.json
+    
+    if not data or 'player_name' not in data:
+        return jsonify({'error': 'Missing required field: player_name'}), 400
+    
+    player_name = data['player_name'].strip()
+    if not player_name:
+        return jsonify({'error': 'player_name cannot be empty'}), 400
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    now = datetime.utcnow().isoformat()
+    
+    # Check if player exists (device UUID is the unique identifier)
+    cursor.execute('SELECT device_uuid FROM players WHERE device_uuid = ?', (device_uuid,))
+    current_player = cursor.fetchone()
+    
+    if current_player:
+        # Update existing player (device UUID is unique, names can be duplicated)
+        cursor.execute('''
+            UPDATE players
+            SET player_name = ?, updated_at = ?
+            WHERE device_uuid = ?
+        ''', (player_name, now, device_uuid))
+    else:
+        # Create new player (device UUID is the primary key, ensures uniqueness)
+        cursor.execute('''
+            INSERT INTO players (device_uuid, player_name, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+        ''', (device_uuid, player_name, now, now))
+    
+    conn.commit()
+    
+    # Get the updated/created player
+    cursor.execute('''
+        SELECT device_uuid, player_name, created_at, updated_at
+        FROM players
+        WHERE device_uuid = ?
+    ''', (device_uuid,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    return jsonify({
+        'device_uuid': row['device_uuid'],
+        'player_name': row['player_name'],
+        'created_at': row['created_at'],
+        'updated_at': row['updated_at']
+    }), 200
+
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
     """Get statistics about objects and finds."""
@@ -393,25 +609,109 @@ def get_stats():
     cursor.execute('SELECT COUNT(*) as count FROM finds')
     total_finds = cursor.fetchone()['count']
     
-    # Top finders
+    # Top finders - include all players, even those with 0 finds
+    # Device UUID is the unique identifier, player names can be duplicated
+    # First get all players
     cursor.execute('''
-        SELECT found_by, COUNT(*) as count
-        FROM finds
-        GROUP BY found_by
-        ORDER BY count DESC
-        LIMIT 10
+        SELECT device_uuid, player_name
+        FROM players
     ''')
-    top_finders = [{'user': row['found_by'], 'count': row['count']} for row in cursor.fetchall()]
+    all_players = {row['device_uuid']: row['player_name'] for row in cursor.fetchall()}
+    
+    # Create reverse lookup: player name -> device UUID (for legacy finds that use names)
+    name_to_uuid = {}
+    for uuid, name in all_players.items():
+        if name:
+            # Handle case-insensitive matching
+            name_lower = name.lower()
+            if name_lower not in name_to_uuid:
+                name_to_uuid[name_lower] = []
+            name_to_uuid[name_lower].append((uuid, name))
+    
+    # Get find counts - group by found_by (which might be UUID or player name)
+    cursor.execute('''
+        SELECT 
+            f.found_by,
+            COUNT(*) as count
+        FROM finds f
+        GROUP BY f.found_by
+    ''')
+    find_counts_raw = {row['found_by']: row['count'] for row in cursor.fetchall()}
+    
+    # Normalize find counts by device UUID
+    # Handle both cases: found_by is UUID or found_by is player name (legacy)
+    find_counts = {}
+    for found_by, count in find_counts_raw.items():
+        # Check if found_by is a device UUID (in players table)
+        if found_by in all_players:
+            # It's a UUID - use it directly
+            find_counts[found_by] = find_counts.get(found_by, 0) + count
+        else:
+            # It might be a player name (legacy data from before we used UUIDs)
+            # Try to find matching UUID(s)
+            found_by_lower = found_by.lower()
+            if found_by_lower in name_to_uuid:
+                matching_uuids = name_to_uuid[found_by_lower]
+                if len(matching_uuids) == 1:
+                    # Only one player with this name, assign finds to them
+                    uuid = matching_uuids[0][0]
+                    find_counts[uuid] = find_counts.get(uuid, 0) + count
+                else:
+                    # Multiple players with same name - can't determine which one
+                    # Skip this find or assign to first one (but this causes issues)
+                    # For now, assign to first one but log a warning
+                    uuid = matching_uuids[0][0]
+                    find_counts[uuid] = find_counts.get(uuid, 0) + count
+                    print(f"⚠️  Warning: Found legacy find with name '{found_by}' matching {len(matching_uuids)} players. Assigned to {uuid[:8]}")
+            else:
+                # Unknown found_by - might be old UUID format, add as-is but don't show in leaderboard
+                # (we'll only show players from the players table)
+                pass
+    
+    # Check for duplicate player names to decide if we need to show UUIDs
+    player_name_counts = {}
+    for player_name in all_players.values():
+        if player_name:
+            player_name_counts[player_name] = player_name_counts.get(player_name, 0) + 1
+    has_duplicate_names = any(count > 1 for count in player_name_counts.values())
+    
+    # Combine: all players with their find counts (0 if no finds)
+    # Each device UUID should appear only once
+    all_finders = []
+    for device_uuid, player_name in all_players.items():
+        count = find_counts.get(device_uuid, 0)
+        # If there are duplicate names, append short UUID to distinguish
+        display_name = player_name or device_uuid
+        if has_duplicate_names and player_name and player_name_counts.get(player_name, 0) > 1:
+            display_name = f"{player_name} ({device_uuid[:8]})"
+        all_finders.append({
+            'user': display_name,
+            'count': count,
+            'device_uuid': device_uuid
+        })
+    
+    # Sort by count descending, then by name
+    all_finders.sort(key=lambda x: (-x['count'], x['user']))
+    
+    # Limit to top 50 (or all if less than 50)
+    top_finders = all_finders[:50]
     
     conn.close()
     
-    return jsonify({
+    response = jsonify({
         'total_objects': total_objects,
         'found_objects': found_objects,
         'unfound_objects': total_objects - found_objects,
         'total_finds': total_finds,
         'top_finders': top_finders
     })
+    
+    # Prevent caching of stats endpoint
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    
+    return response
 
 @app.route('/api/finds/reset', methods=['POST'])
 def reset_all_finds():

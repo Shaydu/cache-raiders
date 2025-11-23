@@ -6,17 +6,23 @@ struct ContentView: View {
     @StateObject private var locationManager = LootBoxLocationManager()
     @StateObject private var userLocationManager = UserLocationManager()
     @State private var showLocationConfig = false
+    @State private var showARPlacement = false
     @State private var showSettings = false
+    @State private var showLeaderboard = false
     @State private var nearbyLocations: [LootBoxLocation] = []
     @State private var distanceToNearest: Double?
     @State private var temperatureStatus: String?
     @State private var collectionNotification: String?
     @State private var nearestObjectDirection: Double?
     
-    // Computed property for loot box counter - uses findableLocations for consistency
-    // Directly references locationManager.findableLocations to ensure SwiftUI tracks changes
+    // Computed property for loot box counter - uses database stats when available
+    // Shows: X items found by you / Y items visible to you in database
     private var lootBoxCounter: (found: Int, total: Int) {
-        // Use findableLocations property to ensure consistency with other parts of the app
+        // Use database stats if available (from API sync)
+        if let stats = locationManager.databaseStats {
+            return (found: stats.foundByYou, total: stats.totalVisible)
+        }
+        // Fallback to local data if API stats not available
         let findableLocations = locationManager.findableLocations
         let foundCount = findableLocations.filter { $0.collected }.count
         let totalCount = findableLocations.count
@@ -38,11 +44,20 @@ struct ContentView: View {
             
             VStack {
                 HStack {
-                    Button(action: { showLocationConfig = true }) {
-                        Image(systemName: "map")
-                            .padding()
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(10)
+                    HStack(spacing: 8) {
+                        Button(action: { showLocationConfig = true }) {
+                            Image(systemName: "map")
+                                .padding()
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(10)
+                        }
+                        
+                        Button(action: { showARPlacement = true }) {
+                            Image(systemName: "plus")
+                                .padding()
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(10)
+                        }
                     }
                     .padding(.top)
                     
@@ -76,11 +91,21 @@ struct ContentView: View {
                     
                     Spacer()
                     
-                    Button(action: { showSettings = true }) {
-                        Image(systemName: "gearshape")
-                            .padding()
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(10)
+                    HStack(spacing: 8) {
+                        Button(action: { showLeaderboard = true }) {
+                            Image(systemName: "trophy.fill")
+                                .foregroundColor(.yellow)
+                                .padding()
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(10)
+                        }
+                        
+                        Button(action: { showSettings = true }) {
+                            Image(systemName: "gearshape")
+                                .padding()
+                                .background(.ultraThinMaterial)
+                                .cornerRadius(10)
+                        }
                     }
                     .padding(.top)
                 }
@@ -97,13 +122,7 @@ struct ContentView: View {
                 Spacer()
                 
                 VStack(spacing: 8) {
-                    if locationManager.locations.isEmpty {
-                        Text("Tap the map icon to add loot box locations")
-                            .font(.headline)
-                            .padding()
-                            .background(.ultraThinMaterial)
-                            .cornerRadius(10)
-                    } else if nearbyLocations.isEmpty {
+                    if nearbyLocations.isEmpty && !locationManager.locations.isEmpty {
                         Text("Walk to a loot box location!")
                             .font(.headline)
                             .padding()
@@ -148,41 +167,6 @@ struct ContentView: View {
                             .background(.ultraThinMaterial)
                             .cornerRadius(10)
                     }
-                    
-                    // Randomize and Reset buttons side by side
-                    HStack(spacing: 8) {
-                        // Randomize button
-                        Button(action: {
-                            locationManager.shouldRandomize = true
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "shuffle")
-                                Text("Randomize")
-                            }
-                            .font(.caption)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Color.orange)
-                            .cornerRadius(8)
-                        }
-
-                        // Reset collected status button
-                        Button(action: {
-                            locationManager.resetAllLocations()
-                        }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.clockwise")
-                                Text("Reset")
-                            }
-                            .font(.caption)
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(Color.red)
-                            .cornerRadius(8)
-                        }
-                    }
                 }
                 .padding()
             }
@@ -190,8 +174,25 @@ struct ContentView: View {
         .sheet(isPresented: $showLocationConfig) {
             LocationConfigView(locationManager: locationManager)
         }
+        .sheet(isPresented: $showARPlacement) {
+            ARPlacementView(locationManager: locationManager, userLocationManager: userLocationManager)
+        }
         .sheet(isPresented: $showSettings) {
             SettingsView(locationManager: locationManager, userLocationManager: userLocationManager)
+        }
+        .sheet(isPresented: $showLeaderboard) {
+            NavigationView {
+                LeaderboardView()
+                    .navigationTitle("Leaderboard")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button("Done") {
+                                showLeaderboard = false
+                            }
+                        }
+                    }
+            }
         }
         .onAppear {
             userLocationManager.requestLocationPermission()

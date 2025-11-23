@@ -4,7 +4,7 @@ import AVFoundation
 
 // MARK: - Loot Box Factory Protocol
 /// Protocol for creating findable objects - eliminates need for exhaustive switch statements
-/// Each factory encapsulates its own sounds, animations, and behaviors
+/// Each factory encapsulates its own sounds, animations, behaviors, and type-specific data
 protocol LootBoxFactory {
     /// Creates the entity for this loot box type
     func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject)
@@ -36,6 +36,19 @@ protocol LootBoxFactory {
     
     /// Returns the description/name for this item type
     func itemDescription() -> String
+    
+    // MARK: - Type Configuration Properties (moved from enum to eliminate coupling)
+    /// Base color for this loot box type
+    var color: UIColor { get }
+    
+    /// Glow color for this loot box type
+    var glowColor: UIColor { get }
+    
+    /// Base size in meters for this loot box type
+    var size: Float { get }
+    
+    /// List of possible item names/descriptions for this type
+    var itemNames: [String] { get }
 }
 
 // MARK: - Factory Implementations
@@ -43,9 +56,13 @@ protocol LootBoxFactory {
 struct ChaliceFactory: LootBoxFactory {
     var iconName: String { "cup.and.saucer.fill" }
     var modelNames: [String] { ["Chalice", "Chalice-basic"] }
+    var color: UIColor { UIColor(red: 0.8, green: 0.7, blue: 0.5, alpha: 1.0) } // Metallic bronze/gold
+    var glowColor: UIColor { UIColor(red: 1.0, green: 0.85, blue: 0.5, alpha: 1.0) } // Warm golden glow
+    var size: Float { 0.3 }
+    var itemNames: [String] { ["Sacred Chalice", "Ancient Chalice", "Golden Chalice"] }
     
     func itemDescription() -> String {
-        return ["Sacred Chalice", "Ancient Chalice", "Golden Chalice"].randomElement() ?? "Sacred Chalice"
+        return itemNames.randomElement() ?? "Sacred Chalice"
     }
     
     func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
@@ -53,7 +70,16 @@ struct ChaliceFactory: LootBoxFactory {
         let container = createContainer(location: location, sizeMultiplier: sizeMultiplier)!
         let entity = container.container
         entity.name = location.id
-        entity.position = SIMD3<Float>(0, 0, 0)
+        
+        // CRITICAL: Position chalice so its base sits on the ground
+        // The chalice extends downward, so we need to offset it upward
+        // Base is at approximately -size * 0.35, so offset by size * 0.35 to put base at ground level
+        let baseSize = size * sizeMultiplier
+        let yOffset = baseSize * 0.35 // Offset to place base on ground
+        entity.position = SIMD3<Float>(0, yOffset, 0)
+        
+        // Ensure entity is enabled and visible
+        entity.isEnabled = true
         
         let findableObject = FindableObject(
             locationId: location.id,
@@ -178,9 +204,13 @@ struct ChaliceFactory: LootBoxFactory {
 struct TreasureChestFactory: LootBoxFactory {
     var iconName: String { "shippingbox.fill" }
     var modelNames: [String] { ["Treasure_Chest"] }
+    var color: UIColor { UIColor(red: 0.6, green: 0.4, blue: 0.2, alpha: 1.0) } // Brown/wooden
+    var glowColor: UIColor { UIColor(red: 1.0, green: 0.8, blue: 0.4, alpha: 1.0) } // Golden glow
+    var size: Float { 0.61 } // 2 feet = 0.61 meters
+    var itemNames: [String] { ["Treasure Chest", "Ancient Chest", "Locked Chest"] }
     
     func itemDescription() -> String {
-        return ["Treasure Chest", "Ancient Chest", "Locked Chest"].randomElement() ?? "Treasure Chest"
+        return itemNames.randomElement() ?? "Treasure Chest"
     }
     
     func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
@@ -334,12 +364,340 @@ struct TreasureChestFactory: LootBoxFactory {
     }
 }
 
+struct LootChestFactory: LootBoxFactory {
+    var iconName: String { "shippingbox.fill" }
+    var modelNames: [String] { ["Stylized_Container"] }
+    var color: UIColor { UIColor(red: 0.5, green: 0.4, blue: 0.3, alpha: 1.0) } // Darker brown/wooden
+    var glowColor: UIColor { UIColor(red: 0.9, green: 0.7, blue: 0.5, alpha: 1.0) } // Warm amber glow
+    var size: Float { 0.61 } // 2 feet = 0.61 meters
+    var itemNames: [String] { ["Loot Chest", "Stylized Chest", "Ornate Chest"] }
+    
+    func itemDescription() -> String {
+        return itemNames.randomElement() ?? "Loot Chest"
+    }
+    
+    func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
+        let container = createContainer(location: location, sizeMultiplier: sizeMultiplier)!
+        let entity = container.container
+        entity.name = location.id
+        entity.position = SIMD3<Float>(0, 0, 0)
+        
+        let findableObject = FindableObject(
+            locationId: location.id,
+            anchor: anchor,
+            sphereEntity: nil,
+            container: container,
+            location: location
+        )
+        
+        return (entity, findableObject)
+    }
+    
+    func createContainer(location: LootBoxLocation, sizeMultiplier: Float) -> LootBoxContainer? {
+        let baseContainer = BoxLootContainer.create(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
+        return LootBoxContainer(
+            container: baseContainer.container,
+            box: baseContainer.box,
+            lid: baseContainer.lid,
+            prize: baseContainer.prize,
+            builtInAnimation: baseContainer.builtInAnimation,
+            open: { container, onComplete in
+                self.openBox(container: container, onComplete: onComplete)
+            }
+        )
+    }
+    
+    func animateFind(entity: ModelEntity, container: LootBoxContainer?, tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
+        let parentEntity = container?.container.parent ?? entity.parent ?? entity
+        let confettiPosition: SIMD3<Float>
+        if let tapPos = tapWorldPosition {
+            let parentTransform = parentEntity.transformMatrix(relativeTo: nil)
+            let parentWorldPos = SIMD3<Float>(
+                parentTransform.columns.3.x,
+                parentTransform.columns.3.y,
+                parentTransform.columns.3.z
+            )
+            confettiPosition = tapPos - parentWorldPos
+        } else {
+            confettiPosition = entity.position
+        }
+        LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
+        playFindSound()
+        
+        if let container = container {
+            openBox(container: container, onComplete: onComplete)
+        } else {
+            onComplete()
+        }
+    }
+    
+    func animateLoop(entity: ModelEntity) {
+        // Loot chests don't have continuous loop animations
+    }
+    
+    func playFindSound() {
+        LootBoxAnimation.playOpeningSound()
+    }
+    
+    private func openBox(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+        if let animation = container.builtInAnimation {
+            let estimatedDuration: TimeInterval = 2.0
+            var isLooping = true
+            
+            func loopAnimation() {
+                guard isLooping else { return }
+                let _ = container.box.playAnimation(animation, transitionDuration: 0.1, startsPaused: false)
+                DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration) {
+                    loopAnimation()
+                }
+            }
+            
+            let _ = container.box.playAnimation(animation, transitionDuration: 0.2, startsPaused: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration) {
+                loopAnimation()
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration * 2.5) {
+                isLooping = false
+                container.prize.isEnabled = true
+                self.animatePrizeReveal(container: container, onComplete: onComplete)
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration * 4.0) {
+                isLooping = false
+                onComplete()
+            }
+            return
+        }
+        
+        // Custom animation - same as treasure chest
+        let lidPos = container.lid.position
+        let isLootChest = lidPos.y > 0.1
+        
+        if isLootChest {
+            let lidRotationAngle = -Float.pi / 2.5
+            let lidOpenTransform = Transform(
+                scale: container.lid.scale,
+                rotation: simd_quatf(angle: lidRotationAngle, axis: SIMD3<Float>(1, 0, 0)),
+                translation: lidPos
+            )
+            container.lid.move(to: lidOpenTransform, relativeTo: container.container, duration: 0.8, timingFunction: .easeOut)
+        } else {
+            let doorRotationAngle = Float.pi / 2.2
+            let doorOpenTransform = Transform(
+                scale: container.lid.scale,
+                rotation: simd_quatf(angle: doorRotationAngle, axis: SIMD3<Float>(0, 1, 0)),
+                translation: lidPos
+            )
+            container.lid.move(to: doorOpenTransform, relativeTo: container.container, duration: 0.8, timingFunction: .easeOut)
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            container.prize.isEnabled = true
+            self.animatePrizeReveal(container: container, onComplete: onComplete)
+        }
+    }
+    
+    private func animatePrizeReveal(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+        let prizeStartPos = container.prize.position
+        let prizeEndPos = SIMD3<Float>(prizeStartPos.x, prizeStartPos.y + 0.5, prizeStartPos.z)
+        let prizeTransform = Transform(scale: container.prize.scale, rotation: container.prize.orientation, translation: prizeEndPos)
+        container.prize.move(to: prizeTransform, relativeTo: container.container, duration: 1.2, timingFunction: .easeOut)
+        animatePrizeRotation(prize: container.prize, duration: 1.2)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            onComplete()
+        }
+    }
+    
+    private func animatePrizeRotation(prize: ModelEntity, duration: Float) {
+        var currentRotation: Float = 0
+        let rotationSpeed: Float = Float.pi * 2 / duration
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { timer in
+            currentRotation += rotationSpeed * 0.016
+            if currentRotation >= Float.pi * 2 {
+                timer.invalidate()
+                prize.orientation = simd_quatf(angle: Float.pi * 2, axis: SIMD3<Float>(0, 1, 0))
+            } else {
+                prize.orientation = simd_quatf(angle: currentRotation, axis: SIMD3<Float>(0, 1, 0))
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(duration)) {
+            timer.invalidate()
+        }
+    }
+}
+
+struct LootCartFactory: LootBoxFactory {
+    var iconName: String { "cart.fill" }
+    var modelNames: [String] { ["Mine_Cart_Gold"] }
+    var color: UIColor { UIColor(red: 0.9, green: 0.7, blue: 0.3, alpha: 1.0) } // Golden cart
+    var glowColor: UIColor { UIColor(red: 1.0, green: 0.9, blue: 0.6, alpha: 1.0) } // Bright golden glow
+    var size: Float { 0.5 } // Medium-sized cart
+    var itemNames: [String] { ["Loot Cart", "Golden Cart", "Treasure Cart"] }
+    
+    func itemDescription() -> String {
+        return itemNames.randomElement() ?? "Loot Cart"
+    }
+    
+    func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
+        let container = createContainer(location: location, sizeMultiplier: sizeMultiplier)!
+        let entity = container.container
+        entity.name = location.id
+        entity.position = SIMD3<Float>(0, 0, 0)
+        
+        let findableObject = FindableObject(
+            locationId: location.id,
+            anchor: anchor,
+            sphereEntity: nil,
+            container: container,
+            location: location
+        )
+        
+        return (entity, findableObject)
+    }
+    
+    func createContainer(location: LootBoxLocation, sizeMultiplier: Float) -> LootBoxContainer? {
+        let baseContainer = BoxLootContainer.create(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
+        return LootBoxContainer(
+            container: baseContainer.container,
+            box: baseContainer.box,
+            lid: baseContainer.lid,
+            prize: baseContainer.prize,
+            builtInAnimation: baseContainer.builtInAnimation,
+            open: { container, onComplete in
+                self.openCart(container: container, onComplete: onComplete)
+            }
+        )
+    }
+    
+    func animateFind(entity: ModelEntity, container: LootBoxContainer?, tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
+        let parentEntity = container?.container.parent ?? entity.parent ?? entity
+        let confettiPosition: SIMD3<Float>
+        if let tapPos = tapWorldPosition {
+            let parentTransform = parentEntity.transformMatrix(relativeTo: nil)
+            let parentWorldPos = SIMD3<Float>(
+                parentTransform.columns.3.x,
+                parentTransform.columns.3.y,
+                parentTransform.columns.3.z
+            )
+            confettiPosition = tapPos - parentWorldPos
+        } else {
+            confettiPosition = entity.position
+        }
+        LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
+        playFindSound()
+        
+        if let container = container {
+            openCart(container: container, onComplete: onComplete)
+        } else {
+            onComplete()
+        }
+    }
+    
+    func animateLoop(entity: ModelEntity) {
+        // Loot carts don't have continuous loop animations
+    }
+    
+    func playFindSound() {
+        LootBoxAnimation.playOpeningSound()
+    }
+    
+    private func openCart(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+        if let animation = container.builtInAnimation {
+            let estimatedDuration: TimeInterval = 2.0
+            var isLooping = true
+            
+            func loopAnimation() {
+                guard isLooping else { return }
+                let _ = container.box.playAnimation(animation, transitionDuration: 0.1, startsPaused: false)
+                DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration) {
+                    loopAnimation()
+                }
+            }
+            
+            let _ = container.box.playAnimation(animation, transitionDuration: 0.2, startsPaused: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration) {
+                loopAnimation()
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration * 2.5) {
+                isLooping = false
+                container.prize.isEnabled = true
+                self.animatePrizeReveal(container: container, onComplete: onComplete)
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration * 4.0) {
+                isLooping = false
+                onComplete()
+            }
+            return
+        }
+        
+        // Custom animation - carts might have a lid or opening mechanism
+        let lidPos = container.lid.position
+        let hasLid = lidPos.y > 0.1 || lidPos.y < -0.1
+        
+        if hasLid {
+            // If cart has a lid on top, open it upward
+            let lidRotationAngle = -Float.pi / 2.5
+            let lidOpenTransform = Transform(
+                scale: container.lid.scale,
+                rotation: simd_quatf(angle: lidRotationAngle, axis: SIMD3<Float>(1, 0, 0)),
+                translation: lidPos
+            )
+            container.lid.move(to: lidOpenTransform, relativeTo: container.container, duration: 0.8, timingFunction: .easeOut)
+        } else {
+            // If no lid, just reveal the prize
+            container.prize.isEnabled = true
+            animatePrizeReveal(container: container, onComplete: onComplete)
+            return
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            container.prize.isEnabled = true
+            self.animatePrizeReveal(container: container, onComplete: onComplete)
+        }
+    }
+    
+    private func animatePrizeReveal(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+        let prizeStartPos = container.prize.position
+        let prizeEndPos = SIMD3<Float>(prizeStartPos.x, prizeStartPos.y + 0.5, prizeStartPos.z)
+        let prizeTransform = Transform(scale: container.prize.scale, rotation: container.prize.orientation, translation: prizeEndPos)
+        container.prize.move(to: prizeTransform, relativeTo: container.container, duration: 1.2, timingFunction: .easeOut)
+        animatePrizeRotation(prize: container.prize, duration: 1.2)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            onComplete()
+        }
+    }
+    
+    private func animatePrizeRotation(prize: ModelEntity, duration: Float) {
+        var currentRotation: Float = 0
+        let rotationSpeed: Float = Float.pi * 2 / duration
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { timer in
+            currentRotation += rotationSpeed * 0.016
+            if currentRotation >= Float.pi * 2 {
+                timer.invalidate()
+                prize.orientation = simd_quatf(angle: Float.pi * 2, axis: SIMD3<Float>(0, 1, 0))
+            } else {
+                prize.orientation = simd_quatf(angle: currentRotation, axis: SIMD3<Float>(0, 1, 0))
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(duration)) {
+            timer.invalidate()
+        }
+    }
+}
+
 struct TempleRelicFactory: LootBoxFactory {
     var iconName: String { "building.columns.fill" }
     var modelNames: [String] { ["Stylised_Treasure_Chest", "Treasure_Chest"] }
+    var color: UIColor { UIColor(red: 0.4, green: 0.3, blue: 0.2, alpha: 1.0) } // Dark stone
+    var glowColor: UIColor { UIColor(red: 0.8, green: 0.6, blue: 0.4, alpha: 1.0) } // Warm stone
+    var size: Float { 0.45 }
+    var itemNames: [String] { ["Temple Relic", "Sacred Relic", "Temple Treasure"] }
     
     func itemDescription() -> String {
-        return ["Temple Relic", "Sacred Relic", "Temple Treasure"].randomElement() ?? "Temple Relic"
+        return itemNames.randomElement() ?? "Temple Relic"
     }
     
     func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
@@ -496,9 +854,13 @@ struct TempleRelicFactory: LootBoxFactory {
 struct SphereFactory: LootBoxFactory {
     var iconName: String { "circle.fill" }
     var modelNames: [String] { [] }
+    var color: UIColor { UIColor(red: 0.9, green: 0.1, blue: 0.1, alpha: 1.0) } // Red/orange sphere
+    var glowColor: UIColor { UIColor(red: 1.0, green: 0.3, blue: 0.1, alpha: 1.0) } // Bright orange glow
+    var size: Float { 0.15 } // Smaller sphere
+    var itemNames: [String] { ["Mysterious Sphere", "Ancient Orb", "Glowing Sphere"] }
     
     func itemDescription() -> String {
-        return "Mysterious Sphere"
+        return itemNames.randomElement() ?? "Mysterious Sphere"
     }
     
     func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
@@ -514,6 +876,9 @@ struct SphereFactory: LootBoxFactory {
         sphere.name = location.id
         sphere.position = SIMD3<Float>(0, sphereRadius, 0)
 
+        // CRITICAL: Ensure sphere is enabled and visible
+        sphere.isEnabled = true
+
         let light = PointLightComponent(color: location.type.glowColor, intensity: 200)
         sphere.components.set(light)
 
@@ -524,7 +889,7 @@ struct SphereFactory: LootBoxFactory {
             container: nil,
             location: location
         )
-        
+
         return (sphere, findableObject)
     }
     
@@ -619,9 +984,13 @@ struct SphereFactory: LootBoxFactory {
 struct CubeFactory: LootBoxFactory {
     var iconName: String { "cube.fill" }
     var modelNames: [String] { [] }
+    var color: UIColor { UIColor(red: 0.2, green: 0.6, blue: 0.9, alpha: 1.0) } // Blue cube
+    var glowColor: UIColor { UIColor(red: 0.3, green: 0.7, blue: 1.0, alpha: 1.0) } // Bright blue glow
+    var size: Float { 0.15 } // Same size as sphere
+    var itemNames: [String] { ["Mysterious Cube"] }
     
     func itemDescription() -> String {
-        return "Mysterious Cube"
+        return itemNames.randomElement() ?? "Mysterious Cube"
     }
     
     func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
@@ -652,6 +1021,9 @@ struct CubeFactory: LootBoxFactory {
         cube.name = location.id
         cube.position = SIMD3<Float>(0, cubeSize / 2, 0)
 
+        // CRITICAL: Ensure cube is enabled and visible
+        cube.isEnabled = true
+
         // Add point light INSIDE the cube for internal glow effect
         let lightEntity = ModelEntity()
         lightEntity.position = SIMD3<Float>(0, 0, 0) // Center of cube
@@ -669,7 +1041,7 @@ struct CubeFactory: LootBoxFactory {
             container: nil,
             location: location
         )
-        
+
         return (cube, findableObject)
     }
     
@@ -737,22 +1109,30 @@ struct CubeFactory: LootBoxFactory {
     }
 }
 
-// MARK: - LootBoxType Extension for Factory Access
-extension LootBoxType {
-    /// Returns the factory for this loot box type
-    var factory: LootBoxFactory {
-        switch self {
-        case .chalice:
-            return ChaliceFactory()
-        case .treasureChest:
-            return TreasureChestFactory()
-        case .templeRelic:
-            return TempleRelicFactory()
-        case .sphere:
-            return SphereFactory()
-        case .cube:
-            return CubeFactory()
+// MARK: - Factory Registry (replaces switch statement for better decoupling)
+/// Centralized registry for all loot box factories
+/// This eliminates the need for switch statements when accessing factories
+struct LootBoxFactoryRegistry {
+    private static var factories: [LootBoxType: LootBoxFactory] = [
+        .chalice: ChaliceFactory(),
+        .treasureChest: TreasureChestFactory(),
+        .lootChest: LootChestFactory(),
+        .lootCart: LootCartFactory(),
+        .templeRelic: TempleRelicFactory(),
+        .sphere: SphereFactory(),
+        .cube: CubeFactory()
+    ]
+    
+    static func factory(for type: LootBoxType) -> LootBoxFactory {
+        guard let factory = factories[type] else {
+            fatalError("No factory registered for LootBoxType: \(type)")
         }
+        return factory
+    }
+    
+    /// Registers a new factory for a loot box type (for extensibility)
+    static func register(_ factory: LootBoxFactory, for type: LootBoxType) {
+        factories[type] = factory
     }
 }
 

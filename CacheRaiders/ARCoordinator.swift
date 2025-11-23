@@ -28,6 +28,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var tapHandler: ARTapHandler?
     private var databaseIndicatorService: ARDatabaseIndicatorService?
     private var groundingService: ARGroundingService?
+    private var precisionPositioningService: ARPrecisionPositioningService?
     
     weak var arView: ARView?
     private var locationManager: LootBoxLocationManager?
@@ -57,7 +58,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     /// Play a chime sound when an object enters the viewport
     /// Uses a different, gentler sound than the treasure found sound
-    private func playViewportChime() {
+    private func playViewportChime(for locationId: String) {
         // Configure audio session
         do {
             let audioSession = AVAudioSession.sharedInstance()
@@ -67,16 +68,40 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             Swift.print("⚠️ Could not configure audio session for chime: \(error)")
         }
         
+        // Get object details for logging
+        let location = locationManager?.locations.first(where: { $0.id == locationId })
+        let objectName = location?.name ?? "Unknown"
+        let objectType = location?.type.displayName ?? "Unknown Type"
+        
         // Use a gentle system notification sound for viewport entry
         // System sound 1103 is a soft, pleasant notification chime
         // This is different from the treasure found sound (level-up-01.mp3)
         AudioServicesPlaySystemSound(1103) // Soft notification sound for viewport entry
-        Swift.print("🔔 Viewport chime: Object entered viewport")
+        Swift.print("🔔 SOUND: Viewport chime (system sound 1103)")
+        Swift.print("   Trigger: Object entered viewport")
+        Swift.print("   Object: \(objectName) (\(objectType))")
+        Swift.print("   Location ID: \(locationId)")
     }
     
     /// Check if an object is currently visible in the viewport
     private func isObjectInViewport(locationId: String, anchor: AnchorEntity) -> Bool {
-        guard let arView = arView else { return false }
+        guard let arView = arView,
+              let frame = arView.session.currentFrame else { return false }
+        
+        // Get camera position and forward direction
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(
+            cameraTransform.columns.3.x,
+            cameraTransform.columns.3.y,
+            cameraTransform.columns.3.z
+        )
+        
+        // Camera forward direction is the negative Z axis in camera space (columns.2)
+        let cameraForward = SIMD3<Float>(
+            -cameraTransform.columns.2.x,
+            -cameraTransform.columns.2.y,
+            -cameraTransform.columns.2.z
+        )
         
         // Get the object's world position
         let anchorTransform = anchor.transformMatrix(relativeTo: nil)
@@ -100,6 +125,24 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 bestPosition = childPosition
                 break
             }
+        }
+        
+        // CRITICAL: Check if object is in front of camera (not behind)
+        // Calculate vector from camera to object
+        let cameraToObject = bestPosition - cameraPos
+        let distanceToObject = length(cameraToObject)
+        
+        // Normalize camera forward direction for dot product
+        let normalizedForward = normalize(cameraForward)
+        let normalizedToObject = normalize(cameraToObject)
+        
+        // Dot product: positive = in front, negative = behind, zero = perpendicular
+        let dotProduct = dot(normalizedForward, normalizedToObject)
+        
+        // Only consider objects that are in front of the camera (dot product > 0)
+        // Use a small threshold (0.0) to avoid edge cases at exactly 90 degrees
+        guard dotProduct > 0.0 else {
+            return false // Object is behind camera
         }
         
         // Project the position to screen coordinates
@@ -141,7 +184,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 
                 // If object just entered viewport (wasn't visible before), play chime and log details
                 if !objectsInViewport.contains(locationId) {
-                    playViewportChime()
+                    playViewportChime(for: locationId)
                     
                     // Get object details for logging
                     let location = locationManager?.locations.first(where: { $0.id == locationId })
@@ -190,6 +233,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Size changes not supported - objects are randomized on placement
         // locationManager.onSizeChanged callback removed
         
+        // Set up callback to remove objects from AR when collected by other users
+        locationManager.onObjectCollectedByOtherUser = { [weak self] objectId in
+            self?.handleObjectCollectedByOtherUser(objectId: objectId)
+        }
+        
         // Store the GPS location when AR starts (this becomes our AR world origin)
         arOriginLocation = userLocationManager.currentLocation
         
@@ -207,7 +255,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         tapHandler = ARTapHandler(arView: arView, locationManager: locationManager)
         databaseIndicatorService = ARDatabaseIndicatorService()
         groundingService = ARGroundingService(arView: arView)
-        
+        precisionPositioningService = ARPrecisionPositioningService(arView: arView)
+
+        // Start periodic grounding checks to ensure objects stay on surfaces
+        // This continuously monitors for better surface data and re-grounds objects when found
+        startPeriodicGrounding()
+
         // Configure managers with shared state
         occlusionManager?.placedBoxes = placedBoxes
         distanceTracker?.placedBoxes = placedBoxes
@@ -240,6 +293,40 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // Apply ambient light setting
         environmentManager?.updateAmbientLight()
+    }
+    
+    /// Handle when an object is collected by another user - remove it from AR scene
+    private func handleObjectCollectedByOtherUser(objectId: String) {
+        guard let arView = arView else { return }
+        
+        // Check if this object is currently placed in AR
+        guard let anchor = placedBoxes[objectId] else {
+            Swift.print("ℹ️ Object \(objectId) collected by another user but not currently in AR scene")
+            return
+        }
+        
+        // Get object name for logging
+        let location = locationManager?.locations.first(where: { $0.id == objectId })
+        let objectName = location?.name ?? "Unknown"
+        
+        Swift.print("🗑️ Removing object '\(objectName)' (ID: \(objectId)) from AR - collected by another user")
+        
+        // Remove from AR scene
+        anchor.removeFromParent()
+        
+        // Remove from tracking dictionaries
+        placedBoxes.removeValue(forKey: objectId)
+        findableObjects.removeValue(forKey: objectId)
+        objectsInViewport.remove(objectId)
+        
+        // Also remove from distance tracker if applicable
+        distanceTracker?.foundLootBoxes.insert(objectId)
+        if let textEntity = distanceTracker?.distanceTextEntities[objectId] {
+            textEntity.removeFromParent()
+            distanceTracker?.distanceTextEntities.removeValue(forKey: objectId)
+        }
+        
+        Swift.print("✅ Object '\(objectName)' removed from AR scene")
     }
     
     // Clear found loot boxes set - makes objects tappable again after reset
@@ -287,10 +374,178 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     deinit {
         distanceTracker?.stopDistanceLogging()
         occlusionManager?.stopOcclusionChecking()
+        stopPeriodicGrounding()
+    }
+
+    /// Timer for periodic grounding checks
+    private var groundingTimer: Timer?
+
+    /// Track when we last checked grounding for each object (to avoid excessive raycasting)
+    private var lastGroundingCheck: [String: Date] = [:]
+
+    /// Starts periodic grounding checks to ensure objects stay on surfaces
+    private func startPeriodicGrounding() {
+        // Stop any existing timer
+        groundingTimer?.invalidate()
+
+        // Check grounding every 2 seconds
+        groundingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.performGroundingCheck()
+        }
+
+        Swift.print("✅ Started periodic grounding checks (every 2 seconds)")
+    }
+
+    /// Stops periodic grounding checks
+    private func stopPeriodicGrounding() {
+        groundingTimer?.invalidate()
+        groundingTimer = nil
+        Swift.print("⏹️ Stopped periodic grounding checks")
+    }
+
+    /// Performs a grounding check on all placed objects
+    /// This runs periodically to catch objects that were placed before surfaces were detected
+    private func performGroundingCheck() {
+        guard let arView = arView,
+              let frame = arView.session.currentFrame else { return }
+
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+
+        let now = Date()
+        var regroundedCount = 0
+
+        for (locationId, anchor) in placedBoxes {
+            // Rate limit: only check each object every 5 seconds to reduce raycasting overhead
+            if let lastCheck = lastGroundingCheck[locationId],
+               now.timeIntervalSince(lastCheck) < 5.0 {
+                continue
+            }
+            lastGroundingCheck[locationId] = now
+
+            // Get anchor's current position
+            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+            let currentX = anchorTransform.columns.3.x
+            let currentZ = anchorTransform.columns.3.z
+            let currentY = anchorTransform.columns.3.y
+
+            // Try to find a surface at this X/Z position
+            if let surfaceY = groundingService?.findHighestBlockingSurface(x: currentX, z: currentZ, cameraPos: cameraPos) {
+                // Check if object is significantly above or below the detected surface
+                let heightDifference = abs(currentY - surfaceY)
+
+                // Re-ground if more than 10cm off the surface (floating or sunk)
+                if heightDifference > 0.1 {
+                    Swift.print("🔧 Re-grounding '\(locationId)': Y=\(String(format: "%.2f", currentY)) → Y=\(String(format: "%.2f", surfaceY)) (Δ=\(String(format: "%.2f", heightDifference))m)")
+
+                    // Smoothly move anchor to new position (interpolate to avoid jarring jumps)
+                    let newY = surfaceY
+                    anchor.transform.translation = SIMD3<Float>(currentX, newY, currentZ)
+                    regroundedCount += 1
+
+                    // Store updated grounding height to database
+                    if let location = locationManager?.locations.first(where: { $0.id == locationId }) {
+                        Task {
+                            do {
+                                try await APIService.shared.updateGroundingHeight(objectId: location.id, height: Double(newY))
+                            } catch {
+                                // Silently fail - grounding still works locally
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if regroundedCount > 0 {
+            Swift.print("✅ Periodic check: Re-grounded \(regroundedCount) object(s)")
+        }
+    }
+
+    /// Re-grounds all placed objects immediately (called when new planes detected)
+    /// This is more aggressive than periodic checks - forces immediate re-grounding
+    private func regroundAllObjects() {
+        guard let arView = arView,
+              let frame = arView.session.currentFrame else { return }
+
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+
+        var regroundedCount = 0
+
+        for (locationId, anchor) in placedBoxes {
+            // Get anchor's current position
+            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+            let currentX = anchorTransform.columns.3.x
+            let currentZ = anchorTransform.columns.3.z
+            let currentY = anchorTransform.columns.3.y
+
+            // Try to find a surface at this X/Z position
+            if let surfaceY = groundingService?.findHighestBlockingSurface(x: currentX, z: currentZ, cameraPos: cameraPos) {
+                // Check if object is significantly above the detected surface (floating)
+                let heightDifference = currentY - surfaceY
+
+                if heightDifference > 0.05 { // More than 5cm above surface = floating (stricter for immediate re-grounding)
+                    Swift.print("🔧 Immediate re-ground '\(locationId)': Y=\(String(format: "%.2f", currentY)) → Y=\(String(format: "%.2f", surfaceY)) (dropped \(String(format: "%.2f", heightDifference))m)")
+
+                    // Update anchor position (move to new surface)
+                    anchor.transform.translation = SIMD3<Float>(currentX, surfaceY, currentZ)
+                    regroundedCount += 1
+
+                    // Update last check time
+                    lastGroundingCheck[locationId] = Date()
+                }
+            }
+        }
+
+        if regroundedCount > 0 {
+            Swift.print("✅ Immediate re-ground: Fixed \(regroundedCount) floating object(s)")
+        }
     }
     
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
         guard let arView = arView else { return }
+
+        // Debug: Log what we're working with
+        Swift.print("🔍 checkAndPlaceBoxes called:")
+        Swift.print("   User location: (\(String(format: "%.6f", userLocation.coordinate.latitude)), \(String(format: "%.6f", userLocation.coordinate.longitude)))")
+        Swift.print("   Nearby locations count: \(nearbyLocations.count)")
+        Swift.print("   Currently placed boxes: \(placedBoxes.count)")
+        if let selectedId = locationManager?.selectedDatabaseObjectId {
+            Swift.print("   Selected object ID: \(selectedId)")
+        }
+
+        for (index, location) in nearbyLocations.enumerated() {
+            let dist = userLocation.distance(from: location.location)
+            Swift.print("   [\(index)] \(location.name) (ID: \(location.id)) - Distance: \(String(format: "%.1f", dist))m, Type: \(location.type.displayName)")
+        }
+
+        // CRITICAL: Remove objects that are no longer in the nearbyLocations list (e.g., when selection changes)
+        // This ensures only the selected object(s) are shown in AR
+        let nearbyLocationIds = Set(nearbyLocations.map { $0.id })
+        var objectsToRemove: [String] = []
+
+        for (locationId, anchor) in placedBoxes {
+            // If this placed object is not in the current nearby locations list, mark it for removal
+            if !nearbyLocationIds.contains(locationId) {
+                objectsToRemove.append(locationId)
+            }
+        }
+
+        // Remove the unselected objects from the scene
+        for locationId in objectsToRemove {
+            if let anchor = placedBoxes[locationId] {
+                Swift.print("🗑️ Removing unselected object '\(locationId)' from AR scene")
+                anchor.removeFromParent()
+                placedBoxes.removeValue(forKey: locationId)
+                findableObjects.removeValue(forKey: locationId)
+                objectsInViewport.remove(locationId)
+            }
+        }
+
+        if !objectsToRemove.isEmpty {
+            Swift.print("✅ Removed \(objectsToRemove.count) unselected object(s) from AR scene")
+        }
 
         // Allow GPS-based loot boxes even when spheres are active
         // Limit to maximum 6 objects total (3 spheres + 3 GPS boxes)
@@ -374,10 +629,22 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Place box if it's nearby (within maxSearchDistance), hasn't been placed, and isn't collected
             // The box will appear in AR when you're within the search distance
             // (location.collected check already done above, so we know it's not collected)
+            Swift.print("🎯 Attempting to place: \(location.name) (ID: \(location.id), Type: \(location.type.displayName))")
+
             if location.id.hasPrefix("AR_SPHERE_MAP_") {
-                // This is a map-only marker for spheres - skip AR placement
-                continue
+                Swift.print("   → Placement path: AR_SPHERE_MAP_ (map-added sphere)")
+                // This is a map-added sphere with GPS coordinates - place it as a sphere using GPS-based placement
+                if location.latitude != 0 || location.longitude != 0 {
+                    // Has GPS coordinates - place as sphere using GPS-based placement
+                    Swift.print("   → Calling placeARSphereAtLocation()")
+                    placeARSphereAtLocation(location, in: arView)
+                } else {
+                    // No GPS coordinates - skip (shouldn't happen for map-added spheres)
+                    Swift.print("⚠️ Skipping \(location.name) - AR_SPHERE_MAP_ item has no GPS coordinates")
+                    continue
+                }
             } else if location.id.hasPrefix("AR_ITEM_") {
+                Swift.print("   → Placement path: AR_ITEM_ (randomized AR item)")
                 // This is a randomized AR item - place it based on its type (not just as sphere)
                 // Use placeBoxAtPosition which respects location.type and creates appropriate object
                 // But first check if we need GPS-based placement or if it's already AR-only
@@ -391,9 +658,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     placeLootBoxAtLocation(location, in: arView)
                 }
             } else if location.id.hasPrefix("AR_SPHERE_") {
+                Swift.print("   → Placement path: AR_SPHERE_ (AR sphere)")
+                Swift.print("   → Calling placeARSphereAtLocation()")
                 // This is an AR sphere location - place a sphere instead of treasure box
                 placeARSphereAtLocation(location, in: arView)
             } else {
+                Swift.print("   → Placement path: Regular GPS treasure box")
+                Swift.print("   → Calling placeLootBoxAtLocation()")
                 // Regular GPS treasure box
                 placeLootBoxAtLocation(location, in: arView)
             }
@@ -489,15 +760,18 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             randomZ = randomCenter.z + randomDistance * sin(adjustedAngle)
 
             // Find the highest blocking surface (floor or table above floor)
-            guard let surfaceY = groundingService?.findHighestBlockingSurface(x: randomX, z: randomZ, cameraPos: cameraPos) else {
-                if attempts <= 3 { // Only log first few failures to avoid spam
-                    Swift.print("⚠️ No surface detected at attempt \(attempts)")
-                    Swift.print("   💡 Try moving camera to scan more surfaces, or place objects manually by tapping")
-                }
-                continue
+            // If no surface detected, use default height and rely on periodic grounding to fix later
+            let surfaceY: Float
+            if let detectedY = groundingService?.findHighestBlockingSurface(x: randomX, z: randomZ, cameraPos: cameraPos) {
+                surfaceY = detectedY
+                Swift.print("✅ Found surface at attempt \(attempts) - Y: \(String(format: "%.2f", surfaceY))")
+            } else {
+                // Use default ground height - object will be adjusted later by periodic grounding
+                let objectTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .sphere, .cube]
+                let selectedType = objectTypes.randomElement() ?? .sphere
+                surfaceY = groundingService?.getDefaultGroundHeight(for: selectedType, cameraPos: cameraPos) ?? (cameraPos.y - 1.5)
+                Swift.print("⚠️ No surface at attempt \(attempts) - using default height Y=\(String(format: "%.2f", surfaceY)) (will auto-adjust later)")
             }
-
-            Swift.print("✅ Found surface at attempt \(attempts) - Y: \(String(format: "%.2f", surfaceY))")
 
             let cameraY = cameraPos.y
 
@@ -546,13 +820,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Create a new temporary location for this object
             // Use completely unique IDs to avoid any confusion with map locations
             // Randomly select object type for variety
-            let objectTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .sphere, .cube]
+            let objectTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .lootChest, .sphere, .cube]
             let selectedType = objectTypes.randomElement() ?? .chalice
             
             // Use the factory's itemDescription() to get the proper name for this type
             // This ensures each type gets its unique description (e.g., "Golden Chalice" not just "Chalice")
             let factory = selectedType.factory
-            let itemName = factory.itemDescription()
+            let baseName = factory.itemDescription()
+
+            // Add unique suffix to prevent duplicate names
+            // Use the placement count to ensure uniqueness
+            let itemName = "\(baseName) #\(placedCount + 1)"
             
             let newLocation = LootBoxLocation(
                 id: "AR_ITEM_" + UUID().uuidString, // Generic prefix for all AR-only items (not just spheres)
@@ -688,11 +966,28 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
     
     // Handle AR anchor updates - remove any unwanted plane anchors (especially ceilings)
+    // Also re-ground objects when new horizontal planes are detected
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
         guard let arView = arView, let frame = arView.session.currentFrame else { return }
-        
+
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+
+        // Check if any new anchors are horizontal planes
+        var hasNewHorizontalPlane = false
+        for anchor in anchors {
+            if let planeAnchor = anchor as? ARPlaneAnchor,
+               planeAnchor.alignment == .horizontal {
+                hasNewHorizontalPlane = true
+                Swift.print("🆕 New horizontal plane detected - will re-ground floating objects")
+                break
+            }
+        }
+
+        // If new horizontal plane detected, re-ground all placed objects
+        if hasNewHorizontalPlane {
+            regroundAllObjects()
+        }
         
         for anchor in anchors {
             // Handle horizontal plane anchors (floors/tables) - we need these for raycasting!
@@ -792,100 +1087,106 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // Use GPS-based placement if location has GPS coordinates
         if location.latitude != 0 || location.longitude != 0 {
-            // Calculate GPS-based position
+            // Use precision positioning service for inch-level accuracy
             let targetLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
-            var distance = userLocation.distance(from: targetLocation) // Distance in meters
-            let bearing = userLocation.bearing(to: targetLocation) // Bearing in degrees (0-360, 0 = North)
+            let distance = userLocation.distance(from: targetLocation)
             
-            // Ensure minimum distance of 1m for AR placement
-            let minDistance: Double = 1.0
-            if distance < minDistance {
-                Swift.print("⚠️ GPS distance \(String(format: "%.2f", distance))m is too close, using minimum \(minDistance)m")
-                distance = minDistance
-            }
+            Swift.print("📍 Placing \(location.name) at GPS distance \(String(format: "%.2f", distance))m")
             
-            Swift.print("📍 Placing \(location.name) at GPS distance \(String(format: "%.2f", distance))m, bearing \(String(format: "%.1f", bearing))°")
-            
-            // Get camera's forward and right directions
-            let cameraForward = SIMD3<Float>(
-                -cameraTransform.columns.2.x,
-                0,
-                -cameraTransform.columns.2.z
-            )
-            let cameraRight = SIMD3<Float>(
-                cameraTransform.columns.0.x,
-                0,
-                cameraTransform.columns.0.z
-            )
-            
-            // Normalize directions
-            let forwardDir = normalize(cameraForward)
-            let rightDir = normalize(cameraRight)
-            
-            // Convert bearing to radians (0 = North, 90 = East, 180 = South, 270 = West)
-            let bearingRad = Float(bearing * .pi / 180.0)
-            
-            // Calculate offset in AR space relative to camera orientation
-            // X = distance * sin(bearing) (east/west)
-            // Z = distance * cos(bearing) (north/south)
-            let offsetX = Float(distance) * sin(bearingRad)
-            let offsetZ = Float(distance) * cos(bearingRad)
-            
-            // Apply offset relative to camera's orientation
-            let targetPos = cameraPos + rightDir * offsetX + forwardDir * offsetZ
-            
-            // Clamp distance to reasonable AR space (max 20m for GPS items)
-            let clampedDistance = min(distance, 20.0)
-            if distance > 20.0 {
-                Swift.print("⚠️ GPS distance \(String(format: "%.2f", distance))m exceeds 20m, clamping to 20m for AR placement")
-                let scale = Float(20.0 / distance)
-                let adjustedTargetPos = cameraPos + (targetPos - cameraPos) * scale
+            // Get precise AR position using precision positioning service
+            if let precisePosition = precisionPositioningService?.convertGPSToARPosition(
+                targetGPS: targetLocation,
+                userGPS: userLocation,
+                cameraTransform: cameraTransform,
+                arOriginGPS: arOriginLocation
+            ) {
+                // Check if we have a stored grounding height from database
+                let finalPosition: SIMD3<Float>
                 
-                // Find the highest blocking surface at adjusted position
-                if let surfaceY = groundingService?.findHighestBlockingSurface(x: adjustedTargetPos.x, z: adjustedTargetPos.z, cameraPos: cameraPos) {
-                    let itemPosition = SIMD3<Float>(adjustedTargetPos.x, surfaceY, adjustedTargetPos.z)
-                    Swift.print("✅ Placed \(location.type.displayName) on surface at GPS-based AR position (Y: \(String(format: "%.2f", surfaceY)))")
+                if let storedHeight = location.grounding_height {
+                    // Use stored grounding height from database
+                    finalPosition = SIMD3<Float>(precisePosition.x, Float(storedHeight), precisePosition.z)
+                    Swift.print("✅ Using stored grounding height: \(String(format: "%.4f", storedHeight))m for \(location.name)")
+                } else if distance < 5.0 {
+                    // Close proximity: precision service already handled surface detection
+                    finalPosition = precisePosition
+                    Swift.print("✅ Placed \(location.type.displayName) using precision positioning at (\(String(format: "%.4f", precisePosition.x)), \(String(format: "%.4f", precisePosition.y)), \(String(format: "%.4f", precisePosition.z)))")
+                    
+                    // Store the grounding height for future use
+                    Task {
+                        do {
+                            try await APIService.shared.updateGroundingHeight(objectId: location.id, height: Double(precisePosition.y))
+                            Swift.print("💾 Stored grounding height \(String(format: "%.4f", precisePosition.y))m for \(location.name)")
+                        } catch {
+                            Swift.print("⚠️ Failed to store grounding height: \(error.localizedDescription)")
+                        }
+                    }
+                } else {
+                    // Far distance: use precision service position but still find surface
+                    if let surfaceY = precisionPositioningService?.getPreciseSurfaceHeight(
+                        x: precisePosition.x,
+                        z: precisePosition.z,
+                        cameraPos: cameraPos
+                    ) {
+                        finalPosition = SIMD3<Float>(precisePosition.x, surfaceY, precisePosition.z)
+                        Swift.print("✅ Placed \(location.type.displayName) on surface at GPS-based AR position (Y: \(String(format: "%.4f", surfaceY)))")
+                        
+                        // Store the grounding height for future use
+                        Task {
+                            do {
+                                try await APIService.shared.updateGroundingHeight(objectId: location.id, height: Double(surfaceY))
+                                Swift.print("💾 Stored grounding height \(String(format: "%.4f", surfaceY))m for \(location.name)")
+                            } catch {
+                                Swift.print("⚠️ Failed to store grounding height: \(error.localizedDescription)")
+                            }
+                        }
+                    } else {
+                        // Fallback to standard grounding service
+                        if let surfaceY = groundingService?.findHighestBlockingSurface(x: precisePosition.x, z: precisePosition.z, cameraPos: cameraPos) {
+                            finalPosition = SIMD3<Float>(precisePosition.x, surfaceY, precisePosition.z)
+                            Swift.print("✅ Placed \(location.type.displayName) on surface (fallback) (Y: \(String(format: "%.2f", surfaceY)))")
+                            
+                            // Store the grounding height for future use
+                            Task {
+                                do {
+                                    try await APIService.shared.updateGroundingHeight(objectId: location.id, height: Double(surfaceY))
+                                    Swift.print("💾 Stored grounding height \(String(format: "%.2f", surfaceY))m for \(location.name)")
+                                } catch {
+                                    Swift.print("⚠️ Failed to store grounding height: \(error.localizedDescription)")
+                                }
+                            }
+                        } else {
+                            finalPosition = precisePosition
+                            Swift.print("⚠️ No surface found - using GPS position directly")
+                        }
+                    }
+                }
+                
+                placeBoxAtPosition(finalPosition, location: location, in: arView)
+                return
+            } else {
+                // Fallback to standard GPS-to-AR conversion if precision service fails
+                Swift.print("⚠️ Precision positioning failed, using standard GPS conversion")
+                let bearing = userLocation.bearing(to: targetLocation)
+                let bearingRad = Float(bearing * .pi / 180.0)
+                
+                let cameraForward = SIMD3<Float>(-cameraTransform.columns.2.x, 0, -cameraTransform.columns.2.z)
+                let cameraRight = SIMD3<Float>(cameraTransform.columns.0.x, 0, cameraTransform.columns.0.z)
+                let forwardDir = normalize(cameraForward)
+                let rightDir = normalize(cameraRight)
+                
+                let offsetX = Float(distance) * sin(bearingRad)
+                let offsetZ = Float(distance) * cos(bearingRad)
+                let targetPos = cameraPos + rightDir * offsetX + forwardDir * offsetZ
+                
+                if let surfaceY = groundingService?.findHighestBlockingSurface(x: targetPos.x, z: targetPos.z, cameraPos: cameraPos) {
+                    let itemPosition = SIMD3<Float>(targetPos.x, surfaceY, targetPos.z)
                     placeBoxAtPosition(itemPosition, location: location, in: arView)
                     return
                 } else {
-                    // Fallback: use adjusted position (placeBoxAtPosition will try to ground it)
-                    placeBoxAtPosition(adjustedTargetPos, location: location, in: arView)
+                    placeBoxAtPosition(targetPos, location: location, in: arView)
                     return
                 }
-            }
-            
-            // Try to find the highest horizontal surface that blocks the floor
-            if let surfaceY = groundingService?.findHighestBlockingSurface(x: targetPos.x, z: targetPos.z, cameraPos: cameraPos) {
-                let itemPosition = SIMD3<Float>(targetPos.x, surfaceY, targetPos.z)
-                Swift.print("✅ Placed \(location.type.displayName) on surface at GPS-based AR position (Y: \(String(format: "%.2f", surfaceY)))")
-                placeBoxAtPosition(itemPosition, location: location, in: arView)
-                return
-            } else {
-                // Fallback: Try wider search before giving up
-                Swift.print("⚠️ No surface detected for GPS location, trying wider search...")
-                let searchOffsets: [SIMD3<Float>] = [
-                    SIMD3<Float>(0, 0, 0),
-                    SIMD3<Float>(0.5, 0, 0),
-                    SIMD3<Float>(-0.5, 0, 0),
-                    SIMD3<Float>(0, 0, 0.5),
-                    SIMD3<Float>(0, 0, -0.5)
-                ]
-                
-                var foundSurface = false
-                if let surfaceY = groundingService?.findSurfaceWithFallback(centerX: targetPos.x, centerZ: targetPos.z, cameraPos: cameraPos) {
-                    let groundedPos = SIMD3<Float>(targetPos.x, surfaceY, targetPos.z)
-                    Swift.print("✅ Found surface at offset position - grounding object")
-                    placeBoxAtPosition(groundedPos, location: location, in: arView)
-                    foundSurface = true
-                }
-                
-                if !foundSurface {
-                    Swift.print("⚠️ No surface found after extended search - object may float")
-                    Swift.print("   💡 Try moving camera to scan surfaces before placing")
-                    // Still place it, but placeBoxAtPosition will try to ground it
-                    placeBoxAtPosition(targetPos, location: location, in: arView)
-                }
-                return
             }
         }
         
@@ -951,27 +1252,73 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     // Place an AR sphere at a GPS location (for map-added spheres)
     private func placeARSphereAtLocation(_ location: LootBoxLocation, in arView: ARView) {
-        guard let frame = arView.session.currentFrame else {
-            Swift.print("⚠️ No AR frame available for sphere \(location.name)")
+        guard let frame = arView.session.currentFrame,
+              let userLocation = userLocationManager?.currentLocation else {
+            Swift.print("⚠️ No AR frame or user location available for sphere \(location.name)")
             return
         }
 
-        // Convert GPS location to AR position
-        guard let arOrigin = arOriginLocation else {
-            Swift.print("⚠️ No AR origin set for sphere placement")
-            return
-        }
-
+        // Use precision positioning service for inch-level accuracy
         let locationCLLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
-        let distance = arOrigin.distance(from: locationCLLocation)
-        let bearing = arOrigin.bearing(to: locationCLLocation)
-
-        // Convert to AR coordinates (simple approximation)
-        let x = Float(distance * sin(bearing * .pi / 180.0))
-        let z = Float(distance * cos(bearing * .pi / 180.0))
-
-        Swift.print("🎯 Placing AR sphere '\(location.name)' at GPS distance \(String(format: "%.1f", distance))m, bearing \(String(format: "%.1f", bearing))°")
-        Swift.print("   AR position: (\(String(format: "%.2f", x)), \(String(format: "%.2f", z)))")
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        
+        // Get precise AR position using precision positioning service
+        guard let precisePosition = precisionPositioningService?.convertGPSToARPosition(
+            targetGPS: locationCLLocation,
+            userGPS: userLocation,
+            cameraTransform: cameraTransform,
+            arOriginGPS: arOriginLocation
+        ) else {
+            Swift.print("⚠️ Precision positioning failed for sphere, using fallback")
+            // Fallback to simple GPS conversion
+            guard let arOrigin = arOriginLocation else {
+                Swift.print("⚠️ No AR origin set for sphere placement")
+                return
+            }
+            let distance = arOrigin.distance(from: locationCLLocation)
+            let bearing = arOrigin.bearing(to: locationCLLocation)
+            let x = Float(distance * sin(bearing * .pi / 180.0))
+            let z = Float(distance * cos(bearing * .pi / 180.0))
+            let groundY = groundingService?.findHighestBlockingSurface(x: x, z: z, cameraPos: cameraPos) ?? (cameraPos.y - 1.5)
+            
+            let sphereRadius: Float = 0.15
+            let sphereMesh = MeshResource.generateSphere(radius: sphereRadius)
+            var sphereMaterial = SimpleMaterial()
+            sphereMaterial.color = .init(tint: .orange)
+            sphereMaterial.roughness = 0.2
+            sphereMaterial.metallic = 0.3
+            let sphere = ModelEntity(mesh: sphereMesh, materials: [sphereMaterial])
+            sphere.name = location.id
+            let anchor = AnchorEntity(world: SIMD3<Float>(x, groundY, z))
+            sphere.position = SIMD3<Float>(0, sphereRadius, 0)
+            let light = PointLightComponent(color: .orange, intensity: 200)
+            sphere.components.set(light)
+            anchor.addChild(sphere)
+            arView.scene.addAnchor(anchor)
+            placedBoxes[location.id] = anchor
+            environmentManager?.applyUniformLuminanceToNewEntity(anchor)
+            findableObjects[location.id] = FindableObject(
+                locationId: location.id,
+                anchor: anchor,
+                sphereEntity: sphere,
+                container: nil,
+                location: location
+            )
+            findableObjects[location.id]?.onFoundCallback = { [weak self] id in
+                DispatchQueue.main.async {
+                    if let locationManager = self?.locationManager {
+                        locationManager.markCollected(id)
+                    }
+                }
+            }
+            return
+        }
+        
+        let distance = userLocation.distance(from: locationCLLocation)
+        Swift.print("🎯 Placing AR sphere '\(location.name)' using precision positioning")
+        Swift.print("   GPS distance: \(String(format: "%.2f", distance))m")
+        Swift.print("   Precise AR position: (\(String(format: "%.4f", precisePosition.x)), \(String(format: "%.4f", precisePosition.y)), \(String(format: "%.4f", precisePosition.z)))")
 
         // Create sphere at calculated position
         let sphereRadius: Float = 0.15 // Smaller sphere for GPS-located items
@@ -984,34 +1331,42 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let sphere = ModelEntity(mesh: sphereMesh, materials: [sphereMaterial])
         sphere.name = location.id
 
-        // Get camera position for grounding
-        let cameraTransform = frame.camera.transform
-        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-        
-        // Find the highest blocking surface to ground the sphere
+        // Use precise position (already includes surface detection for close proximity)
         let groundY: Float
-        if let surfaceY = groundingService?.findHighestBlockingSurface(x: x, z: z, cameraPos: cameraPos) {
-            groundY = surfaceY
+        if distance < 5.0 {
+            // Close proximity: precision service already handled surface detection
+            groundY = precisePosition.y
         } else {
-            // Fallback to camera height - 1.5m if no surface found
-            groundY = cameraPos.y - 1.5
-            Swift.print("⚠️ No surface found for sphere - using fallback height")
+            // Far distance: use precision surface detection
+            if let surfaceY = precisionPositioningService?.getPreciseSurfaceHeight(
+                x: precisePosition.x,
+                z: precisePosition.z,
+                cameraPos: cameraPos
+            ) {
+                groundY = surfaceY
+            } else if let surfaceY = groundingService?.findHighestBlockingSurface(x: precisePosition.x, z: precisePosition.z, cameraPos: cameraPos) {
+                groundY = surfaceY
+            } else {
+                groundY = cameraPos.y - 1.5
+                Swift.print("⚠️ No surface found for sphere - using fallback height")
+            }
         }
-        
-        // Position sphere so bottom sits flat on surface
-        sphere.position = SIMD3<Float>(x, sphereRadius, z) // Bottom of sphere touches surface
+
+        // Create anchor at grounded position
+        let anchor = AnchorEntity(world: SIMD3<Float>(precisePosition.x, groundY, precisePosition.z))
+
+        // Position sphere relative to anchor so bottom sits flat on surface
+        sphere.position = SIMD3<Float>(0, sphereRadius, 0) // Bottom of sphere touches surface
 
         // Add point light to make it visible
         let light = PointLightComponent(color: .orange, intensity: 200)
         sphere.components.set(light)
 
-        // Create anchor at grounded position
-        let anchor = AnchorEntity(world: SIMD3<Float>(x, groundY, z))
         anchor.addChild(sphere)
 
         arView.scene.addAnchor(anchor)
         placedBoxes[location.id] = anchor
-        
+
         // Apply uniform luminance if ambient light is disabled
         environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
@@ -1033,7 +1388,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
 
-        Swift.print("✅ Placed AR sphere '\(location.name)' at AR position (\(String(format: "%.2f", x)), \(String(format: "%.2f", z)))")
+        Swift.print("✅ Placed AR sphere '\(location.name)' at AR position (\(String(format: "%.2f", precisePosition.x)), \(String(format: "%.2f", precisePosition.z)))")
     }
     
     // Helper method to place a randomly selected object at a specific position
@@ -1102,8 +1457,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             groundedPosition = SIMD3<Float>(boxPosition.x, surfaceY, boxPosition.z)
             Swift.print("✅ Grounded object on surface at Y: \(String(format: "%.2f", surfaceY))")
         } else {
-            Swift.print("⚠️ No horizontal surface detected at position - object may float")
-            Swift.print("   💡 Try moving camera to scan more surfaces before placing objects")
+            // No surface detected - use default ground height for object type
+            let defaultY = groundingService?.getDefaultGroundHeight(for: location.type, cameraPos: cameraPos) ?? (cameraPos.y - 1.5)
+            groundedPosition = SIMD3<Float>(boxPosition.x, defaultY, boxPosition.z)
+            Swift.print("⚠️ No horizontal surface detected - using default height for \(location.type.displayName): Y=\(String(format: "%.2f", defaultY))")
+            Swift.print("   💡 Object will auto-adjust when surfaces are detected")
         }
         
         // DEBUG: Log position details
@@ -1125,7 +1483,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             selectedObjectType = .sphere
         case .cube:
             selectedObjectType = .cube
-        case .templeRelic, .treasureChest:
+        case .templeRelic, .treasureChest, .lootChest, .lootCart:
             selectedObjectType = .treasureBox
         }
 
@@ -1142,23 +1500,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // CRITICAL: Verify each type uses its correct factory to ensure proper separation
         // Check factory type name to ensure correct factory is being used
+        // Note: This verification could be removed if we trust the registry, but it's useful for debugging
         let factoryTypeName = String(describing: type(of: factory))
-        let expectedFactoryNames: [LootBoxType: String] = [
-            .chalice: "ChaliceFactory",
-            .treasureChest: "TreasureChestFactory",
-            .templeRelic: "TempleRelicFactory",
-            .sphere: "SphereFactory",
-            .cube: "CubeFactory"
-        ]
-        
-        if let expectedName = expectedFactoryNames[location.type] {
-            if !factoryTypeName.contains(expectedName) {
-                Swift.print("❌ CRITICAL ERROR: \(location.type.displayName) location \(location.id) is using factory \(factoryTypeName) instead of \(expectedName)!")
-                Swift.print("   This will cause incorrect object rendering and naming!")
-            } else {
-                Swift.print("✅ Verified \(location.type.displayName) is using correct factory: \(factoryTypeName)")
-            }
-        }
+        Swift.print("✅ Using factory \(factoryTypeName) for \(location.type.displayName)")
         
         let (entity, findable) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: sizeMultiplier)
         

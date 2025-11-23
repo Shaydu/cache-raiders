@@ -181,17 +181,28 @@ class ARTapHandler {
                 Swift.print("⚠️ Anchor not found for \(idString)")
                 return
             }
-            
-            // Find the sphere entity if it exists (for objects with spheres)
+
+            // Find the sphere entity if it exists
+            // For simple objects (spheres/cubes), check the findableObjects dictionary first
             var sphereEntity: ModelEntity? = nil
-            for child in anchor.children {
-                if let modelEntity = child as? ModelEntity,
-                   modelEntity.components[PointLightComponent.self] != nil {
-                    sphereEntity = modelEntity
-                    break
+
+            // First, check if we have a FindableObject with sphereEntity set (for spheres/cubes)
+            if let findableObject = findableObjects[idString],
+               let sphere = findableObject.sphereEntity {
+                sphereEntity = sphere
+                Swift.print("🎯 Found sphere entity via findableObject: \(sphere.name)")
+            } else {
+                // Fallback: search children for entities with PointLightComponent (for containers)
+                for child in anchor.children {
+                    if let modelEntity = child as? ModelEntity,
+                       modelEntity.components[PointLightComponent.self] != nil {
+                        sphereEntity = modelEntity
+                        Swift.print("🎯 Found sphere entity via PointLightComponent in children: \(modelEntity.name)")
+                        break
+                    }
                 }
             }
-            
+
             // Use callback to find loot box
             Swift.print("🎯 Finding object: \(idString) (type: sphere=\(sphereEntity != nil), has findableObject=\(findableObjects[idString] != nil))")
             onFindLootBox?(idString, anchor, cameraPos, sphereEntity)
@@ -219,9 +230,11 @@ class ARTapHandler {
             let cameraY = frame.camera.transform.columns.3.y
             let hitY = result.worldTransform.columns.3.y
             if hitY <= cameraY - 0.2 {
+                // Generate unique name for tap-placed artifact
+                let tapCount = placedBoxes.count + 1
                 let testLocation = LootBoxLocation(
                     id: UUID().uuidString,
-                    name: "Test Artifact",
+                    name: "Test Artifact #\(tapCount)",
                     type: .templeRelic,
                     latitude: 0,
                     longitude: 0,

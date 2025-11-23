@@ -19,14 +19,21 @@ class LootBoxAnimation {
         
         // Find the sound file
         var soundURL: URL?
+        var foundFileName: String?
         if let url = Bundle.main.url(forResource: "810753__mokasza__level-up-01", withExtension: "mp3") {
             soundURL = url
+            foundFileName = "810753__mokasza__level-up-01.mp3"
         } else if let url = Bundle.main.url(forResource: "level-up-01", withExtension: "mp3") {
             soundURL = url
+            foundFileName = "level-up-01.mp3"
         }
         
-        guard let url = soundURL else {
-            Swift.print("⚠️ Level-up sound file not found in bundle")
+        guard let url = soundURL, let fileName = foundFileName else {
+            Swift.print("❌ Level-up sound file not found in bundle")
+            Swift.print("   Checked for:")
+            Swift.print("   - '810753__mokasza__level-up-01.mp3'")
+            Swift.print("   - 'level-up-01.mp3'")
+            Swift.print("   Make sure the file is added to the Xcode project and included in the target")
             return nil
         }
         
@@ -35,10 +42,11 @@ class LootBoxAnimation {
             let player = try AVAudioPlayer(contentsOf: url)
             player.prepareToPlay()
             audioPlayer = player
-            Swift.print("🔊 Initialized audio player with: \(url.lastPathComponent)")
+            Swift.print("🔊 Initialized audio player with: \(fileName)")
             return player
         } catch {
-            Swift.print("⚠️ Could not create audio player: \(error)")
+            Swift.print("❌ Could not create audio player for \(fileName): \(error)")
+            Swift.print("   Error details: \(error.localizedDescription)")
             return nil
         }
     }
@@ -447,7 +455,8 @@ class LootBoxAnimation {
             try audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try audioSession.setActive(true)
         } catch {
-            Swift.print("⚠️ Could not configure audio session: \(error)")
+            Swift.print("❌ Could not configure audio session: \(error)")
+            return
         }
         
         // Play haptic feedback (vibration) for collection
@@ -460,8 +469,8 @@ class LootBoxAnimation {
         
         // Use the static reusable audio player
         guard let player = initializeAudioPlayer() else {
-            Swift.print("⚠️ Could not initialize audio player, using fallback system sound")
-            AudioServicesPlaySystemSound(1057)
+            Swift.print("❌ Could not initialize audio player - sound file may be missing from bundle")
+            Swift.print("   Looking for: '810753__mokasza__level-up-01.mp3' or 'level-up-01.mp3'")
             return
         }
         
@@ -471,7 +480,9 @@ class LootBoxAnimation {
         }
         player.currentTime = 0
         player.play()
-        Swift.print("🔊 Playing level-up sound (reusing static player)")
+        Swift.print("🔔 SOUND: Treasure found / Level-up (level-up-01.mp3)")
+        Swift.print("   Trigger: Loot box collected/found")
+        Swift.print("   Sound file: level-up-01.mp3 (from bundle)")
     }
     
     /// Creates a confetti effect at the specified position
@@ -480,7 +491,6 @@ class LootBoxAnimation {
     ///   - parent: The parent entity to attach confetti to
     static func createConfettiEffect(at position: SIMD3<Float>, parent: Entity) {
         // Play the level-up sound when confetti animation is triggered
-        Swift.print("🔊 Playing level-up sound for confetti animation...")
         playOpeningSound()
         
         // Confetti colors - vibrant celebration colors

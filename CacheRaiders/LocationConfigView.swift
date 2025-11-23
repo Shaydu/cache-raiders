@@ -41,14 +41,20 @@ struct LocationConfigView: View {
                         .cornerRadius(8)
                     }
 
-                    // Stats - count both GPS boxes and AR spheres
+                    // Stats - use database stats when available (same as main view counter)
                     HStack {
-                        let gpsCollected = locationManager.locations.filter { $0.collected }.count
-                        let arSpheresFound = 0 // We'll need to pass this from ARCoordinator
-                        let totalFound = gpsCollected // + arSpheresFound (when we add that)
-                        let totalAvailable = locationManager.locations.count // + arSpheresFound (when we add that)
+                        let stats: (found: Int, total: Int) = {
+                            // Use database stats if available (from API sync)
+                            if let dbStats = locationManager.databaseStats {
+                                return (found: dbStats.foundByYou, total: dbStats.totalVisible)
+                            }
+                            // Fallback to local data if API stats not available
+                            let foundCount = locationManager.locations.filter { $0.collected }.count
+                            let totalCount = locationManager.locations.count
+                            return (found: foundCount, total: totalCount)
+                        }()
 
-                        Text("Found: \(totalFound)/\(totalAvailable)")
+                        Text("Found: \(stats.found)/\(stats.total)")
                             .font(.caption)
                             .foregroundColor(.secondary)
                         Spacer()
@@ -76,6 +82,29 @@ struct LocationConfigView: View {
         }
         .onAppear {
             userLocationManager.requestLocationPermission()
+            
+            // Load ALL items from API when map is displayed (no distance filter, include found items)
+            // This ensures all database items are visible on the map, matching the admin panel
+            Task {
+                print("🗺️ Map view appeared - loading ALL items from database (no distance filter, including found items)")
+                await locationManager.loadLocationsFromAPI(userLocation: nil, includeFound: true)
+                print("🗺️ Loaded \(locationManager.locations.count) items for map display")
+                if let stats = locationManager.databaseStats {
+                    print("🗺️ Database stats: \(stats.foundByYou) found / \(stats.totalVisible) total")
+                }
+            }
+        }
+        .onChange(of: locationManager.selectedDatabaseObjectId) { oldValue, newValue in
+            // Reload items when selection changes so map can filter properly
+            Task {
+                if let newValue = newValue {
+                    print("🗺️ Selection changed to: \(newValue) - reloading to show only selected item")
+                } else {
+                    print("🗺️ Selection cleared - reloading ALL items")
+                }
+                // Load all items (no distance filter) so map can show selected item or all items
+                await locationManager.loadLocationsFromAPI(userLocation: nil, includeFound: true)
+            }
         }
     }
 }

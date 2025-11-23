@@ -36,13 +36,16 @@ struct LootBoxMapView: View {
     @State private var lastAddTime = Date()
     
     // Combine user location and loot boxes into a single annotation array
-    // Explicitly depend on showFoundOnMap and collected status to ensure view updates
+    // Explicitly depend on showFoundOnMap, collected status, and selection to ensure view updates
     private var allAnnotations: [MapAnnotationItem] {
         // Access showFoundOnMap to create explicit dependency for SwiftUI updates
         let showFound = locationManager.showFoundOnMap
         // Also access collected count to force updates when items are found
         let collectedCount = locationManager.locations.filter { $0.collected }.count
         _ = collectedCount // Explicitly use to create dependency
+        // Access selectedDatabaseObjectId to force updates when selection changes
+        let selectedId = locationManager.selectedDatabaseObjectId
+        _ = selectedId // Explicitly use to create dependency
         
         var annotations: [MapAnnotationItem] = []
         
@@ -74,9 +77,19 @@ struct LootBoxMapView: View {
         }
         
         // Add loot box locations that have valid GPS coordinates
-        // By default, exclude collected items unless showFoundOnMap is enabled
-        // Exclude AR-only locations (AR_SPHERE_ prefix but not AR_SPHERE_MAP_) and locations with invalid coordinates (0,0)
+        // Filter by selection: if an item is selected, show only that item; otherwise show ALL items
+        let selectedId = locationManager.selectedDatabaseObjectId
+        
         let filteredLocations = locationManager.locations.filter { location in
+            // If an item is selected, only show that item
+            if let selectedId = selectedId {
+                if location.id != selectedId {
+                    return false // Filter out non-selected items
+                }
+                // Selected item: continue with other filters
+            }
+            // No selection: show all items (no ID filter)
+            
             // If showFoundOnMap is disabled, exclude collected items
             if !showFound && location.collected {
                 Swift.print("🗺️ Filtering out collected item '\(location.name)' (showFoundOnMap=\(showFound))")
@@ -112,9 +125,11 @@ struct LootBoxMapView: View {
                 )
             })
         
-        Swift.print("🗺️ Map annotations: \(annotations.count) total (showFoundOnMap=\(showFound), collected items filtered: \(!showFound))")
+        let selectionInfo = selectedId != nil ? " (showing selected: \(selectedId!))" : " (showing ALL items)"
+        Swift.print("🗺️ Map annotations: \(annotations.count) total\(selectionInfo)")
         Swift.print("   Total locations in manager: \(locationManager.locations.count)")
         Swift.print("   Filtered locations count: \(filteredLocations.count)")
+        Swift.print("   Show found items: \(showFound)")
         
         return annotations
     }
@@ -128,11 +143,15 @@ struct LootBoxMapView: View {
                             // User location pin
                             Annotation("", coordinate: annotation.coordinate) {
                                 VStack(spacing: 4) {
-                                    Image(systemName: "location.fill")
+                                    // Rotate the icon based on user's heading/direction of travel
+                                    // MapKit uses 0 = north, so we rotate the icon to match
+                                    // Use location.north.line.fill for a directional indicator
+                                    Image(systemName: "location.north.line.fill")
                                         .foregroundColor(.blue)
                                         .font(.title2)
                                         .background(Circle().fill(.white))
                                         .shadow(radius: 3)
+                                        .rotationEffect(.degrees(userLocationManager.heading ?? 0))
 
                                     Text("You")
                                         .font(.caption)
@@ -531,12 +550,8 @@ struct LootBoxMapView: View {
             print("✅ Queued \(selectedItemType.displayName) '\(arLocation.name)' for AR placement")
         } else {
             // For other items, queue them for AR placement
-            let itemNames = [
-                LootBoxType.chalice: ["Sacred Chalice", "Ancient Chalice", "Golden Chalice"],
-                LootBoxType.templeRelic: ["Temple Relic", "Sacred Relic", "Temple Treasure"],
-                LootBoxType.treasureChest: ["Treasure Chest", "Ancient Chest", "Locked Chest"],
-                LootBoxType.sphere: ["Mysterious Sphere", "Ancient Orb", "Glowing Sphere"]
-            ]
+            // Use factories to get item names (eliminates hardcoded dictionary)
+            let itemNames = Dictionary(uniqueKeysWithValues: LootBoxType.allCases.map { ($0, $0.factory.itemNames) })
 
             let names = itemNames[selectedItemType] ?? ["Unknown Item"]
             let randomName = names.randomElement() ?? "Findable Item"

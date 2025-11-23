@@ -11,6 +11,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     let longitude: Double
     let radius: Double // meters - how close user needs to be
     var collected: Bool = false
+    var grounding_height: Double? // Optional: stored grounding height in meters (AR world space Y coordinate)
     
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -53,7 +54,10 @@ class LootBoxLocationManager: ObservableObject {
     @Published var pendingSphereLocationId: String? // ID of the map marker location to use for the sphere
     @Published var pendingARItem: LootBoxLocation? // Item to place in AR room
     @Published var shouldResetARObjects: Bool = false // Trigger for removing all AR objects when locations are reset
+    @Published var selectedDatabaseObjectId: String? = nil // Selected database object to find (only one at a time)
+    @Published var databaseStats: (foundByYou: Int, totalVisible: Int)? = nil // Database stats for loot box counter
     var onSizeChanged: (() -> Void)? // Callback when size settings change
+    var onObjectCollectedByOtherUser: ((String) -> Void)? // Callback when object is collected by another user (to remove from AR)
     private let locationsFileName = "lootBoxLocations.json"
     private let maxDistanceKey = "maxSearchDistance"
     private let debugVisualsKey = "showARDebugVisuals"
@@ -64,6 +68,7 @@ class LootBoxLocationManager: ObservableObject {
     private let enableAudioModeKey = "enableAudioMode"
     private let lootBoxMinSizeKey = "lootBoxMinSize"
     private let lootBoxMaxSizeKey = "lootBoxMaxSize"
+    private let selectedDatabaseObjectIdKey = "selectedDatabaseObjectId"
     
     // API refresh timer - refreshes from API every 30 seconds when enabled
     private var apiRefreshTimer: Timer?
@@ -81,12 +86,88 @@ class LootBoxLocationManager: ObservableObject {
         loadEnableObjectRecognition()
         loadEnableAudioMode()
         loadLootBoxSizes()
+        loadSelectedDatabaseObjectId()
         
         // API sync is always enabled - start refresh timer
         startAPIRefreshTimer()
         
         // Auto-connect to WebSocket
         WebSocketService.shared.connect()
+        
+        // Set up WebSocket event handlers for real-time updates
+        setupWebSocketCallbacks()
+    }
+    
+    /// Set up WebSocket callbacks to handle real-time collection events from other users
+    private func setupWebSocketCallbacks() {
+        WebSocketService.shared.onObjectCollected = { [weak self] objectId, foundBy, foundAt in
+            guard let self = self else { return }
+            
+            // Get current user ID to check if we collected it ourselves
+            let currentUserId = APIService.shared.currentUserID
+            
+            // Only handle if collected by another user (not us)
+            if foundBy != currentUserId {
+                print("🔔 Another user (\(foundBy)) collected object: \(objectId)")
+                
+                // Update the location's collected status
+                if let index = self.locations.firstIndex(where: { $0.id == objectId }) {
+                    var updatedLocation = self.locations[index]
+                    updatedLocation.collected = true
+                    self.locations[index] = updatedLocation
+                    
+                    // Notify observers
+                    self.objectWillChange.send()
+                    
+                    // Notify AR coordinator to remove the object from AR scene
+                    self.onObjectCollectedByOtherUser?(objectId)
+                    
+                    print("✅ Updated location '\(updatedLocation.name)' to collected status (found by another user)")
+                } else {
+                    // Location not in our list yet - might need to reload from API
+                    print("⚠️ Object \(objectId) collected by another user but not in local locations list")
+                    // Optionally trigger a refresh from API
+                    if let userLocation = self.lastKnownUserLocation {
+                        Task {
+                            await self.loadLocationsFromAPI(userLocation: userLocation, includeFound: true)
+                        }
+                    }
+                }
+            } else {
+                print("ℹ️ We collected object \(objectId) ourselves - no action needed")
+            }
+        }
+        
+        WebSocketService.shared.onObjectUncollected = { [weak self] objectId in
+            guard let self = self else { return }
+            
+            print("🔄 Object uncollected (reset): \(objectId)")
+            
+            // Update the location's collected status to false
+            if let index = self.locations.firstIndex(where: { $0.id == objectId }) {
+                var updatedLocation = self.locations[index]
+                updatedLocation.collected = false
+                self.locations[index] = updatedLocation
+                
+                // Notify observers
+                self.objectWillChange.send()
+                
+                print("✅ Updated location '\(updatedLocation.name)' to uncollected status")
+            }
+        }
+        
+        WebSocketService.shared.onAllFindsReset = { [weak self] in
+            guard let self = self else { return }
+            
+            print("🔄 All finds reset - reloading from API")
+            
+            // Reload all locations from API to get updated collected status
+            if let userLocation = self.lastKnownUserLocation {
+                Task {
+                    await self.loadLocationsFromAPI(userLocation: userLocation, includeFound: true)
+                }
+            }
+        }
     }
     
     deinit {
@@ -247,15 +328,16 @@ class LootBoxLocationManager: ObservableObject {
         }
     }
     
-    /// Returns only findable locations (excludes map markers, but includes AR items for counter)
+    /// Returns only findable locations (excludes temporary AR-only items, but includes map-added spheres)
     var findableLocations: [LootBoxLocation] {
         return locations.filter { location in
-            // Exclude map-only markers - these are just visual markers, not findable items
+            // Include AR_SPHERE_MAP_ items - these are findable spheres added from the map
+            // They appear both on the map AND in AR, so they should be counted
             if location.id.hasPrefix("AR_SPHERE_MAP_") {
-                return false
+                return true
             }
             // Include AR_ITEM_ items - these are randomized AR items that should be counted
-            // Include AR_SPHERE_ items (but not AR_SPHERE_MAP_ which are map markers)
+            // Include AR_SPHERE_ items (but not AR_SPHERE_MAP_ which are handled above)
             // Include all other locations (GPS-based locations with real coordinates)
             return true
         }
@@ -308,19 +390,26 @@ class LootBoxLocationManager: ObservableObject {
         return locations.filter { location in
             // Only include uncollected locations
             guard !location.collected else { return false }
-            
+
             // Exclude AR-only locations (AR_SPHERE_ prefix) - these are AR-only and shouldn't be counted as "nearby" for GPS
             // They're placed in AR space, not GPS space, so they don't have meaningful GPS coordinates
             if location.id.hasPrefix("AR_SPHERE_") {
                 return false
             }
-            
+
             // Exclude locations with invalid GPS coordinates (lat: 0, lon: 0) - these are AR-only or tap-created
             // They don't have real GPS positions, so distance calculation is meaningless
             if location.latitude == 0 && location.longitude == 0 {
                 return false
             }
-            
+
+            // CRITICAL: If a specific object is selected, ALWAYS include it regardless of distance
+            // This ensures the selected object appears in AR even if it's far away
+            if let selectedId = selectedDatabaseObjectId, location.id == selectedId {
+                print("🎯 Including selected object '\(location.name)' (ID: \(selectedId)) in nearby list (ignoring distance)")
+                return true
+            }
+
             // Check if within search distance
             return userLocation.distance(from: location.location) <= maxSearchDistance
         }
@@ -433,6 +522,42 @@ class LootBoxLocationManager: ObservableObject {
         return Double.random(in: lootBoxMinSize...lootBoxMaxSize)
     }
     
+    // Save selected database object ID
+    func saveSelectedDatabaseObjectId() {
+        if let objectId = selectedDatabaseObjectId {
+            UserDefaults.standard.set(objectId, forKey: selectedDatabaseObjectIdKey)
+            print("✅ Saved selected database object ID: \(objectId)")
+        } else {
+            UserDefaults.standard.removeObject(forKey: selectedDatabaseObjectIdKey)
+            print("✅ Cleared selected database object ID")
+        }
+    }
+    
+    // Load selected database object ID
+    private func loadSelectedDatabaseObjectId() {
+        selectedDatabaseObjectId = UserDefaults.standard.string(forKey: selectedDatabaseObjectIdKey)
+        if let objectId = selectedDatabaseObjectId {
+            print("✅ Loaded selected database object ID: \(objectId)")
+        }
+    }
+    
+    // Set selected database object ID (and save)
+    func setSelectedDatabaseObjectId(_ objectId: String?) {
+        selectedDatabaseObjectId = objectId
+        saveSelectedDatabaseObjectId()
+
+        // Clear all AR objects since we're changing the filter
+        // This ensures old objects don't remain visible when filtering to a specific object
+        shouldResetARObjects = true
+
+        // Reload locations from API to filter to only the selected object
+        if let userLocation = lastKnownUserLocation {
+            Task {
+                await loadLocationsFromAPI(userLocation: userLocation)
+            }
+        }
+    }
+    
     // Check if user is at a specific location
     func isAtLocation(_ location: LootBoxLocation, userLocation: CLLocation) -> Bool {
         let distance = userLocation.distance(from: location.location)
@@ -510,27 +635,111 @@ class LootBoxLocationManager: ObservableObject {
             }
             
             // Get objects from API
-            let apiObjects: [APIObject]
-            if let userLocation = userLocation {
-                apiObjects = try await APIService.shared.getObjects(
-                    latitude: userLocation.coordinate.latitude,
-                    longitude: userLocation.coordinate.longitude,
-                    radius: maxSearchDistance,
-                    includeFound: includeFound
-                )
-            } else {
+            var apiObjects: [APIObject]
+            var allApiObjectsForStats: [APIObject] = [] // All objects for accurate stats
+
+            // CRITICAL: If a specific object is selected, skip distance filtering
+            // This ensures the selected object is always loaded, regardless of how far away it is
+            if let selectedId = selectedDatabaseObjectId {
+                // Get ALL objects (no distance filter) and then filter to just the selected one
+                print("🎯 Selected object mode: fetching all objects to find '\(selectedId)'")
                 apiObjects = try await APIService.shared.getObjects(includeFound: includeFound)
+                apiObjects = apiObjects.filter { $0.id == selectedId }
+                allApiObjectsForStats = apiObjects // For selected mode, stats = selected object only
+
+                if apiObjects.isEmpty {
+                    print("⚠️ Selected database object ID '\(selectedId)' not found in API results")
+                } else {
+                    let selectedName = apiObjects.first?.name ?? "Unknown"
+                    print("🎯 Found selected database object: \(selectedName) (ID: \(selectedId))")
+                }
+            } else {
+                // Normal mode: get nearby objects for AR placement, but ALL objects for accurate stats
+                if let userLocation = userLocation {
+                    // Get nearby objects for AR placement (within maxSearchDistance)
+                    apiObjects = try await APIService.shared.getObjects(
+                        latitude: userLocation.coordinate.latitude,
+                        longitude: userLocation.coordinate.longitude,
+                        radius: maxSearchDistance,
+                        includeFound: includeFound
+                    )
+                    
+                    // Get ALL objects (large radius) for accurate stats matching Settings view
+                    // Use 10km radius to match what Settings view shows (or all if no location)
+                    allApiObjectsForStats = try await APIService.shared.getObjects(
+                        latitude: userLocation.coordinate.latitude,
+                        longitude: userLocation.coordinate.longitude,
+                        radius: 10000.0, // 10km to match Settings view
+                        includeFound: true // Always include found for accurate stats
+                    )
+                } else {
+                    // No location: get all objects for both AR and stats
+                    apiObjects = try await APIService.shared.getObjects(includeFound: includeFound)
+                    allApiObjectsForStats = apiObjects
+                }
             }
             
-            // Convert API objects to LootBoxLocations
+            // Convert API objects to LootBoxLocations for AR placement
             let loadedLocations = apiObjects.compactMap { apiObject in
                 APIService.shared.convertToLootBoxLocation(apiObject)
             }
             
+            // Convert ALL objects for stats calculation (matching Settings view)
+            let allLocationsForStats = allApiObjectsForStats.compactMap { apiObject in
+                APIService.shared.convertToLootBoxLocation(apiObject)
+            }
+            
             await MainActor.run {
-                self.locations = loadedLocations
+                // Merge API-loaded locations with local items that haven't been synced yet
+                // This preserves locally created items (spheres, cubes) that aren't in the API yet
+                let apiLocationIds = Set(loadedLocations.map { $0.id })
+                let localOnlyItems = self.locations.filter { location in
+                    // Keep local items that:
+                    // 1. Are temporary AR-only items (AR_SPHERE_, AR_ITEM_ without MAP prefix)
+                    // 2. Are map-created items (MAP_ITEM_, AR_SPHERE_MAP_) that aren't in API yet
+                    let isTemporaryAR = (location.id.hasPrefix("AR_SPHERE_") && !location.id.hasPrefix("AR_SPHERE_MAP_")) ||
+                                       (location.id.hasPrefix("AR_ITEM_") && location.latitude == 0 && location.longitude == 0)
+                    let isMapCreatedNotSynced = (location.id.hasPrefix("MAP_ITEM_") || location.id.hasPrefix("AR_SPHERE_MAP_")) &&
+                                               !apiLocationIds.contains(location.id)
+                    return isTemporaryAR || isMapCreatedNotSynced
+                }
+                
+                // Combine API locations with local-only items
+                self.locations = loadedLocations + localOnlyItems
+                
                 let collectedCount = loadedLocations.filter { $0.collected }.count
-                print("✅ Loaded \(loadedLocations.count) loot box locations from API (\(collectedCount) collected)")
+                let unfoundCount = loadedLocations.count - collectedCount
+                print("✅ Loaded \(loadedLocations.count) loot box locations from API for AR (\(collectedCount) collected, \(unfoundCount) unfound)")
+                if !localOnlyItems.isEmpty {
+                    print("✅ Preserved \(localOnlyItems.count) local item(s) not yet synced to API: \(localOnlyItems.map { $0.name }.joined(separator: ", "))")
+                }
+
+                // Calculate stats from ALL objects (matching Settings database list view)
+                let allCollectedCount = allLocationsForStats.filter { $0.collected }.count
+                let allTotalCount = allLocationsForStats.count
+                print("📊 Database total: \(allTotalCount) objects (\(allCollectedCount) found by you, \(allTotalCount - allCollectedCount) unfound)")
+
+                // Update database stats for the counter display
+                // foundByYou = number of items YOU have found (collected = true) from ALL objects
+                // totalVisible = total number of items in database (matching Settings view)
+                self.databaseStats = (foundByYou: allCollectedCount, totalVisible: allTotalCount)
+                print("📊 Updated database stats: \(allCollectedCount) found / \(allTotalCount) total (matches Settings view)")
+                print("📊 Unfound items: \(allTotalCount - allCollectedCount)")
+                
+                // Debug: Print all loaded locations with their coordinates
+                for location in loadedLocations {
+                    if !location.collected {
+                        print("   🎯 Unfound: \(location.name) at (\(location.latitude), \(location.longitude))")
+                    }
+                }
+
+                if let selectedId = self.selectedDatabaseObjectId {
+                    print("   Selected object filter active: \(selectedId)")
+                    if let selectedObj = loadedLocations.first {
+                        print("   Selected object: \(selectedObj.name) (collected: \(selectedObj.collected))")
+                    }
+                }
+
                 // Force SwiftUI update
                 self.objectWillChange.send()
             }
@@ -551,13 +760,13 @@ class LootBoxLocationManager: ObservableObject {
             print("⚠️ API sync is disabled - location '\(location.name)' (ID: \(location.id)) not synced to shared database")
             return
         }
-        
-        // Check if this is a temporary AR item that shouldn't be synced
-        let isTemporaryARItem = location.id.hasPrefix("AR_ITEM_") || 
-                               (location.id.hasPrefix("AR_SPHERE_") && !location.id.hasPrefix("AR_SPHERE_MAP_"))
-        
-        if isTemporaryARItem {
-            print("⏭️ Skipping API sync for temporary AR item: '\(location.name)' (ID: \(location.id))")
+
+        // Check if this is a temporary AR-only item that shouldn't be synced
+        // Temporary items are those without real GPS coordinates (placed in AR room only)
+        let hasGPSCoordinates = !(location.latitude == 0 && location.longitude == 0)
+
+        if !hasGPSCoordinates {
+            print("⏭️ Skipping API sync for AR-only item (no GPS): '\(location.name)' (ID: \(location.id))")
             return
         }
         

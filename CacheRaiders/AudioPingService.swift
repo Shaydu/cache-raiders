@@ -1,6 +1,5 @@
 import Foundation
 import AVFoundation
-import AudioToolbox
 
 // MARK: - Audio Ping Service
 /// Plays a ping sound once per second with pitch that increases as distance decreases
@@ -12,6 +11,7 @@ class AudioPingService {
     private var currentDistance: Double?
     private var isEnabled: Bool = false
     private var connectionFormat: AVAudioFormat? // Store the format used for connections
+    private var lastLoggedDistance: Double? // Track last logged distance to reduce log spam
     
     // Pitch range: low pitch when far, high pitch when close
     // Distance range: 0.5m (very close) to 50m (far)
@@ -78,9 +78,9 @@ class AudioPingService {
             do {
                 try engine.start()
             } catch {
-                Swift.print("⚠️ Could not start audio engine: \(error)")
-                // Fallback to system sound if audio engine fails
-                startSystemSoundFallback()
+                Swift.print("❌ Could not start audio engine: \(error)")
+                Swift.print("   Error details: \(error.localizedDescription)")
+                isEnabled = false
                 return
             }
         }
@@ -116,8 +116,7 @@ class AudioPingService {
     /// Play a single ping sound with pitch based on current distance
     private func playPing() {
         guard let engine = audioEngine, let player = playerNode else {
-            // Fallback to system sound
-            playSystemSoundPing()
+            Swift.print("❌ Cannot play ping: audio engine or player node not initialized")
             return
         }
         
@@ -126,7 +125,7 @@ class AudioPingService {
         
         // Get or create the time pitch unit
         guard let timePitch = engine.attachedNodes.first(where: { $0 is AVAudioUnitTimePitch }) as? AVAudioUnitTimePitch else {
-            playSystemSoundPing()
+            Swift.print("❌ Cannot play ping: time pitch unit not found in audio engine")
             return
         }
         
@@ -142,20 +141,20 @@ class AudioPingService {
         
         // Use the connection format to ensure channel count matches
         guard let audioFormat = connectionFormat else {
-            playSystemSoundPing()
+            Swift.print("❌ Cannot play ping: connection format not available")
             return
         }
         
         let sampleRate = audioFormat.sampleRate
         let frameCount = Int(sampleRate * duration)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(frameCount)) else {
-            playSystemSoundPing()
+            Swift.print("❌ Cannot play ping: failed to create audio buffer")
             return
         }
         buffer.frameLength = AVAudioFrameCount(frameCount)
         
         guard let channelData = buffer.floatChannelData else {
-            playSystemSoundPing()
+            Swift.print("❌ Cannot play ping: failed to get channel data from buffer")
             return
         }
         
@@ -180,6 +179,29 @@ class AudioPingService {
         if !player.isPlaying {
             player.play()
         }
+        
+        // Log ping sound (only when distance changes significantly to avoid spam)
+        // Log if this is first ping, or if distance changed by more than 2 meters
+        let shouldLog: Bool
+        if let currentDist = currentDistance {
+            if let lastDist = lastLoggedDistance {
+                shouldLog = abs(currentDist - lastDist) > 2.0
+            } else {
+                shouldLog = true // First ping
+            }
+        } else {
+            shouldLog = lastLoggedDistance != nil // Changed from known to unknown
+        }
+        
+        if shouldLog {
+            let distanceStr = currentDistance != nil ? String(format: "%.1fm", currentDistance!) : "unknown"
+            let pitchStr = String(format: "%.2f", pitch)
+            Swift.print("🔔 SOUND: Audio ping (programmatic beep)")
+            Swift.print("   Trigger: Audio mode enabled, proximity to nearest object")
+            Swift.print("   Distance: \(distanceStr)")
+            Swift.print("   Pitch multiplier: \(pitchStr) (base frequency: 800Hz, pitch range: 0.5-2.0)")
+            lastLoggedDistance = currentDistance
+        }
     }
     
     /// Calculate pitch based on distance
@@ -202,27 +224,6 @@ class AudioPingService {
         let pitch = minPitch + Float(invertedDistance) * (maxPitch - minPitch)
         
         return pitch
-    }
-    
-    /// Fallback: Use system sound if audio engine fails
-    private func playSystemSoundPing() {
-        AudioServicesPlaySystemSound(1103) // Soft notification sound
-    }
-    
-    /// Fallback: Use timer with system sounds if audio engine setup fails
-    private func startSystemSoundFallback() {
-        // Play first ping immediately
-        playSystemSoundPing()
-        
-        // Schedule pings every second
-        pingTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.playSystemSoundPing()
-        }
-        
-        // Add timer to common run loop modes
-        if let timer = pingTimer {
-            RunLoop.current.add(timer, forMode: .common)
-        }
     }
 }
 

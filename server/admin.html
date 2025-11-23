@@ -160,7 +160,7 @@
         }
         
         .object-item.collected {
-            border-left-color: #4caf50;
+            border-left-color: #ff6b6b;
             opacity: 0.7;
         }
         
@@ -171,7 +171,7 @@
         }
         
         .object-item.collected h3 {
-            color: #4caf50;
+            color: #ff6b6b;
         }
         
         .object-item .meta {
@@ -216,6 +216,86 @@
             color: #999;
             padding: 20px;
         }
+        
+        .leaderboard {
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        
+        .leaderboard-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px;
+            margin-bottom: 8px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            border-left: 3px solid #666;
+        }
+        
+        .leaderboard-item.rank-1 {
+            border-left-color: #ffd700;
+            background: linear-gradient(90deg, rgba(255, 215, 0, 0.1) 0%, #1a1a1a 10%);
+        }
+        
+        .leaderboard-item.rank-2 {
+            border-left-color: #c0c0c0;
+            background: linear-gradient(90deg, rgba(192, 192, 192, 0.1) 0%, #1a1a1a 10%);
+        }
+        
+        .leaderboard-item.rank-3 {
+            border-left-color: #cd7f32;
+            background: linear-gradient(90deg, rgba(205, 127, 50, 0.1) 0%, #1a1a1a 10%);
+        }
+        
+        .rank-badge {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 16px;
+            margin-right: 12px;
+            flex-shrink: 0;
+        }
+        
+        .rank-badge.rank-1 {
+            background: #ffd700;
+            color: #1a1a1a;
+        }
+        
+        .rank-badge.rank-2 {
+            background: #c0c0c0;
+            color: #1a1a1a;
+        }
+        
+        .rank-badge.rank-3 {
+            background: #cd7f32;
+            color: #fff;
+        }
+        
+        .rank-badge.rank-other {
+            background: #444;
+            color: #fff;
+        }
+        
+        .leaderboard-user {
+            flex: 1;
+            font-size: 14px;
+            color: #fff;
+        }
+        
+        .leaderboard-count {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 16px;
+            font-weight: bold;
+            color: #4caf50;
+        }
     </style>
 </head>
 <body>
@@ -240,6 +320,8 @@
                         <option value="Chalice">Chalice</option>
                         <option value="Temple Relic">Temple Relic</option>
                         <option value="Treasure Chest">Treasure Chest</option>
+                        <option value="Loot Chest">Loot Chest</option>
+                        <option value="Loot Cart">Loot Cart</option>
                         <option value="Mysterious Sphere">Mysterious Sphere</option>
                         <option value="Mysterious Cube">Mysterious Cube</option>
                     </select>
@@ -285,6 +367,22 @@
         </div>
         
         <div class="section">
+            <h2>🏆 Leaderboard</h2>
+            <button class="btn-secondary" onclick="refreshStats()">Refresh Leaderboard</button>
+            <div class="leaderboard" id="leaderboard">
+                <div class="loading">Loading leaderboard...</div>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>👥 Player Management</h2>
+            <button class="btn-secondary" onclick="loadPlayers()">Refresh Players</button>
+            <div class="objects-list" id="playersList">
+                <div class="loading">Loading players...</div>
+            </div>
+        </div>
+        
+        <div class="section">
             <h2>Existing Objects</h2>
             <button class="btn-secondary" onclick="loadObjects()">Refresh List</button>
             <div class="objects-list" id="objectsList">
@@ -310,10 +408,19 @@
         function initMap() {
             map = L.map('map').setView([40.0758, -105.3008], 15);
             
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            // Try to use higher zoom levels, fallback if not supported
+            const tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '© OpenStreetMap contributors',
-                maxZoom: 19
-            }).addTo(map);
+                maxZoom: 22,  // Allow closer zoom
+                maxNativeZoom: 19  // OpenStreetMap's native max zoom
+            });
+            
+            // Handle tile errors - if high zoom fails, it will automatically fall back
+            tileLayer.on('tileerror', function(error, tile) {
+                console.warn('Tile load error at zoom level:', map.getZoom(), error);
+            });
+            
+            tileLayer.addTo(map);
             
             // Handle map clicks
             map.on('click', function(e) {
@@ -360,10 +467,15 @@
                 
                 // Add markers for each object
                 objects.forEach(obj => {
+                    // Use distinct colors: green for available, red for found
+                    const markerColor = obj.collected ? '#ff6b6b' : '#4caf50';
+                    const markerSize = obj.collected ? 14 : 18;  // Slightly smaller when found
+                    const borderColor = obj.collected ? '#cc0000' : '#2d7a2d';
+                    
                     const icon = L.divIcon({
                         className: 'object-marker',
-                        html: `<div style="background: ${obj.collected ? '#4caf50' : '#ff6b6b'}; width: 16px; height: 16px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 8px rgba(0,0,0,0.5);"></div>`,
-                        iconSize: [16, 16]
+                        html: `<div style="background: ${markerColor}; width: ${markerSize}px; height: ${markerSize}px; border-radius: 50%; border: 3px solid ${borderColor}; box-shadow: 0 0 10px ${obj.collected ? 'rgba(255, 107, 107, 0.6)' : 'rgba(76, 175, 80, 0.6)'};"></div>`,
+                        iconSize: [markerSize, markerSize]
                     });
                     
                     const marker = L.marker([obj.latitude, obj.longitude], { icon })
@@ -372,7 +484,7 @@
                             <strong>${obj.name}</strong><br>
                             Type: ${obj.type}<br>
                             Radius: ${obj.radius}m<br>
-                            ${obj.collected ? `<span style="color: #4caf50;">✓ Collected</span>` : '<span style="color: #ff6b6b;">Available</span>'}
+                            ${obj.collected ? `<span style="color: #ff6b6b; font-weight: bold;">✓ Collected</span><br>Found by: ${obj.found_by || 'Unknown'}` : '<span style="color: #4caf50; font-weight: bold;">● Available</span>'}
                         `);
                     
                     markers[obj.id] = marker;
@@ -412,16 +524,71 @@
         // Refresh statistics
         async function refreshStats() {
             try {
-                const response = await fetch(`${API_BASE}/api/stats`);
+                // Add cache-busting parameter to ensure fresh data
+                const cacheBuster = '?t=' + Date.now();
+                const response = await fetch(`${API_BASE}/api/stats${cacheBuster}`, {
+                    method: 'GET',
+                    cache: 'no-cache',
+                    headers: {
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const stats = await response.json();
                 
                 document.getElementById('totalObjects').textContent = stats.total_objects;
                 document.getElementById('foundObjects').textContent = stats.found_objects;
                 document.getElementById('unfoundObjects').textContent = stats.unfound_objects;
                 document.getElementById('totalFinds').textContent = stats.total_finds;
+                
+                // Update leaderboard with fresh data
+                updateLeaderboard(stats.top_finders || []);
+                
+                console.log('Stats refreshed:', stats);
             } catch (error) {
                 console.error('Error loading stats:', error);
+                showStatus('Error refreshing stats: ' + error.message, 'error');
             }
+        }
+        
+        // Update leaderboard display
+        function updateLeaderboard(topFinders) {
+            const leaderboardEl = document.getElementById('leaderboard');
+            
+            // Show loading state briefly
+            leaderboardEl.innerHTML = '<div class="loading">Refreshing...</div>';
+            
+            // Small delay to ensure UI updates
+            setTimeout(() => {
+                if (topFinders.length === 0) {
+                    leaderboardEl.innerHTML = '<div class="loading">No finds yet. Be the first!</div>';
+                    return;
+                }
+                
+                leaderboardEl.innerHTML = topFinders.map((finder, index) => {
+                    const rank = index + 1;
+                    const rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : '';
+                    const badgeClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-other';
+                    const rankIcon = rank === 1 ? '👑' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : rank;
+                    
+                    return `
+                        <div class="leaderboard-item ${rankClass}">
+                            <div class="rank-badge ${badgeClass}">${rankIcon}</div>
+                            <div class="leaderboard-user">${finder.user || 'Unknown'}</div>
+                            <div class="leaderboard-count">
+                                <span>✓</span>
+                                <span>${finder.count}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                console.log('Leaderboard updated with', topFinders.length, 'players');
+            }, 100);
         }
         
         // Handle form submission
@@ -520,13 +687,113 @@
             }, 5000);
         }
         
+        // Load players from API
+        async function loadPlayers() {
+            try {
+                const cacheBuster = '?t=' + Date.now();
+                const response = await fetch(`${API_BASE}/api/players${cacheBuster}`, {
+                    method: 'GET',
+                    cache: 'no-cache',
+                    headers: {
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const players = await response.json();
+                updatePlayersList(players);
+            } catch (error) {
+                console.error('Error loading players:', error);
+                const listEl = document.getElementById('playersList');
+                listEl.innerHTML = `<div class="status error">Error loading players: ${error.message}</div>`;
+            }
+        }
+        
+        // Update players list in sidebar
+        function updatePlayersList(players) {
+            const listEl = document.getElementById('playersList');
+            
+            if (players.length === 0) {
+                listEl.innerHTML = '<div class="loading">No players found</div>';
+                return;
+            }
+            
+            listEl.innerHTML = players.map(player => {
+                const shortUuid = player.device_uuid.substring(0, 8) + '...';
+                const updatedDate = new Date(player.updated_at).toLocaleString();
+                const findCount = player.find_count || 0;
+                
+                return `
+                    <div class="object-item">
+                        <h3>${player.player_name || 'Unnamed Player'}</h3>
+                        <div class="meta">
+                            Device ID: ${shortUuid}<br>
+                            Full UUID: ${player.device_uuid}<br>
+                            Finds: <span style="color: #4caf50; font-weight: bold;">${findCount}</span><br>
+                            Last Updated: ${updatedDate}
+                        </div>
+                        <div style="margin-top: 8px;">
+                            <input type="text" id="player-name-${player.device_uuid}" 
+                                   value="${player.player_name || ''}" 
+                                   placeholder="Enter player name"
+                                   style="width: calc(100% - 80px); margin-right: 8px; padding: 6px; border: 1px solid #444; border-radius: 4px; background: #1a1a1a; color: #fff; font-size: 12px;">
+                            <button onclick="updatePlayerName('${player.device_uuid}')" 
+                                    style="background: #4caf50; padding: 6px 12px; font-size: 12px; width: 70px;">
+                                Update
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        // Update player name
+        async function updatePlayerName(deviceUuid) {
+            const nameInput = document.getElementById(`player-name-${deviceUuid}`);
+            const newName = nameInput.value.trim();
+            
+            if (!newName) {
+                showStatus('Player name cannot be empty', 'error');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/api/players/${deviceUuid}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ player_name: newName })
+                });
+                
+                if (response.ok) {
+                    showStatus(`Player name updated to "${newName}"`, 'success');
+                    // Reload players and stats to reflect changes
+                    loadPlayers();
+                    refreshStats();
+                } else {
+                    const error = await response.json();
+                    showStatus(`Error: ${error.error || 'Failed to update player name'}`, 'error');
+                }
+            } catch (error) {
+                showStatus('Error updating player name: ' + error.message, 'error');
+            }
+        }
+        
         // Initialize on page load
         initMap();
+        
+        // Load players on page load
+        loadPlayers();
         
         // Auto-refresh every 30 seconds
         setInterval(() => {
             loadObjects();
             refreshStats();
+            loadPlayers();
         }, 30000);
     </script>
 </body>

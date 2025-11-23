@@ -172,22 +172,46 @@ class ARDistanceTracker: ObservableObject {
         // Normalize the horizontal direction
         let normalizedDirection = normalize(horizontalDirection)
 
-        // Calculate angle in camera's local space
-        // Forward direction is -Z in camera space
+        // Calculate angle in screen space for UI arrow
+        // The icon "location.north.line.fill" points up by default
+        // We need to calculate the angle where:
+        // - 0° = up (target is straight ahead/forward)
+        // - 90° = right (target is to the right)
+        // - 180° = down (target is behind)
+        // - 270° = left (target is to the left)
+        
+        // Get camera's right and forward vectors (horizontal only)
         let cameraForward = normalize(SIMD3<Float>(forward.x, 0, forward.z))
-        let cameraRight = normalize(cross(up, cameraForward))
+        let cameraRight = normalize(cross(SIMD3<Float>(0, 1, 0), cameraForward))
 
-        // Project direction onto camera's right and forward vectors
-        let forwardDot = dot(normalizedDirection, cameraForward)
-        let rightDot = dot(normalizedDirection, cameraRight)
+        // Project target direction onto camera's right and forward vectors
+        let rightComponent = dot(normalizedDirection, cameraRight)  // + = right, - = left
+        let forwardComponent = dot(normalizedDirection, cameraForward)  // + = forward, - = behind
 
-        // Calculate angle from forward direction (clockwise, 0 = forward)
-        var angle = atan2(rightDot, forwardDot) * 180.0 / .pi
+        // Calculate angle in screen space
+        // For screen coordinates: atan2(y, x) where:
+        // - y = forwardComponent (positive = forward = up on screen)
+        // - x = rightComponent (positive = right)
+        // But we want: 0° = up (forward), 90° = right
+        // So: angle = atan2(forwardComponent, rightComponent)
+        // However, atan2 gives: 0° = +x (right), 90° = +y (up)
+        // We want: 0° = up, 90° = right
+        // So we need: angle = atan2(rightComponent, forwardComponent) + 90°
+        // Or simpler: angle = atan2(forwardComponent, rightComponent) - 90°
+        // Actually, let's use: angle = atan2(rightComponent, forwardComponent)
+        // This gives: 0° when forward, 90° when right, 180° when behind, 270° when left
+        // But icon points up, so we need to rotate: angle = atan2(rightComponent, forwardComponent) - 90°
+        var angle = atan2(rightComponent, forwardComponent) * 180.0 / .pi - 90.0
 
         // Normalize to 0-360 range
         if angle < 0 {
             angle += 360
         }
+        
+        // Snap to 45-degree intervals for easier reading
+        // Round to nearest 45° (0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°)
+        let interval: Float = 45.0
+        angle = round(angle / interval) * interval
 
         nearestObjectDirection = Double(angle)
         
@@ -374,7 +398,7 @@ class ARDistanceTracker: ObservableObject {
         // Check for proximity (within 3 feet = ~0.91m) - play sound only (no auto-collection)
         // User must tap to collect boxes
         if currentDistance <= 0.91 && !proximitySoundPlayed.contains(location.id) {
-            playProximitySound()
+            playProximitySound(for: location, distance: currentDistance)
             proximitySoundPlayed.insert(location.id)
             // NOTE: Auto-collection disabled - user must tap to collect
         }
@@ -403,10 +427,16 @@ class ARDistanceTracker: ObservableObject {
         }
     }
     
-    /// Plays a sound when user is within 1m of a loot box
-    private func playProximitySound() {
+    /// Plays a sound when user is within 0.91m (3 feet) of a loot box
+    private func playProximitySound(for location: LootBoxLocation, distance: Double) {
         // Play a subtle proximity sound (different from opening sound)
+        // System sound 1054 is a bell-like notification sound (lower pitch)
         AudioServicesPlaySystemSound(1054) // System sound for proximity/notification
+        Swift.print("🔔 SOUND: Proximity bell (system sound 1054)")
+        Swift.print("   Trigger: Within 0.91m (3 feet) of loot box")
+        Swift.print("   Object: \(location.name) (\(location.type.displayName))")
+        Swift.print("   Distance: \(String(format: "%.2f", distance))m")
+        Swift.print("   Location ID: \(location.id)")
     }
     
     // MARK: - Helper Methods

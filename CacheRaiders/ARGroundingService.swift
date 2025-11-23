@@ -61,41 +61,41 @@ class ARGroundingService {
             return nil
         }
         
-        // The first surface is the floor (lowest)
-        let floorY = validSurfaces.first!.y
-        let floorTransform = validSurfaces.first!.transform
-        
-        // Check if any surface above the floor blocks it
-        // A surface "blocks" the floor if it's directly above the floor position (within tolerance)
-        var highestBlockingSurface: Float? = nil
-        
-        // Check each surface above the floor
-        for surface in validSurfaces.dropFirst() {
+        // Find all surfaces that are at the target X/Z position (within tolerance)
+        // These are surfaces that the object would actually rest on
+        var surfacesAtTargetPosition: [(y: Float, transform: simd_float4x4)] = []
+
+        for surface in validSurfaces {
             let surfaceY = surface.y
             let surfaceTransform = surface.transform
             let surfaceX = surfaceTransform.columns.3.x
             let surfaceZ = surfaceTransform.columns.3.z
-            
-            // Check if this surface is directly above the floor position (within tolerance)
+
+            // Check if this surface is at the target X/Z position (within tolerance)
             let horizontalDistance = sqrt(
                 pow(surfaceX - x, 2) + pow(surfaceZ - z, 2)
             )
-            
+
             if horizontalDistance <= horizontalTolerance {
-                // This surface is directly above the floor - it blocks it
-                highestBlockingSurface = surfaceY
-                Swift.print("✅ ARGroundingService: Found blocking surface at Y: \(String(format: "%.2f", surfaceY)) (floor at Y: \(String(format: "%.2f", floorY)))")
+                surfacesAtTargetPosition.append(surface)
+                Swift.print("✅ ARGroundingService: Found surface at target position - Y: \(String(format: "%.2f", surfaceY)), distance: \(String(format: "%.2f", horizontalDistance))m")
             }
         }
-        
-        // Return the highest blocking surface, or the floor if nothing blocks it
-        if let blockingY = highestBlockingSurface {
-            Swift.print("✅ ARGroundingService: Using highest blocking surface at Y: \(String(format: "%.2f", blockingY))")
-            return blockingY
-        } else {
-            Swift.print("✅ ARGroundingService: Using floor surface at Y: \(String(format: "%.2f", floorY))")
+
+        // If no surfaces found at target position, fall back to the floor (lowest surface)
+        guard !surfacesAtTargetPosition.isEmpty else {
+            let floorY = validSurfaces.first!.y
+            Swift.print("✅ ARGroundingService: No surfaces at target position, using floor at Y: \(String(format: "%.2f", floorY))")
             return floorY
         }
+
+        // Sort surfaces at target position by Y (highest to lowest)
+        let sortedSurfaces = surfacesAtTargetPosition.sorted { $0.y > $1.y }
+
+        // Return the HIGHEST surface at the target position (this is the topmost plane the object should rest on)
+        let highestSurface = sortedSurfaces.first!
+        Swift.print("✅ ARGroundingService: Using highest surface at target position - Y: \(String(format: "%.2f", highestSurface.y))")
+        return highestSurface.y
     }
     
     /// Grounds a position by finding the highest blocking surface at the given X/Z coordinates.
@@ -135,7 +135,7 @@ class ARGroundingService {
             SIMD3<Float>(0, 0, 0.5),
             SIMD3<Float>(0, 0, -0.5)
         ]
-        
+
         for offset in offsets {
             let searchX = centerX + offset.x
             let searchZ = centerZ + offset.z
@@ -143,8 +143,54 @@ class ARGroundingService {
                 return surfaceY
             }
         }
-        
+
         return nil
+    }
+
+    /// Returns a default ground height based on object type when no surface is detected
+    /// Uses camera position as reference
+    /// - Parameters:
+    ///   - objectType: The type of object being placed
+    ///   - cameraPos: Current camera position
+    /// - Returns: A default Y coordinate for placing the object
+    func getDefaultGroundHeight(for objectType: LootBoxType, cameraPos: SIMD3<Float>) -> Float {
+        switch objectType {
+        case .sphere, .cube:
+            // Small objects: place slightly below camera (as if on a low table/surface)
+            return cameraPos.y - 0.8
+        case .chalice:
+            // Medium height objects
+            return cameraPos.y - 1.0
+        case .treasureChest, .lootChest, .templeRelic, .lootCart:
+            // Larger containers: place on floor
+            return cameraPos.y - 1.5
+        }
+    }
+
+    /// Finds surface or returns default ground height
+    /// This is the ultimate fallback - always returns a valid Y coordinate
+    /// - Parameters:
+    ///   - x: X coordinate in AR world space
+    ///   - z: Z coordinate in AR world space
+    ///   - cameraPos: Current camera position
+    ///   - objectType: The type of object being placed (for default height)
+    /// - Returns: The Y coordinate to place the object at
+    func findSurfaceOrDefault(x: Float, z: Float, cameraPos: SIMD3<Float>, objectType: LootBoxType) -> Float {
+        // Try to find actual surface
+        if let surfaceY = findHighestBlockingSurface(x: x, z: z, cameraPos: cameraPos) {
+            return surfaceY
+        }
+
+        // Try wider search
+        if let surfaceY = findSurfaceWithFallback(centerX: x, centerZ: z, cameraPos: cameraPos) {
+            Swift.print("✅ ARGroundingService: Found surface via fallback search")
+            return surfaceY
+        }
+
+        // Use default height for object type
+        let defaultY = getDefaultGroundHeight(for: objectType, cameraPos: cameraPos)
+        Swift.print("⚠️ ARGroundingService: No surface detected - using default height for \(objectType.displayName): Y=\(String(format: "%.2f", defaultY))")
+        return defaultY
     }
 }
 

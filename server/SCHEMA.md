@@ -39,7 +39,7 @@ Tracks who found which objects and when.
 |--------|------|-------------|-------------|
 | `id` | INTEGER | PRIMARY KEY AUTOINCREMENT | Auto-incrementing find record ID |
 | `object_id` | TEXT | NOT NULL, FOREIGN KEY | References `objects.id` |
-| `found_by` | TEXT | NOT NULL | User ID who found the object |
+| `found_by` | TEXT | NOT NULL | User ID (device UUID) who found the object |
 | `found_at` | TEXT | NOT NULL | ISO 8601 timestamp when object was found |
 
 **Example:**
@@ -47,19 +47,42 @@ Tracks who found which objects and when.
 INSERT INTO finds VALUES (
     NULL,  -- auto-increment
     '550e8400-e29b-41d4-a716-446655440000',
-    'user456',
+    '550e8400-e29b-41d4-a716-446655440001',  -- device UUID
     '2025-11-23T14:30:00'
+);
+```
+
+### `players`
+Maps device UUIDs to player names for display on leaderboards.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `device_uuid` | TEXT | PRIMARY KEY | Device UUID (same as used in `finds.found_by`) |
+| `player_name` | TEXT | NOT NULL | Display name for the player |
+| `created_at` | TEXT | NOT NULL | ISO 8601 timestamp when player record was created |
+| `updated_at` | TEXT | NOT NULL | ISO 8601 timestamp when player record was last updated |
+
+**Example:**
+```sql
+INSERT INTO players VALUES (
+    '550e8400-e29b-41d4-a716-446655440001',
+    'Adventure Seeker',
+    '2025-11-23T13:00:00',
+    '2025-11-23T15:30:00'
 );
 ```
 
 ## Indexes
 
 - `idx_object_id` on `finds(object_id)` - Speeds up lookups of finds by object ID
+- `idx_player_name` on `players(player_name)` - Speeds up lookups by player name
 
 ## Relationships
 
 - **One-to-Many**: One `object` can have multiple `finds` (if you allow re-finding, though currently the API prevents duplicate finds)
 - **Foreign Key**: `finds.object_id` → `objects.id`
+- **One-to-One**: One `device_uuid` maps to one `player_name` in the `players` table
+- **Logical Link**: `finds.found_by` can be joined with `players.device_uuid` to get player names
 
 ## Query Examples
 
@@ -100,12 +123,30 @@ SELECT COUNT(*) FROM objects;
 -- Found objects
 SELECT COUNT(DISTINCT object_id) FROM finds;
 
--- Top finders
-SELECT found_by, COUNT(*) as count
-FROM finds
-GROUP BY found_by
+-- Top finders (with player names)
+SELECT 
+    COALESCE(p.player_name, f.found_by) as user,
+    COUNT(*) as count
+FROM finds f
+LEFT JOIN players p ON f.found_by = p.device_uuid
+GROUP BY f.found_by
 ORDER BY count DESC
 LIMIT 10;
+```
+
+### Get or update player name:
+```sql
+-- Get player name for a device UUID
+SELECT player_name FROM players WHERE device_uuid = '550e8400-e29b-41d4-a716-446655440001';
+
+-- Update player name
+UPDATE players 
+SET player_name = 'New Name', updated_at = '2025-11-23T16:00:00'
+WHERE device_uuid = '550e8400-e29b-41d4-a716-446655440001';
+
+-- Create new player
+INSERT INTO players (device_uuid, player_name, created_at, updated_at)
+VALUES ('550e8400-e29b-41d4-a716-446655440001', 'Player Name', '2025-11-23T13:00:00', '2025-11-23T13:00:00');
 ```
 
 ## Data Types
@@ -119,7 +160,10 @@ LIMIT 10;
 - Timestamps are stored as ISO 8601 strings (e.g., `2025-11-23T13:00:00`)
 - Object IDs should be UUIDs to ensure uniqueness
 - The API prevents duplicate finds for the same object (enforced in application logic)
-- User IDs are currently simple strings (device UUIDs in iOS app)
+- User IDs are device UUIDs (from iOS `identifierForVendor`)
+- Player names are optional - if not set, the device UUID is used for display
+- The `players` table allows users to set display names that appear on leaderboards
+- When querying top finders, the API joins `finds` with `players` to show player names instead of UUIDs
 
 
 

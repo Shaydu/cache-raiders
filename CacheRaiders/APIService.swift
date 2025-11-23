@@ -13,6 +13,7 @@ struct APIObject: Codable {
     let radius: Double
     let created_at: String?
     let created_by: String?
+    let grounding_height: Double?
     let collected: Bool
     let found_by: String?
     let found_at: String?
@@ -55,18 +56,18 @@ class APIService {
     static let shared = APIService()
     
     // Configure your API base URL here
-    // For local development: "http://localhost:5000"
+    // For local development: "http://localhost:5001"
     // For production: "https://your-api-domain.com"
     var baseURL: String {
         // Check UserDefaults for custom URL, otherwise use default
         if let customURL = UserDefaults.standard.string(forKey: "apiBaseURL"), !customURL.isEmpty {
             return customURL
         }
-        // Try to get a suggested local network IP (Docker uses port 5000)
+        // Try to get a suggested local network IP (default port is 5001)
         if let suggestedIP = getSuggestedLocalIP() {
-            return "http://\(suggestedIP):5000"
+            return "http://\(suggestedIP):5001"
         }
-        return "http://localhost:5000"
+        return "http://localhost:5001"
     }
     
     /// Get a suggested local network IP address based on the device's network
@@ -115,7 +116,7 @@ class APIService {
         return nil
     }
     
-    // User identifier - in production, this should be a proper user ID
+    // User identifier - device UUID for tracking
     var currentUserID: String {
         // Use device identifier or user account ID
         if let userID = UserDefaults.standard.string(forKey: "userID"), !userID.isEmpty {
@@ -125,6 +126,35 @@ class APIService {
         let userID = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
         UserDefaults.standard.set(userID, forKey: "userID")
         return userID
+    }
+    
+    // User display name - for leaderboard and display purposes
+    var currentUserName: String {
+        if let userName = UserDefaults.standard.string(forKey: "userName"), !userName.isEmpty {
+            return userName
+        }
+        // Default to UUID if no name is set
+        return currentUserID
+    }
+    
+    // Set user name (maps to UUID in database)
+    func setUserName(_ name: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty {
+            UserDefaults.standard.set(trimmedName, forKey: "userName")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "userName")
+        }
+        
+        // Sync to server if API is available
+        Task {
+            do {
+                try await updatePlayerNameOnServer(trimmedName)
+            } catch {
+                // Silently fail - local storage is primary, server is secondary
+                print("⚠️ Failed to sync player name to server: \(error.localizedDescription)")
+            }
+        }
     }
     
     private init() {}
@@ -245,7 +275,10 @@ class APIService {
             throw APIError.invalidURL
         }
         
-        let request = MarkFoundRequest(found_by: foundBy ?? currentUserID)
+        // Always use device UUID as the unique identifier for finds
+        // The server will look up the player name from the players table for display
+        let foundByUUID = foundBy ?? currentUserID
+        let request = MarkFoundRequest(found_by: foundByUUID)
         let encoder = JSONEncoder()
         let body = try encoder.encode(request)
         
@@ -287,6 +320,99 @@ class APIService {
         }
         
         return try await makeRequest(url: url, method: "POST")
+    }
+    
+    /// Get player name from server
+    func getPlayerNameFromServer() async throws -> String? {
+        guard let url = URL(string: "\(baseURL)/api/players/\(currentUserID)") else {
+            throw APIError.invalidURL
+        }
+        
+        do {
+            let response: [String: String] = try await makeRequest(url: url)
+            return response["player_name"]
+        } catch {
+            // If player doesn't exist on server, return nil
+            if case APIError.httpError(let code) = error, code == 404 {
+                return nil
+            }
+            throw error
+        }
+    }
+    
+    /// Get player name by device UUID
+    func getPlayerName(deviceUUID: String) async throws -> String? {
+        guard let url = URL(string: "\(baseURL)/api/players/\(deviceUUID)") else {
+            throw APIError.invalidURL
+        }
+        
+        do {
+            let response: [String: String] = try await makeRequest(url: url)
+            return response["player_name"]
+        } catch {
+            // If player doesn't exist on server, return nil
+            if case APIError.httpError(let code) = error, code == 404 {
+                return nil
+            }
+            throw error
+        }
+    }
+    
+    /// Update player name on server
+    func updatePlayerNameOnServer(_ name: String) async throws {
+        guard let url = URL(string: "\(baseURL)/api/players/\(currentUserID)") else {
+            throw APIError.invalidURL
+        }
+        
+        let body = ["player_name": name]
+        let encoder = JSONEncoder()
+        let bodyData = try encoder.encode(body)
+        
+        let _: [String: String] = try await makeRequest(url: url, method: "POST", body: bodyData)
+    }
+    
+    /// Update grounding height for an object
+    func updateGroundingHeight(objectId: String, height: Double) async throws {
+        guard let url = URL(string: "\(baseURL)/api/objects/\(objectId)/grounding") else {
+            throw APIError.invalidURL
+        }
+        
+        struct GroundingUpdate: Codable {
+            let grounding_height: Double
+        }
+
+        struct GroundingResponse: Codable {
+            let success: Bool?
+        }
+
+        let body = GroundingUpdate(grounding_height: height)
+        let encoder = JSONEncoder()
+        let bodyData = try encoder.encode(body)
+
+        // Response not needed for this operation - just ignore the result
+        let _: GroundingResponse = try await makeRequest(url: url, method: "PUT", body: bodyData)
+    }
+    
+    /// Update object location (latitude/longitude)
+    func updateObjectLocation(objectId: String, latitude: Double, longitude: Double) async throws {
+        guard let url = URL(string: "\(baseURL)/api/objects/\(objectId)") else {
+            throw APIError.invalidURL
+        }
+        
+        struct LocationUpdate: Codable {
+            let latitude: Double
+            let longitude: Double
+        }
+        
+        struct UpdateResponse: Codable {
+            let success: Bool?
+        }
+        
+        let body = LocationUpdate(latitude: latitude, longitude: longitude)
+        let encoder = JSONEncoder()
+        let bodyData = try encoder.encode(body)
+        
+        let _: UpdateResponse = try await makeRequest(url: url, method: "PUT", body: bodyData)
     }
     
     /// Convert APIObject to LootBoxLocation

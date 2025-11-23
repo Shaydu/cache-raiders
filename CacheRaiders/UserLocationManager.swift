@@ -6,6 +6,7 @@ import Combine
 class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private let locationManager = CLLocationManager()
     @Published var currentLocation: CLLocation?
+    @Published var heading: Double? // Direction of travel in degrees (0 = north, 90 = east, etc.)
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     
     override init() {
@@ -35,6 +36,13 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         currentLocation = location
+        
+        // Extract heading from location's course (direction of travel)
+        // Course is in degrees: 0 = north, 90 = east, 180 = south, 270 = west
+        // Only use course if it's valid (>= 0 means valid direction)
+        if location.course >= 0 {
+            heading = location.course
+        }
     }
     
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {

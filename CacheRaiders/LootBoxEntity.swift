@@ -8,6 +8,8 @@ enum LootBoxType: String, CaseIterable, Codable {
     case chalice = "Chalice"
     case templeRelic = "Temple Relic"
     case treasureChest = "Treasure Chest"
+    case lootChest = "Loot Chest"
+    case lootCart = "Loot Cart"
     case sphere = "Mysterious Sphere"
     case cube = "Mysterious Cube"
 
@@ -15,34 +17,24 @@ enum LootBoxType: String, CaseIterable, Codable {
         return self.rawValue
     }
     
+    /// Returns the color for this loot box type (delegates to factory)
     var color: UIColor {
-        switch self {
-        case .chalice: return UIColor(red: 0.8, green: 0.7, blue: 0.5, alpha: 1.0) // Metallic bronze/gold
-        case .templeRelic: return UIColor(red: 0.4, green: 0.3, blue: 0.2, alpha: 1.0) // Dark stone
-        case .treasureChest: return UIColor(red: 0.6, green: 0.4, blue: 0.2, alpha: 1.0) // Brown/wooden
-        case .sphere: return UIColor(red: 0.9, green: 0.1, blue: 0.1, alpha: 1.0) // Red/orange sphere
-        case .cube: return UIColor(red: 0.2, green: 0.6, blue: 0.9, alpha: 1.0) // Blue cube
-        }
+        return factory.color
     }
     
+    /// Returns the glow color for this loot box type (delegates to factory)
     var glowColor: UIColor {
-        switch self {
-        case .chalice: return UIColor(red: 1.0, green: 0.85, blue: 0.5, alpha: 1.0) // Warm golden glow
-        case .templeRelic: return UIColor(red: 0.8, green: 0.6, blue: 0.4, alpha: 1.0) // Warm stone
-        case .treasureChest: return UIColor(red: 1.0, green: 0.8, blue: 0.4, alpha: 1.0) // Golden glow
-        case .sphere: return UIColor(red: 1.0, green: 0.3, blue: 0.1, alpha: 1.0) // Bright orange glow
-        case .cube: return UIColor(red: 0.3, green: 0.7, blue: 1.0, alpha: 1.0) // Bright blue glow
-        }
+        return factory.glowColor
     }
     
+    /// Returns the base size for this loot box type (delegates to factory)
     var size: Float {
-        switch self {
-        case .chalice: return 0.3
-        case .templeRelic: return 0.45
-        case .treasureChest: return 0.61 // 2 feet = 0.61 meters (width/height), depth handled separately
-        case .sphere: return 0.15 // Smaller sphere
-        case .cube: return 0.15 // Same size as sphere
-        }
+        return factory.size
+    }
+    
+    /// Returns the factory for this loot box type (uses registry instead of switch)
+    var factory: LootBoxFactory {
+        return LootBoxFactoryRegistry.factory(for: self)
     }
 }
 
@@ -117,38 +109,44 @@ class LootBoxEntity {
     
     // Create prize entity (the artifact inside)
     private static func createPrize(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
-        let size = type.size * sizeMultiplier * 0.6 // Smaller than box
+        let factory = type.factory
+        let size = factory.size * sizeMultiplier * 0.6 // Smaller than box
         
-        let prizeMesh: MeshResource
+        var prizeMesh: MeshResource
         var prizeMaterial = SimpleMaterial()
         
+        // Use factory to determine prize shape based on type
+        // This could be further refactored to be a factory method, but for now we use a simple heuristic
+        // Container-based types (chalice, chest, cart, relic) get box prizes
+        // Simple types (sphere, cube) don't use this method
+        
+        // Special cases for specific types (could be moved to factories if needed)
         switch type {
         case .chalice:
             prizeMesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.6, depth: size * 0.3, cornerRadius: 0.05)
-            prizeMaterial.color = .init(tint: type.color)
             prizeMaterial.roughness = 0.2
             prizeMaterial.metallic = 0.8
-        case .templeRelic:
-            prizeMesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.5, depth: size * 0.4, cornerRadius: 0.04)
-            prizeMaterial.color = .init(tint: type.color)
-            prizeMaterial.roughness = 0.4
-            prizeMaterial.metallic = 0.5
-        case .treasureChest:
-            // Treasure chest prize - golden coins/treasure
+        case .treasureChest, .lootChest, .lootCart:
             prizeMesh = MeshResource.generateBox(width: size * 0.5, height: size * 0.3, depth: size * 0.5, cornerRadius: 0.03)
-            prizeMaterial.color = .init(tint: type.color)
             prizeMaterial.roughness = 0.2
             prizeMaterial.metallic = 0.9
         case .sphere, .cube:
             // Spheres and cubes don't have prizes - they are handled directly in ARCoordinator
             fatalError("Spheres and cubes should not be created using LootBoxEntity.createPrize")
+        default:
+            // Default prize shape for container types
+            prizeMesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.5, depth: size * 0.4, cornerRadius: 0.04)
+            prizeMaterial.roughness = 0.3
+            prizeMaterial.metallic = 0.7
         }
+        
+        prizeMaterial.color = .init(tint: factory.color)
         
         let prizeEntity = ModelEntity(mesh: prizeMesh, materials: [prizeMaterial])
         
         // Add glow effect to prize
         var glowMaterial = SimpleMaterial()
-        glowMaterial.color = .init(tint: type.glowColor)
+        glowMaterial.color = .init(tint: factory.glowColor)
         glowMaterial.roughness = 0.0
         glowMaterial.metallic = 0.0
         

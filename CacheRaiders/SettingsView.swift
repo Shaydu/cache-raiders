@@ -17,35 +17,21 @@ struct SettingsView: View {
     @State private var databaseObjects: [APIObject] = []
     @State private var isLoadingDatabase: Bool = false
     @State private var apiURL: String = ""
+    @State private var selectedObjectId: String? = nil
+    @State private var userName: String = ""
+    @State private var leaderboard: [TopFinder] = []
+    @State private var isLoadingLeaderboard: Bool = false
+    @State private var playerNameCache: [String: String] = [:] // Cache for player names by device UUID
     
     // Helper function to get icon name for each findable type
+    // Uses the factory pattern to ensure consistency with the rest of the app
     private func iconName(for type: LootBoxType) -> String {
-        switch type {
-        case .chalice:
-            return "cup.and.saucer.fill"
-        case .templeRelic:
-            return "building.columns.fill"
-        case .treasureChest:
-            return "shippingbox.fill"
-        case .sphere:
-            return "circle.fill"
-        case .cube:
-            return "cube.fill"
-        }
+        return type.factory.iconName
     }
     
-    // Helper function to get model names for each findable type
+    // Helper function to get model names for each findable type (uses factory)
     private func modelNames(for type: LootBoxType) -> [String] {
-        switch type {
-        case .chalice:
-            return ["Chalice", "Chalice-basic"]
-        case .templeRelic:
-            return ["Stylised_Treasure_Chest", "Treasure_Chest"]
-        case .treasureChest:
-            return ["Treasure_Chest"]
-        case .sphere, .cube:
-            return [] // Spheres and cubes are procedural, no models
-        }
+        return type.factory.modelNames
     }
     
     // Group types by their model names to deduplicate
@@ -182,26 +168,48 @@ struct SettingsView: View {
                 
                 Section("Findable Types") {
                     ForEach(Array(groupedFindableTypes.enumerated()), id: \.offset) { index, group in
-                        HStack(spacing: 12) {
-                            // Use icon from first type in group
-                            let firstType = group.types.first!
-                            Image(systemName: iconName(for: firstType))
-                                .foregroundColor(Color(firstType.color))
-                                .font(.title3)
-                                .frame(width: 30)
-                            
-                            // Show all type names that share these models
-                            let typeNames = group.types.map { $0.displayName }.joined(separator: ", ")
-                            
-                            if group.models.isEmpty {
-                                Text(typeNames)
-                                    .font(.body)
-                            } else {
-                                Text("\(typeNames) (\(group.models.joined(separator: ", ")))")
-                                    .font(.body)
+                        // If group has multiple types, show each separately so they can have their own icons
+                        if group.types.count > 1 {
+                            ForEach(Array(group.types.enumerated()), id: \.offset) { typeIndex, type in
+                                HStack(spacing: 12) {
+                                    // Each type gets its own icon from its factory
+                                    Image(systemName: iconName(for: type))
+                                        .foregroundColor(Color(type.color))
+                                        .font(.title3)
+                                        .frame(width: 30)
+                                    
+                                    // Show type name and models if any
+                                    if group.models.isEmpty {
+                                        Text(type.displayName)
+                                            .font(.body)
+                                    } else {
+                                        Text("\(type.displayName) (\(group.models.joined(separator: ", ")))")
+                                            .font(.body)
+                                    }
+                                }
+                                .padding(.vertical, 2)
                             }
+                        } else {
+                            // Single type in group - show as before
+                            let firstType = group.types.first!
+                            HStack(spacing: 12) {
+                                Image(systemName: iconName(for: firstType))
+                                    .foregroundColor(Color(firstType.color))
+                                    .font(.title3)
+                                    .frame(width: 30)
+                                
+                                let typeNames = group.types.map { $0.displayName }.joined(separator: ", ")
+                                
+                                if group.models.isEmpty {
+                                    Text(typeNames)
+                                        .font(.body)
+                                } else {
+                                    Text("\(typeNames) (\(group.models.joined(separator: ", ")))")
+                                        .font(.body)
+                                }
+                            }
+                            .padding(.vertical, 2)
                         }
-                        .padding(.vertical, 2)
                     }
                 }
                 
@@ -285,6 +293,90 @@ struct SettingsView: View {
                     Text("When enabled, plays a ping sound once per second. The pitch increases as you get closer to objects, reaching maximum pitch when you're on top of them.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
+                }
+                
+                Section("User Profile") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Your Name")
+                            .font(.headline)
+                        
+                        TextField("Enter your name", text: $userName)
+                            .textFieldStyle(.roundedBorder)
+                            .autocapitalization(.words)
+                            .disableAutocorrection(true)
+                            .onSubmit {
+                                saveUserName()
+                            }
+                        
+                        HStack {
+                            Button("Save Name") {
+                                saveUserName()
+                            }
+                            .buttonStyle(.bordered)
+                            
+                            Spacer()
+                            
+                            Text("Device ID: \(APIService.shared.currentUserID.prefix(8))...")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Text("Your name will appear on the leaderboard when you find objects. This name is linked to your device ID.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+                
+                Section("Leaderboard") {
+                    NavigationLink(destination: LeaderboardView()) {
+                        HStack {
+                            Image(systemName: "trophy.fill")
+                                .foregroundColor(.yellow)
+                            Text("View Leaderboard")
+                            Spacer()
+                            if !leaderboard.isEmpty {
+                                Text("\(leaderboard.count) players")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    
+                    // Quick preview of top 3
+                    if !leaderboard.isEmpty {
+                        ForEach(Array(leaderboard.prefix(3).enumerated()), id: \.offset) { index, finder in
+                            HStack {
+                                ZStack {
+                                    Circle()
+                                        .fill(index < 3 ? Color.yellow.opacity(0.3) : Color.gray.opacity(0.3))
+                                        .frame(width: 28, height: 28)
+                                    
+                                    if index == 0 {
+                                        Image(systemName: "crown.fill")
+                                            .foregroundColor(.yellow)
+                                            .font(.caption2)
+                                    } else {
+                                        Text("\(index + 1)")
+                                            .font(.caption)
+                                            .fontWeight(.bold)
+                                            .foregroundColor(index < 3 ? .black : .primary)
+                                    }
+                                }
+                                
+                                Text(finder.user)
+                                    .font(.caption)
+                                
+                                Spacer()
+                                
+                                Text("\(finder.count)")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.green)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    }
                 }
                 
                 Section("API Sync") {
@@ -571,52 +663,111 @@ struct SettingsView: View {
                                 .padding(.vertical, 4)
                         } else {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text("Database Objects (\(databaseObjects.count))")
-                                    .font(.headline)
-                                    .padding(.top, 4)
+                                HStack {
+                                    Text("Database Objects (\(databaseObjects.count))")
+                                        .font(.headline)
+                                    Spacer()
+                                    if selectedObjectId != nil {
+                                        Text("1 Selected")
+                                            .font(.caption)
+                                            .foregroundColor(.blue)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .background(Color.blue.opacity(0.2))
+                                            .cornerRadius(8)
+                                    }
+                                }
+                                .padding(.top, 4)
+                                
+                                if selectedObjectId != nil {
+                                    Text("Tap an item to deselect. Only the selected object will appear in AR and be used for audio search.")
+                                        .font(.caption2)
+                                        .foregroundColor(.blue)
+                                        .padding(.bottom, 4)
+                                } else {
+                                    Text("Tap an item to select it. Only the selected object will appear in AR and be used for audio search.")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                        .padding(.bottom, 4)
+                                }
                                 
                                 ForEach(databaseObjects, id: \.id) { obj in
-                                    HStack(alignment: .top, spacing: 8) {
-                                        // Status indicator
-                                        Image(systemName: obj.collected ? "checkmark.circle.fill" : "circle")
-                                            .foregroundColor(obj.collected ? .green : .orange)
-                                            .font(.caption)
-                                        
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(obj.name)
-                                                .font(.body)
-                                                .fontWeight(.medium)
-                                            
-                                            HStack(spacing: 4) {
-                                                Text(obj.type)
-                                                    .font(.caption)
-                                                    .foregroundColor(.secondary)
-                                                
-                                                Text("•")
-                                                    .foregroundColor(.secondary)
-                                                
-                                                Text(obj.collected ? "Found" : "Not Found")
-                                                    .font(.caption)
-                                                    .foregroundColor(obj.collected ? .green : .orange)
-                                            }
-                                            
-                                            if let foundBy = obj.found_by {
-                                                Text("Found by: \(foundBy)")
-                                                    .font(.caption2)
-                                                    .foregroundColor(.secondary)
-                                            }
-                                            
-                                            Text("Location: \(String(format: "%.6f", obj.latitude)), \(String(format: "%.6f", obj.longitude))")
-                                                .font(.caption2)
-                                                .foregroundColor(.secondary)
+                                    let isSelected = selectedObjectId == obj.id
+                                    Button(action: {
+                                        // Toggle selection: if already selected, deselect; otherwise select this one
+                                        if isSelected {
+                                            selectedObjectId = nil
+                                            locationManager.setSelectedDatabaseObjectId(nil)
+                                        } else {
+                                            selectedObjectId = obj.id
+                                            locationManager.setSelectedDatabaseObjectId(obj.id)
                                         }
-                                        
-                                        Spacer()
+                                    }) {
+                                        HStack(alignment: .top, spacing: 8) {
+                                            // Selection indicator
+                                            Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                                .foregroundColor(isSelected ? .blue : .secondary)
+                                                .font(.title3)
+                                            
+                                            // Status indicator
+                                            Image(systemName: obj.collected ? "checkmark.circle.fill" : "circle")
+                                                .foregroundColor(obj.collected ? .orange : .green)
+                                                .font(.caption)
+                                            
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(obj.name)
+                                                    .font(.body)
+                                                    .fontWeight(isSelected ? .bold : .medium)
+                                                    .foregroundColor(isSelected ? .primary : (isSelected ? nil : .secondary))
+                                                
+                                                HStack(spacing: 4) {
+                                                    Text(obj.type)
+                                                        .font(.caption)
+                                                        .foregroundColor(isSelected ? .secondary : .secondary.opacity(0.6))
+                                                    
+                                                    Text("•")
+                                                        .foregroundColor(isSelected ? .secondary : .secondary.opacity(0.6))
+                                                    
+                                                    Text(obj.collected ? "Found" : "Not Found")
+                                                        .font(.caption)
+                                                        .foregroundColor(obj.collected ? .orange : .green)
+                                                }
+                                                
+                                                if let foundBy = obj.found_by {
+                                                    Text("Found by: \(playerNameCache[foundBy] ?? foundBy)")
+                                                        .font(.caption2)
+                                                        .foregroundColor(isSelected ? .secondary : .secondary.opacity(0.6))
+                                                        .onAppear {
+                                                            // Fetch player name if not in cache
+                                                            if playerNameCache[foundBy] == nil {
+                                                                Task {
+                                                                    do {
+                                                                        if let playerName = try await APIService.shared.getPlayerName(deviceUUID: foundBy) {
+                                                                            await MainActor.run {
+                                                                                playerNameCache[foundBy] = playerName
+                                                                            }
+                                                                        }
+                                                                    } catch {
+                                                                        print("⚠️ Failed to fetch player name for \(foundBy): \(error.localizedDescription)")
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                }
+                                                
+                                                Text("Location: \(String(format: "%.6f", obj.latitude)), \(String(format: "%.6f", obj.longitude))")
+                                                    .font(.caption2)
+                                                    .foregroundColor(isSelected ? .secondary : .secondary.opacity(0.6))
+                                            }
+                                            
+                                            Spacer()
+                                        }
+                                        .padding(.vertical, 4)
+                                        .padding(.horizontal, 8)
+                                        .background(isSelected ? Color.blue.opacity(0.2) : Color.secondary.opacity(0.1))
+                                        .cornerRadius(8)
                                     }
-                                    .padding(.vertical, 4)
-                                    .padding(.horizontal, 8)
-                                    .background(Color.secondary.opacity(0.1))
-                                    .cornerRadius(8)
+                                    .buttonStyle(PlainButtonStyle())
                                 }
                             }
                             .padding(.vertical, 4)
@@ -648,9 +799,14 @@ struct SettingsView: View {
                 previousDistance = locationManager.maxSearchDistance
                 // Load current API URL
                 loadAPIURL()
+                // Load user name
+                loadUserName()
+                // Load selected object ID
+                selectedObjectId = locationManager.selectedDatabaseObjectId
                 // Load database objects when view appears if API sync is enabled
                 if locationManager.useAPISync {
                     loadDatabaseObjects()
+                    loadLeaderboard()
                     // Ensure WebSocket is connected
                     WebSocketService.shared.connect()
                 }
@@ -671,11 +827,11 @@ struct SettingsView: View {
         if !currentURL.contains("localhost") {
             return currentURL
         }
-        // Otherwise, try to suggest based on device IP (Docker uses port 5000)
+        // Otherwise, try to suggest based on device IP (default port is 5001)
         if let suggested = getSuggestedLocalIP() {
-            return "http://\(suggested):5000"
+            return "http://\(suggested):5001"
         }
-        return "http://192.168.1.1:5000"
+        return "http://192.168.1.1:5001"
     }
     
     private func getSuggestedLocalIP() -> String? {
@@ -718,21 +874,83 @@ struct SettingsView: View {
         return nil
     }
     
+    private func loadUserName() {
+        // First load from local storage
+        userName = APIService.shared.currentUserName
+        // If userName is the UUID (meaning no name set), clear the field
+        if userName == APIService.shared.currentUserID {
+            userName = ""
+        }
+        
+        // Then try to load from server if API sync is enabled
+        if locationManager.useAPISync {
+            Task {
+                do {
+                    if let serverName = try await APIService.shared.getPlayerNameFromServer() {
+                        await MainActor.run {
+                            // Update local storage and UI if server has a name
+                            if !serverName.isEmpty {
+                                userName = serverName
+                                APIService.shared.setUserName(serverName)
+                            }
+                        }
+                    }
+                } catch {
+                    // Silently fail - local storage is primary
+                    print("⚠️ Failed to load player name from server: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    private func saveUserName() {
+        let trimmedName = userName.trimmingCharacters(in: .whitespacesAndNewlines)
+        APIService.shared.setUserName(trimmedName)
+        
+        alertTitle = "Name Saved"
+        if trimmedName.isEmpty {
+            alertMessage = "Name cleared. Device ID will be used instead."
+        } else {
+            alertMessage = "Your name '\(trimmedName)' has been saved. It will appear on the leaderboard when you find objects."
+        }
+        showAlert = true
+    }
+    
+    private func loadLeaderboard() {
+        guard locationManager.useAPISync else { return }
+        
+        isLoadingLeaderboard = true
+        Task {
+            do {
+                let stats = try await APIService.shared.getStats()
+                await MainActor.run {
+                    self.leaderboard = stats.top_finders
+                    self.isLoadingLeaderboard = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.leaderboard = []
+                    self.isLoadingLeaderboard = false
+                }
+            }
+        }
+    }
+    
     private func loadAPIURL() {
         // Load saved URL, or use suggested IP if none exists
         if let savedURL = UserDefaults.standard.string(forKey: "apiBaseURL"), !savedURL.isEmpty {
             apiURL = savedURL
         } else {
-            // Auto-populate with suggested local network IP (Docker uses port 5000)
+            // Auto-populate with suggested local network IP (default port is 5001)
             if let suggested = getSuggestedLocalIP() {
-                let suggestedURL = "http://\(suggested):5000"
+                let suggestedURL = "http://\(suggested):5001"
                 apiURL = suggestedURL
                 // Auto-save it so it's used immediately as default
                 UserDefaults.standard.set(suggestedURL, forKey: "apiBaseURL")
                 print("✅ Auto-configured API URL to: \(suggestedURL)")
             } else {
                 // Fallback to a common default for 10.0.x.x networks
-                let fallbackURL = "http://10.0.0.1:5000"
+                let fallbackURL = "http://10.0.0.1:5001"
                 apiURL = fallbackURL
                 UserDefaults.standard.set(fallbackURL, forKey: "apiBaseURL")
                 print("⚠️ Using fallback API URL: \(fallbackURL)")

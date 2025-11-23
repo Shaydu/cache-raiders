@@ -21,6 +21,9 @@ struct ARLootBoxView: UIViewRepresentable {
         // Detect both horizontal (ground) and vertical (walls) planes
         // Vertical planes are used for occlusion (hiding loot boxes behind walls)
         config.planeDetection = [.horizontal, .vertical]
+        // Note: environmentTexturing may produce harmless warnings about internal RealityKit materials
+        // These warnings (e.g., 'arInPlacePostProcessCombinedPermute14.rematerial') can be safely ignored
+        // They are internal framework materials used for AR post-processing effects
         config.environmentTexturing = .automatic
         
         // Check if AR is supported
@@ -49,6 +52,8 @@ struct ARLootBoxView: UIViewRepresentable {
         if uiView.session.configuration == nil {
             let config = ARWorldTrackingConfiguration()
             config.planeDetection = [.horizontal, .vertical] // Horizontal for ground, vertical for walls (occlusion)
+            // Note: environmentTexturing may produce harmless warnings about internal RealityKit materials
+            // These warnings (e.g., 'arInPlacePostProcessCombinedPermute14.rematerial') can be safely ignored
             config.environmentTexturing = .automatic
             uiView.session.run(config, options: [.resetTracking])
         }

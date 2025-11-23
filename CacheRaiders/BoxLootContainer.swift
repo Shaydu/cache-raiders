@@ -46,17 +46,26 @@ class BoxLootContainer {
     /// Loads a treasure chest USDZ model (randomly chooses between available models)
     /// Note: Make sure "Stylised_Treasure_Chest.usdz" and "Treasure_Chest.usdz" are added to the Xcode project and included in the app bundle
     private static func loadTreasureChestModel(size: Float, type: LootBoxType, id: String) -> (box: ModelEntity, lid: ModelEntity?, animation: AnimationResource?) {
-        // For treasureChest type, always use Treasure_Chest.usdz
-        // For other types, randomly choose between available models
-        let chestModels: [String]
-        if case .treasureChest = type {
-            chestModels = ["Treasure_Chest"] // Always use Treasure_Chest for treasure chest type
-        } else {
-            chestModels = ["Stylised_Treasure_Chest", "Treasure_Chest"] // Random for other types
+        // Use factory to get model names (eliminates switch statement)
+        let factory = type.factory
+        let availableModels = factory.modelNames
+        
+        guard !availableModels.isEmpty else {
+            print("⚠️ No models available for type \(type.displayName)")
+            return (createFallbackBox(size: size, color: factory.color, glowColor: factory.glowColor, id: id), createDoor(size: size, color: factory.color, glowColor: factory.glowColor), nil)
         }
         
-        // Select model (for treasureChest, use first; for others, random)
-        let selectedModel = type == .treasureChest ? chestModels[0] : (chestModels.randomElement() ?? chestModels[0])
+        // For treasureChest type, always use first model (Treasure_Chest)
+        // For lootChest type, use Stylized_Container
+        // For other types, randomly choose between available models
+        let selectedModel: String
+        if type == .treasureChest {
+            selectedModel = availableModels[0]
+        } else if type == .lootChest {
+            selectedModel = "Stylized_Container"
+        } else {
+            selectedModel = availableModels.randomElement() ?? availableModels[0]
+        }
         
         // Try to load the selected model
         guard let modelURL = Bundle.main.url(forResource: selectedModel, withExtension: "usdz") else {
@@ -105,8 +114,8 @@ class BoxLootContainer {
             // This gives us final sizes of approximately 0.0045-0.009m (4.5-9mm) which is small but visible
             // Treasure chests are scaled down by 50% (0.5 multiplier)
             let baseScale: Float = 0.03
-            let treasureChestScale = type == .treasureChest ? baseScale * 0.5 : baseScale
-            modelEntity.scale = SIMD3<Float>(repeating: size * treasureChestScale)
+            let chestScale = (type == .treasureChest || type == .lootChest) ? baseScale * 0.5 : baseScale
+            modelEntity.scale = SIMD3<Float>(repeating: size * chestScale)
             
             // Ensure model is right-side up (not upside down)
             // Some models may load with incorrect orientation
