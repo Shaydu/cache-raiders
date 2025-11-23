@@ -194,6 +194,12 @@ class LootBoxLocationManager: ObservableObject {
     
     // Mark location as collected
     func markCollected(_ locationId: String) {
+        // Don't mark AR-only locations (they start with "AR_SPHERE_")
+        if locationId.hasPrefix("AR_SPHERE_") {
+            print("ℹ️ Ignoring markCollected for AR-only location: \(locationId)")
+            return
+        }
+
         if let index = locations.firstIndex(where: { $0.id == locationId }) {
             print("✅ Marking location \(locations[index].name) (ID: \(locationId)) as collected")
             // Create a new location with collected = true to trigger @Published update
