@@ -5,6 +5,8 @@ import CoreLocation
 import AVFoundation
 import AudioToolbox
 
+// Findable protocol and base class are now in FindableObject.swift
+
 // MARK: - AR Coordinator
 class ARCoordinator: NSObject, ARSessionDelegate {
     weak var arView: ARView?
@@ -12,25 +14,34 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var userLocationManager: UserLocationManager?
     private var nearbyLocationsBinding: Binding<[LootBoxLocation]>?
     private var placedBoxes: [String: AnchorEntity] = [:]
+    private var findableObjects: [String: FindableObject] = [:] // Track all findable objects
     private var arOriginLocation: CLLocation? // GPS location when AR session started
     private var distanceLogger: Timer?
     private var previousDistance: Double?
     var distanceToNearestBinding: Binding<Double?>?
     var temperatureStatusBinding: Binding<String?>?
-    private var occlusionCheckTimer: Timer?
+    var collectionNotificationBinding: Binding<String?>?
     private var proximitySoundPlayed: Set<String> = [] // Track which boxes have played proximity sound
+    private var foundLootBoxes: Set<String> = [] // Track which boxes have been found (to avoid duplicate finds)
     private var occlusionPlanes: [UUID: AnchorEntity] = [:] // Track occlusion planes for walls
+    private var occlusionCheckTimer: Timer? // Timer for checking occlusion
+    private var distanceTextEntities: [String: ModelEntity] = [:] // Track distance text entities for each loot box
     
-    func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>) {
+    override init() {
+        super.init()
+    }
+    
+    func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>) {
         self.arView = arView
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
         self.nearbyLocationsBinding = nearbyLocations
         self.distanceToNearestBinding = distanceToNearest
         self.temperatureStatusBinding = temperatureStatus
+        self.collectionNotificationBinding = collectionNotification
         
         // Set up callback for size changes
-        locationManager.onSizeChanged = { [weak self] in
+        locationManager.onSizeChanged = { [weak self] () -> Void in
             self?.updateLootBoxSizes()
         }
         
@@ -43,18 +54,22 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Start distance logging timer
         startDistanceLogging()
         
-        // Clean up any existing occlusion planes (they were causing issues)
+        // Clean up any existing occlusion planes once at startup (they were causing dark boxes)
+        // No need for periodic cleanup since we're not creating new occlusion planes anymore
         removeAllOcclusionPlanes()
         
-        // Occlusion checking disabled - was causing issues with ceiling detection
-        // startOcclusionChecking()
+        // Start occlusion checking to hide loot boxes behind walls
+        startOcclusionChecking()
     }
     
     // Remove all existing occlusion planes
-    private func removeAllOcclusionPlanes() {
+    private func removeAllOcclusionPlanes(quiet: Bool = false) {
         guard let arView = arView else { return }
         
+        var removedCount = 0
+        
         // Remove all tracked occlusion planes
+        removedCount += occlusionPlanes.count
         for (_, anchor) in occlusionPlanes {
             anchor.removeFromParent()
         }
@@ -65,7 +80,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let anchors = Array(arView.scene.anchors)
         for anchor in anchors {
             // Remove occlusion entities recursively
-            removeOcclusionEntities(from: anchor)
+            removeOcclusionEntities(from: anchor, removedCount: &removedCount)
             
             // Also check if anchor itself is an occlusion plane anchor (from ARPlaneAnchor)
             if let anchorEntity = anchor as? AnchorEntity {
@@ -80,23 +95,33 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 
                 if !hasNonOcclusionChildren && !anchorEntity.children.isEmpty {
                     // This anchor only has occlusion planes - remove it entirely
-                    print("🗑️ Removing occlusion-only anchor")
+                    if !quiet {
+                        Swift.print("🗑️ Removing occlusion-only anchor")
+                    }
                     anchorEntity.removeFromParent()
+                    removedCount += 1
                 }
             }
         }
         
-        print("🧹 Removed all occlusion planes")
+        // Only print if something was removed or if not in quiet mode
+        if removedCount > 0 {
+            if !quiet {
+                Swift.print("🧹 Removed \(removedCount) occlusion plane(s)")
+            }
+        } else if !quiet {
+            Swift.print("🧹 Removed all occlusion planes")
+        }
     }
     
     // Recursively find and remove any entities with OcclusionMaterial or suspiciously large planes
-    private func removeOcclusionEntities(from entity: Entity) {
+    private func removeOcclusionEntities(from entity: Entity, removedCount: inout Int) {
         // Make a copy of children array before iterating (to avoid mutation issues)
         let children = Array(entity.children)
         
         // First, recursively process children
         for child in children {
-            removeOcclusionEntities(from: child)
+            removeOcclusionEntities(from: child, removedCount: &removedCount)
         }
         
         // Then check this entity itself
@@ -104,16 +129,33 @@ class ARCoordinator: NSObject, ARSessionDelegate {
            let model = modelEntity.model {
             // Check if any material is OcclusionMaterial
             if model.materials.contains(where: { $0 is OcclusionMaterial }) {
-                print("🗑️ Found and removing occlusion entity: \(entity.name ?? "unnamed")")
+                let entityName = entity.name.isEmpty ? "unnamed" : entity.name
+                print("🗑️ Found and removing occlusion entity: \(entityName)")
                 entity.removeFromParent()
+                removedCount += 1
                 return
+            }
+            
+            // Also check for suspiciously large plane meshes (likely ceiling planes)
+            let mesh = model.mesh
+                let bounds = mesh.bounds
+                let size = bounds.extents
+                let maxDimension = max(size.x, max(size.y, size.z))
+                if maxDimension > 3.0 {
+                    let entityName = entity.name.isEmpty ? "unnamed" : entity.name
+                    print("🗑️ Found and removing large plane entity (likely ceiling): \(entityName), size=\(String(format: "%.2f", maxDimension))m")
+                    entity.removeFromParent()
+                    removedCount += 1
+                    return
             }
         }
     }
     
+    // MARK: - Occlusion Detection
+    // Use raycasting to detect walls and hide loot boxes behind them
     private func startOcclusionChecking() {
-        // Check occlusion more frequently (every 0.1 seconds = 10 times per second)
-        occlusionCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+        // Check occlusion periodically (every 0.2 seconds = 5 times per second)
+        occlusionCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             self?.checkOcclusionForPlacedBoxes()
         }
     }
@@ -128,41 +170,127 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             cameraTransform.columns.3.z
         )
         
-        // Check each placed loot box for occlusion
+        // Update distance texts for all loot boxes
+        updateDistanceTexts()
+        
+        // Check each placed loot box for occlusion and camera collision
         for (locationId, anchor) in placedBoxes {
-            guard let boxEntity = anchor.children.first else { continue }
-            
-            // Get box position in world space
-            let boxTransform = anchor.transformMatrix(relativeTo: nil)
-            let boxPosition = SIMD3<Float>(
-                boxTransform.columns.3.x,
-                boxTransform.columns.3.y,
-                boxTransform.columns.3.z
+            // Get anchor position in world space
+            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+            let anchorPosition = SIMD3<Float>(
+                anchorTransform.columns.3.x,
+                anchorTransform.columns.3.y,
+                anchorTransform.columns.3.z
             )
-            
-            // Calculate direction from camera to box
-            let direction = boxPosition - cameraPosition
+
+            // Find the actual loot box position (not just anchor position)
+            // Loot boxes are positioned with Y offset relative to anchor
+            var lootBoxPosition = anchorPosition
+            for child in anchor.children {
+                if let modelEntity = child as? ModelEntity,
+                   modelEntity.name == locationId {
+                    // This is the loot box container - get its world position
+                    let lootBoxTransform = modelEntity.transformMatrix(relativeTo: nil)
+                    lootBoxPosition = SIMD3<Float>(
+                        lootBoxTransform.columns.3.x,
+                        lootBoxTransform.columns.3.y,
+                        lootBoxTransform.columns.3.z
+                    )
+                    break
+                }
+            }
+
+            // Use the actual loot box position for distance calculations
+            let direction = lootBoxPosition - cameraPosition
             let distance = length(direction)
             
-            // Skip if box is too close or too far
+            // PROXIMITY DETECTION: Auto-find when within 1m of loot box
+            let findDistance: Float = 1.0 // 1 meter threshold for finding
+            
+            // Check if camera is within 1m of the loot box
+            if distance <= findDistance && !foundLootBoxes.contains(locationId) {
+                // Find the sphere entity for animation
+                var sphereEntity: ModelEntity? = nil
+                for child in anchor.children {
+                    if let modelEntity = child as? ModelEntity,
+                       modelEntity.components[PointLightComponent.self] != nil {
+                        sphereEntity = modelEntity
+                        break
+                    }
+                }
+                
+                // Trigger finding (sound, confetti, animation, increment count)
+                findLootBox(locationId: locationId, anchor: anchor, cameraPosition: cameraPosition, sphereEntity: sphereEntity)
+                continue // Skip occlusion check
+            }
+            
+            // COLLISION DETECTION: Hide objects when camera is too close (within their boundary)
+            // Loot box size: 0.3m total (0.15m radius), sphere: 0.15m radius
+            // Add 0.1m buffer to prevent camera from entering boundary
+            let lootBoxRadius: Float = 0.15 // Half of 0.3m total size
+            let sphereRadius: Float = 0.15 // Sphere indicator radius
+            let buffer: Float = 0.1 // Safety buffer
+            let minDistanceForLootBox = lootBoxRadius + buffer
+            let minDistanceForSphere = sphereRadius + buffer
+
+            // Check if camera is too close to the actual loot box position
+            var isCameraTooClose = false
+            if distance < minDistanceForLootBox {
+                isCameraTooClose = true
+            }
+            
+            // Also check distance to sphere indicator (positioned above the box)
+            var spherePosition = anchorPosition
+            for child in anchor.children {
+                if let modelEntity = child as? ModelEntity,
+                   modelEntity.components[PointLightComponent.self] != nil {
+                    // This is the sphere - get its world position
+                    let sphereTransform = modelEntity.transformMatrix(relativeTo: nil)
+                    spherePosition = SIMD3<Float>(
+                        sphereTransform.columns.3.x,
+                        sphereTransform.columns.3.y,
+                        sphereTransform.columns.3.z
+                    )
+                    let sphereDistance = length(spherePosition - cameraPosition)
+                    if sphereDistance < minDistanceForSphere {
+                        isCameraTooClose = true
+                    }
+                    break
+                }
+            }
+            
+            // If camera is too close, hide all children to prevent camera from appearing inside
+            if isCameraTooClose {
+                for child in anchor.children {
+                    if let modelEntity = child as? ModelEntity {
+                        modelEntity.isEnabled = false
+                    } else {
+                        child.isEnabled = false
+                    }
+                }
+                continue // Skip occlusion check if camera is too close
+            }
+            
+            // Skip occlusion check if box is too far
             guard distance > 0.1 && distance < 50.0 else {
-                boxEntity.isEnabled = true
+                // Show all children if too far (no occlusion check needed)
+                for child in anchor.children {
+                    if let modelEntity = child as? ModelEntity {
+                        modelEntity.isEnabled = true
+                    } else {
+                        child.isEnabled = true
+                    }
+                }
                 continue
             }
             
             let normalizedDirection = direction / distance
-            
-            // Convert to ARKit coordinate space (camera space)
-            let cameraSpaceDirection = simd_mul(
-                simd_inverse(cameraTransform),
-                SIMD4<Float>(normalizedDirection.x, normalizedDirection.y, normalizedDirection.z, 0)
-            )
-            
-            // Perform raycast from camera to loot box to check for walls
-            // Use trackableType to check for vertical planes (walls)
+
+            // Perform raycast from camera to actual loot box position to check for walls
+            // Use vertical plane detection to find walls
             let raycastQuery = ARRaycastQuery(
                 origin: cameraPosition,
-                direction: SIMD3<Float>(cameraSpaceDirection.x, cameraSpaceDirection.y, cameraSpaceDirection.z),
+                direction: normalizedDirection,
                 allowing: .estimatedPlane,
                 alignment: .vertical // Check for vertical planes (walls)
             )
@@ -181,28 +309,121 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 let hitDistance = length(hitPoint - cameraPosition)
                 
                 // If wall is closer than box (with some tolerance), box is occluded
-                if hitDistance < distance - 0.5 { // 0.5m tolerance
+                if hitDistance < distance - 0.3 { // 0.3m tolerance
                     isOccluded = true
                     break
                 }
             }
             
-            // Show/hide box based on occlusion
-            boxEntity.isEnabled = !isOccluded
+            // Show/hide all children (loot box container and orb indicator) based on occlusion
+            for child in anchor.children {
+                if let modelEntity = child as? ModelEntity {
+                    modelEntity.isEnabled = !isOccluded
+                } else {
+                    child.isEnabled = !isOccluded
+                }
+            }
         }
     }
     
     private func startDistanceLogging() {
-        distanceLogger = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        // Check every 0.5 seconds for more responsive warmer/colder feedback
+        distanceLogger = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.logDistanceToNearestLootBox()
         }
     }
     
     private func logDistanceToNearestLootBox() {
-        // Only show status if we have GPS fix and can calculate distance
-        guard let userLocation = userLocationManager?.currentLocation,
+        // Try to use AR world coordinates first (more accurate for AR), fallback to GPS
+        guard let arView = arView,
+              let frame = arView.session.currentFrame,
               let locationManager = locationManager else {
-            // No GPS fix or location manager - don't show anything
+            // Fallback to GPS if AR not available
+            guard let userLocation = userLocationManager?.currentLocation else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.distanceToNearestBinding?.wrappedValue = nil
+                    self?.temperatureStatusBinding?.wrappedValue = nil
+                }
+                return
+            }
+            calculateDistanceUsingGPS(userLocation: userLocation)
+            return
+        }
+        
+        // Use AR world coordinates for more accurate distance calculation
+        let cameraTransform = frame.camera.transform
+        let cameraPosition = SIMD3<Float>(
+            cameraTransform.columns.3.x,
+            cameraTransform.columns.3.y,
+            cameraTransform.columns.3.z
+        )
+        
+        // Find nearest uncollected loot box in AR world space
+        var nearestBox: (location: LootBoxLocation, distance: Double, anchor: AnchorEntity)? = nil
+        var minDistance: Double = Double.infinity
+        
+        // Check all placed boxes in AR space
+        for (locationId, anchor) in placedBoxes {
+            // Find the location for this box
+            guard let location = locationManager.locations.first(where: { $0.id == locationId && !$0.collected }) else {
+                continue
+            }
+            
+            // Get anchor position in AR world space
+            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+            let anchorPosition = SIMD3<Float>(
+                anchorTransform.columns.3.x,
+                anchorTransform.columns.3.y,
+                anchorTransform.columns.3.z
+            )
+            
+            // Find the sphere indicator position (more visible and accurate - this is what user sees)
+            // The sphere is positioned above the loot box
+            var spherePosition = anchorPosition
+            for child in anchor.children {
+                if let modelEntity = child as? ModelEntity,
+                   modelEntity.name == locationId,
+                   modelEntity.components[PointLightComponent.self] != nil {
+                    // This is the orange sphere - get its world position
+                    let sphereTransform = modelEntity.transformMatrix(relativeTo: nil)
+                    spherePosition = SIMD3<Float>(
+                        sphereTransform.columns.3.x,
+                        sphereTransform.columns.3.y,
+                        sphereTransform.columns.3.z
+                    )
+                    break
+                }
+            }
+            
+            // Calculate distance in AR world space (meters) - use sphere position for accuracy
+            let distance = Double(length(spherePosition - cameraPosition))
+            
+            if distance < minDistance {
+                minDistance = distance
+                nearestBox = (location: location, distance: distance, anchor: anchor)
+            }
+        }
+        
+        // If we found a box in AR space, use that
+        if let nearest = nearestBox {
+            updateTemperatureStatus(currentDistance: nearest.distance, location: nearest.location)
+            return
+        }
+        
+        // Fallback to GPS if no boxes are placed in AR yet
+        if let userLocation = userLocationManager?.currentLocation {
+            calculateDistanceUsingGPS(userLocation: userLocation)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.distanceToNearestBinding?.wrappedValue = nil
+                self?.temperatureStatusBinding?.wrappedValue = nil
+            }
+        }
+    }
+    
+    // Helper to calculate distance using GPS coordinates
+    private func calculateDistanceUsingGPS(userLocation: CLLocation) {
+        guard let locationManager = locationManager else {
             DispatchQueue.main.async { [weak self] in
                 self?.distanceToNearestBinding?.wrappedValue = nil
                 self?.temperatureStatusBinding?.wrappedValue = nil
@@ -212,7 +433,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // Check if we have a valid GPS fix (horizontal accuracy should be reasonable)
         guard userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 100 else {
-            // GPS fix not accurate enough - don't show anything
             DispatchQueue.main.async { [weak self] in
                 self?.distanceToNearestBinding?.wrappedValue = nil
                 self?.temperatureStatusBinding?.wrappedValue = nil
@@ -220,10 +440,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
         
-        // Find nearest uncollected loot box
+        // Find nearest uncollected loot box using GPS
         let uncollectedLocations = locationManager.locations.filter { !$0.collected }
         guard !uncollectedLocations.isEmpty else {
-            // No uncollected loot boxes - don't show anything
             DispatchQueue.main.async { [weak self] in
                 self?.distanceToNearestBinding?.wrappedValue = nil
                 self?.temperatureStatusBinding?.wrappedValue = nil
@@ -236,7 +455,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         
         guard let nearest = distances.min(by: { $0.distance < $1.distance }) else {
-            // Couldn't find nearest - don't show anything
             DispatchQueue.main.async { [weak self] in
                 self?.distanceToNearestBinding?.wrappedValue = nil
                 self?.temperatureStatusBinding?.wrappedValue = nil
@@ -244,23 +462,56 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
         
-        let currentDistance = nearest.distance
-        
-        // Log distance
-        print("📏 Distance to nearest loot box (\(nearest.location.name)): \(String(format: "%.2f", currentDistance))m")
+        updateTemperatureStatus(currentDistance: nearest.distance, location: nearest.location)
+    }
+    
+    // Helper function to convert meters to feet and inches
+    private func metersToFeetAndInches(_ meters: Double) -> (feet: Int, inches: Int) {
+        let totalInches = meters * 39.3701 // 1 meter = 39.3701 inches
+        let feet = Int(totalInches / 12)
+        let inches = Int(totalInches.truncatingRemainder(dividingBy: 12))
+        return (feet: feet, inches: inches)
+    }
+    
+    // Helper function to format distance as feet and inches string
+    private func formatDistance(_ meters: Double) -> String {
+        let (feet, inches) = metersToFeetAndInches(meters)
+        if feet == 0 {
+            return "\(inches)\""
+        } else if inches == 0 {
+            return "\(feet)'"
+        } else {
+            return "\(feet)'\(inches)\""
+        }
+    }
+    
+    // Update temperature status based on distance change
+    private func updateTemperatureStatus(currentDistance: Double, location: LootBoxLocation) {
+        // Log distance in both meters and feet/inches for debugging
+        let (feet, inches) = metersToFeetAndInches(currentDistance)
+        Swift.print("📏 Distance to nearest loot box (\(location.name)): \(String(format: "%.2f", currentDistance))m (\(feet)'\(inches)\")")
         
         // Update temperature status with distance included (only show distance when we have a comparison)
         var status: String?
         if let previous = previousDistance {
             // We have a previous distance to compare - show warmer/colder with distance
-            if currentDistance < previous {
-                status = "🔥 Warmer (\(String(format: "%.1f", currentDistance))m)"
-                print("   🔥 Getting warmer! (was \(String(format: "%.2f", previous))m)")
-            } else if currentDistance > previous {
-                status = "❄️ Colder (\(String(format: "%.1f", currentDistance))m)"
-                print("   ❄️ Getting colder... (was \(String(format: "%.2f", previous))m)")
+            // Use a threshold to avoid flickering (only show change if difference is significant)
+            // 1.5 feet threshold (approximately 0.46m)
+            let threshold: Double = 0.46 // ~1.5 feet
+            if currentDistance < previous - threshold {
+                let distanceStr = formatDistance(currentDistance)
+                status = "🔥 Warmer (\(distanceStr))"
+                let (prevFeet, prevInches) = metersToFeetAndInches(previous)
+                Swift.print("   🔥 Getting warmer! (was \(prevFeet)'\(prevInches)\")")
+            } else if currentDistance > previous + threshold {
+                let distanceStr = formatDistance(currentDistance)
+                status = "❄️ Colder (\(distanceStr))"
+                let (prevFeet, prevInches) = metersToFeetAndInches(previous)
+                Swift.print("   ❄️ Getting colder... (was \(prevFeet)'\(prevInches)\")")
             } else {
-                status = "➡️ Same distance (\(String(format: "%.1f", currentDistance))m)"
+                // Within threshold - keep previous status or show same distance
+                let distanceStr = formatDistance(currentDistance)
+                status = "➡️ \(distanceStr)"
             }
             previousDistance = currentDistance
         } else {
@@ -269,32 +520,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             status = nil // Don't show anything until we have a comparison
         }
         
-        // Check for proximity (within 1m) - play sound and open box
-        if currentDistance <= 1.0 && !proximitySoundPlayed.contains(nearest.location.id) {
+        // Check for proximity (within 3 feet = ~0.91m) - play sound only (no auto-collection)
+        // User must tap to collect boxes
+        if currentDistance <= 0.91 && !proximitySoundPlayed.contains(location.id) {
             playProximitySound()
-            proximitySoundPlayed.insert(nearest.location.id)
-            
-            // Automatically open the loot box
-            if let arView = arView,
-               let anchor = placedBoxes[nearest.location.id],
-               var info = anchor.components[LootBoxInfoComponent.self],
-               let container = info.container,
-               !info.isOpening {
-                info.isOpening = true
-                anchor.components[LootBoxInfoComponent.self] = info
-                
-                LootBoxAnimation.openLootBox(container: container, location: nearest.location) { [weak self] in
-                    // Animation complete - mark as collected and remove
-                    if let locationManager = self?.locationManager {
-                        locationManager.markCollected(nearest.location.id)
-                    }
-                    
-                    anchor.removeFromParent()
-                    self?.placedBoxes.removeValue(forKey: nearest.location.id)
-                    
-                    print("🎉 Collected: \(nearest.location.name)")
-                }
-            }
+            proximitySoundPlayed.insert(location.id)
+            // NOTE: Auto-collection disabled - user must tap to collect
         }
         
         // Update bindings
@@ -316,7 +547,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
     
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
-        guard let arView = arView, let locationManager = locationManager else { return }
+        guard let arView = arView else { return }
         
         for location in nearbyLocations {
             // Place box if it's nearby (within maxSearchDistance), hasn't been placed, and isn't collected
@@ -327,13 +558,132 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
     
+    // Regenerate loot boxes at random locations in the AR room
+    func randomizeLootBoxes() {
+        guard let arView = arView,
+              let frame = arView.session.currentFrame,
+              let locationManager = locationManager else {
+            Swift.print("⚠️ Cannot randomize: AR not ready")
+            return
+        }
+        
+        // Remove all existing placed boxes
+        for (_, anchor) in placedBoxes {
+            anchor.removeFromParent()
+        }
+        placedBoxes.removeAll()
+        
+        // Get available loot box types
+        let lootBoxTypes: [LootBoxType] = [.goldenIdol, .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet]
+        let lootBoxNames = ["Golden Idol", "Ancient Artifact", "Temple Relic", "Puzzle Box", "Stone Tablet"]
+        
+        // Generate 3-5 new loot boxes at random positions
+        let numberOfBoxes = Int.random(in: 3...5)
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        
+        // Get search distance for placement range
+        let searchDistance = Float(locationManager.maxSearchDistance)
+        let minDistance: Float = 5.0 // Minimum 5 meters from camera
+        let maxDistance: Float = min(searchDistance * 0.8, 50.0)
+        
+        Swift.print("🎲 Randomizing \(numberOfBoxes) loot boxes in AR room...")
+        
+        var placedCount = 0
+        var attempts = 0
+        let maxAttempts = numberOfBoxes * 10 // Allow more attempts for placement
+        
+        while placedCount < numberOfBoxes && attempts < maxAttempts {
+            attempts += 1
+            
+            // Generate random position around camera
+            let randomDistance = Float.random(in: minDistance...maxDistance)
+            let randomAngle = Float.random(in: 0...(2 * Float.pi))
+            
+            let randomX = cameraPos.x + randomDistance * cos(randomAngle)
+            let randomZ = cameraPos.z + randomDistance * sin(randomAngle)
+            
+            // Raycast to find floor
+            let raycastOrigin = SIMD3<Float>(randomX, cameraPos.y + 1.0, randomZ)
+            let raycastQuery = ARRaycastQuery(
+                origin: raycastOrigin,
+                direction: SIMD3<Float>(0, -1, 0),
+                allowing: .estimatedPlane,
+                alignment: .horizontal
+            )
+            
+            let raycastResults = arView.session.raycast(raycastQuery)
+            
+            guard let result = raycastResults.first else {
+                continue
+            }
+            
+            let hitY = result.worldTransform.columns.3.y
+            let cameraY = cameraPos.y
+            
+            // Reject ceiling hits or floors too far away
+            if hitY > cameraY - 0.2 || abs(hitY - cameraY) > 2.0 {
+                continue
+            }
+            
+            let boxPosition = SIMD3<Float>(randomX, hitY, randomZ)
+            let distanceFromCamera = length(boxPosition - cameraPos)
+
+            // CRITICAL: Enforce MINIMUM 1m distance from camera to prevent large objects spawning on/near camera
+            if distanceFromCamera < 1.0 {
+                // Too close to camera - skip this position
+                continue
+            }
+
+            if distanceFromCamera < minDistance || distanceFromCamera > maxDistance {
+                continue
+            }
+            
+            // Check if too close to other boxes
+            var tooClose = false
+            for (_, existingAnchor) in placedBoxes {
+                let existingTransform = existingAnchor.transformMatrix(relativeTo: nil)
+                let existingPos = SIMD3<Float>(
+                    existingTransform.columns.3.x,
+                    existingTransform.columns.3.y,
+                    existingTransform.columns.3.z
+                )
+                if length(boxPosition - existingPos) < 1.5 {
+                    tooClose = true
+                    break
+                }
+            }
+            
+            if tooClose {
+                continue
+            }
+            
+            // Create a new temporary location for this box
+            let randomIndex = Int.random(in: 0..<lootBoxTypes.count)
+            let newLocation = LootBoxLocation(
+                id: UUID().uuidString,
+                name: lootBoxNames[randomIndex],
+                type: lootBoxTypes[randomIndex],
+                latitude: 0, // Not GPS-based
+                longitude: 0, // Not GPS-based
+                radius: 100.0 // Large radius since we're not using GPS
+            )
+            
+            // Place the box
+            placeBoxAtPosition(boxPosition, location: newLocation, in: arView)
+            placedCount += 1
+        }
+        
+        Swift.print("✅ Randomized and placed \(placedCount) loot boxes")
+    }
+    
     // MARK: - ARSessionDelegate
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         // Set AR origin on first frame if not set
         if arOriginLocation == nil,
            let userLocation = userLocationManager?.currentLocation {
             arOriginLocation = userLocation
-            print("📍 AR Origin set at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+            Swift.print("📍 AR Origin set at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
         }
         
         // Check for nearby locations when AR is tracking
@@ -345,24 +695,40 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
     
-    // Handle AR anchor updates to create occlusion planes for walls
-    // DISABLED: Occlusion planes were creating enormous objects (likely from ceiling detection)
-    // If re-enabling, add filtering to exclude ceiling-sized planes
+    // Handle AR anchor updates - remove any unwanted plane anchors (especially ceilings)
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
-        // Occlusion planes disabled - was causing issues with ceiling detection
-        // guard let arView = arView else { return }
-        //
-        // for anchor in anchors {
-        //     // Only process vertical plane anchors (walls)
-        //     if let planeAnchor = anchor as? ARPlaneAnchor,
-        //        planeAnchor.alignment == .vertical {
-        //         createOcclusionPlane(for: planeAnchor, in: arView)
-        //     }
-        // }
+        guard let arView = arView, let frame = arView.session.currentFrame else { return }
+        
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        
+        for anchor in anchors {
+            // Remove all horizontal plane anchors (floors/ceilings) - we don't need them
+            // ARKit's plane detection is causing issues with ceiling detection
+            if let planeAnchor = anchor as? ARPlaneAnchor {
+                if planeAnchor.alignment == .horizontal {
+                    // Check if this plane is above the camera (likely a ceiling)
+                    let planeY = planeAnchor.transform.columns.3.y
+                    let planeHeight = planeAnchor.planeExtent.height
+                    let planeWidth = planeAnchor.planeExtent.width
+                    
+                    // Remove if it's above camera or if it's suspiciously large (likely a ceiling)
+                    if planeY > cameraPos.y || (planeHeight > 5.0 || planeWidth > 5.0) {
+                        Swift.print("🗑️ Removing horizontal plane anchor (likely ceiling): Y=\(String(format: "%.2f", planeY)), size=\(String(format: "%.2f", planeWidth))x\(String(format: "%.2f", planeHeight))")
+                        // Remove the anchor by not adding it to the scene
+                        // ARKit will handle cleanup
+                    }
+                }
+                // Disabled: Don't create occlusion planes for vertical planes (was causing dark boxes everywhere)
+                // if planeAnchor.alignment == .vertical {
+                //     createOcclusionPlane(for: planeAnchor, in: arView)
+                // }
+            }
+        }
     }
     
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
-        // Occlusion planes disabled
+        // Disabled: No longer updating occlusion planes (was causing dark boxes)
         // guard let arView = arView else { return }
         //
         // for anchor in anchors {
@@ -409,7 +775,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         occlusionPlanes[planeAnchor.identifier] = anchorEntity
         
-        print("🧱 Created occlusion plane for wall at: \(planeAnchor.center)")
+        Swift.print("🧱 Created occlusion plane for wall at: \(planeAnchor.center)")
     }
     
     // Update occlusion plane when ARKit refines the plane geometry
@@ -425,25 +791,25 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
     
     func session(_ session: ARSession, didFailWithError error: Error) {
-        print("❌ AR Session failed: \(error.localizedDescription)")
+        Swift.print("❌ AR Session failed: \(error.localizedDescription)")
         // Try to restart the session
         if let arView = arView {
             let config = ARWorldTrackingConfiguration()
-            config.planeDetection = [.horizontal, .vertical]
+            config.planeDetection = [.horizontal, .vertical] // Horizontal for ground, vertical for wall detection (occlusion)
             config.environmentTexturing = .automatic
             arView.session.run(config, options: [.resetTracking])
         }
     }
     
     func sessionWasInterrupted(_ session: ARSession) {
-        print("⚠️ AR Session was interrupted")
+        Swift.print("⚠️ AR Session was interrupted")
     }
     
     func sessionInterruptionEnded(_ session: ARSession) {
-        print("✅ AR Session interruption ended, restarting...")
+        Swift.print("✅ AR Session interruption ended, restarting...")
         if let arView = arView {
             let config = ARWorldTrackingConfiguration()
-            config.planeDetection = [.horizontal, .vertical]
+            config.planeDetection = [.horizontal, .vertical] // Horizontal for ground, vertical for wall detection (occlusion)
             config.environmentTexturing = .automatic
             arView.session.run(config, options: [.resetTracking])
         }
@@ -451,52 +817,36 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     // MARK: - Loot Box Placement
     private func placeLootBoxAtLocation(_ location: LootBoxLocation, in arView: ARView) {
-        guard let frame = arView.session.currentFrame,
-              let userLocation = userLocationManager?.currentLocation,
-              let originLocation = arOriginLocation ?? userLocationManager?.currentLocation else {
-            // Fallback: place in front of camera if we don't have GPS
-            placeLootBoxInFrontOfCamera(location: location, in: arView)
+        guard let frame = arView.session.currentFrame else {
+            Swift.print("⚠️ No AR frame available for \(location.name)")
             return
         }
         
-        // Calculate offset from AR origin GPS to loot box GPS location
-        let lootBoxGPSLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
-        let offset = calculateGPSOffset(from: originLocation, to: lootBoxGPSLocation)
-        
-        // ARKit's coordinate system:
-        // - Origin (0,0,0) is where tracking started
-        // - X axis: typically right/east
-        // - Y axis: up
-        // - Z axis: forward (but direction depends on initial orientation)
-        
-        // Place box at GPS offset relative to AR origin (0,0,0)
-        // Convert GPS offset (north/east in meters) to AR world coordinates
-        // Note: We'll use X for east, Z for north (negative Z typically = forward/north in ARKit)
-        let targetXZ = SIMD3<Float>(
-            Float(offset.east),   // East = X axis
-            0.0,                  // Will be set by raycast
-            -Float(offset.north)  // North = -Z axis (negative because +Z is typically forward/south)
-        )
-        
-        // Check distance from AR origin (0,0,0) - must be at least 5m
-        let distanceFromOrigin = length(SIMD3<Float>(targetXZ.x, 0, targetXZ.z))
-        if distanceFromOrigin < 5.0 {
-            print("⚠️ Skipping \(location.name) - too close to AR origin (\(String(format: "%.2f", distanceFromOrigin))m < 5m)")
-            return
-        }
-        
-        // Also check distance from current camera position
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-        let distanceFromCamera = length(SIMD3<Float>(targetXZ.x, 0, targetXZ.z) - SIMD3<Float>(cameraPos.x, 0, cameraPos.z))
-        if distanceFromCamera < 5.0 {
-            print("⚠️ Skipping \(location.name) - too close to camera (\(String(format: "%.2f", distanceFromCamera))m < 5m)")
-            return
-        }
         
-        // Use raycasting to find the ground plane at this X/Z position
-        // Start raycast from above the target position (at camera height or higher)
-        let raycastOrigin = SIMD3<Float>(targetXZ.x, cameraPos.y + 1.0, targetXZ.z)
+        // Place boxes within the same room by finding floor planes near the camera
+        // Try multiple random positions around the camera within the search distance
+        var attempts = 0
+        let maxAttempts = 10
+
+        while attempts < maxAttempts {
+            attempts += 1
+
+            // Generate random position around camera using settings from maxSearchDistance
+            // Use min 5m to avoid being too close to camera, max 80% of search distance to stay within room
+            let minDistance: Float = 5.0 // Minimum 5 meters from camera
+            let searchDistance = Float(locationManager?.maxSearchDistance ?? 100.0)
+            let maxDistance: Float = min(searchDistance * 0.8, 50.0) // Cap at 50m for practical AR limits
+            let randomDistance = Float.random(in: minDistance...maxDistance)
+            let randomAngle = Float.random(in: 0...(2 * Float.pi))
+            
+            // Calculate random position in XZ plane around camera
+            let randomX = cameraPos.x + randomDistance * cos(randomAngle)
+            let randomZ = cameraPos.z + randomDistance * sin(randomAngle)
+            
+            // Raycast downward from above this position to find the floor
+            let raycastOrigin = SIMD3<Float>(randomX, cameraPos.y + 1.0, randomZ)
         let raycastQuery = ARRaycastQuery(
             origin: raycastOrigin,
             direction: SIMD3<Float>(0, -1, 0), // Point downward
@@ -505,66 +855,349 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         )
         
         let raycastResults = arView.session.raycast(raycastQuery)
-        var groundY: Float = 0.0
-        
-        if let result = raycastResults.first {
-            // Use the hit point on the ground plane
-            groundY = result.worldTransform.columns.3.y
-        } else {
-            // No plane detected, estimate ground level (assume AR origin is at ground)
-            groundY = 0.0
-            print("⚠️ No ground plane detected at \(location.name), using estimated ground level")
+            
+            guard let result = raycastResults.first else {
+                // No floor plane detected at this position, try another
+                continue
+            }
+            
+            let hitY = result.worldTransform.columns.3.y
+            let cameraY = cameraPos.y
+            
+            // Reject if hit is above camera (likely ceiling) or too far below (likely wrong floor)
+            if hitY > cameraY - 0.2 {
+                // Likely a ceiling hit
+                continue
+            }
+            
+            // Check if floor is at a reasonable level (within 2 meters of camera height)
+            if abs(hitY - cameraY) > 2.0 {
+                // Floor too far from camera level, likely different floor
+                continue
+            }
+            
+            var boxPosition = SIMD3<Float>(randomX, hitY, randomZ)
+
+            // CRITICAL: Enforce MINIMUM 1m distance from camera to prevent large objects spawning on/near camera
+            let distanceFromCamera = length(boxPosition - cameraPos)
+            if distanceFromCamera < 1.0 {
+                // Too close to camera - skip this position
+                continue
+            }
+
+            // BASIC FINDABLE BEHAVIOR: Ensure minimum distance from camera (5m)
+            // Use FindableObject's static method to enforce minimum distance
+            if let adjustedPosition = FindableObject.ensureMinimumDistance(from: boxPosition, to: cameraPos, minDistance: minDistance) {
+                boxPosition = adjustedPosition
+            } else {
+                // Position is too close, skip this attempt
+                continue
+            }
+
+            // Check distance from camera (use the same limits as placement)
+            let finalDistanceFromCamera = length(boxPosition - cameraPos)
+            if finalDistanceFromCamera > maxDistance {
+                continue
+            }
+            
+            // Check if position is too close to other boxes
+            var tooCloseToOtherBox = false
+            for (_, existingAnchor) in placedBoxes {
+                let existingTransform = existingAnchor.transformMatrix(relativeTo: nil)
+                let existingPos = SIMD3<Float>(
+                    existingTransform.columns.3.x,
+                    existingTransform.columns.3.y,
+                    existingTransform.columns.3.z
+                )
+                let distanceToExisting = length(boxPosition - existingPos)
+                if distanceToExisting < 1.5 {
+                    tooCloseToOtherBox = true
+                    break
+                }
+            }
+            
+            if tooCloseToOtherBox {
+                continue
+            }
+            
+            // Found a good position! Place the box here
+            placeBoxAtPosition(boxPosition, location: location, in: arView)
+            return
         }
         
-        // Final position on ground plane
-        let boxPosition = SIMD3<Float>(targetXZ.x, groundY, targetXZ.z)
-        
+        // If we couldn't find a good position after max attempts, try fallback
+        Swift.print("⚠️ Could not find suitable floor plane for \(location.name) after \(maxAttempts) attempts, using fallback")
+        placeLootBoxInFrontOfCamera(location: location, in: arView)
+    }
+    
+    // Helper method to place a box at a specific position
+    private func placeBoxAtPosition(_ boxPosition: SIMD3<Float>, location: LootBoxLocation, in arView: ARView) {
+        // CRITICAL: Final safety check - ensure minimum 1m distance from camera
+        guard let frame = arView.session.currentFrame else {
+            Swift.print("⚠️ Cannot place box: no AR frame available")
+            return
+        }
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        let distanceFromCamera = length(boxPosition - cameraPos)
+
+        if distanceFromCamera < 1.0 {
+            Swift.print("⚠️ Rejected placement of \(location.name) - too close to camera (\(String(format: "%.2f", distanceFromCamera))m)")
+            return
+        }
+
         var boxTransform = matrix_identity_float4x4
         boxTransform.columns.3 = SIMD4<Float>(boxPosition.x, boxPosition.y, boxPosition.z, 1.0)
         
         let anchor = AnchorEntity(world: boxTransform)
-        // Get random size between min and max from location manager (in meters)
-        // Size multiplier scales the base size to the desired final size
-        let randomSize = locationManager?.getRandomLootBoxSize() ?? 0.3
-        let baseSize = Float(location.type.size) // Base size (0.3-0.5m)
         
-        // Clamp random size to reasonable range and calculate multiplier
-        let clampedSize = max(0.1, min(Float(randomSize), 1.5)) // Clamp between 0.1m and 1.5m
-        let sizeMultiplier = clampedSize / baseSize
+        // Use random size between 0.3m to 1.0m (capped at 1 meter maximum)
+        // Ensure no object renders larger than 1 meter
+        let minSize: Float = 0.3  // Minimum size (30cm)
+        let maxSize: Float = 1.0  // Maximum size (1 meter) - cap at 1m
+        let targetSize = Float.random(in: minSize...maxSize) // Random size between 0.3-1.0m
+        let baseSize = Float(location.type.size) // Base size (0.3-0.5m)
+        let sizeMultiplier = min(targetSize / baseSize, 1.0 / baseSize) // Calculate multiplier, cap to ensure max 1m
         
         let lootBoxContainer = LootBoxEntity.createLootBox(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
-        
+
         // Position object so bottom sits on ground plane
-        // The object's origin is typically at its center, so we need to move it up by half its height
-        // Different object types have different heights
+        // Different object types have different heights and coordinate systems
         let objectHeight: Float
+        let yOffset: Float
         switch location.type {
-        case .crystalSkull:
-            objectHeight = baseSize * sizeMultiplier * 0.7 // Skull is roughly 0.7x its base size in height
         case .goldenIdol:
-            objectHeight = baseSize * sizeMultiplier * 0.6 // Chalice is roughly 0.6x its base size in height
+            objectHeight = targetSize * 0.6 // Chalice is roughly 0.6x its total size in height
+            // For chalice, match the sphere positioning to ensure it's at the right height
+            yOffset = objectHeight / 2.0 // Use same logic as other boxes for now
+            Swift.print("🎯 Positioning chalice: targetSize=\(String(format: "%.2f", targetSize)), objectHeight=\(String(format: "%.2f", objectHeight)), yOffset=\(String(format: "%.2f", yOffset))")
         default:
-            objectHeight = baseSize * sizeMultiplier * 0.6 // Boxes are roughly 0.6x their base size in height
+            objectHeight = targetSize * 0.6 // Boxes are roughly 0.6x their total size in height
+            yOffset = objectHeight / 2.0 // Center of box should be half height above ground
         }
-        lootBoxContainer.container.position.y = objectHeight / 2.0
+        // Position so bottom touches ground
+        lootBoxContainer.container.position.y = yOffset
+
+        Swift.print("📍 Loot box container positioned at Y=\(String(format: "%.2f", yOffset)) relative to anchor")
         
         // Ensure object is right-side up (not upside down)
         lootBoxContainer.container.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
         
+        // Create orange sphere indicator (same size as before - 0.15m radius)
+        let indicatorSize: Float = 0.15 // 15cm sphere - same size as loot boxes
+        let indicatorMesh = MeshResource.generateSphere(radius: indicatorSize)
+        var indicatorMaterial = SimpleMaterial()
+        indicatorMaterial.color = .init(tint: .orange)
+        indicatorMaterial.roughness = 0.2
+        indicatorMaterial.metallic = 0.3
+        
+        let orangeIndicator = ModelEntity(mesh: indicatorMesh, materials: [indicatorMaterial])
+        orangeIndicator.name = location.id // Set name for tap detection
+        // Position sphere above the loot box (at the top of the box height)
+        orangeIndicator.position = SIMD3<Float>(0, objectHeight + indicatorSize, 0)
+        
+        // Add a point light to make it more visible
+        let light = PointLightComponent(color: .orange, intensity: 200)
+        orangeIndicator.components.set(light)
+        
+        // Add both the loot box container and the orange sphere indicator
         anchor.addChild(lootBoxContainer.container)
+        anchor.addChild(orangeIndicator)
+        
+        // Create distance text overlay above the sphere
+        let distanceTextEntity = createDistanceTextEntity()
+        // Position text above the sphere (sphere is at objectHeight + indicatorSize, so text goes above that)
+        distanceTextEntity.position = SIMD3<Float>(0, objectHeight + indicatorSize + 0.3, 0)
+        anchor.addChild(distanceTextEntity)
+        distanceTextEntities[location.id] = distanceTextEntity
+        
         arView.scene.addAnchor(anchor)
         placedBoxes[location.id] = anchor
-        
+
+        // DEBUG: Log final world positions
+        let finalAnchorTransform = anchor.transformMatrix(relativeTo: nil)
+        let finalAnchorPos = SIMD3<Float>(
+            finalAnchorTransform.columns.3.x,
+            finalAnchorTransform.columns.3.y,
+            finalAnchorTransform.columns.3.z
+        )
+
+        let finalSphereTransform = orangeIndicator.transformMatrix(relativeTo: nil)
+        let finalSpherePos = SIMD3<Float>(
+            finalSphereTransform.columns.3.x,
+            finalSphereTransform.columns.3.y,
+            finalSphereTransform.columns.3.z
+        )
+
+        Swift.print("✅ Placed \(location.name) at AR position: \(finalAnchorPos)")
+        Swift.print("   Sphere at: \(finalSpherePos)")
+
         // Store container info for opening animation
         var info = LootBoxInfoComponent()
         info.container = lootBoxContainer
         anchor.components[LootBoxInfoComponent.self] = info
+
+        // Create FindableObject to encapsulate findable behavior
+        let findableObject = FindableObject(
+            locationId: location.id,
+            anchor: anchor,
+            sphereEntity: orangeIndicator,
+            container: lootBoxContainer,
+            location: location
+        )
+
+        // Set callback to increment found count
+        findableObject.onFoundCallback = { [weak self] id in
+            DispatchQueue.main.async {
+                if let locationManager = self?.locationManager {
+                    locationManager.markCollected(id)
+                }
+            }
+        }
+
+        findableObjects[location.id] = findableObject
+    }
+    
+    // MARK: - Distance Text Overlay
+    /// Creates a 3D text entity for displaying distance
+    private func createDistanceTextEntity() -> ModelEntity {
+        // Create a small plane for the text
+        let textPlaneSize: Float = 0.2 // 20cm plane
+        let textMesh = MeshResource.generatePlane(width: textPlaneSize, depth: textPlaneSize * 0.3)
         
-        let distance = originLocation.distance(from: lootBoxGPSLocation)
-        print("✅ Placed \(location.name) at GPS: \(location.latitude), \(location.longitude)")
-        print("   Distance from AR origin: \(String(format: "%.2f", distance))m")
-        print("   Offset: \(String(format: "%.2f", offset.north))m N, \(String(format: "%.2f", offset.east))m E")
-        print("   AR world position: \(boxPosition)")
+        // Create initial text texture (will be updated)
+        let textMaterial = createTextMaterial(text: "0'0\"")
+        
+        let textEntity = ModelEntity(mesh: textMesh, materials: [textMaterial])
+        textEntity.name = "distanceText"
+        
+        // Make text always face camera (billboard effect)
+        // We'll update orientation in the update function
+        
+        return textEntity
+    }
+    
+    /// Creates a material with text rendered on it
+    private func createTextMaterial(text: String) -> SimpleMaterial {
+        // Create text image
+        let fontSize: CGFloat = 48
+        let font = UIFont.boldSystemFont(ofSize: fontSize)
+        let textColor = UIColor.white
+        let backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        
+        // Calculate text size
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: textColor
+        ]
+        let attributedString = NSAttributedString(string: text, attributes: attributes)
+        let textSize = attributedString.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).size
+        
+        // Create image with padding
+        let padding: CGFloat = 20
+        let imageSize = CGSize(
+            width: textSize.width + padding * 2,
+            height: textSize.height + padding * 2
+        )
+        
+        let renderer = UIGraphicsImageRenderer(size: imageSize)
+        let image = renderer.image { context in
+            // Draw background
+            backgroundColor.setFill()
+            context.cgContext.fillEllipse(in: CGRect(origin: .zero, size: imageSize))
+            
+            // Draw text
+            let textRect = CGRect(
+                x: padding,
+                y: padding,
+                width: textSize.width,
+                height: textSize.height
+            )
+            attributedString.draw(in: textRect)
+        }
+        
+        // Create material from image
+        var material = SimpleMaterial()
+        if let cgImage = image.cgImage {
+            do {
+                let texture = try TextureResource(image: cgImage, options: .init(semantic: .color))
+                material.color = .init(texture: .init(texture))
+            } catch {
+                print("⚠️ Failed to create texture from text: \(error)")
+                material.color = .init(tint: .white)
+            }
+        }
+        material.roughness = 0.1
+        material.metallic = 0.0
+        
+        return material
+    }
+    
+    /// Updates the distance text for all loot boxes
+    private func updateDistanceTexts() {
+        guard let arView = arView, let frame = arView.session.currentFrame else { return }
+        
+        let cameraTransform = frame.camera.transform
+        let cameraPosition = SIMD3<Float>(
+            cameraTransform.columns.3.x,
+            cameraTransform.columns.3.y,
+            cameraTransform.columns.3.z
+        )
+        
+        // Update distance text for each loot box
+        for (locationId, anchor) in placedBoxes {
+            // Skip if already found
+            if foundLootBoxes.contains(locationId) {
+                continue
+            }
+            
+            guard let textEntity = distanceTextEntities[locationId] else { continue }
+            
+            // Get box position (use sphere position if available, otherwise anchor position)
+            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+            var boxPosition = SIMD3<Float>(
+                anchorTransform.columns.3.x,
+                anchorTransform.columns.3.y,
+                anchorTransform.columns.3.z
+            )
+            
+            // Try to find sphere position (more accurate)
+            for child in anchor.children {
+                if let modelEntity = child as? ModelEntity,
+                   modelEntity.components[PointLightComponent.self] != nil {
+                    let sphereTransform = modelEntity.transformMatrix(relativeTo: nil)
+                    boxPosition = SIMD3<Float>(
+                        sphereTransform.columns.3.x,
+                        sphereTransform.columns.3.y,
+                        sphereTransform.columns.3.z
+                    )
+                    break
+                }
+            }
+            
+            // Calculate distance
+            let distance = Double(length(boxPosition - cameraPosition))
+            
+            // Format as feet and inches
+            let distanceText = formatDistance(distance)
+            
+            // Update text material
+            let newMaterial = createTextMaterial(text: distanceText)
+            if var model = textEntity.model {
+                model.materials = [newMaterial]
+                textEntity.model = model
+            }
+            
+            // Make text face camera (billboard effect)
+            let directionToCamera = normalize(cameraPosition - boxPosition)
+            // Calculate rotation to face camera (simplified - just rotate around Y axis)
+            let angle = atan2(directionToCamera.x, directionToCamera.z)
+            textEntity.orientation = simd_quatf(angle: angle, axis: SIMD3<Float>(0, 1, 0))
+        }
     }
     
     // Fallback: place in front of camera
@@ -576,8 +1209,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         let forward = SIMD3<Float>(-cameraTransform.columns.2.x, -cameraTransform.columns.2.y, -cameraTransform.columns.2.z)
         
-        // Try to raycast to find ground plane at least 5m away
-        let targetPosition = cameraPos + forward * 5.0
+        // Try to raycast to find ground plane at least 6m away (further than normal placement)
+        // CRITICAL: Use at least 1m minimum distance (preferably more for fallback)
+        let fallbackMinDistance: Float = 6.0 // Prefer 6m for fallback placement
+        let targetPosition = cameraPos + forward * fallbackMinDistance
         let raycastOrigin = SIMD3<Float>(targetPosition.x, cameraPos.y, targetPosition.z)
         
         // Create raycast query to find horizontal plane
@@ -592,68 +1227,110 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         var boxPosition: SIMD3<Float>
         if let result = raycastResults.first {
-            // Use the hit point on the ground plane
             let hitPoint = SIMD3<Float>(
                 result.worldTransform.columns.3.x,
                 result.worldTransform.columns.3.y,
                 result.worldTransform.columns.3.z
             )
-            
-            // Check distance from camera
-            let distanceFromCamera = length(hitPoint - cameraPos)
-            if distanceFromCamera < 5.0 {
-                // Too close, place at exactly 5m away
-                let direction = normalize(hitPoint - cameraPos)
-                boxPosition = cameraPos + direction * 5.0
-                boxPosition.y = hitPoint.y // Use the ground plane Y
+            // Reject ceiling-like hits
+            if hitPoint.y > cameraPos.y - 0.2 {
+                boxPosition = cameraPos + forward * max(fallbackMinDistance, 1.0)
+                boxPosition.y = cameraPos.y - 1.5
+                Swift.print("⚠️ Raycast landed on ceiling-like plane. Falling back to estimated ground placement.")
             } else {
-                boxPosition = hitPoint
+                let distanceFromCamera = length(hitPoint - cameraPos)
+                // CRITICAL: Enforce minimum 1m distance (preferably 5m for fallback)
+                if distanceFromCamera < 1.0 {
+                    let direction = normalize(hitPoint - cameraPos)
+                    boxPosition = cameraPos + direction * max(fallbackMinDistance, 1.0)
+                    boxPosition.y = hitPoint.y
+                } else if distanceFromCamera < 5.0 {
+                    let direction = normalize(hitPoint - cameraPos)
+                    boxPosition = cameraPos + direction * 5.0
+                    boxPosition.y = hitPoint.y
+                } else {
+                    boxPosition = hitPoint
+                }
             }
         } else {
-            // No plane detected, place 5m in front at estimated ground level
-            boxPosition = cameraPos + forward * 5.0
-            boxPosition.y = cameraPos.y - 1.5 // Assume camera is ~1.5m above ground
+            // No plane detected, place at fallback distance in front at estimated ground level
+            // CRITICAL: Must be at least 1m away (preferably more)
+            boxPosition = cameraPos + forward * max(fallbackMinDistance, 1.0)
+            boxPosition.y = cameraPos.y - 1.5
         }
-        
-        // Double-check minimum distance
+
+        // CRITICAL: Final safety check - enforce ABSOLUTE minimum 1m distance from camera
         let finalDistance = length(boxPosition - cameraPos)
-        if finalDistance < 5.0 {
-            print("⚠️ Skipping \(location.name) - fallback placement too close to camera (\(String(format: "%.2f", finalDistance))m < 5m)")
-            return
+        if finalDistance < 1.0 {
+            // If somehow too close, move it to exactly 1m away (absolute minimum)
+            let direction = normalize(boxPosition - cameraPos)
+            boxPosition = cameraPos + direction * 1.0
+            Swift.print("⚠️ CRITICAL: Adjusted \(location.name) placement to 1m MINIMUM distance from camera")
+        } else if finalDistance < 5.0 {
+            // Prefer 5m for fallback placement
+            let direction = normalize(boxPosition - cameraPos)
+            boxPosition = cameraPos + direction * 5.0
+            Swift.print("⚠️ Adjusted \(location.name) placement to 5m minimum distance from camera")
         }
         
         var boxTransform = matrix_identity_float4x4
         boxTransform.columns.3 = SIMD4<Float>(boxPosition.x, boxPosition.y, boxPosition.z, 1.0)
         
         let anchor = AnchorEntity(world: boxTransform)
-        // Get random size between min and max from location manager (in meters)
-        // Size multiplier scales the base size to the desired final size
-        let randomSize = locationManager?.getRandomLootBoxSize() ?? 0.3
-        let baseSize = Float(location.type.size) // Base size (0.3-0.5m)
         
-        // Clamp random size to reasonable range and calculate multiplier
-        let clampedSize = max(0.1, min(Float(randomSize), 1.5)) // Clamp between 0.1m and 1.5m
-        let sizeMultiplier = clampedSize / baseSize
+        // Use random size between 0.3m to 1.0m (capped at 1 meter maximum)
+        // Ensure no object renders larger than 1 meter
+        let minSize: Float = 0.3  // Minimum size (30cm)
+        let maxSize: Float = 1.0  // Maximum size (1 meter) - cap at 1m
+        let targetSize = Float.random(in: minSize...maxSize) // Random size between 0.3-1.0m
+        let baseSize = Float(location.type.size) // Base size (0.3-0.5m)
+        let sizeMultiplier = min(targetSize / baseSize, 1.0 / baseSize) // Calculate multiplier, cap to ensure max 1m
         
         let lootBoxContainer = LootBoxEntity.createLootBox(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
         
-        // Position object so bottom sits on ground plane
+        // Position object so bottom sits on ground plane (grounded like the sphere was)
         // Different object types have different heights
         let objectHeight: Float
         switch location.type {
-        case .crystalSkull:
-            objectHeight = baseSize * sizeMultiplier * 0.7 // Skull is roughly 0.7x its base size in height
         case .goldenIdol:
-            objectHeight = baseSize * sizeMultiplier * 0.6 // Chalice is roughly 0.6x its base size in height
+            objectHeight = targetSize * 0.6 // Chalice is roughly 0.6x its total size in height
         default:
-            objectHeight = baseSize * sizeMultiplier * 0.6 // Boxes are roughly 0.6x their base size in height
+            objectHeight = targetSize * 0.6 // Boxes are roughly 0.6x their total size in height
         }
+        // Position so bottom of object sits on ground (sphere was at y = radius, so just touching ground)
         lootBoxContainer.container.position.y = objectHeight / 2.0
         
         // Ensure object is right-side up (not upside down)
         lootBoxContainer.container.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
         
+        // Create orange sphere indicator (same size as before - 0.15m radius)
+        let indicatorSize: Float = 0.15 // 15cm sphere - same size as loot boxes
+        let indicatorMesh = MeshResource.generateSphere(radius: indicatorSize)
+        var indicatorMaterial = SimpleMaterial()
+        indicatorMaterial.color = .init(tint: .orange)
+        indicatorMaterial.roughness = 0.2
+        indicatorMaterial.metallic = 0.3
+        
+        let orangeIndicator = ModelEntity(mesh: indicatorMesh, materials: [indicatorMaterial])
+        orangeIndicator.name = location.id // Set name for tap detection
+        // Position sphere above the loot box (at the top of the box height)
+        orangeIndicator.position = SIMD3<Float>(0, objectHeight + indicatorSize, 0)
+        
+        // Add a point light to make it more visible
+        let light = PointLightComponent(color: .orange, intensity: 200)
+        orangeIndicator.components.set(light)
+        
+        // Add both the loot box container and the orange sphere indicator
         anchor.addChild(lootBoxContainer.container)
+        anchor.addChild(orangeIndicator)
+        
+        // Create distance text overlay above the sphere
+        let distanceTextEntity = createDistanceTextEntity()
+        // Position text above the sphere (sphere is at objectHeight + indicatorSize, so text goes above that)
+        distanceTextEntity.position = SIMD3<Float>(0, objectHeight + indicatorSize + 0.3, 0)
+        anchor.addChild(distanceTextEntity)
+        distanceTextEntities[location.id] = distanceTextEntity
+        
         arView.scene.addAnchor(anchor)
         placedBoxes[location.id] = anchor
         
@@ -662,17 +1339,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         info.container = lootBoxContainer
         anchor.components[LootBoxInfoComponent.self] = info
         
-        print("✅ Placed \(location.name) in front of camera at: \(boxPosition)")
-        print("   Distance from camera: \(String(format: "%.2f", finalDistance))m")
+        Swift.print("✅ Placed \(location.name) in front of camera at: \(boxPosition)")
+        Swift.print("   Distance from camera: \(String(format: "%.2f", finalDistance))m")
     }
     
     // Update all existing loot boxes with new size settings
     func updateLootBoxSizes() {
         guard let arView = arView,
               let locationManager = locationManager,
-              let originLocation = arOriginLocation else { return }
+              let _ = arOriginLocation else { return }
         
-        print("🔄 Updating all loot box sizes...")
+        Swift.print("🔄 Updating all loot box sizes...")
         
         for (locationId, anchor) in placedBoxes {
             // Find the location
@@ -711,25 +1388,23 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             
             let currentPosition = SIMD3<Float>(currentXZ.x, groundY, currentXZ.z)
             
-            // Create new box with updated size
-            let randomSize = locationManager.getRandomLootBoxSize()
+            // Create new box with random size between 0.3m to 1.0m (capped at 1 meter maximum)
+            // Ensure no object renders larger than 1 meter
+            let minSize: Float = 0.3  // Minimum size (30cm)
+            let maxSize: Float = 1.0  // Maximum size (1 meter) - cap at 1m
+            let targetSize = Float.random(in: minSize...maxSize) // Random size between 0.3-1.0m
             let baseSize = Float(location.type.size)
-            
-            // Clamp random size to reasonable range and calculate multiplier
-            let clampedSize = max(0.1, min(Float(randomSize), 1.5))
-            let sizeMultiplier = clampedSize / baseSize
+            let sizeMultiplier = min(targetSize / baseSize, 1.0 / baseSize) // Calculate multiplier, cap to ensure max 1m
             
             let lootBoxContainer = LootBoxEntity.createLootBox(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
             
             // Position object so bottom sits on ground plane
             let objectHeight: Float
             switch location.type {
-            case .crystalSkull:
-                objectHeight = baseSize * sizeMultiplier * 0.7
             case .goldenIdol:
-                objectHeight = baseSize * sizeMultiplier * 0.6
+                objectHeight = targetSize * 0.6
             default:
-                objectHeight = baseSize * sizeMultiplier * 0.6
+                objectHeight = targetSize * 0.6
             }
             lootBoxContainer.container.position.y = objectHeight / 2.0
             
@@ -741,7 +1416,33 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             boxTransform.columns.3 = SIMD4<Float>(currentPosition.x, currentPosition.y, currentPosition.z, 1.0)
             let newAnchor = AnchorEntity(world: boxTransform)
             
+            // Create orange sphere indicator (same size as before - 0.15m radius)
+            let indicatorSize: Float = 0.15 // 15cm sphere - same size as loot boxes
+            let indicatorMesh = MeshResource.generateSphere(radius: indicatorSize)
+            var indicatorMaterial = SimpleMaterial()
+            indicatorMaterial.color = .init(tint: .orange)
+            indicatorMaterial.roughness = 0.2
+            indicatorMaterial.metallic = 0.3
+            
+            let orangeIndicator = ModelEntity(mesh: indicatorMesh, materials: [indicatorMaterial])
+            orangeIndicator.name = location.id
+            // Position sphere above the loot box (at the top of the box height)
+            orangeIndicator.position = SIMD3<Float>(0, objectHeight + indicatorSize, 0)
+            
+            let light = PointLightComponent(color: .orange, intensity: 200)
+            orangeIndicator.components.set(light)
+            
+            // Add both the loot box container and the orange sphere indicator
             newAnchor.addChild(lootBoxContainer.container)
+            newAnchor.addChild(orangeIndicator)
+            
+            // Create or update distance text overlay above the sphere
+            let distanceTextEntity = createDistanceTextEntity()
+            // Position text above the sphere (sphere is at objectHeight + indicatorSize, so text goes above that)
+            distanceTextEntity.position = SIMD3<Float>(0, objectHeight + indicatorSize + 0.3, 0)
+            newAnchor.addChild(distanceTextEntity)
+            distanceTextEntities[locationId] = distanceTextEntity
+            
             arView.scene.addAnchor(newAnchor)
             placedBoxes[locationId] = newAnchor
             
@@ -749,9 +1450,29 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             var info = LootBoxInfoComponent()
             info.container = lootBoxContainer
             newAnchor.components[LootBoxInfoComponent.self] = info
+            
+            // Create or update FindableObject
+            let findableObject = FindableObject(
+                locationId: locationId,
+                anchor: newAnchor,
+                sphereEntity: orangeIndicator,
+                container: lootBoxContainer,
+                location: location
+            )
+            
+            // Set callback to increment found count
+            findableObject.onFoundCallback = { [weak self] id in
+                DispatchQueue.main.async {
+                    if let locationManager = self?.locationManager {
+                        locationManager.markCollected(id)
+                    }
+                }
+            }
+            
+            findableObjects[locationId] = findableObject
         }
         
-        print("✅ Updated \(placedBoxes.count) loot box sizes")
+        Swift.print("✅ Updated \(placedBoxes.count) loot box sizes")
     }
     
     // Calculate GPS offset in meters (north/south, east/west)
@@ -767,47 +1488,311 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         return (north: northOffset, east: eastOffset)
     }
     
+    // MARK: - Find Loot Box Helper
+    /// Finds any findable object using the FindableObject base class behavior
+    private func findLootBox(locationId: String, anchor: AnchorEntity, cameraPosition: SIMD3<Float>, sphereEntity: ModelEntity?) {
+        guard !foundLootBoxes.contains(locationId) else {
+            return // Already found
+        }
+        
+        // Mark as found to prevent duplicate finds
+        foundLootBoxes.insert(locationId)
+        
+        // Remove distance text when found
+        if let textEntity = distanceTextEntities[locationId] {
+            textEntity.removeFromParent()
+            distanceTextEntities.removeValue(forKey: locationId)
+        }
+        
+        // Get or create FindableObject for this location
+        var findableObject: FindableObject
+        if let existing = findableObjects[locationId] {
+            findableObject = existing
+        } else {
+            // Create new FindableObject
+            let location = locationManager?.locations.first(where: { $0.id == locationId })
+            var container: LootBoxContainer? = nil
+            if let info = anchor.components[LootBoxInfoComponent.self] {
+                container = info.container
+            }
+            
+            findableObject = FindableObject(
+                locationId: locationId,
+                anchor: anchor,
+                sphereEntity: sphereEntity,
+                container: container,
+                location: location
+            )
+            
+            // Set callback to increment found count
+            findableObject.onFoundCallback = { [weak self] id in
+                DispatchQueue.main.async {
+                    if let locationManager = self?.locationManager {
+                        locationManager.markCollected(id)
+                    }
+                }
+            }
+            
+            findableObjects[locationId] = findableObject
+        }
+        
+        // Show discovery notification
+        let objectName = findableObject.location?.name ?? "Treasure"
+        DispatchQueue.main.async { [weak self] in
+            self?.collectionNotificationBinding?.wrappedValue = "🎉 Discovered: \(objectName)!"
+        }
+        
+        // Hide notification after 3 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+            self?.collectionNotificationBinding?.wrappedValue = nil
+        }
+        
+        // Use FindableObject's find() method - this encapsulates all the basic findable behavior
+        findableObject.find { [weak self] in
+            // Cleanup after find completes
+            self?.placedBoxes.removeValue(forKey: locationId)
+            self?.findableObjects.removeValue(forKey: locationId)
+            Swift.print("🎉 Collected: \(objectName)")
+        }
+    }
+    
     // MARK: - Tap Handling
     @objc func handleTap(_ sender: UITapGestureRecognizer) {
         guard let arView = arView,
-              let userLocation = userLocationManager?.currentLocation,
-              let locationManager = locationManager else { return }
+              let locationManager = locationManager,
+              let frame = arView.session.currentFrame else {
+            Swift.print("⚠️ Tap handler: Missing AR view, location manager, or frame")
+            return
+        }
         
         let tapLocation = sender.location(in: arView)
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        
+        Swift.print("👆 Tap detected at screen: (\(tapLocation.x), \(tapLocation.y))")
+        Swift.print("   Placed boxes count: \(placedBoxes.count)")
+        
+        // Get tap world position using raycast
+        var tapWorldPosition: SIMD3<Float>? = nil
+        if let raycastResult = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .horizontal).first {
+            tapWorldPosition = SIMD3<Float>(
+                raycastResult.worldTransform.columns.3.x,
+                raycastResult.worldTransform.columns.3.y,
+                raycastResult.worldTransform.columns.3.z
+            )
+        }
         
         // Check if tapped on existing loot box
-        if let entity = arView.entity(at: tapLocation) {
-            let idString = entity.name
+        // First try direct entity hit
+        let tappedEntity: Entity? = arView.entity(at: tapLocation)
+        var locationId: String? = nil
+        
+        // Walk up the entity hierarchy to find the location ID
+        var entityToCheck = tappedEntity
+        while let currentEntity = entityToCheck {
+            let entityName = currentEntity.name
+            // Entity.name is a String, not String?, so check if it's not empty
+            if !entityName.isEmpty {
+                let idString = entityName
+                // Check if this ID matches a placed box
+                if placedBoxes[idString] != nil {
+                    locationId = idString
+                    break
+                }
+            }
+            entityToCheck = currentEntity.parent
+        }
+        
+        // If entity hit didn't work, try proximity-based detection
+        // Check all placed boxes to see if tap is near any of them
+        if locationId == nil && !placedBoxes.isEmpty {
+            var closestBoxId: String? = nil
+            var closestDistance: Float = Float.infinity
+            let maxWorldDistance: Float = 1.5 // Maximum world distance in meters to consider a tap "on" the box
+            let maxScreenDistance: Float = 200.0 // Maximum screen distance in points (fallback)
             
-            // Try to find in location manager
-            if let location = locationManager.locations.first(where: { $0.id == idString }) {
-                // Check if user is within collection radius
-                let distance = userLocation.distance(from: location.location)
+            // Use ARView's built-in method to project world positions to screen
+            // We'll check both world-space distance (if we have tap world position) 
+            // and use a simple screen-space check as fallback
+            for (boxId, anchor) in placedBoxes {
+                let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+                let anchorWorldPos = SIMD3<Float>(
+                    anchorTransform.columns.3.x,
+                    anchorTransform.columns.3.y,
+                    anchorTransform.columns.3.z
+                )
                 
-                if distance <= location.radius {
-                    // User is close enough - open the loot box with animation
-                    if let anchor = placedBoxes[idString],
-                       var info = anchor.components[LootBoxInfoComponent.self],
-                       let container = info.container,
-                       !info.isOpening {
-                        info.isOpening = true
-                        anchor.components[LootBoxInfoComponent.self] = info
-                        
-                        LootBoxAnimation.openLootBox(container: container, location: location) { [weak self] in
-                            // Animation complete - mark as collected and remove
-                            if let locationManager = self?.locationManager {
-                                locationManager.markCollected(location.id)
-                            }
-                            
-                            anchor.removeFromParent()
-                            self?.placedBoxes.removeValue(forKey: location.id)
-                            
-                            print("🎉 Collected: \(location.name)")
+                // Check world-space distance if we have a tap world position
+                var worldDistance: Float = Float.infinity
+                if let tapPos = tapWorldPosition {
+                    worldDistance = length(anchorWorldPos - tapPos)
+                }
+                
+                // Also check distance from camera to box (if tap is in that direction)
+                let distanceFromCamera = length(anchorWorldPos - cameraPos)
+                
+                // Simple screen-space approximation: if box is close to camera and tap is near center, consider it
+                // This is a fallback when we don't have a tap world position
+                var screenDistance: Float = Float.infinity
+                if tapWorldPosition == nil && distanceFromCamera < 5.0 {
+                    // Rough approximation: assume tap near center of screen might hit nearby boxes
+                    let centerX = Float(arView.bounds.width / 2)
+                    let centerY = Float(arView.bounds.height / 2)
+                    let tapX = Float(tapLocation.x)
+                    let tapY = Float(tapLocation.y)
+                    let distanceFromCenter = sqrt(pow(tapX - centerX, 2) + pow(tapY - centerY, 2))
+                    
+                    // If tap is near center and box is close, use this as a heuristic
+                    if distanceFromCenter < 100.0 {
+                        screenDistance = distanceFromCenter
+                    }
+                }
+                
+                // Consider it a hit if:
+                // 1. World distance is small (tap hit near the box in 3D space), OR
+                // 2. Screen distance is small and box is close to camera (fallback heuristic)
+                if worldDistance < maxWorldDistance || (screenDistance < maxScreenDistance && distanceFromCamera < 3.0) {
+                    let effectiveDistance = min(worldDistance, screenDistance)
+                    if effectiveDistance < closestDistance {
+                        closestDistance = effectiveDistance
+                        closestBoxId = boxId
+                    }
+                }
+            }
+            
+            if let closestId = closestBoxId {
+                locationId = closestId
+                Swift.print("🎯 Detected tap on box via proximity: \(closestId), distance: \(String(format: "%.2f", closestDistance))m")
+            } else {
+                Swift.print("⚠️ Tap did not hit any box. Tap world pos: \(tapWorldPosition != nil ? "yes" : "no"), boxes checked: \(placedBoxes.count)")
+            }
+        }
+        
+        // UNIFIED FINDABLE BEHAVIOR: All objects in placedBoxes are findable and clickable
+        // If we found a location ID (tapped on any findable object), trigger find behavior
+        if let idString = locationId {
+            // Try to find in location manager first
+            if let location = locationManager.locations.first(where: { $0.id == idString }) {
+                // Check if already collected
+                if location.collected {
+                    Swift.print("⚠️ \(location.name) has already been collected")
+                    return
+                }
+                
+                // User tapped on the box - find it regardless of distance
+                if let anchor = placedBoxes[idString] {
+                    // Get camera position
+                    let cameraTransform = frame.camera.transform
+                    let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+                    
+                    // Find the orange orb/sphere
+                    var orangeOrb: ModelEntity? = nil
+                    for child in anchor.children {
+                        if let modelEntity = child as? ModelEntity,
+                           modelEntity.components[PointLightComponent.self] != nil {
+                            // This is the sphere/orb
+                                    orangeOrb = modelEntity
+                                    break
                         }
                     }
-                } else {
-                    // User is too far away
-                    print("⚠️ Too far away to collect \(location.name). Need to be within \(location.radius)m (currently \(String(format: "%.1f", distance))m away)")
+                    
+                    Swift.print("🎯 Treasure box tapped - triggering find!")
+                    
+                    // Find the loot box (plays sound, confetti, animation, increments count)
+                    findLootBox(locationId: idString, anchor: anchor, cameraPosition: cameraPos, sphereEntity: orangeOrb)
+                }
+                return
+            } else {
+                // Box not in location manager (might be from randomization) - still trigger find behavior
+                if let anchor = placedBoxes[idString] {
+                    // Find the orange orb/sphere
+                    var orangeOrb: ModelEntity? = nil
+                    for child in anchor.children {
+                        if let modelEntity = child as? ModelEntity,
+                           modelEntity.components[PointLightComponent.self] != nil {
+                            // This is the sphere/orb
+                            orangeOrb = modelEntity
+                            break
+                        }
+                    }
+                    
+                    Swift.print("🎯 Randomized treasure box tapped - triggering find!")
+                    
+                    // For randomized boxes, we need to handle them differently since they're not in locationManager
+                    // But we can still trigger the find animation and effects
+                    guard var info = anchor.components[LootBoxInfoComponent.self],
+                          let container = info.container,
+                          !info.isOpening else {
+                        return
+                    }
+                    
+                    info.isOpening = true
+                    anchor.components[LootBoxInfoComponent.self] = info
+                    
+                    // Mark as found to prevent duplicate finds
+                    foundLootBoxes.insert(idString)
+                    
+                    // Remove distance text when found
+                    if let textEntity = distanceTextEntities[idString] {
+                        textEntity.removeFromParent()
+                        distanceTextEntities.removeValue(forKey: idString)
+                    }
+                    
+                    // Get anchor world position for confetti
+                    let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+                    let anchorWorldPos = SIMD3<Float>(
+                        anchorTransform.columns.3.x,
+                        anchorTransform.columns.3.y,
+                        anchorTransform.columns.3.z
+                    )
+                    
+                    // Create a temporary location for this box
+                    let tempLocation = LootBoxLocation(
+                        id: idString,
+                        name: "Treasure",
+                        type: .ancientArtifact, // Default type
+                        latitude: 0,
+                        longitude: 0,
+                        radius: 100.0
+                    )
+                    
+                    Swift.print("🎉 Finding randomized treasure box")
+                    
+                    // Play sound immediately
+                    LootBoxAnimation.playOpeningSound()
+                    
+                    // Create confetti effect immediately
+                    let parentEntity = anchor
+                    let confettiRelativePos = SIMD3<Float>(0, 0.15, 0) // At sphere position
+                    LootBoxAnimation.createConfettiEffect(at: confettiRelativePos, parent: parentEntity)
+                    
+                    // Show discovery notification
+                    DispatchQueue.main.async { [weak self] in
+                        self?.collectionNotificationBinding?.wrappedValue = "🎉 Discovered: \(tempLocation.name)!"
+                    }
+                    
+                    // Hide notification after 3 seconds
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
+                        self?.collectionNotificationBinding?.wrappedValue = nil
+                    }
+                    
+                    // Animate sphere "find" animation (+25% for 0.5s, ease out, then pop by shrinking 100%)
+                    if let orb = orangeOrb {
+                        LootBoxAnimation.animateSphereFind(orb: orb) {
+                            // Open the loot box with confetti
+                            LootBoxAnimation.openLootBox(container: container, location: tempLocation, tapWorldPosition: anchorWorldPos) { [weak self] in
+                                anchor.removeFromParent()
+                                self?.placedBoxes.removeValue(forKey: idString)
+                                Swift.print("🎉 Collected: \(tempLocation.name)")
+                            }
+                        }
+                    } else {
+                        LootBoxAnimation.openLootBox(container: container, location: tempLocation, tapWorldPosition: anchorWorldPos) { [weak self] in
+                            anchor.removeFromParent()
+                            self?.placedBoxes.removeValue(forKey: idString)
+                            Swift.print("🎉 Collected: \(tempLocation.name)")
+                        }
+                    }
                 }
                 return
             }
@@ -815,17 +1800,45 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // If no location-based system or not at a location, allow manual placement
         // Place a test loot box where user taps (for testing without locations)
-        if let result = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .horizontal).first {
-            let testLocation = LootBoxLocation(
-                id: UUID().uuidString,
-                name: "Test Artifact",
-                type: .crystalSkull,
-                latitude: 0,
-                longitude: 0,
-                radius: 100
-            )
-            placeLootBoxAtLocation(testLocation, in: arView)
+        if let result = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .horizontal).first,
+           let frame = arView.session.currentFrame {
+            let cameraY = frame.camera.transform.columns.3.y
+            let hitY = result.worldTransform.columns.3.y
+            if hitY <= cameraY - 0.2 {
+                let testLocation = LootBoxLocation(
+                    id: UUID().uuidString,
+                    name: "Test Artifact",
+                    type: .ancientArtifact,
+                    latitude: 0,
+                    longitude: 0,
+                    radius: 100
+                )
+                placeLootBoxAtLocation(testLocation, in: arView)
+            } else {
+                Swift.print("⚠️ Tap raycast hit likely ceiling. Ignoring manual placement.")
+            }
         }
     }
+    
+    // Remove any boxes that are too close to the camera (can look huge and occlude view)
+    private func cleanupBoxesNearCamera() {
+        guard let arView = arView, let frame = arView.session.currentFrame else { return }
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        var toRemove: [String] = []
+        for (id, anchor) in placedBoxes {
+            let t = anchor.transformMatrix(relativeTo: nil)
+            let pos = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
+            let d = length(pos - cameraPos)
+            if d < 1.5 { // within 1.5m of camera
+                Swift.print("🗑️ Removing box too close to camera: \(id), distance: \(String(format: "%.2f", d))m")
+                anchor.removeFromParent()
+                toRemove.append(id)
+            }
+        }
+        for id in toRemove { placedBoxes.removeValue(forKey: id) }
+    }
+    
+    // NOTE: Removed cleanupBoxesAtOrigin() - it was causing boxes to be removed incorrectly
+    // The AR origin is arbitrary and boxes within 5m of it are not necessarily problematic
 }
-

@@ -69,35 +69,26 @@ class ChaliceLootContainer {
         do {
             // Load the model entity
             let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
-            
-            // If it's a ModelEntity, use it directly
-            // If it's a scene with children, find the main chalice entity
-            let modelEntity: ModelEntity
-            if let directModel = loadedEntity as? ModelEntity {
-                modelEntity = directModel
-            } else {
-                // Search for the main chalice model in children
-                if let chalice = findFirstModelEntity(in: loadedEntity) {
-                    modelEntity = chalice
-                } else {
-                    // Create a wrapper and add the loaded entity as child
-                    modelEntity = ModelEntity()
-                    modelEntity.addChild(loadedEntity)
-                }
-            }
-            
-            // Scale the model to match desired size
-            // Adjust scale based on model's original size (you may need to tweak this)
-            modelEntity.scale = SIMD3<Float>(repeating: size * 0.5) // Adjust multiplier as needed
-            
-            // Ensure model is right-side up (not upside down)
-            modelEntity.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
-            
-            // Apply materials/colors if needed
-            applyMaterials(to: modelEntity, color: type.color, glowColor: type.glowColor)
-            
-            print("✅ Loaded chalice model: \(modelName)")
-            return modelEntity
+
+            // CRITICAL FIX: Always wrap the loaded entity to preserve its coordinate system
+            // USDZ files often have their own scene hierarchy and positioning
+            let wrapperEntity = ModelEntity()
+
+            // Add the loaded entity as a child to preserve its relative positioning
+            wrapperEntity.addChild(loadedEntity)
+
+            // Scale the wrapper to match desired size
+            // For USDZ models, we need to be more conservative with scaling
+            wrapperEntity.scale = SIMD3<Float>(repeating: size * 0.3) // Reduced from 0.5 - USDZ models are often already scaled
+
+            // Ensure wrapper is right-side up (not upside down)
+            wrapperEntity.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
+
+            // Apply materials/colors to the wrapper and its children
+            applyMaterials(to: wrapperEntity, color: type.color, glowColor: type.glowColor)
+
+            print("✅ Loaded chalice model: \(modelName) (wrapped to preserve coordinates)")
+            return wrapperEntity
         } catch {
             print("❌ Error loading chalice model \(modelName): \(error)")
             print("   Using fallback procedural chalice")
