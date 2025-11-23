@@ -948,8 +948,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         let anchor = AnchorEntity(world: boxTransform)
         
-        // Only place spheres (disable chalices and treasure boxes for now)
-        let selectedObjectType = PlacedObjectType.sphere
+        // Randomly choose what type of object to place (chalice, treasure box, or sphere)
+        let objectTypes: [PlacedObjectType] = [.chalice, .treasureBox, .sphere]
+        let selectedObjectType = objectTypes.randomElement()!
 
         Swift.print("🎲 Placing \(selectedObjectType) for \(location.name)")
 
@@ -1001,30 +1002,30 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             )
 
         case .sphere:
-            // Place just a sphere indicator (no loot box)
-            let indicatorSize: Float = 0.15 // 15cm sphere
-            let indicatorMesh = MeshResource.generateSphere(radius: indicatorSize)
-            var indicatorMaterial = SimpleMaterial()
-            indicatorMaterial.color = .init(tint: .orange)
-            indicatorMaterial.roughness = 0.2
-            indicatorMaterial.metallic = 0.3
+            // Place just a sphere - size varies randomly between 0.15m and 0.5m radius (max 1.0m diameter)
+            let sphereRadius = Float.random(in: 0.15...0.5) // Random sphere size
+            let sphereMesh = MeshResource.generateSphere(radius: sphereRadius)
+            var sphereMaterial = SimpleMaterial()
+            sphereMaterial.color = .init(tint: .orange)
+            sphereMaterial.roughness = 0.2
+            sphereMaterial.metallic = 0.3
 
-            let orangeIndicator = ModelEntity(mesh: indicatorMesh, materials: [indicatorMaterial])
-            orangeIndicator.name = location.id
+            let sphere = ModelEntity(mesh: sphereMesh, materials: [sphereMaterial])
+            sphere.name = location.id
 
-            // Position sphere at ground level (no loot box underneath)
-            orangeIndicator.position = SIMD3<Float>(0, indicatorSize, 0) // Bottom of sphere touches ground
+            // Position sphere so bottom sits flat on ground
+            sphere.position = SIMD3<Float>(0, sphereRadius, 0) // Bottom of sphere touches ground
 
             // Add point light to make it visible
             let light = PointLightComponent(color: .orange, intensity: 200)
-            orangeIndicator.components.set(light)
+            sphere.components.set(light)
 
-            placedEntity = orangeIndicator
+            placedEntity = sphere
 
             findableObject = FindableObject(
                 locationId: location.id,
                 anchor: anchor,
-                sphereEntity: orangeIndicator, // The sphere itself is the findable object
+                sphereEntity: sphere, // The sphere itself is the findable object
                 container: nil, // No loot box container
                 location: location
             )
