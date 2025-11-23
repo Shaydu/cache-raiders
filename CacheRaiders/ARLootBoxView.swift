@@ -102,6 +102,9 @@ struct ARLootBoxView: UIViewRepresentable {
                 context.coordinator.placeARItem(pendingItem)
             }
         }
+        
+        // Update ambient light setting when it changes
+        context.coordinator.updateAmbientLight()
     }
     
     func makeCoordinator() -> ARCoordinator {

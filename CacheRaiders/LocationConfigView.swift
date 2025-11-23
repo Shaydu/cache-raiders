@@ -26,20 +26,6 @@ struct LocationConfigView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
 
-                    // Instructions overlay when add mode is not active
-                    VStack {
-                        HStack {
-                            Text("Tap + to add items, drag to position crosshairs")
-                                .font(.caption)
-                                .padding(8)
-                                .background(Color.black.opacity(0.7))
-                                .foregroundColor(.white)
-                                .cornerRadius(8)
-                                .padding()
-                            Spacer()
-                        }
-                        Spacer()
-                    }
                 }
 
                 // Bottom controls

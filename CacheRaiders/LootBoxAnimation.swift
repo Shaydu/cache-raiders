@@ -21,11 +21,8 @@ class LootBoxAnimation {
     ) {
         Swift.print("🎬 openLootBox called for: \(location.name), type: \(location.type)")
         
-        // Play opening sound
-        Swift.print("🔊 Playing opening sound...")
-        playOpeningSound()
-        
         // Create confetti effect at tap position if provided, otherwise at container position
+        // (Sound will play automatically when confetti is created)
         let parentEntity = container.container.parent ?? container.container
         let confettiPosition: SIMD3<Float>
         if let tapPos = tapWorldPosition {
@@ -46,10 +43,10 @@ class LootBoxAnimation {
         // Determine animation type based on loot box type
         Swift.print("🎭 Determining animation type for: \(location.type)")
         switch location.type {
-        case .goldenIdol, .chalice:
+        case .chalice:
             Swift.print("   → Using chalice animation")
             openChalice(container: container, onComplete: onComplete)
-        case .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet, .treasureChest:
+        case .templeRelic, .treasureChest:
             Swift.print("   → Using box animation")
             openBox(container: container, onComplete: onComplete)
         case .sphere:
@@ -462,6 +459,10 @@ class LootBoxAnimation {
     ///   - position: The position relative to parent where confetti should appear
     ///   - parent: The parent entity to attach confetti to
     static func createConfettiEffect(at position: SIMD3<Float>, parent: Entity) {
+        // Play the level-up sound when confetti animation is triggered
+        Swift.print("🔊 Playing level-up sound for confetti animation...")
+        playOpeningSound()
+        
         // Confetti colors - vibrant celebration colors
         let confettiColors: [UIColor] = [
             .systemRed, .systemBlue, .systemGreen, .systemYellow,

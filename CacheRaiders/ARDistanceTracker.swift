@@ -1,0 +1,512 @@
+import Foundation
+import SwiftUI
+import Combine
+import RealityKit
+import ARKit
+import CoreLocation
+import AudioToolbox
+
+// MARK: - AR Distance Tracker
+/// Handles distance calculation, direction tracking, and text overlays
+class ARDistanceTracker: ObservableObject {
+    weak var arView: ARView?
+    weak var locationManager: LootBoxLocationManager?
+    weak var userLocationManager: UserLocationManager?
+    
+    var placedBoxes: [String: AnchorEntity] = [:]
+    var distanceTextEntities: [String: ModelEntity] = [:]
+    var foundLootBoxes: Set<String> = []
+    var proximitySoundPlayed: Set<String> = []
+    
+    var distanceToNearestBinding: Binding<Double?>?
+    var temperatureStatusBinding: Binding<String?>?
+    var nearestObjectDirectionBinding: Binding<Double?>?
+    
+    @Published var nearestObjectDirection: Double? = nil
+    
+    private var distanceLogger: Timer?
+    private var previousDistance: Double?
+    
+    init(arView: ARView?, locationManager: LootBoxLocationManager?, userLocationManager: UserLocationManager?) {
+        self.arView = arView
+        self.locationManager = locationManager
+        self.userLocationManager = userLocationManager
+    }
+    
+    /// Start distance logging
+    func startDistanceLogging() {
+        // Check every 0.5 seconds for more responsive warmer/colder feedback
+        distanceLogger = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.logDistanceToNearestLootBox()
+        }
+    }
+    
+    /// Stop distance logging
+    func stopDistanceLogging() {
+        distanceLogger?.invalidate()
+    }
+    
+    /// Clear found loot boxes set
+    func clearFoundLootBoxes() {
+        foundLootBoxes.removeAll()
+        proximitySoundPlayed.removeAll()
+        Swift.print("🔄 Cleared found loot boxes set - objects are now tappable again")
+    }
+    
+    /// Update distance texts for all loot boxes
+    func updateDistanceTexts() {
+        guard let arView = arView, let frame = arView.session.currentFrame else { return }
+        
+        let cameraTransform = frame.camera.transform
+        let cameraPosition = SIMD3<Float>(
+            cameraTransform.columns.3.x,
+            cameraTransform.columns.3.y,
+            cameraTransform.columns.3.z
+        )
+        
+        // Update distance text for each loot box
+        for (locationId, anchor) in placedBoxes {
+            // Skip if already found
+            if foundLootBoxes.contains(locationId) {
+                continue
+            }
+            
+            guard let textEntity = distanceTextEntities[locationId] else { continue }
+            
+            // Get box position (use sphere position if available, otherwise anchor position)
+            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+            var boxPosition = SIMD3<Float>(
+                anchorTransform.columns.3.x,
+                anchorTransform.columns.3.y,
+                anchorTransform.columns.3.z
+            )
+            
+            // Try to find sphere position (more accurate)
+            for child in anchor.children {
+                if let modelEntity = child as? ModelEntity,
+                   modelEntity.components[PointLightComponent.self] != nil {
+                    let sphereTransform = modelEntity.transformMatrix(relativeTo: nil)
+                    boxPosition = SIMD3<Float>(
+                        sphereTransform.columns.3.x,
+                        sphereTransform.columns.3.y,
+                        sphereTransform.columns.3.z
+                    )
+                    break
+                }
+            }
+            
+            // Calculate distance
+            let distance = Double(length(boxPosition - cameraPosition))
+            
+            // Format as feet and inches
+            let distanceText = formatDistance(distance)
+            
+            // Update text material
+            let newMaterial = createTextMaterial(text: distanceText)
+            if var model = textEntity.model {
+                model.materials = [newMaterial]
+                textEntity.model = model
+            }
+            
+            // Make text face camera (billboard effect)
+            let directionToCamera = normalize(cameraPosition - boxPosition)
+            // Calculate rotation to face camera (simplified - just rotate around Y axis)
+            let angle = atan2(directionToCamera.x, directionToCamera.z)
+            textEntity.orientation = simd_quatf(angle: angle, axis: SIMD3<Float>(0, 1, 0))
+        }
+    }
+    
+    /// Updates the direction to the nearest placed object
+    func updateNearestObjectDirection() {
+        guard let arView = arView,
+              let frame = arView.session.currentFrame,
+              !placedBoxes.isEmpty else {
+            nearestObjectDirection = nil
+            return
+        }
+
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+
+        // Get forward and up vectors for orientation
+        let forward = SIMD3<Float>(-cameraTransform.columns.2.x, -cameraTransform.columns.2.y, -cameraTransform.columns.2.z)
+        let up = SIMD3<Float>(cameraTransform.columns.1.x, cameraTransform.columns.1.y, cameraTransform.columns.1.z)
+
+        // Find nearest object
+        var nearestDistance: Float = .infinity
+        var nearestPosition: SIMD3<Float>? = nil
+
+        for (_, anchor) in placedBoxes {
+            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+            let objectPos = SIMD3<Float>(
+                anchorTransform.columns.3.x,
+                anchorTransform.columns.3.y,
+                anchorTransform.columns.3.z
+            )
+
+            let distance = length(objectPos - cameraPos)
+            if distance < nearestDistance {
+                nearestDistance = distance
+                nearestPosition = objectPos
+            }
+        }
+
+        guard let targetPos = nearestPosition else {
+            nearestObjectDirection = nil
+            return
+        }
+
+        // Calculate direction vector from camera to target
+        let directionVector = targetPos - cameraPos
+        let horizontalDirection = SIMD3<Float>(directionVector.x, 0, directionVector.z)
+
+        if length(horizontalDirection) < 0.1 {
+            // Directly above/below - can't determine horizontal direction
+            nearestObjectDirection = nil
+            return
+        }
+
+        // Normalize the horizontal direction
+        let normalizedDirection = normalize(horizontalDirection)
+
+        // Calculate angle in camera's local space
+        // Forward direction is -Z in camera space
+        let cameraForward = normalize(SIMD3<Float>(forward.x, 0, forward.z))
+        let cameraRight = normalize(cross(up, cameraForward))
+
+        // Project direction onto camera's right and forward vectors
+        let forwardDot = dot(normalizedDirection, cameraForward)
+        let rightDot = dot(normalizedDirection, cameraRight)
+
+        // Calculate angle from forward direction (clockwise, 0 = forward)
+        var angle = atan2(rightDot, forwardDot) * 180.0 / .pi
+
+        // Normalize to 0-360 range
+        if angle < 0 {
+            angle += 360
+        }
+
+        nearestObjectDirection = Double(angle)
+        
+        // Update binding
+        DispatchQueue.main.async { [weak self] in
+            self?.nearestObjectDirectionBinding?.wrappedValue = self?.nearestObjectDirection
+        }
+    }
+    
+    // MARK: - Private Methods
+    
+    private func logDistanceToNearestLootBox() {
+        // Try to use AR world coordinates first (more accurate for AR), fallback to GPS
+        guard let arView = arView,
+              let frame = arView.session.currentFrame,
+              let locationManager = locationManager else {
+            // Fallback to GPS if AR not available
+            guard let userLocation = userLocationManager?.currentLocation else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.distanceToNearestBinding?.wrappedValue = nil
+                    self?.temperatureStatusBinding?.wrappedValue = nil
+                    self?.nearestObjectDirectionBinding?.wrappedValue = nil
+                }
+                return
+            }
+            calculateDistanceUsingGPS(userLocation: userLocation)
+            return
+        }
+        
+        // Use AR world coordinates for more accurate distance calculation
+        let cameraTransform = frame.camera.transform
+        let cameraPosition = SIMD3<Float>(
+            cameraTransform.columns.3.x,
+            cameraTransform.columns.3.y,
+            cameraTransform.columns.3.z
+        )
+        
+        // Find nearest uncollected loot box in AR world space
+        var nearestBox: (location: LootBoxLocation, distance: Double, anchor: AnchorEntity)? = nil
+        var minDistance: Double = Double.infinity
+        
+        // Check all placed boxes in AR space
+        for (locationId, anchor) in placedBoxes {
+            // Find the location for this box
+            guard let location = locationManager.locations.first(where: { $0.id == locationId && !$0.collected }) else {
+                continue
+            }
+            
+            // Get anchor position in AR world space
+            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+            let anchorPosition = SIMD3<Float>(
+                anchorTransform.columns.3.x,
+                anchorTransform.columns.3.y,
+                anchorTransform.columns.3.z
+            )
+
+            // Find the actual object position (chalice, treasure box, or sphere)
+            var objectPosition = anchorPosition
+            for child in anchor.children {
+                if let modelEntity = child as? ModelEntity {
+                    // Check for loot box containers (chalice or treasure box)
+                    if modelEntity.name == locationId {
+                        let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                        objectPosition = SIMD3<Float>(
+                            objectTransform.columns.3.x,
+                            objectTransform.columns.3.y,
+                            objectTransform.columns.3.z
+                        )
+                        break
+                    }
+                    // Check for standalone spheres
+                    else if modelEntity.name == locationId && modelEntity.components[PointLightComponent.self] != nil {
+                        let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                        objectPosition = SIMD3<Float>(
+                            objectTransform.columns.3.x,
+                            objectTransform.columns.3.y,
+                            objectTransform.columns.3.z
+                        )
+                        break
+                    }
+                }
+            }
+
+            // Calculate distance in AR world space (meters) - use object position for accuracy
+            let distance = Double(length(objectPosition - cameraPosition))
+            
+            if distance < minDistance {
+                minDistance = distance
+                nearestBox = (location: location, distance: distance, anchor: anchor)
+            }
+        }
+        
+        // If we found a box in AR space, use that
+        if let nearest = nearestBox {
+            updateTemperatureStatus(currentDistance: nearest.distance, location: nearest.location)
+            return
+        }
+        
+        // Fallback to GPS if no boxes are placed in AR yet
+        if let userLocation = userLocationManager?.currentLocation {
+            calculateDistanceUsingGPS(userLocation: userLocation)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.distanceToNearestBinding?.wrappedValue = nil
+                self?.temperatureStatusBinding?.wrappedValue = nil
+                self?.nearestObjectDirectionBinding?.wrappedValue = nil
+            }
+        }
+    }
+    
+    private func calculateDistanceUsingGPS(userLocation: CLLocation) {
+        guard let locationManager = locationManager else {
+            DispatchQueue.main.async { [weak self] in
+                self?.distanceToNearestBinding?.wrappedValue = nil
+                self?.temperatureStatusBinding?.wrappedValue = nil
+                self?.nearestObjectDirectionBinding?.wrappedValue = nil
+            }
+            return
+        }
+        
+        // Check if we have a valid GPS fix (horizontal accuracy should be reasonable)
+        guard userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 100 else {
+            DispatchQueue.main.async { [weak self] in
+                self?.distanceToNearestBinding?.wrappedValue = nil
+                self?.temperatureStatusBinding?.wrappedValue = nil
+                self?.nearestObjectDirectionBinding?.wrappedValue = nil
+            }
+            return
+        }
+        
+        // Find nearest uncollected loot box using GPS
+        let uncollectedLocations = locationManager.locations.filter { !$0.collected }
+        guard !uncollectedLocations.isEmpty else {
+            DispatchQueue.main.async { [weak self] in
+                self?.distanceToNearestBinding?.wrappedValue = nil
+                self?.temperatureStatusBinding?.wrappedValue = nil
+                self?.nearestObjectDirectionBinding?.wrappedValue = nil
+            }
+            return
+        }
+        
+        let distances = uncollectedLocations.map { location in
+            (location: location, distance: userLocation.distance(from: location.location))
+        }
+        
+        guard let nearest = distances.min(by: { $0.distance < $1.distance }) else {
+            DispatchQueue.main.async { [weak self] in
+                self?.distanceToNearestBinding?.wrappedValue = nil
+                self?.temperatureStatusBinding?.wrappedValue = nil
+                self?.nearestObjectDirectionBinding?.wrappedValue = nil
+            }
+            return
+        }
+        
+        updateTemperatureStatus(currentDistance: nearest.distance, location: nearest.location)
+    }
+    
+    private func updateTemperatureStatus(currentDistance: Double, location: LootBoxLocation) {
+        // Log distance in both meters and feet/inches for debugging
+        let (feet, inches) = metersToFeetAndInches(currentDistance)
+        Swift.print("📏 Distance to nearest loot box (\(location.name)): \(String(format: "%.2f", currentDistance))m (\(feet)'\(inches)\")")
+        
+        // Update temperature status with distance included (only show distance when we have a comparison)
+        var status: String?
+        if let previous = previousDistance {
+            // We have a previous distance to compare - show warmer/colder with distance
+            // Use a threshold to avoid flickering (only show change if difference is significant)
+            // 1.5 feet threshold (approximately 0.46m)
+            let threshold: Double = 0.46 // ~1.5 feet
+            if currentDistance < previous - threshold {
+                let distanceStr = formatDistance(currentDistance)
+                status = "🔥 Warmer (\(distanceStr))"
+                let (prevFeet, prevInches) = metersToFeetAndInches(previous)
+                Swift.print("   🔥 Getting warmer! (was \(prevFeet)'\(prevInches)\")")
+            } else if currentDistance > previous + threshold {
+                let distanceStr = formatDistance(currentDistance)
+                status = "❄️ Colder (\(distanceStr))"
+                let (prevFeet, prevInches) = metersToFeetAndInches(previous)
+                Swift.print("   ❄️ Getting colder... (was \(prevFeet)'\(prevInches)\")")
+            } else {
+                // Within threshold - keep previous status or show same distance
+                let distanceStr = formatDistance(currentDistance)
+                status = "➡️ \(distanceStr)"
+            }
+            previousDistance = currentDistance
+        } else {
+            // First reading - don't show distance yet, just store it for next comparison
+            previousDistance = currentDistance
+            status = nil // Don't show anything until we have a comparison
+        }
+        
+        // Check for proximity (within 3 feet = ~0.91m) - play sound only (no auto-collection)
+        // User must tap to collect boxes
+        if currentDistance <= 0.91 && !proximitySoundPlayed.contains(location.id) {
+            playProximitySound()
+            proximitySoundPlayed.insert(location.id)
+            // NOTE: Auto-collection disabled - user must tap to collect
+        }
+        
+        // Update direction to nearest object
+        updateNearestObjectDirection()
+        
+        // Update bindings
+        DispatchQueue.main.async { [weak self] in
+            self?.distanceToNearestBinding?.wrappedValue = currentDistance
+            self?.temperatureStatusBinding?.wrappedValue = status
+            if let direction = self?.nearestObjectDirection {
+                self?.nearestObjectDirectionBinding?.wrappedValue = direction
+            } else {
+                self?.nearestObjectDirectionBinding?.wrappedValue = nil
+            }
+        }
+    }
+    
+    /// Plays a sound when user is within 1m of a loot box
+    private func playProximitySound() {
+        // Play a subtle proximity sound (different from opening sound)
+        AudioServicesPlaySystemSound(1054) // System sound for proximity/notification
+    }
+    
+    // MARK: - Helper Methods
+    
+    /// Helper function to convert meters to feet and inches
+    private func metersToFeetAndInches(_ meters: Double) -> (feet: Int, inches: Int) {
+        let totalInches = meters * 39.3701 // 1 meter = 39.3701 inches
+        let feet = Int(totalInches / 12)
+        let inches = Int(totalInches.truncatingRemainder(dividingBy: 12))
+        return (feet: feet, inches: inches)
+    }
+    
+    /// Helper function to format distance as feet and inches string
+    private func formatDistance(_ meters: Double) -> String {
+        let (feet, inches) = metersToFeetAndInches(meters)
+        if feet == 0 {
+            return "\(inches)\""
+        } else if inches == 0 {
+            return "\(feet)'"
+        } else {
+            return "\(feet)'\(inches)\""
+        }
+    }
+    
+    /// Creates a 3D text entity for displaying distance
+    func createDistanceTextEntity() -> ModelEntity {
+        // Create a small plane for the text
+        let textPlaneSize: Float = 0.2 // 20cm plane
+        let textMesh = MeshResource.generatePlane(width: textPlaneSize, depth: textPlaneSize * 0.3)
+        
+        // Create initial text texture (will be updated)
+        let textMaterial = createTextMaterial(text: "0'0\"")
+        
+        let textEntity = ModelEntity(mesh: textMesh, materials: [textMaterial])
+        textEntity.name = "distanceText"
+        
+        // Make text always face camera (billboard effect)
+        // We'll update orientation in the update function
+        
+        return textEntity
+    }
+    
+    /// Creates a material with text rendered on it
+    private func createTextMaterial(text: String) -> SimpleMaterial {
+        // Create text image
+        let fontSize: CGFloat = 48
+        let font = UIFont.boldSystemFont(ofSize: fontSize)
+        let textColor = UIColor.white
+        let backgroundColor = UIColor.black.withAlphaComponent(0.7)
+        
+        // Calculate text size
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: textColor
+        ]
+        let attributedString = NSAttributedString(string: text, attributes: attributes)
+        let textSize = attributedString.boundingRect(
+            with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        ).size
+        
+        // Create image with padding
+        let padding: CGFloat = 20
+        let imageSize = CGSize(
+            width: textSize.width + padding * 2,
+            height: textSize.height + padding * 2
+        )
+        
+        let renderer = UIGraphicsImageRenderer(size: imageSize)
+        let image = renderer.image { context in
+            // Draw background
+            backgroundColor.setFill()
+            context.cgContext.fillEllipse(in: CGRect(origin: .zero, size: imageSize))
+            
+            // Draw text
+            let textRect = CGRect(
+                x: padding,
+                y: padding,
+                width: textSize.width,
+                height: textSize.height
+            )
+            attributedString.draw(in: textRect)
+        }
+        
+        // Create material from image
+        var material = SimpleMaterial()
+        if let cgImage = image.cgImage {
+            do {
+                let texture = try TextureResource(image: cgImage, options: .init(semantic: .color))
+                material.color = .init(texture: .init(texture))
+            } catch {
+                print("⚠️ Failed to create texture from text: \(error)")
+                material.color = .init(tint: .white)
+            }
+        }
+        material.roughness = 0.1
+        material.metallic = 0.0
+        
+        return material
+    }
+    
+    deinit {
+        distanceLogger?.invalidate()
+    }
+}
+

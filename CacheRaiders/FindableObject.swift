@@ -85,11 +85,8 @@ class FindableObject: Findable {
         
         Swift.print("🎉 Finding object: \(objectName)")
         
-        // BASIC FINDABLE BEHAVIOR #1: Play sound immediately
-        Swift.print("🔊 Playing opening sound...")
-        LootBoxAnimation.playOpeningSound()
-        
-        // BASIC FINDABLE BEHAVIOR #2: Create confetti effect immediately
+        // BASIC FINDABLE BEHAVIOR #1: Create confetti effect immediately
+        // (Sound will play automatically when confetti is created)
         Swift.print("🎊 Creating confetti effect...")
         let parentEntity = anchor
         let confettiRelativePos = SIMD3<Float>(0, 0.15, 0) // At object center

@@ -7,6 +7,51 @@ struct SettingsView: View {
     @Environment(\.dismiss) var dismiss
     @State private var previousDistance: Double = 10.0
     
+    // Helper function to get icon name for each findable type
+    private func iconName(for type: LootBoxType) -> String {
+        switch type {
+        case .chalice:
+            return "cup.and.saucer.fill"
+        case .templeRelic:
+            return "building.columns.fill"
+        case .treasureChest:
+            return "shippingbox.fill"
+        case .sphere:
+            return "circle.fill"
+        }
+    }
+    
+    // Helper function to get model names for each findable type
+    private func modelNames(for type: LootBoxType) -> [String] {
+        switch type {
+        case .chalice:
+            return ["Chalice", "Chalice-basic"]
+        case .templeRelic:
+            return ["Stylised_Treasure_Chest", "Treasure_Chest"]
+        case .treasureChest:
+            return ["Treasure_Chest"]
+        case .sphere:
+            return [] // Spheres are procedural, no models
+        }
+    }
+    
+    // Group types by their model names to deduplicate
+    private var groupedFindableTypes: [(models: [String], types: [LootBoxType])] {
+        var groups: [[String]: [LootBoxType]] = [:]
+        
+        for type in LootBoxType.allCases {
+            let models = modelNames(for: type)
+            let key = models.sorted()
+            if groups[key] == nil {
+                groups[key] = []
+            }
+            groups[key]?.append(type)
+        }
+        
+        return groups.map { (models: $0.key, types: $0.value) }
+            .sorted { $0.types.first?.displayName ?? "" < $1.types.first?.displayName ?? "" }
+    }
+    
     var body: some View {
         NavigationView {
             List {
@@ -122,6 +167,46 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                 }
                 
+                Section("Findable Types") {
+                    ForEach(Array(groupedFindableTypes.enumerated()), id: \.offset) { index, group in
+                        HStack(spacing: 12) {
+                            // Use icon from first type in group
+                            let firstType = group.types.first!
+                            Image(systemName: iconName(for: firstType))
+                                .foregroundColor(Color(firstType.color))
+                                .font(.title3)
+                                .frame(width: 30)
+                            
+                            // Show all type names that share these models
+                            let typeNames = group.types.map { $0.displayName }.joined(separator: ", ")
+                            
+                            if group.models.isEmpty {
+                                Text(typeNames)
+                                    .font(.body)
+                            } else {
+                                Text("\(typeNames) (\(group.models.joined(separator: ", ")))")
+                                    .font(.body)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+                
+                Section("Map Display") {
+                    Toggle("Show Found on Map", isOn: Binding(
+                        get: { locationManager.showFoundOnMap },
+                        set: { newValue in
+                            locationManager.showFoundOnMap = newValue
+                            locationManager.saveShowFoundOnMap()
+                        }
+                    ))
+                    .padding(.vertical, 4)
+                    
+                    Text("When enabled, found items appear in deep red and unfound items appear in green on the map")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                
                 Section("AR Debug") {
                     Toggle("Show AR Debug Visuals", isOn: Binding(
                         get: { locationManager.showARDebugVisuals },
@@ -133,6 +218,32 @@ struct SettingsView: View {
                     .padding(.vertical, 4)
                     
                     Text("Enable to see ARKit feature points (green triangles) and anchor origins for debugging")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    Toggle("Disable Occlusion", isOn: Binding(
+                        get: { locationManager.disableOcclusion },
+                        set: { newValue in
+                            locationManager.disableOcclusion = newValue
+                            locationManager.saveDisableOcclusion()
+                        }
+                    ))
+                    .padding(.vertical, 4)
+                    
+                    Text("When enabled, objects will be visible even when behind walls. Useful for finding hidden objects.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                    
+                    Toggle("Disable Ambient Light", isOn: Binding(
+                        get: { locationManager.disableAmbientLight },
+                        set: { newValue in
+                            locationManager.disableAmbientLight = newValue
+                            locationManager.saveDisableAmbientLight()
+                        }
+                    ))
+                    .padding(.vertical, 4)
+                    
+                    Text("When enabled, objects will have uniform brightness regardless of real-world lighting conditions.")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }

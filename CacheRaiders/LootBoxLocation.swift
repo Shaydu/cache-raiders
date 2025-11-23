@@ -41,6 +41,9 @@ class LootBoxLocationManager: ObservableObject {
     @Published var locations: [LootBoxLocation] = []
     @Published var maxSearchDistance: Double = 100.0 // Default 100 meters
     @Published var showARDebugVisuals: Bool = false // Default: debug visuals disabled
+    @Published var showFoundOnMap: Bool = false // Default: don't show found items on map
+    @Published var disableOcclusion: Bool = false // Default: occlusion enabled (false = occlusion ON)
+    @Published var disableAmbientLight: Bool = false // Default: ambient light enabled (false = ambient light ON)
     @Published var lootBoxMinSize: Double = 0.25 // Default 0.25m (minimum size)
     @Published var lootBoxMaxSize: Double = 1.0 // Default 1.0m (maximum size) - reduced from 3.0m
     @Published var shouldRandomize: Bool = false // Trigger for randomizing loot boxes in AR
@@ -50,6 +53,9 @@ class LootBoxLocationManager: ObservableObject {
     private let locationsFileName = "lootBoxLocations.json"
     private let maxDistanceKey = "maxSearchDistance"
     private let debugVisualsKey = "showARDebugVisuals"
+    private let showFoundOnMapKey = "showFoundOnMap"
+    private let disableOcclusionKey = "disableOcclusion"
+    private let disableAmbientLightKey = "disableAmbientLight"
     private let lootBoxMinSizeKey = "lootBoxMinSize"
     private let lootBoxMaxSizeKey = "lootBoxMaxSize"
     
@@ -58,6 +64,9 @@ class LootBoxLocationManager: ObservableObject {
         // loadLocations()
         loadMaxDistance()
         loadDebugVisuals()
+        loadShowFoundOnMap()
+        loadDisableOcclusion()
+        loadDisableAmbientLight()
         loadLootBoxSizes()
     }
     
@@ -144,8 +153,8 @@ class LootBoxLocationManager: ObservableObject {
     
     // Create default locations randomly within maxSearchDistance of user location
     func createDefaultLocations(near userLocation: CLLocation) {
-        let lootBoxTypes: [LootBoxType] = [.goldenIdol, .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet]
-        let lootBoxNames = ["Golden Idol", "Ancient Artifact", "Temple Relic", "Puzzle Box", "Stone Tablet"]
+        let lootBoxTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest]
+        let lootBoxNames = ["Chalice", "Temple Relic", "Treasure Chest"]
         
         locations = []
         
@@ -268,6 +277,36 @@ class LootBoxLocationManager: ObservableObject {
     // Load debug visuals preference
     private func loadDebugVisuals() {
         showARDebugVisuals = UserDefaults.standard.bool(forKey: debugVisualsKey)
+    }
+    
+    // Save show found on map preference
+    func saveShowFoundOnMap() {
+        UserDefaults.standard.set(showFoundOnMap, forKey: showFoundOnMapKey)
+    }
+    
+    // Load show found on map preference
+    private func loadShowFoundOnMap() {
+        showFoundOnMap = UserDefaults.standard.bool(forKey: showFoundOnMapKey)
+    }
+    
+    // Save disable occlusion preference
+    func saveDisableOcclusion() {
+        UserDefaults.standard.set(disableOcclusion, forKey: disableOcclusionKey)
+    }
+    
+    // Load disable occlusion preference
+    private func loadDisableOcclusion() {
+        disableOcclusion = UserDefaults.standard.bool(forKey: disableOcclusionKey)
+    }
+    
+    // Save disable ambient light preference
+    func saveDisableAmbientLight() {
+        UserDefaults.standard.set(disableAmbientLight, forKey: disableAmbientLightKey)
+    }
+    
+    // Load disable ambient light preference
+    private func loadDisableAmbientLight() {
+        disableAmbientLight = UserDefaults.standard.bool(forKey: disableAmbientLightKey)
     }
     
     // Save loot box size preferences

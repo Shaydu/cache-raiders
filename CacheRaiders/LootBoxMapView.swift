@@ -22,7 +22,7 @@ struct LootBoxMapView: View {
 
     // Add mode state
     @State private var isAddModeActive = false
-    @State private var selectedItemType: LootBoxType = .goldenIdol
+    @State private var selectedItemType: LootBoxType = .chalice
     @State private var crosshairPosition: CLLocationCoordinate2D = CLLocationCoordinate2D(latitude: 0, longitude: 0)
     @State private var crosshairScreenPosition: CGPoint = .zero
 
@@ -66,12 +66,15 @@ struct LootBoxMapView: View {
             ))
         }
         
-        // Add all uncollected loot box locations that have valid GPS coordinates
+        // Add loot box locations that have valid GPS coordinates
+        // By default, exclude collected items unless showFoundOnMap is enabled
         // Exclude AR-only locations (AR_SPHERE_ prefix but not AR_SPHERE_MAP_) and locations with invalid coordinates (0,0)
         let filteredLocations = locationManager.locations.filter { location in
-            guard !location.collected else { 
-                return false 
+            // If showFoundOnMap is disabled, exclude collected items
+            if !locationManager.showFoundOnMap && location.collected {
+                return false
             }
+            
             guard !(location.latitude == 0 && location.longitude == 0) else { 
                 return false // Exclude invalid GPS coordinates
             }
@@ -132,14 +135,26 @@ struct LootBoxMapView: View {
                             let isPreview = location.id == "preview"
                             
                             // Loot box pin
-                            Annotation(location.name, coordinate: annotation.coordinate) {
+                            Annotation("", coordinate: annotation.coordinate) {
                                 VStack(spacing: 4) {
-                                    Image(systemName: isPreview ? "plus.circle.fill" :
-                                          (location.collected ? "checkmark.circle.fill" :
-                                          (location.type == .sphere ? "circle.fill" : "mappin.circle.fill")))
-                                        .foregroundColor(isPreview ? .blue :
-                                                        (location.collected ? .green :
-                                                        (location.type == .sphere ? .red : .red)))
+                                    // Determine icon
+                                    let iconName = isPreview ? "plus.circle.fill" :
+                                        (location.collected ? "checkmark.circle.fill" :
+                                        (location.type == .sphere ? "circle.fill" : "mappin.circle.fill"))
+                                    
+                                    // Determine color based on collected status and showFoundOnMap setting
+                                    let iconColor: Color = if isPreview {
+                                        .blue
+                                    } else if location.collected {
+                                        // Deep red for found items when showFoundOnMap is enabled
+                                        locationManager.showFoundOnMap ? Color(red: 0.6, green: 0.0, blue: 0.0) : .green
+                                    } else {
+                                        // Green for unfound items when showFoundOnMap is enabled, red otherwise
+                                        locationManager.showFoundOnMap ? .green : .red
+                                    }
+                                    
+                                    Image(systemName: iconName)
+                                        .foregroundColor(iconColor)
                                         .font(.title)
                                         .background(Circle().fill(isPreview ? .white.opacity(0.8) : .white))
                                         .shadow(radius: 3)
@@ -154,6 +169,11 @@ struct LootBoxMapView: View {
                             }
                         }
                     }
+                }
+                .mapStyle(.standard(elevation: .realistic))
+                .onMapCameraChange { context in
+                    // Force scale to always be visible by accessing the underlying map view
+                    // This is handled via the MapStyle and should show scale by default
                 }
                 .gesture(
                     isAddModeActive ?
@@ -247,40 +267,21 @@ struct LootBoxMapView: View {
             // Add mode controls overlay
             VStack {
                 HStack {
-                    // Instructions when not in add mode
-                    if !isAddModeActive {
-                        Text("Tap + to add items")
-                            .font(.caption)
-                            .padding(8)
-                            .background(Color.black.opacity(0.7))
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
-                            .padding(.leading)
-                    }
-
                     Spacer()
 
-                    // Map control buttons (always visible)
-                    VStack(spacing: 8) {
-                        Button(action: {
+                    // Map control button - follow me toggle
+                    Button(action: {
+                        shouldAutoCenter.toggle()
+                        // Also center immediately when toggling on
+                        if shouldAutoCenter {
                             updateRegion()
-                        }) {
-                            Image(systemName: "location.fill")
-                                .foregroundColor(.white)
-                                .padding(8)
-                                .background(Color.blue.opacity(0.8))
-                                .clipShape(Circle())
                         }
-
-                        Button(action: {
-                            shouldAutoCenter.toggle()
-                        }) {
-                            Image(systemName: shouldAutoCenter ? "location.slash.fill" : "location")
-                                .foregroundColor(shouldAutoCenter ? .red : .green)
-                                .padding(8)
-                                .background(Color.black.opacity(0.7))
-                                .clipShape(Circle())
-                        }
+                    }) {
+                        Image(systemName: shouldAutoCenter ? "location.fill" : "location")
+                            .foregroundColor(shouldAutoCenter ? .green : .white)
+                            .padding(8)
+                            .background(shouldAutoCenter ? Color.green.opacity(0.8) : Color.blue.opacity(0.8))
+                            .clipShape(Circle())
                     }
                     .padding(.trailing)
 
@@ -492,12 +493,8 @@ struct LootBoxMapView: View {
         } else {
             // For other items, queue them for AR placement
             let itemNames = [
-                LootBoxType.goldenIdol: ["Golden Idol", "Golden Statue", "Gold Relic"],
                 LootBoxType.chalice: ["Sacred Chalice", "Ancient Chalice", "Golden Chalice"],
-                LootBoxType.ancientArtifact: ["Ancient Artifact", "Ancient Pottery", "Ancient Scroll"],
                 LootBoxType.templeRelic: ["Temple Relic", "Sacred Relic", "Temple Treasure"],
-                LootBoxType.puzzleBox: ["Puzzle Box", "Mystery Box", "Enigma Container"],
-                LootBoxType.stoneTablet: ["Stone Tablet", "Ancient Tablet", "Carved Stone"],
                 LootBoxType.treasureChest: ["Treasure Chest", "Ancient Chest", "Locked Chest"]
             ]
 
