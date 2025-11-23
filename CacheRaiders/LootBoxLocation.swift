@@ -44,6 +44,8 @@ class LootBoxLocationManager: ObservableObject {
     @Published var lootBoxMinSize: Double = 0.25 // Default 0.25m (minimum size)
     @Published var lootBoxMaxSize: Double = 1.0 // Default 1.0m (maximum size) - reduced from 3.0m
     @Published var shouldRandomize: Bool = false // Trigger for randomizing loot boxes in AR
+    @Published var shouldPlaceSphere: Bool = false // Trigger for placing a single sphere in AR
+    @Published var pendingARItem: LootBoxLocation? // Item to place in AR room
     var onSizeChanged: (() -> Void)? // Callback when size settings change
     private let locationsFileName = "lootBoxLocations.json"
     private let maxDistanceKey = "maxSearchDistance"
@@ -52,7 +54,8 @@ class LootBoxLocationManager: ObservableObject {
     private let lootBoxMaxSizeKey = "lootBoxMaxSize"
     
     init() {
-        loadLocations()
+        // Don't load existing locations on init - start with clean slate
+        // loadLocations()
         loadMaxDistance()
         loadDebugVisuals()
         loadLootBoxSizes()
@@ -203,19 +206,17 @@ class LootBoxLocationManager: ObservableObject {
     
     // Mark location as collected
     func markCollected(_ locationId: String) {
-        // Don't mark AR-only locations (they start with "AR_SPHERE_")
-        if locationId.hasPrefix("AR_SPHERE_") {
-            print("ℹ️ Ignoring markCollected for AR-only location: \(locationId)")
-            return
-        }
-
         if let index = locations.firstIndex(where: { $0.id == locationId }) {
             print("✅ Marking location \(locations[index].name) (ID: \(locationId)) as collected")
             // Create a new location with collected = true to trigger @Published update
             var updatedLocation = locations[index]
             updatedLocation.collected = true
             locations[index] = updatedLocation
-            saveLocations()
+
+            // Only save non-AR spheres (GPS locations should persist, AR spheres are temporary)
+            if !locationId.hasPrefix("AR_SPHERE_") {
+                saveLocations()
+            }
 
             // Explicitly notify observers (in case @Published doesn't catch the change)
             objectWillChange.send()

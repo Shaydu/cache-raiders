@@ -64,10 +64,42 @@ struct ARLootBoxView: UIViewRepresentable {
         // Handle randomization trigger
         if locationManager.shouldRandomize {
             print("🎯 Randomize button pressed - triggering sphere placement...")
-            context.coordinator.randomizeLootBoxes()
+            // Defer the randomization to avoid view update publishing issues
             DispatchQueue.main.async {
-                locationManager.shouldRandomize = false
-                print("🔄 Randomize flag reset")
+                context.coordinator.randomizeLootBoxes()
+                // Reset the flag after randomization is complete
+                DispatchQueue.main.async {
+                    locationManager.shouldRandomize = false
+                    print("🔄 Randomize flag reset")
+                }
+            }
+        }
+
+        // Handle single sphere placement trigger
+        if locationManager.shouldPlaceSphere {
+            print("🎯 Single sphere placement triggered in ARLootBoxView...")
+            // Defer the sphere placement to avoid view update publishing issues
+            DispatchQueue.main.async {
+                context.coordinator.placeSingleSphere()
+                // Reset the flag after placement is complete
+                DispatchQueue.main.async {
+                    locationManager.shouldPlaceSphere = false
+                    print("🔄 Single sphere flag reset")
+                }
+            }
+        }
+
+        // Handle pending AR item placement
+        if let pendingItem = locationManager.pendingARItem {
+            print("🎯 Pending AR item placement triggered: \(pendingItem.name)")
+            // Defer the actual placement to avoid view update publishing issues
+            DispatchQueue.main.async {
+                context.coordinator.placeARItem(pendingItem)
+                // Clear the pending item after placement is complete
+                DispatchQueue.main.async {
+                    locationManager.pendingARItem = nil
+                    print("🔄 Pending AR item cleared")
+                }
             }
         }
     }

@@ -45,6 +45,9 @@ class LootBoxAnimation {
             openChalice(container: container, onComplete: onComplete)
         case .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet:
             openBox(container: container, onComplete: onComplete)
+        case .sphere:
+            // Spheres don't need opening animation - just complete immediately
+            onComplete()
         }
     }
     

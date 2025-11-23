@@ -10,6 +10,11 @@ enum LootBoxType: String, CaseIterable, Codable {
     case templeRelic = "Temple Relic"
     case puzzleBox = "Puzzle Box"
     case stoneTablet = "Stone Tablet"
+    case sphere = "Mysterious Sphere"
+
+    var displayName: String {
+        return self.rawValue
+    }
     
     var color: UIColor {
         switch self {
@@ -18,6 +23,7 @@ enum LootBoxType: String, CaseIterable, Codable {
         case .templeRelic: return UIColor(red: 0.4, green: 0.3, blue: 0.2, alpha: 1.0) // Dark stone
         case .puzzleBox: return UIColor(red: 0.7, green: 0.5, blue: 0.3, alpha: 1.0) // Weathered wood
         case .stoneTablet: return UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1.0) // Stone gray
+        case .sphere: return UIColor(red: 0.9, green: 0.1, blue: 0.1, alpha: 1.0) // Red/orange sphere
         }
     }
     
@@ -28,6 +34,7 @@ enum LootBoxType: String, CaseIterable, Codable {
         case .templeRelic: return UIColor(red: 0.8, green: 0.6, blue: 0.4, alpha: 1.0) // Warm stone
         case .puzzleBox: return UIColor(red: 0.9, green: 0.7, blue: 0.3, alpha: 1.0) // Golden
         case .stoneTablet: return UIColor(red: 0.6, green: 0.8, blue: 0.9, alpha: 1.0) // Mystical blue
+        case .sphere: return UIColor(red: 1.0, green: 0.3, blue: 0.1, alpha: 1.0) // Bright orange glow
         }
     }
     
@@ -38,6 +45,7 @@ enum LootBoxType: String, CaseIterable, Codable {
         case .templeRelic: return 0.45
         case .puzzleBox: return 0.38
         case .stoneTablet: return 0.5
+        case .sphere: return 0.15 // Smaller sphere
         }
     }
 }
@@ -60,6 +68,9 @@ class LootBoxEntity {
             return ChaliceLootContainer.create(type: type, id: id, sizeMultiplier: sizeMultiplier)
         case .ancientArtifact, .templeRelic, .puzzleBox, .stoneTablet:
             return BoxLootContainer.create(type: type, id: id, sizeMultiplier: sizeMultiplier)
+        case .sphere:
+            // Spheres don't use containers - they are handled directly in ARCoordinator
+            fatalError("Spheres should not be created using LootBoxEntity.createLootBox")
         }
     }
     
@@ -138,6 +149,9 @@ class LootBoxEntity {
             prizeMaterial.color = .init(tint: type.color)
             prizeMaterial.roughness = 0.6
             prizeMaterial.metallic = 0.3
+        case .sphere:
+            // Spheres don't have prizes - they are handled directly in ARCoordinator
+            fatalError("Spheres should not be created using LootBoxEntity.createPrize")
         }
         
         let prizeEntity = ModelEntity(mesh: prizeMesh, materials: [prizeMaterial])

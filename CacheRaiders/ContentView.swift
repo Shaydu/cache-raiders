@@ -156,23 +156,24 @@ struct ContentView: View {
         .onAppear {
             userLocationManager.requestLocationPermission()
         }
-        .onChange(of: userLocationManager.currentLocation) { _, newLocation in
-            // When we get a GPS fix, check if we need to create/regenerate locations
-            if let location = newLocation {
-                // Check if we have a valid GPS fix
-                guard location.horizontalAccuracy >= 0 && location.horizontalAccuracy < 100 else {
-                    return
-                }
-                
-                // If no locations, or if we need to check/regenerate, reload with user location
-                if locationManager.locations.isEmpty {
-                    locationManager.loadLocations(userLocation: location)
-                } else {
-                    // Check if existing locations are too far away
-                    locationManager.loadLocations(userLocation: location)
-                }
-            }
-        }
+        // No automatic GPS box creation - user must add items manually via map
+        // .onChange(of: userLocationManager.currentLocation) { _, newLocation in
+        //     // When we get a GPS fix, check if we need to create/regenerate locations
+        //     if let location = newLocation {
+        //         // Check if we have a valid GPS fix
+        //         guard location.horizontalAccuracy >= 0 && location.horizontalAccuracy < 100 else {
+        //             return
+        //         }
+        //
+        //         // If no locations, or if we need to check/regenerate, reload with user location
+        //         if locationManager.locations.isEmpty {
+        //             locationManager.loadLocations(userLocation: location)
+        //         } else {
+        //             // Check if existing locations are too far away
+        //             locationManager.loadLocations(userLocation: location)
+        //         }
+        //     }
+        // }
     }
 }
 

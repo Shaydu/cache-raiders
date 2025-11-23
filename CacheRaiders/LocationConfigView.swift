@@ -7,126 +7,87 @@ struct LocationConfigView: View {
     @StateObject private var userLocationManager = UserLocationManager()
     @Environment(\.dismiss) var dismiss
     
-    @State private var newLocationName = ""
-    @State private var newLocationType: LootBoxType = .goldenIdol
-    @State private var newLatitude = ""
-    @State private var newLongitude = ""
-    @State private var newRadius = "5.0"
-    @State private var showDistanceError = false
-    @State private var distanceError = ""
-    
     var body: some View {
         NavigationView {
-            List {
-                Section("Add New Location") {
-                    TextField("Name", text: $newLocationName)
-                    
-                    Picker("Type", selection: $newLocationType) {
-                        ForEach(LootBoxType.allCases, id: \.self) { type in
-                            Text(type.rawValue).tag(type)
-                        }
-                    }
-                    
-                    TextField("Latitude", text: $newLatitude)
-                        .keyboardType(.decimalPad)
-                    
-                    TextField("Longitude", text: $newLongitude)
-                        .keyboardType(.decimalPad)
-                    
-                    TextField("Radius (meters)", text: $newRadius)
-                        .keyboardType(.decimalPad)
-                    
-                    Button("Add Location") {
-                        addLocation()
-                    }
-                    .disabled(newLocationName.isEmpty || newLatitude.isEmpty || newLongitude.isEmpty)
-                    
-                    if showDistanceError {
-                        Text(distanceError)
-                            .font(.caption)
-                            .foregroundColor(.red)
-                    }
-                    
-                    if let userLocation = userLocationManager.currentLocation {
-                        Button("Use My Current Location") {
-                            newLatitude = String(userLocation.coordinate.latitude)
-                            newLongitude = String(userLocation.coordinate.longitude)
-                        }
-                        .font(.caption)
-                    }
-                }
-                
-                Section("Map View") {
+            VStack(spacing: 0) {
+                // Large map view taking most of the screen
+                ZStack {
                     if !locationManager.locations.isEmpty || userLocationManager.currentLocation != nil {
                         LootBoxMapView(locationManager: locationManager, userLocationManager: userLocationManager)
-                            .frame(height: 300)
-                            .cornerRadius(10)
+                            .ignoresSafeArea(edges: [.leading, .trailing])
                     } else {
-                        Text("Add locations to see them on the map")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .frame(height: 300)
-                    }
-                    
-                    if let userLocation = userLocationManager.currentLocation {
-                        Button("🔄 Regenerate Random Loot Boxes") {
-                            locationManager.regenerateLocations(near: userLocation)
+                        VStack {
+                            Image(systemName: "map")
+                                .font(.largeTitle)
+                                .foregroundColor(.secondary)
+                            Text("No locations to display")
+                                .foregroundColor(.secondary)
                         }
-                        .foregroundColor(.blue)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                }
-                
-                Section("Current Locations") {
-                    ForEach(locationManager.locations) { location in
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(location.name)
-                                .font(.headline)
-                            Text(location.type.rawValue)
+
+                    // Instructions overlay when add mode is not active
+                    VStack {
+                        HStack {
+                            Text("Tap + to add items, drag to position crosshairs")
                                 .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text("📍 \(location.latitude, specifier: "%.6f"), \(location.longitude, specifier: "%.6f")")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text("Radius: \(location.radius, specifier: "%.1f")m")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            if location.collected {
-                                Text("✅ Collected")
-                                    .font(.caption)
-                                    .foregroundColor(.green)
-                            }
+                                .padding(8)
+                                .background(Color.black.opacity(0.7))
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                                .padding()
+                            Spacer()
                         }
-                        .padding(.vertical, 4)
-                    }
-                    .onDelete { indexSet in
-                        locationManager.locations.remove(atOffsets: indexSet)
-                        locationManager.saveLocations()
+                        Spacer()
                     }
                 }
-                
-                Section("Instructions") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("1. Get your coordinates:")
-                            .font(.caption)
-                        Text("   • Use Maps app to find your location")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Text("   • Long press to drop a pin")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        Text("   • Tap the pin to see coordinates")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                        
-                        Text("2. Enter coordinates above")
-                            .font(.caption)
-                            .padding(.top, 4)
-                        
-                        Text("3. Set radius (how close you need to be)")
-                            .font(.caption)
+
+                // Bottom controls
+                VStack(spacing: 12) {
+                    if let userLocation = userLocationManager.currentLocation {
+                        HStack(spacing: 20) {
+                            Button("🔄 Regenerate Loot Boxes") {
+                                locationManager.regenerateLocations(near: userLocation)
+                            }
+                            .foregroundColor(.blue)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(8)
+
+                            Button("❌ Reset All Found") {
+                                locationManager.resetAllLocations()
+                            }
+                            .foregroundColor(.red)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color.red.opacity(0.1))
+                            .cornerRadius(8)
+                        }
                     }
-                    .padding(.vertical, 4)
+
+                    // Stats - count both GPS boxes and AR spheres
+                    HStack {
+                        let gpsCollected = locationManager.locations.filter { $0.collected }.count
+                        let arSpheresFound = 0 // We'll need to pass this from ARCoordinator
+                        let totalFound = gpsCollected // + arSpheresFound (when we add that)
+                        let totalAvailable = locationManager.locations.count // + arSpheresFound (when we add that)
+
+                        Text("Found: \(totalFound)/\(totalAvailable)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        if let location = userLocationManager.currentLocation {
+                            Text("📍 \(location.coordinate.latitude, specifier: "%.4f"), \(location.coordinate.longitude, specifier: "%.4f")")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
                 }
+                .background(Color(.systemBackground))
+                .shadow(radius: 2)
             }
             .navigationTitle("Loot Box Locations")
             .navigationBarTitleDisplayMode(.inline)
@@ -141,44 +102,6 @@ struct LocationConfigView: View {
         .onAppear {
             userLocationManager.requestLocationPermission()
         }
-    }
-    
-    private func addLocation() {
-        guard let lat = Double(newLatitude),
-              let lon = Double(newLongitude),
-              let radius = Double(newRadius) else {
-            return
-        }
-        
-        // Check distance from user's current location
-        if let userLocation = userLocationManager.currentLocation {
-            let newLocation = CLLocation(latitude: lat, longitude: lon)
-            let distance = userLocation.distance(from: newLocation)
-            
-            if distance > locationManager.maxSearchDistance {
-                showDistanceError = true
-                distanceError = "⚠️ Location is \(String(format: "%.1f", distance))m away. Must be within \(Int(locationManager.maxSearchDistance))m of your current location."
-                return
-            }
-        }
-        
-        let location = LootBoxLocation(
-            id: UUID().uuidString,
-            name: newLocationName,
-            type: newLocationType,
-            latitude: lat,
-            longitude: lon,
-            radius: radius
-        )
-        
-        locationManager.addLocation(location)
-        showDistanceError = false
-        
-        // Reset fields
-        newLocationName = ""
-        newLatitude = ""
-        newLongitude = ""
-        newRadius = "5.0"
     }
 }
 
