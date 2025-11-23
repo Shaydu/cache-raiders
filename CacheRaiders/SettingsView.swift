@@ -18,6 +18,8 @@ struct SettingsView: View {
             return "shippingbox.fill"
         case .sphere:
             return "circle.fill"
+        case .cube:
+            return "cube.fill"
         }
     }
     
@@ -30,8 +32,8 @@ struct SettingsView: View {
             return ["Stylised_Treasure_Chest", "Treasure_Chest"]
         case .treasureChest:
             return ["Treasure_Chest"]
-        case .sphere:
-            return [] // Spheres are procedural, no models
+        case .sphere, .cube:
+            return [] // Spheres and cubes are procedural, no models
         }
     }
     

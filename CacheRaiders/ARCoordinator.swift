@@ -14,6 +14,7 @@ enum PlacedObjectType {
     case chalice
     case treasureBox
     case sphere
+    case cube
 }
 
 // MARK: - AR Coordinator
@@ -109,6 +110,28 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     func clearFoundLootBoxes() {
         distanceTracker?.clearFoundLootBoxes()
         tapHandler?.foundLootBoxes.removeAll()
+    }
+    
+    // Remove all placed objects from AR scene and clear tracking dictionaries
+    // This allows objects to be re-placed at their proper GPS locations after reset
+    func removeAllPlacedObjects() {
+        guard let arView = arView else { return }
+        
+        Swift.print("🔄 Removing all \(placedBoxes.count) placed objects from AR scene...")
+        
+        // Remove all anchors from the scene
+        for (_, anchor) in placedBoxes {
+            anchor.removeFromParent()
+        }
+        
+        // Clear tracking dictionaries
+        placedBoxes.removeAll()
+        findableObjects.removeAll()
+        
+        // Also clear found loot boxes tracking
+        clearFoundLootBoxes()
+        
+        Swift.print("✅ All placed objects removed - ready for re-placement at proper locations")
     }
     
     // Update scene ambient lighting based on settings
@@ -349,7 +372,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Create a new temporary location for this object
             // Use completely unique IDs to avoid any confusion with map locations
             // Randomly select object type for variety
-            let objectTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest]
+            let objectTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .sphere, .cube]
             let selectedType = objectTypes.randomElement() ?? .chalice
             let newLocation = LootBoxLocation(
                 id: "AR_ITEM_" + UUID().uuidString, // Generic prefix for all AR-only items (not just spheres)
@@ -564,118 +587,149 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     // MARK: - Loot Box Placement
     private func placeLootBoxAtLocation(_ location: LootBoxLocation, in arView: ARView) {
-        guard let frame = arView.session.currentFrame else {
-            Swift.print("⚠️ No AR frame available for \(location.name)")
+        guard let frame = arView.session.currentFrame,
+              let userLocation = userLocationManager?.currentLocation else {
+            Swift.print("⚠️ No AR frame or user location available for \(location.name)")
             return
         }
         
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
         
-        // Place boxes within the same room by finding floor planes near the camera
-        // Try multiple random positions around the camera within the search distance
-        var attempts = 0
-        let maxAttempts = 10
-
-        while attempts < maxAttempts {
-            attempts += 1
-
-            // Generate random position around camera using settings from maxSearchDistance
-            // Use min 5m to avoid being too close to camera, max 80% of search distance to stay within room
-            let minDistance: Float = 5.0 // Minimum 5 meters from camera (for initial placement attempt)
-            let searchDistance = Float(locationManager?.maxSearchDistance ?? 100.0)
-            let maxDistance: Float = min(searchDistance * 0.8, 50.0) // Cap at 50m for practical AR limits
-            let randomDistance = Float.random(in: minDistance...maxDistance)
-            let randomAngle = Float.random(in: 0...(2 * Float.pi))
+        // Use GPS-based placement if location has GPS coordinates
+        if location.latitude != 0 || location.longitude != 0 {
+            // Calculate GPS-based position
+            let targetLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
+            var distance = userLocation.distance(from: targetLocation) // Distance in meters
+            let bearing = userLocation.bearing(to: targetLocation) // Bearing in degrees (0-360, 0 = North)
             
-            // Calculate random position in XZ plane around camera
-            let randomX = cameraPos.x + randomDistance * cos(randomAngle)
-            let randomZ = cameraPos.z + randomDistance * sin(randomAngle)
-            
-            // Raycast downward from above this position to find the floor
-            let raycastOrigin = SIMD3<Float>(randomX, cameraPos.y + 1.0, randomZ)
-        let raycastQuery = ARRaycastQuery(
-            origin: raycastOrigin,
-            direction: SIMD3<Float>(0, -1, 0), // Point downward
-            allowing: .estimatedPlane,
-            alignment: .horizontal
-        )
-        
-        let raycastResults = arView.session.raycast(raycastQuery)
-            
-            guard let result = raycastResults.first else {
-                // No floor plane detected at this position, try another
-                continue
+            // Ensure minimum distance of 1m for AR placement
+            let minDistance: Double = 1.0
+            if distance < minDistance {
+                Swift.print("⚠️ GPS distance \(String(format: "%.2f", distance))m is too close, using minimum \(minDistance)m")
+                distance = minDistance
             }
             
-            let hitY = result.worldTransform.columns.3.y
-            let cameraY = cameraPos.y
+            Swift.print("📍 Placing \(location.name) at GPS distance \(String(format: "%.2f", distance))m, bearing \(String(format: "%.1f", bearing))°")
             
-            // Reject if hit is above camera (likely ceiling) or too far below (likely wrong floor)
-            if hitY > cameraY - 0.2 {
-                // Likely a ceiling hit
-                continue
-            }
+            // Get camera's forward and right directions
+            let cameraForward = SIMD3<Float>(
+                -cameraTransform.columns.2.x,
+                0,
+                -cameraTransform.columns.2.z
+            )
+            let cameraRight = SIMD3<Float>(
+                cameraTransform.columns.0.x,
+                0,
+                cameraTransform.columns.0.z
+            )
             
-            // Check if floor is at a reasonable level (within 2 meters of camera height)
-            let heightDifference = abs(hitY - cameraY)
-            if heightDifference > 2.0 {
-                // Floor too far from camera level, likely different floor
-                continue
-            }
+            // Normalize directions
+            let forwardDir = normalize(cameraForward)
+            let rightDir = normalize(cameraRight)
             
-            var boxPosition = SIMD3<Float>(randomX, hitY, randomZ)
-
-            // CRITICAL: Enforce MINIMUM 3m distance from camera to prevent large objects spawning on/near camera
-            let distanceFromCamera = length(boxPosition - cameraPos)
-            if distanceFromCamera < 3.0 {
-                // Too close to camera - skip this position
-                continue
-            }
-
-            // BASIC FINDABLE BEHAVIOR: Ensure minimum distance from camera (5m)
-            // Use FindableObject's static method to enforce minimum distance
-            if let adjustedPosition = FindableObject.ensureMinimumDistance(from: boxPosition, to: cameraPos, minDistance: minDistance) {
-                boxPosition = adjustedPosition
-            } else {
-                // Position is too close, skip this attempt
-                continue
-            }
-
-            // Check distance from camera (use the same limits as placement)
-            let finalDistanceFromCamera = length(boxPosition - cameraPos)
-            if finalDistanceFromCamera > maxDistance {
-                continue
-            }
+            // Convert bearing to radians (0 = North, 90 = East, 180 = South, 270 = West)
+            let bearingRad = Float(bearing * .pi / 180.0)
             
-            // Check if position is too close to other boxes
-            var tooCloseToOtherBox = false
-            for (_, existingAnchor) in placedBoxes {
-                let existingTransform = existingAnchor.transformMatrix(relativeTo: nil)
-                let existingPos = SIMD3<Float>(
-                    existingTransform.columns.3.x,
-                    existingTransform.columns.3.y,
-                    existingTransform.columns.3.z
+            // Calculate offset in AR space relative to camera orientation
+            // X = distance * sin(bearing) (east/west)
+            // Z = distance * cos(bearing) (north/south)
+            let offsetX = Float(distance) * sin(bearingRad)
+            let offsetZ = Float(distance) * cos(bearingRad)
+            
+            // Apply offset relative to camera's orientation
+            let targetPos = cameraPos + rightDir * offsetX + forwardDir * offsetZ
+            
+            // Clamp distance to reasonable AR space (max 20m for GPS items)
+            let clampedDistance = min(distance, 20.0)
+            if distance > 20.0 {
+                Swift.print("⚠️ GPS distance \(String(format: "%.2f", distance))m exceeds 20m, clamping to 20m for AR placement")
+                let scale = Float(20.0 / distance)
+                let adjustedTargetPos = cameraPos + (targetPos - cameraPos) * scale
+                
+                // Raycast to find ground at adjusted position
+                let raycastOrigin = SIMD3<Float>(adjustedTargetPos.x, cameraPos.y + 1.0, adjustedTargetPos.z)
+                let raycastQuery = ARRaycastQuery(
+                    origin: raycastOrigin,
+                    direction: SIMD3<Float>(0, -1, 0),
+                    allowing: .estimatedPlane,
+                    alignment: .horizontal
                 )
-                let distanceToExisting = length(boxPosition - existingPos)
-                if distanceToExisting < 3.0 {
-                    tooCloseToOtherBox = true
-                    break
+                
+                if let raycastResult = arView.session.raycast(raycastQuery).first {
+                    let groundY = raycastResult.worldTransform.columns.3.y
+                    let itemPosition = SIMD3<Float>(adjustedTargetPos.x, groundY, adjustedTargetPos.z)
+                    Swift.print("✅ Placed \(location.type.displayName) on ground at GPS-based AR position")
+                    placeBoxAtPosition(itemPosition, location: location, in: arView)
+                    return
+                } else {
+                    // Fallback: use adjusted position at camera height
+                    placeBoxAtPosition(adjustedTargetPos, location: location, in: arView)
+                    return
                 }
             }
             
-            if tooCloseToOtherBox {
-                continue
-            }
+            // Try to find ground plane by raycasting downward from above the target position
+            let raycastOrigin = SIMD3<Float>(targetPos.x, cameraPos.y + 1.0, targetPos.z)
+            let raycastQuery = ARRaycastQuery(
+                origin: raycastOrigin,
+                direction: SIMD3<Float>(0, -1, 0),
+                allowing: .estimatedPlane,
+                alignment: .horizontal
+            )
             
-            // Found a good position! Place the box here
-            Swift.print("🎯 Placing object at position (total objects: \(placedBoxes.count + 1)/3)")
-            placeBoxAtPosition(boxPosition, location: location, in: arView)
-            return
+            if let raycastResult = arView.session.raycast(raycastQuery).first {
+                let groundY = raycastResult.worldTransform.columns.3.y
+                let itemPosition = SIMD3<Float>(targetPos.x, groundY, targetPos.z)
+                Swift.print("✅ Placed \(location.type.displayName) on ground at GPS-based AR position")
+                placeBoxAtPosition(itemPosition, location: location, in: arView)
+                return
+            } else {
+                // Fallback: Try wider search before giving up
+                Swift.print("⚠️ No ground plane detected for GPS location, trying wider search...")
+                let searchOffsets: [SIMD3<Float>] = [
+                    SIMD3<Float>(0, 0, 0),
+                    SIMD3<Float>(0.5, 0, 0),
+                    SIMD3<Float>(-0.5, 0, 0),
+                    SIMD3<Float>(0, 0, 0.5),
+                    SIMD3<Float>(0, 0, -0.5)
+                ]
+                
+                var foundSurface = false
+                for offset in searchOffsets {
+                    let searchPos = targetPos + offset
+                    let searchOrigin = SIMD3<Float>(searchPos.x, cameraPos.y + 1.0, searchPos.z)
+                    let searchQuery = ARRaycastQuery(
+                        origin: searchOrigin,
+                        direction: SIMD3<Float>(0, -1, 0),
+                        allowing: .estimatedPlane,
+                        alignment: .horizontal
+                    )
+                    
+                    if let result = arView.session.raycast(searchQuery).first {
+                        let surfaceY = result.worldTransform.columns.3.y
+                        if surfaceY < cameraPos.y - 0.2 {
+                            let groundedPos = SIMD3<Float>(targetPos.x, surfaceY, targetPos.z)
+                            Swift.print("✅ Found surface at offset position - grounding object")
+                            placeBoxAtPosition(groundedPos, location: location, in: arView)
+                            foundSurface = true
+                            break
+                        }
+                    }
+                }
+                
+                if !foundSurface {
+                    Swift.print("⚠️ No ground plane found after extended search - object may float")
+                    Swift.print("   💡 Try moving camera to scan surfaces before placing")
+                    // Still place it, but placeBoxAtPosition will try to ground it
+                    placeBoxAtPosition(targetPos, location: location, in: arView)
+                }
+                return
+            }
         }
         
-        // If we couldn't find a good position after max attempts, try fallback
-        Swift.print("⚠️ Could not find suitable floor plane for \(location.name) after \(maxAttempts) attempts, using fallback")
+        // Fallback: If no GPS coordinates, use random placement (for AR-only items)
+        Swift.print("⚠️ No GPS coordinates for \(location.name), using random placement")
         placeLootBoxInFrontOfCamera(location: location, in: arView)
     }
     
@@ -836,15 +890,40 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
+        // CRITICAL: Ensure object is grounded on a horizontal surface (floor/table)
+        // Raycast downward from above the target position to find the actual surface
+        var groundedPosition = boxPosition
+        let raycastOrigin = SIMD3<Float>(boxPosition.x, cameraPos.y + 1.0, boxPosition.z)
+        let raycastQuery = ARRaycastQuery(
+            origin: raycastOrigin,
+            direction: SIMD3<Float>(0, -1, 0),
+            allowing: .estimatedPlane,
+            alignment: .horizontal
+        )
+        
+        if let raycastResult = arView.session.raycast(raycastQuery).first {
+            let surfaceY = raycastResult.worldTransform.columns.3.y
+            // Reject if surface is above camera (likely a ceiling)
+            if surfaceY < cameraPos.y - 0.2 {
+                groundedPosition = SIMD3<Float>(boxPosition.x, surfaceY, boxPosition.z)
+                Swift.print("✅ Found horizontal surface at Y: \(String(format: "%.2f", surfaceY)) - grounding object")
+            } else {
+                Swift.print("⚠️ Raycast hit surface above camera (likely ceiling) at Y: \(String(format: "%.2f", surfaceY)) - using original position")
+            }
+        } else {
+            Swift.print("⚠️ No horizontal surface detected at position - object may float")
+            Swift.print("   💡 Try moving camera to scan more surfaces before placing objects")
+        }
+        
         // DEBUG: Log position details
-        Swift.print("📍 Placing at position: (\(String(format: "%.2f", boxPosition.x)), \(String(format: "%.2f", boxPosition.y)), \(String(format: "%.2f", boxPosition.z)))")
+        Swift.print("📍 Placing at position: (\(String(format: "%.2f", groundedPosition.x)), \(String(format: "%.2f", groundedPosition.y)), \(String(format: "%.2f", groundedPosition.z)))")
         Swift.print("📍 Camera position: (\(String(format: "%.2f", cameraPos.x)), \(String(format: "%.2f", cameraPos.y)), \(String(format: "%.2f", cameraPos.z)))")
         Swift.print("📍 Distance from camera: \(String(format: "%.2f", distanceFromCamera))m")
-        Swift.print("📍 Height difference (camera - box): \(String(format: "%.2f", cameraPos.y - boxPosition.y))m")
+        Swift.print("📍 Height difference (camera - box): \(String(format: "%.2f", cameraPos.y - groundedPosition.y))m")
         
         // Use same simple world anchor approach as spheres for consistency
         // This ensures boxes stay fixed in world space and don't follow the camera
-        let anchor = AnchorEntity(world: boxPosition)
+        let anchor = AnchorEntity(world: groundedPosition)
         
         // Determine object type based on location type from dropdown selection
         let selectedObjectType: PlacedObjectType
@@ -853,6 +932,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             selectedObjectType = .chalice
         case .sphere:
             selectedObjectType = .sphere
+        case .cube:
+            selectedObjectType = .cube
         case .templeRelic, .treasureChest:
             selectedObjectType = .treasureBox
         }
@@ -862,91 +943,27 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("   Location type: \(location.type)")
         Swift.print("   Selected object type: \(selectedObjectType)")
 
-        var placedEntity: ModelEntity? = nil
-        var findableObject: FindableObject? = nil
-
-        switch selectedObjectType {
-        case .chalice:
-            // Create chalice using ChaliceLootContainer
-            Swift.print("🎯 Creating chalice for \(location.name)")
-            let sizeMultiplier = Float.random(in: 0.5...1.0) // Vary size for variety
-            let lootContainer = ChaliceLootContainer.create(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
-            
-            // Use the container entity which contains all children (box, prize, etc.)
-            placedEntity = lootContainer.container
-            placedEntity?.name = location.id
-            
-            // Position the container so it sits on the ground
-            placedEntity?.position = SIMD3<Float>(0, 0, 0)
-            
-            findableObject = FindableObject(
-                locationId: location.id,
-                anchor: anchor,
-                sphereEntity: nil, // Chalices don't have spheres
-                container: lootContainer,
-                location: location
-            )
-            
-        case .treasureBox:
-            // Create treasure box using BoxLootContainer
-            Swift.print("🎯 Creating treasure box for \(location.name)")
-            let sizeMultiplier = Float.random(in: 0.5...1.0) // Vary size for variety
-            let lootContainer = BoxLootContainer.create(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
-            
-            // Use the container entity which contains all children (box, lid, prize, etc.)
-            placedEntity = lootContainer.container
-            placedEntity?.name = location.id
-            
-            // Position the container so it sits on the ground
-            placedEntity?.position = SIMD3<Float>(0, 0, 0)
-            
-            findableObject = FindableObject(
-                locationId: location.id,
-                anchor: anchor,
-                sphereEntity: nil, // Treasure boxes don't have spheres
-                container: lootContainer,
-                location: location
-            )
-            
-        case .sphere:
-            // Use simple sphere approach for spheres
-            Swift.print("🎯 Creating sphere for \(location.name)")
-            
-            // Use same size range as spheres for consistency (0.15-0.3m)
-            let sphereRadius = Float.random(in: 0.15...0.3)
-            let sphereMesh = MeshResource.generateSphere(radius: sphereRadius)
-            var sphereMaterial = SimpleMaterial()
-            
-            // Use type-specific color
-            sphereMaterial.color = .init(tint: location.type.color)
-            sphereMaterial.roughness = 0.2
-            sphereMaterial.metallic = 0.3
-
-            let sphere = ModelEntity(mesh: sphereMesh, materials: [sphereMaterial])
-            sphere.name = location.id
-
-            // Position sphere so bottom sits flat on ground
-            sphere.position = SIMD3<Float>(0, sphereRadius, 0) // Bottom of sphere touches ground
-
-            // Add point light to make it visible (using type's glow color)
-            let light = PointLightComponent(color: location.type.glowColor, intensity: 200)
-            sphere.components.set(light)
-
-            placedEntity = sphere
-
-            findableObject = FindableObject(
-                locationId: location.id,
-                anchor: anchor,
-                sphereEntity: sphere, // The sphere itself is the findable object
-                container: nil, // No loot box container - using simple sphere approach
-                location: location
-            )
+        // Use factory to create entity - each factory encapsulates its own creation logic
+        Swift.print("🎯 Creating \(location.type.displayName) using factory for \(location.name)")
+        Swift.print("   Location type: \(location.type), Factory type: \(type(of: location.type.factory))")
+        let sizeMultiplier = Float.random(in: 0.5...1.0) // Vary size for variety
+        let factory = location.type.factory
+        
+        // Ensure spheres use SphereFactory, not TreasureChestFactory
+        if location.type == .sphere {
+            assert(factory is SphereFactory, "ERROR: Sphere location is using wrong factory: \(type(of: factory))")
+            if !(factory is SphereFactory) {
+                Swift.print("❌ CRITICAL ERROR: Sphere location \(location.id) is using factory \(type(of: factory)) instead of SphereFactory!")
+            }
         }
+        
+        let (entity, findable) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: sizeMultiplier)
+        
+        let placedEntity = entity
+        let findableObject = findable
 
         // Add the placed entity to the anchor
-        if let entity = placedEntity {
-            anchor.addChild(entity)
-        }
+        anchor.addChild(placedEntity)
 
         // Store the anchor and findable object
         arView.scene.addAnchor(anchor)
@@ -966,21 +983,19 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("✅ Placed \(selectedObjectType) at AR position: \(finalAnchorPos)")
         
         // DEBUG: Log container info
-        if let findableObj = findableObject {
-            Swift.print("   FindableObject created:")
-            Swift.print("     - Has container: \(findableObj.container != nil)")
-            Swift.print("     - Has location: \(findableObj.location != nil)")
-            Swift.print("     - Location name: \(findableObj.location?.name ?? "nil")")
-            if let container = findableObj.container {
-                Swift.print("     - Container has box: \(container.box.name)")
-                Swift.print("     - Container has lid: \(container.lid.name)")
-                Swift.print("     - Container has prize: \(container.prize.name)")
-                Swift.print("     - Built-in animation: \(container.builtInAnimation != nil ? "YES" : "NO")")
-            }
+        Swift.print("   FindableObject created:")
+        Swift.print("     - Has container: \(findableObject.container != nil)")
+        Swift.print("     - Has location: \(findableObject.location != nil)")
+        Swift.print("     - Location name: \(findableObject.location?.name ?? "nil")")
+        if let container = findableObject.container {
+            Swift.print("     - Container has box: \(container.box.name)")
+            Swift.print("     - Container has lid: \(container.lid.name)")
+            Swift.print("     - Container has prize: \(container.prize.name)")
+            Swift.print("     - Built-in animation: \(container.builtInAnimation != nil ? "YES" : "NO")")
         }
 
         // Set callback to increment found count
-        findableObject?.onFoundCallback = { [weak self] id in
+        findableObject.onFoundCallback = { [weak self] id in
             DispatchQueue.main.async {
                 if let locationManager = self?.locationManager {
                     locationManager.markCollected(id)
@@ -988,12 +1003,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
 
-        if let findableObj = findableObject {
-            findableObjects[location.id] = findableObj
-            Swift.print("   ✅ Stored FindableObject in findableObjects dictionary")
-        } else {
-            Swift.print("   ⚠️ WARNING: No FindableObject to store!")
-        }
+        findableObjects[location.id] = findableObject
+        Swift.print("   ✅ Stored FindableObject in findableObjects dictionary")
     }
     
     // MARK: - Distance Text Overlay (delegated to ARDistanceTracker)
@@ -1176,7 +1187,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // Use FindableObject's find() method - this encapsulates all the basic findable behavior
         // The notification will appear AFTER animation completes
-        let objectName = findableObject.location?.name ?? "Treasure"
+        let objectName = findableObject.itemDescription()
         findableObject.find { [weak self] in
             // Show discovery notification AFTER animation completes
             DispatchQueue.main.async { [weak self] in
@@ -1191,6 +1202,19 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Cleanup after find completes
             self?.placedBoxes.removeValue(forKey: locationId)
             self?.findableObjects.removeValue(forKey: locationId)
+            
+            // Remove randomized AR items from locationManager when found (they're AR-only, not GPS-based)
+            // This keeps the counter accurate - only shows items that are actually placed on screen
+            if locationId.hasPrefix("AR_ITEM_") || locationId.hasPrefix("AR_SPHERE_") {
+                DispatchQueue.main.async { [weak self] in
+                    if let locationManager = self?.locationManager {
+                        // Remove the location from locationManager since it's no longer on screen
+                        locationManager.locations.removeAll { $0.id == locationId }
+                        Swift.print("🗑️ Removed AR item \(locationId) from locationManager (no longer on screen)")
+                    }
+                }
+            }
+            
             Swift.print("🎉 Collected: \(objectName)")
 
             // Check if all randomized AR items are found and disable sphere mode
@@ -1688,7 +1712,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let raycastOrigin = SIMD3<Float>(targetPos.x, cameraPos.y + 1.0, targetPos.z)
         let raycastQuery = ARRaycastQuery(
             origin: raycastOrigin,
-            direction: SIMD3<Float>(0, -1, 0), // Downward ray from above target
+            direction: SIMD3<Float>(0, -1, 0),
             allowing: .estimatedPlane,
             alignment: .horizontal
         )

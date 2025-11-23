@@ -106,6 +106,25 @@ struct ARLootBoxView: UIViewRepresentable {
             }
         }
         
+        // Handle AR object reset trigger (when locations are reset)
+        if locationManager.shouldResetARObjects {
+            print("🔄 Reset AR objects triggered - removing all placed objects...")
+            // Clear the flag IMMEDIATELY to prevent duplicate resets
+            locationManager.shouldResetARObjects = false
+            // Defer the reset to avoid view update publishing issues
+            DispatchQueue.main.async {
+                context.coordinator.removeAllPlacedObjects()
+                // After removing objects, trigger re-placement if we have a user location
+                if let userLocation = userLocationManager.currentLocation {
+                    let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
+                    DispatchQueue.main.async {
+                        nearbyLocations = nearby
+                        context.coordinator.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+                    }
+                }
+            }
+        }
+        
         // Update ambient light setting when it changes
         context.coordinator.updateAmbientLight()
     }

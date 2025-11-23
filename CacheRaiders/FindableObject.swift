@@ -10,6 +10,10 @@ protocol Findable {
     var container: LootBoxContainer? { get }
     var location: LootBoxLocation? { get }
     
+    /// Returns the description of this item - all items must have a description
+    /// - Returns: A non-empty description string for this item
+    func itemDescription() -> String
+    
     /// Triggers the find behavior: sound, confetti, animation, increment count, disappear
     func find(onComplete: @escaping () -> Void)
 }
@@ -39,60 +43,56 @@ class FindableObject: Findable {
         self.location = location
     }
     
-    /// Handles container opening and anchor removal with safety timeout
-    /// - Parameters:
-    ///   - container: The loot box container to open (if any)
-    ///   - foundLocation: The location that was found
-    ///   - anchorWorldPos: World position of the anchor for confetti
-    ///   - onComplete: Completion callback
-    private func handleContainerOpeningAndRemoval(
-        container: LootBoxContainer?,
-        foundLocation: LootBoxLocation?,
-        anchorWorldPos: SIMD3<Float>,
-        onComplete: @escaping () -> Void
-    ) {
-        if let container = container,
-           let foundLocation = foundLocation {
-            // Safety: ensure anchor is removed even if animation fails
-            var completionCalled = false
-            let safeCompletion = {
-                if !completionCalled {
-                    completionCalled = true
-                    self.anchor.removeFromParent()
-                    onComplete()
-                }
-            }
-            
-            // Open the loot box with confetti
-            LootBoxAnimation.openLootBox(container: container, location: foundLocation, tapWorldPosition: anchorWorldPos) {
-                safeCompletion()
-            }
-            
-            // Safety timeout: remove anchor after 3 seconds even if animation doesn't complete
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                safeCompletion()
-            }
-        } else {
-            // No container - just remove the anchor (sphere or other findable disappears)
-            anchor.removeFromParent()
-            onComplete()
+    /// Returns the description of this item
+    /// Override this method in subclasses to provide custom descriptions
+    /// Default implementation uses the factory pattern based on location type
+    /// - Returns: A non-empty description string for this item
+    func itemDescription() -> String {
+        guard let location = location else {
+            // Fallback: if no location, return generic description
+            // This should rarely happen as all items should have a location
+            return "Mysterious Treasure"
         }
+        // Use factory to get the description - each factory provides its own description
+        return location.type.factory.itemDescription()
     }
     
     /// Triggers the find behavior: sound, confetti, animation, increment count, disappear
+    /// This is the main entry point - confetti and sound are default behaviors for all findables
     func find(onComplete: @escaping () -> Void) {
-        let objectName = location?.name ?? "Treasure"
+        let objectName = itemDescription()
         
         Swift.print("🎉 Finding object: \(objectName)")
         
-        // BASIC FINDABLE BEHAVIOR #1: Create confetti effect immediately
+        // DEFAULT BEHAVIOR #1: Create confetti effect immediately
         // (Sound will play automatically when confetti is created)
         Swift.print("🎊 Creating confetti effect...")
         let parentEntity = anchor
-        let confettiRelativePos = SIMD3<Float>(0, 0.15, 0) // At object center
-        LootBoxAnimation.createConfettiEffect(at: confettiRelativePos, parent: parentEntity)
+        let confettiPosition = SIMD3<Float>(0, 0.15, 0) // At object center
+        LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
         
-        // Get anchor world position for confetti
+        // DEFAULT BEHAVIOR #2: Perform find animation (overrideable by child classes)
+        // This method determines which animation to play based on location type
+        performFindAnimation(onComplete: onComplete)
+    }
+    
+    /// Performs the find animation based on location type
+    /// This method can be overridden by child classes to customize animation behavior
+    /// - Parameter onComplete: Callback when animation completes
+    func performFindAnimation(onComplete: @escaping () -> Void) {
+        guard let location = location else {
+            // No location - just complete immediately
+            onFoundCallback?(locationId)
+            DispatchQueue.main.async { [weak self] in
+                self?.anchor.removeFromParent()
+                onComplete()
+            }
+            return
+        }
+        
+        let objectName = itemDescription()
+        
+        // Get anchor world position for cleanup
         let anchorTransform = anchor.transformMatrix(relativeTo: nil)
         let anchorWorldPos = SIMD3<Float>(
             anchorTransform.columns.3.x,
@@ -112,57 +112,51 @@ class FindableObject: Findable {
             }
         }
         
-        // BASIC FINDABLE BEHAVIOR #3: Trigger find animation
-        // Priority: If container exists, play opening animation first, then mark as found
-        // Otherwise, if sphere exists, play sphere animation, then mark as found
+        // Use factory to handle animation - each factory encapsulates its own behavior
+        Swift.print("🎭 Using factory for animation: \(location.type)")
         
-        if let container = container, let foundLocation = location {
-            // For containers (treasure chests, chalices, etc.):
-            // 1. Play opening animation
-            // 2. Mark as found callback is called (location already marked as collected in findLootBox)
-            // 3. Then remove/disappear
-            Swift.print("📦 Opening container for: \(objectName)")
-            Swift.print("   Container has box: \(container.box.name), lid: \(container.lid.name), prize: \(container.prize.name)")
-            Swift.print("   Built-in animation available: \(container.builtInAnimation != nil)")
-            handleContainerOpeningAndRemoval(
-                container: container,
-                foundLocation: foundLocation,
-                anchorWorldPos: anchorWorldPos
-            ) {
-                // Callback to update found count (location already marked as collected)
-                Swift.print("✅ Animation complete for: \(objectName)")
-                self.onFoundCallback?(foundLocation.id)
+        // Get the factory for this location type
+        let factory = location.type.factory
+        
+        // Determine which entity to animate
+        let entityToAnimate: ModelEntity
+        if let container = container {
+            entityToAnimate = container.container
+        } else if let orb = orb {
+            entityToAnimate = orb
+        } else {
+            // Fallback - shouldn't happen, but handle gracefully
+            onFoundCallback?(location.id)
+            DispatchQueue.main.async { [weak self] in
+                self?.anchor.removeFromParent()
                 onComplete()
             }
-        } else if let orb = orb {
-            // For spheres: play sphere animation, then mark as found
-            LootBoxAnimation.animateSphereFind(orb: orb) {
-                // BASIC FINDABLE BEHAVIOR #4: Increment found count for ALL findable objects
-                if let foundLocation = self.location {
-                    self.onFoundCallback?(foundLocation.id)
-                }
-                
-                // Handle container opening and removal (shared logic) - in case there's a container too
-                self.handleContainerOpeningAndRemoval(
-                    container: self.container,
-                    foundLocation: self.location,
-                    anchorWorldPos: anchorWorldPos,
-                    onComplete: onComplete
-                )
+            return
+        }
+        
+        // Safety: ensure anchor is removed even if animation fails
+        var completionCalled = false
+        let safeCompletion = {
+            if !completionCalled {
+                completionCalled = true
+                self.anchor.removeFromParent()
+                self.onFoundCallback?(location.id)
+                onComplete()
             }
-        } else {
-            // No sphere or container - just mark as found and complete
-            if let foundLocation = location {
-                onFoundCallback?(foundLocation.id)
-            }
-            
-            // Handle container opening and removal (shared logic) - fallback
-            handleContainerOpeningAndRemoval(
-                container: container,
-                foundLocation: location,
-                anchorWorldPos: anchorWorldPos,
-                onComplete: onComplete
-            )
+        }
+        
+        // Use factory to animate find behavior (includes confetti, sound, and animation)
+        factory.animateFind(
+            entity: entityToAnimate,
+            container: container,
+            tapWorldPosition: anchorWorldPos
+        ) {
+            safeCompletion()
+        }
+        
+        // Safety timeout: remove anchor after 3 seconds even if animation doesn't complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+            safeCompletion()
         }
     }
     

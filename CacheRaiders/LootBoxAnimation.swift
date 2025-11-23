@@ -76,20 +76,9 @@ class LootBoxAnimation {
         Swift.print("🎊 Creating confetti effect...")
         createConfettiEffect(at: confettiPosition, parent: parentEntity)
         
-        // Determine animation type based on loot box type
-        Swift.print("🎭 Determining animation type for: \(location.type)")
-        switch location.type {
-        case .chalice:
-            Swift.print("   → Using chalice animation")
-            openChalice(container: container, onComplete: onComplete)
-        case .templeRelic, .treasureChest:
-            Swift.print("   → Using box animation")
-            openBox(container: container, onComplete: onComplete)
-        case .sphere:
-            // Spheres don't need opening animation - just complete immediately
-            Swift.print("   → Sphere (no animation needed)")
-            onComplete()
-        }
+        // Use polymorphic opening behavior - each container knows how to open itself
+        Swift.print("🎭 Opening loot box using polymorphic behavior")
+        container.open(container, onComplete)
     }
     
     /// Animates the sphere "find" animation: +25% size for 0.5s, ease out, then pop by shrinking 100%
@@ -230,7 +219,7 @@ class LootBoxAnimation {
     }
     
     /// Opens a skull container - lid rotates upward
-    private static func openSkull(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+    static func openSkull(container: LootBoxContainer, onComplete: @escaping () -> Void) {
         // Animate lid opening upward (rotate around X axis at the back edge)
         let lidRotationAngle = -Float.pi / 2.5 // Open lid about 72 degrees
         
@@ -255,7 +244,7 @@ class LootBoxAnimation {
     }
     
     /// Opens a chalice container - prize rises up from inside
-    private static func openChalice(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+    static func openChalice(container: LootBoxContainer, onComplete: @escaping () -> Void) {
         // No lid to open - prize just rises up and glows
         container.prize.isEnabled = true
         
@@ -299,7 +288,7 @@ class LootBoxAnimation {
     }
     
     /// Opens a box container - uses built-in animation if available (looped), otherwise custom animation
-    private static func openBox(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+    static func openBox(container: LootBoxContainer, onComplete: @escaping () -> Void) {
         // First, try to use built-in animation from the USDZ model if available
         if let animation = container.builtInAnimation {
             Swift.print("🎬 Playing built-in animation from USDZ model (will loop continuously)")

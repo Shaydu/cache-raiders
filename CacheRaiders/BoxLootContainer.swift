@@ -38,7 +38,8 @@ class BoxLootContainer {
             box: box,
             lid: doorLid, // Lid/door from model or dummy
             prize: prize,
-            builtInAnimation: builtInAnimation // Store built-in animation if available
+            builtInAnimation: builtInAnimation, // Store built-in animation if available
+            open: LootBoxAnimation.openBox
         )
     }
     
@@ -102,7 +103,10 @@ class BoxLootContainer {
             // ALL boxes (treasure chest, ancient artifact, puzzle box, etc.) use the same uniform scale
             // Scale by size * 0.03 (40% reduction from 0.05) to make boxes smaller
             // This gives us final sizes of approximately 0.0045-0.009m (4.5-9mm) which is small but visible
-            modelEntity.scale = SIMD3<Float>(repeating: size * 0.03)
+            // Treasure chests are scaled down by 50% (0.5 multiplier)
+            let baseScale: Float = 0.03
+            let treasureChestScale = type == .treasureChest ? baseScale * 0.5 : baseScale
+            modelEntity.scale = SIMD3<Float>(repeating: size * treasureChestScale)
             
             // Ensure model is right-side up (not upside down)
             // Some models may load with incorrect orientation

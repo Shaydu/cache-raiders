@@ -36,7 +36,9 @@ class SkullLootContainer {
             container: container,
             box: skullBase,
             lid: lid,
-            prize: prize
+            prize: prize,
+            builtInAnimation: nil,
+            open: LootBoxAnimation.openSkull
         )
     }
     

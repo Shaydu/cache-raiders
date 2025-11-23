@@ -50,6 +50,7 @@ class LootBoxLocationManager: ObservableObject {
     @Published var shouldPlaceSphere: Bool = false // Trigger for placing a single sphere in AR
     @Published var pendingSphereLocationId: String? // ID of the map marker location to use for the sphere
     @Published var pendingARItem: LootBoxLocation? // Item to place in AR room
+    @Published var shouldResetARObjects: Bool = false // Trigger for removing all AR objects when locations are reset
     var onSizeChanged: (() -> Void)? // Callback when size settings change
     private let locationsFileName = "lootBoxLocations.json"
     private let maxDistanceKey = "maxSearchDistance"
@@ -128,6 +129,9 @@ class LootBoxLocationManager: ObservableObject {
         }
         saveLocations()
         print("🔄 Reset all \(locations.count) loot boxes to not collected")
+        
+        // Trigger AR object removal so they can be re-placed at proper GPS locations
+        shouldResetARObjects = true
     }
     
     // Save locations to JSON file
@@ -202,8 +206,34 @@ class LootBoxLocationManager: ObservableObject {
     
     // Add a new location
     func addLocation(_ location: LootBoxLocation) {
+        // Check if location with same ID already exists (prevent duplicates)
+        if locations.contains(where: { $0.id == location.id }) {
+            print("⚠️ Location with ID \(location.id) already exists - skipping duplicate")
+            return
+        }
         locations.append(location)
         saveLocations()
+    }
+    
+    /// Returns only findable locations (excludes map markers and temporary AR items)
+    var findableLocations: [LootBoxLocation] {
+        return locations.filter { location in
+            // Exclude map-only markers - these are just visual markers, not findable items
+            if location.id.hasPrefix("AR_SPHERE_MAP_") {
+                return false
+            }
+            // Exclude temporary AR-only items (AR_ITEM_ and AR_SPHERE_ without MAP)
+            // These are randomized AR items that get removed when randomizing again
+            // They shouldn't be counted in the main loot box counter
+            if location.id.hasPrefix("AR_ITEM_") {
+                return false
+            }
+            if location.id.hasPrefix("AR_SPHERE_") && !location.id.hasPrefix("AR_SPHERE_MAP_") {
+                return false
+            }
+            // Include all other locations (GPS-based locations with real coordinates)
+            return true
+        }
     }
     
     // Update location
@@ -223,14 +253,15 @@ class LootBoxLocationManager: ObservableObject {
             updatedLocation.collected = true
             locations[index] = updatedLocation
 
-            // Save all locations except temporary AR-only spheres (AR_SPHERE_ without MAP)
+            // Save all locations except temporary AR-only items
             // AR_SPHERE_MAP_ locations should be saved because they're map markers
-            let isTemporaryARSphere = locationId.hasPrefix("AR_SPHERE_") && !locationId.hasPrefix("AR_SPHERE_MAP_")
-            if !isTemporaryARSphere {
+            // AR_ITEM_ and AR_SPHERE_ (without MAP) are temporary and don't need to be saved
+            let isTemporaryARItem = (locationId.hasPrefix("AR_SPHERE_") && !locationId.hasPrefix("AR_SPHERE_MAP_")) || locationId.hasPrefix("AR_ITEM_")
+            if !isTemporaryARItem {
                 saveLocations()
                 print("💾 Saved locations (including collected status for \(locationId))")
             } else {
-                print("⏭️ Skipping save for temporary AR sphere: \(locationId)")
+                print("⏭️ Skipping save for temporary AR item: \(locationId)")
             }
 
             // Explicitly notify observers (in case @Published doesn't catch the change)

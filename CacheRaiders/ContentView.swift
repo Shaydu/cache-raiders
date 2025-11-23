@@ -131,7 +131,11 @@ struct ContentView: View {
                     }
                     
                     if !locationManager.locations.isEmpty {
-                        Text("Loot Boxes Found: \(locationManager.locations.filter { $0.collected }.count)/\(locationManager.locations.count)")
+                        // Only count findable locations (exclude map markers)
+                        let findableLocations = locationManager.findableLocations
+                        let foundCount = findableLocations.filter { $0.collected }.count
+                        let totalCount = findableLocations.count
+                        Text("Loot Boxes Found: \(foundCount)/\(totalCount)")
                             .padding()
                             .background(.ultraThinMaterial)
                             .cornerRadius(10)

@@ -34,7 +34,9 @@ class ChaliceLootContainer {
             container: container,
             box: chalice,
             lid: dummyLid,
-            prize: prize
+            prize: prize,
+            builtInAnimation: nil,
+            open: LootBoxAnimation.openChalice
         )
     }
     

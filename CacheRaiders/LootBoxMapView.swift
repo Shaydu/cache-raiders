@@ -150,17 +150,19 @@ struct LootBoxMapView: View {
                                     // Determine icon
                                     let iconName = isPreview ? "plus.circle.fill" :
                                         (location.collected ? "checkmark.circle.fill" :
-                                        (location.type == .sphere ? "circle.fill" : "mappin.circle.fill"))
+                                        (location.type == .sphere ? "circle.fill" :
+                                        (location.type == .cube ? "cube.fill" : "mappin.circle.fill")))
                                     
-                                    // Determine color based on collected status and showFoundOnMap setting
+                                    // Determine color based on collected status
+                                    // Unfound objects: green, Found objects: red
                                     let iconColor: Color = if isPreview {
                                         .blue
                                     } else if location.collected {
-                                        // Deep red for found items when showFoundOnMap is enabled
-                                        locationManager.showFoundOnMap ? Color(red: 0.6, green: 0.0, blue: 0.0) : .green
+                                        // Red for found items
+                                        .red
                                     } else {
-                                        // Green for unfound items when showFoundOnMap is enabled, red otherwise
-                                        locationManager.showFoundOnMap ? .green : .red
+                                        // Green for unfound items
+                                        .green
                                     }
                                     
                                     Image(systemName: iconName)
@@ -508,12 +510,29 @@ struct LootBoxMapView: View {
             }
 
             print("🎯 Triggered sphere placement in AR room and added map marker at (\(coordinate.latitude), \(coordinate.longitude))")
+        } else if selectedItemType == .cube {
+            // Create AR item location for cube with fixed name
+            let arLocation = LootBoxLocation(
+                id: "AR_ITEM_" + UUID().uuidString,
+                name: "Mysterious Cube",
+                type: selectedItemType,
+                latitude: coordinate.latitude,
+                longitude: coordinate.longitude,
+                radius: 5.0
+            )
+
+            // Queue it for AR placement
+            locationManager.pendingARItem = arLocation
+            locationManager.addLocation(arLocation)
+            successMessage = "\(selectedItemType.displayName) added to AR room!"
+            print("✅ Queued \(selectedItemType.displayName) '\(arLocation.name)' for AR placement")
         } else {
             // For other items, queue them for AR placement
             let itemNames = [
                 LootBoxType.chalice: ["Sacred Chalice", "Ancient Chalice", "Golden Chalice"],
                 LootBoxType.templeRelic: ["Temple Relic", "Sacred Relic", "Temple Treasure"],
-                LootBoxType.treasureChest: ["Treasure Chest", "Ancient Chest", "Locked Chest"]
+                LootBoxType.treasureChest: ["Treasure Chest", "Ancient Chest", "Locked Chest"],
+                LootBoxType.sphere: ["Mysterious Sphere", "Ancient Orb", "Glowing Sphere"]
             ]
 
             let names = itemNames[selectedItemType] ?? ["Unknown Item"]

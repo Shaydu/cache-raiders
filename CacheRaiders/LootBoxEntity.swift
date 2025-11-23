@@ -9,6 +9,7 @@ enum LootBoxType: String, CaseIterable, Codable {
     case templeRelic = "Temple Relic"
     case treasureChest = "Treasure Chest"
     case sphere = "Mysterious Sphere"
+    case cube = "Mysterious Cube"
 
     var displayName: String {
         return self.rawValue
@@ -20,6 +21,7 @@ enum LootBoxType: String, CaseIterable, Codable {
         case .templeRelic: return UIColor(red: 0.4, green: 0.3, blue: 0.2, alpha: 1.0) // Dark stone
         case .treasureChest: return UIColor(red: 0.6, green: 0.4, blue: 0.2, alpha: 1.0) // Brown/wooden
         case .sphere: return UIColor(red: 0.9, green: 0.1, blue: 0.1, alpha: 1.0) // Red/orange sphere
+        case .cube: return UIColor(red: 0.2, green: 0.6, blue: 0.9, alpha: 1.0) // Blue cube
         }
     }
     
@@ -29,6 +31,7 @@ enum LootBoxType: String, CaseIterable, Codable {
         case .templeRelic: return UIColor(red: 0.8, green: 0.6, blue: 0.4, alpha: 1.0) // Warm stone
         case .treasureChest: return UIColor(red: 1.0, green: 0.8, blue: 0.4, alpha: 1.0) // Golden glow
         case .sphere: return UIColor(red: 1.0, green: 0.3, blue: 0.1, alpha: 1.0) // Bright orange glow
+        case .cube: return UIColor(red: 0.3, green: 0.7, blue: 1.0, alpha: 1.0) // Bright blue glow
         }
     }
     
@@ -38,6 +41,7 @@ enum LootBoxType: String, CaseIterable, Codable {
         case .templeRelic: return 0.45
         case .treasureChest: return 0.61 // 2 feet = 0.61 meters (width/height), depth handled separately
         case .sphere: return 0.15 // Smaller sphere
+        case .cube: return 0.15 // Same size as sphere
         }
     }
 }
@@ -49,22 +53,24 @@ struct LootBoxContainer {
     let lid: ModelEntity
     let prize: ModelEntity
     var builtInAnimation: AnimationResource? = nil // Optional built-in animation from USDZ model
+    
+    // Polymorphic opening behavior - each container type knows how to open itself
+    let open: (LootBoxContainer, @escaping () -> Void) -> Void
 }
 
 // MARK: - Loot Box Entity
 class LootBoxEntity {
     static func createLootBox(type: LootBoxType, id: String, sizeMultiplier: Float = 1.0) -> LootBoxContainer {
-        // Determine container type based on loot box type
-        // Use chalice for chalice, box for others
-        switch type {
-        case .chalice:
-            return ChaliceLootContainer.create(type: type, id: id, sizeMultiplier: sizeMultiplier)
-        case .templeRelic, .treasureChest:
-            return BoxLootContainer.create(type: type, id: id, sizeMultiplier: sizeMultiplier)
-        case .sphere:
-            // Spheres don't use containers - they are handled directly in ARCoordinator
-            fatalError("Spheres should not be created using LootBoxEntity.createLootBox")
+        // Use factory to create container - each factory encapsulates its own creation logic
+        let location = LootBoxLocation(id: id, name: "", type: type, latitude: 0, longitude: 0, radius: 5.0, collected: false)
+        let factory = type.factory
+        
+        guard let container = factory.createContainer(location: location, sizeMultiplier: sizeMultiplier) else {
+            // Spheres and cubes don't use containers - they are handled directly in ARCoordinator
+            fatalError("Spheres and cubes should not be created using LootBoxEntity.createLootBox")
         }
+        
+        return container
     }
     
     // Extract lid from box entity (finds and removes skull lid)
@@ -133,9 +139,9 @@ class LootBoxEntity {
             prizeMaterial.color = .init(tint: type.color)
             prizeMaterial.roughness = 0.2
             prizeMaterial.metallic = 0.9
-        case .sphere:
-            // Spheres don't have prizes - they are handled directly in ARCoordinator
-            fatalError("Spheres should not be created using LootBoxEntity.createPrize")
+        case .sphere, .cube:
+            // Spheres and cubes don't have prizes - they are handled directly in ARCoordinator
+            fatalError("Spheres and cubes should not be created using LootBoxEntity.createPrize")
         }
         
         let prizeEntity = ModelEntity(mesh: prizeMesh, materials: [prizeMaterial])
