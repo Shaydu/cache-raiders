@@ -605,39 +605,48 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             Swift.print("⚠️ Cannot randomize: AR not ready")
             return
         }
-        
+
         // Remove all existing placed boxes
         for (_, anchor) in placedBoxes {
             anchor.removeFromParent()
         }
         placedBoxes.removeAll()
-        
+
         // Generate exactly 3 new loot boxes at random positions (since we only allow 3 total)
         let numberOfBoxes = 3
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-        
-        // Get search distance for placement range
-        let searchDistance = Float(locationManager.maxSearchDistance)
-        let minDistance: Float = 5.0 // Minimum 5 meters from camera (for initial placement attempt)
-        let maxDistance: Float = min(searchDistance * 0.8, 50.0)
-        
-        Swift.print("🎲 Randomizing \(numberOfBoxes) loot boxes in AR room...")
-        
+
+        // Detect if we're indoors by checking for vertical planes (walls)
+        let isIndoors = detectIndoorEnvironment(frame: frame)
+        Swift.print("🏠 Environment detection: \(isIndoors ? "INDOORS" : "OUTDOORS")")
+
+        // Adjust placement strategy based on environment
+        let (minDistance, maxDistance, placementStrategy) = getPlacementStrategy(isIndoors: isIndoors, searchDistance: Float(locationManager.maxSearchDistance))
+
+        Swift.print("🎲 Randomizing \(numberOfBoxes) loot boxes (\(placementStrategy))...")
+
         var placedCount = 0
         var attempts = 0
-        let maxAttempts = numberOfBoxes * 10 // Allow more attempts for placement
+        let maxAttempts = numberOfBoxes * 15 // Allow more attempts for complex indoor placement
         
         while placedCount < numberOfBoxes && attempts < maxAttempts {
             attempts += 1
-            
-            // Generate random position around camera
-            let randomDistance = Float.random(in: minDistance...maxDistance)
-            let randomAngle = Float.random(in: 0...(2 * Float.pi))
-            
-            let randomX = cameraPos.x + randomDistance * cos(randomAngle)
-            let randomZ = cameraPos.z + randomDistance * sin(randomAngle)
-            
+
+            var randomX: Float
+            var randomZ: Float
+
+            if isIndoors {
+                // Indoor placement: try to place within detected room boundaries
+                (randomX, randomZ) = generateIndoorPosition(cameraPos: cameraPos, minDistance: minDistance, maxDistance: maxDistance)
+            } else {
+                // Outdoor placement: random around camera
+                let randomDistance = Float.random(in: minDistance...maxDistance)
+                let randomAngle = Float.random(in: 0...(2 * Float.pi))
+                randomX = cameraPos.x + randomDistance * cos(randomAngle)
+                randomZ = cameraPos.z + randomDistance * sin(randomAngle)
+            }
+
             // Raycast to find floor
             let raycastOrigin = SIMD3<Float>(randomX, cameraPos.y + 1.0, randomZ)
             let raycastQuery = ARRaycastQuery(
@@ -646,7 +655,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 allowing: .estimatedPlane,
                 alignment: .horizontal
             )
-            
+
             let raycastResults = arView.session.raycast(raycastQuery)
 
             guard let result = raycastResults.first else {
@@ -670,8 +679,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             let boxPosition = SIMD3<Float>(randomX, hitY, randomZ)
             let distanceFromCamera = length(boxPosition - cameraPos)
 
-            // CRITICAL: Enforce MINIMUM 3m distance from camera to prevent large objects spawning on/near camera
-            if distanceFromCamera < 3.0 {
+            // CRITICAL: Enforce MINIMUM 1m distance from camera to prevent objects spawning on camera
+            if distanceFromCamera < 1.0 {
                 Swift.print("⚠️ Too close to camera rejected at attempt \(attempts) - distance: \(String(format: "%.2f", distanceFromCamera))m")
                 continue
             }
@@ -720,7 +729,141 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         Swift.print("✅ Randomized and placed \(placedCount) loot boxes")
     }
-    
+
+    // Detect if we're indoors by checking for vertical planes (walls)
+    private func detectIndoorEnvironment(frame: ARFrame) -> Bool {
+        guard let arView = arView else { return false }
+
+        // Look for vertical planes in the scene
+        let verticalPlanes = arView.scene.anchors.compactMap { anchor -> ARPlaneAnchor? in
+            if let planeAnchor = anchor.anchor as? ARPlaneAnchor,
+               planeAnchor.alignment == .vertical {
+                return planeAnchor
+            }
+            return nil
+        }
+
+        // If we have multiple vertical planes, we're likely indoors
+        // Also check if planes are reasonably sized (not just tiny detections)
+        let significantPlanes = verticalPlanes.filter { $0.planeExtent.width > 1.0 || $0.planeExtent.height > 1.0 }
+
+        let isIndoors = significantPlanes.count >= 2
+        Swift.print("🏗️ Found \(verticalPlanes.count) vertical planes (\(significantPlanes.count) significant)")
+
+        return isIndoors
+    }
+
+    // Generate position for indoor placement (within room boundaries)
+    private func generateIndoorPosition(cameraPos: SIMD3<Float>, minDistance: Float, maxDistance: Float) -> (x: Float, z: Float) {
+        guard let arView = arView else {
+            // Fallback to random placement if no AR view
+            let randomDistance = Float.random(in: minDistance...maxDistance)
+            let randomAngle = Float.random(in: 0...(2 * Float.pi))
+            return (cameraPos.x + randomDistance * cos(randomAngle), cameraPos.z + randomDistance * sin(randomAngle))
+        }
+
+        // Find vertical planes (walls) to understand room boundaries
+        let verticalPlanes = arView.scene.anchors.compactMap { anchor -> ARPlaneAnchor? in
+            if let planeAnchor = anchor.anchor as? ARPlaneAnchor,
+               planeAnchor.alignment == .vertical {
+                return planeAnchor
+            }
+            return nil
+        }
+
+        if verticalPlanes.isEmpty {
+            // No walls detected, fall back to constrained random placement
+            Swift.print("🏠 No walls detected, using constrained random placement")
+            let randomDistance = Float.random(in: minDistance...min(maxDistance, 4.0)) // Limit to 4m when no walls
+            let randomAngle = Float.random(in: 0...(2 * Float.pi))
+            return (cameraPos.x + randomDistance * cos(randomAngle), cameraPos.z + randomDistance * sin(randomAngle))
+        }
+
+        // Try to place within room boundaries defined by walls
+        // Use a simple approach: place in front of camera but constrained by wall distances
+        let forwardDirection = SIMD3<Float>(-cameraPos.x, 0, -cameraPos.z)
+        let forwardAngle = atan2(forwardDirection.z, forwardDirection.x)
+
+        // Try multiple angles around the forward direction
+        for attempt in 0..<8 {
+            let angleOffset = Float(attempt) * (.pi / 4) // 45-degree increments
+            let testAngle = forwardAngle + angleOffset
+
+            // Start with minimum distance and work outward
+            for distance in stride(from: minDistance, to: maxDistance, by: 0.5) {
+                let testX = cameraPos.x + distance * cos(testAngle)
+                let testZ = cameraPos.z + distance * sin(testAngle)
+
+                // Check if this position is within room boundaries
+                if isPositionWithinRoomBounds(x: testX, z: testZ, cameraPos: cameraPos, walls: verticalPlanes) {
+                    Swift.print("🏠 Placed at indoor position: angle \(String(format: "%.1f", testAngle * 180 / .pi))°, distance \(String(format: "%.1f", distance))m")
+                    return (testX, testZ)
+                }
+            }
+        }
+
+        // If no good indoor position found, use constrained random
+        Swift.print("🏠 No ideal indoor position found, using fallback")
+        let randomDistance = Float.random(in: minDistance...min(maxDistance, 3.0))
+        let randomAngle = Float.random(in: 0...(2 * Float.pi))
+        return (cameraPos.x + randomDistance * cos(randomAngle), cameraPos.z + randomDistance * sin(randomAngle))
+    }
+
+    // Check if a position is within room boundaries defined by walls
+    private func isPositionWithinRoomBounds(x: Float, z: Float, cameraPos: SIMD3<Float>, walls: [ARPlaneAnchor]) -> Bool {
+        let testPos = SIMD3<Float>(x, cameraPos.y, z)
+
+        // For each wall, check if the position is on the correct side
+        for wall in walls {
+            let wallTransform = wall.transform
+            let wallPosition = SIMD3<Float>(
+                wallTransform.columns.3.x,
+                wallTransform.columns.3.y,
+                wallTransform.columns.3.z
+            )
+
+            // Get wall normal (direction the wall is facing)
+            let wallNormal = SIMD3<Float>(
+                wallTransform.columns.2.x,
+                wallTransform.columns.2.y,
+                wallTransform.columns.2.z
+            )
+
+            // Vector from wall to test position
+            let toTestPos = testPos - wallPosition
+
+            // If the dot product is positive, the position is on the "outside" of the wall
+            // We want positions on the "inside" (negative dot product)
+            let dotProduct = dot(wallNormal, toTestPos)
+
+            // Allow some tolerance - if clearly outside, reject
+            if dotProduct > 1.0 { // More than 1m outside the wall
+                return false
+            }
+        }
+
+        return true // Position is within bounds or no clear boundary violation
+    }
+
+    // Get placement strategy based on environment
+    private func getPlacementStrategy(isIndoors: Bool, searchDistance: Float) -> (minDistance: Float, maxDistance: Float, strategy: String) {
+        if isIndoors {
+            // Indoors: closer placement, smaller room assumed
+            return (
+                minDistance: 1.0, // Minimum 1 meter (safer for indoor)
+                maxDistance: min(searchDistance * 0.3, 8.0), // Max 8m, closer for indoor
+                strategy: "INDOOR MODE - close placement within walls"
+            )
+        } else {
+            // Outdoors: normal placement
+            return (
+                minDistance: 3.0, // Minimum 3 meters
+                maxDistance: min(searchDistance * 0.8, 50.0), // Normal range
+                strategy: "OUTDOOR MODE - normal placement range"
+            )
+        }
+    }
+
     // MARK: - ARSessionDelegate
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         // Set AR origin on first frame if not set
