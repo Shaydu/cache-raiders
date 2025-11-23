@@ -7,6 +7,42 @@ import Foundation
 // MARK: - Loot Box Opening Animation
 class LootBoxAnimation {
     
+    // Static reusable audio player for level-up sound
+    private static var audioPlayer: AVAudioPlayer?
+    
+    /// Initializes the static audio player if not already initialized
+    private static func initializeAudioPlayer() -> AVAudioPlayer? {
+        // Return existing player if already initialized
+        if let existingPlayer = audioPlayer {
+            return existingPlayer
+        }
+        
+        // Find the sound file
+        var soundURL: URL?
+        if let url = Bundle.main.url(forResource: "810753__mokasza__level-up-01", withExtension: "mp3") {
+            soundURL = url
+        } else if let url = Bundle.main.url(forResource: "level-up-01", withExtension: "mp3") {
+            soundURL = url
+        }
+        
+        guard let url = soundURL else {
+            Swift.print("⚠️ Level-up sound file not found in bundle")
+            return nil
+        }
+        
+        // Create and configure the player
+        do {
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.prepareToPlay()
+            audioPlayer = player
+            Swift.print("🔊 Initialized audio player with: \(url.lastPathComponent)")
+            return player
+        } catch {
+            Swift.print("⚠️ Could not create audio player: \(error)")
+            return nil
+        }
+    }
+    
     /// Animates the opening of a loot box with lid opening, sound, and prize reveal
     /// - Parameters:
     ///   - container: The loot box container with box, lid, and prize entities
@@ -416,6 +452,15 @@ class LootBoxAnimation {
     
     /// Plays the opening sound effect and haptic feedback
     static func playOpeningSound() {
+        // Configure audio session for playback
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try audioSession.setActive(true)
+        } catch {
+            Swift.print("⚠️ Could not configure audio session: \(error)")
+        }
+        
         // Play haptic feedback (vibration) for collection
         let impactFeedback = UIImpactFeedbackGenerator(style: .heavy)
         impactFeedback.impactOccurred()
@@ -424,34 +469,20 @@ class LootBoxAnimation {
         let notificationFeedback = UINotificationFeedbackGenerator()
         notificationFeedback.notificationOccurred(.success)
         
-        // Play custom level-up sound
-        if let url = Bundle.main.url(forResource: "810753__mokasza__level-up-01", withExtension: "mp3") {
-            do {
-                let player = try AVAudioPlayer(contentsOf: url)
-                player.prepareToPlay()
-                player.play()
-            } catch {
-                print("⚠️ Could not play level-up sound: \(error)")
-                // Fallback to system sound
-                AudioServicesPlaySystemSound(1057)
-            }
-        } else {
-            // Try alternative filename (without the long prefix)
-            if let url = Bundle.main.url(forResource: "level-up-01", withExtension: "mp3") {
-                do {
-                    let player = try AVAudioPlayer(contentsOf: url)
-                    player.prepareToPlay()
-                    player.play()
-                } catch {
-                    print("⚠️ Could not play level-up sound: \(error)")
-                    AudioServicesPlaySystemSound(1057)
-                }
-            } else {
-                print("⚠️ Level-up sound file not found in bundle")
-                // Fallback to system sound
-                AudioServicesPlaySystemSound(1057)
-            }
+        // Use the static reusable audio player
+        guard let player = initializeAudioPlayer() else {
+            Swift.print("⚠️ Could not initialize audio player, using fallback system sound")
+            AudioServicesPlaySystemSound(1057)
+            return
         }
+        
+        // Reset to beginning if already playing, then play
+        if player.isPlaying {
+            player.stop()
+        }
+        player.currentTime = 0
+        player.play()
+        Swift.print("🔊 Playing level-up sound (reusing static player)")
     }
     
     /// Creates a confetti effect at the specified position

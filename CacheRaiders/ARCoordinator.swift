@@ -863,10 +863,51 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         var findableObject: FindableObject? = nil
 
         switch selectedObjectType {
-        case .chalice, .treasureBox, .sphere:
-            // Use simple sphere approach for ALL objects to ensure they appear reliably
-            // This matches the working sphere behavior
-            Swift.print("🎯 Creating simple object for \(location.name) (type: \(location.type))")
+        case .chalice:
+            // Create chalice using ChaliceLootContainer
+            Swift.print("🎯 Creating chalice for \(location.name)")
+            let sizeMultiplier = Float.random(in: 0.5...1.0) // Vary size for variety
+            let lootContainer = ChaliceLootContainer.create(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
+            
+            // Use the container entity which contains all children (box, prize, etc.)
+            placedEntity = lootContainer.container
+            placedEntity?.name = location.id
+            
+            // Position the container so it sits on the ground
+            placedEntity?.position = SIMD3<Float>(0, 0, 0)
+            
+            findableObject = FindableObject(
+                locationId: location.id,
+                anchor: anchor,
+                sphereEntity: nil, // Chalices don't have spheres
+                container: lootContainer,
+                location: location
+            )
+            
+        case .treasureBox:
+            // Create treasure box using BoxLootContainer
+            Swift.print("🎯 Creating treasure box for \(location.name)")
+            let sizeMultiplier = Float.random(in: 0.5...1.0) // Vary size for variety
+            let lootContainer = BoxLootContainer.create(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
+            
+            // Use the container entity which contains all children (box, lid, prize, etc.)
+            placedEntity = lootContainer.container
+            placedEntity?.name = location.id
+            
+            // Position the container so it sits on the ground
+            placedEntity?.position = SIMD3<Float>(0, 0, 0)
+            
+            findableObject = FindableObject(
+                locationId: location.id,
+                anchor: anchor,
+                sphereEntity: nil, // Treasure boxes don't have spheres
+                container: lootContainer,
+                location: location
+            )
+            
+        case .sphere:
+            // Use simple sphere approach for spheres
+            Swift.print("🎯 Creating sphere for \(location.name)")
             
             // Use same size range as spheres for consistency (0.15-0.3m)
             let sphereRadius = Float.random(in: 0.15...0.3)
