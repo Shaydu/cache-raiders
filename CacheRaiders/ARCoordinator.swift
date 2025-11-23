@@ -648,16 +648,22 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             )
             
             let raycastResults = arView.session.raycast(raycastQuery)
-            
+
             guard let result = raycastResults.first else {
+                Swift.print("⚠️ Raycast failed - no floor detected at attempt \(attempts)")
                 continue
             }
-            
+
             let hitY = result.worldTransform.columns.3.y
             let cameraY = cameraPos.y
-            
+
             // Reject ceiling hits or floors too far away
-            if hitY > cameraY - 0.2 || abs(hitY - cameraY) > 2.0 {
+            if hitY > cameraY - 0.2 {
+                Swift.print("⚠️ Ceiling hit rejected at attempt \(attempts) - hitY: \(String(format: "%.2f", hitY)), cameraY: \(String(format: "%.2f", cameraY))")
+                continue
+            }
+            if abs(hitY - cameraY) > 2.0 {
+                Swift.print("⚠️ Floor too far rejected at attempt \(attempts) - hitY: \(String(format: "%.2f", hitY)), cameraY: \(String(format: "%.2f", cameraY)), diff: \(String(format: "%.2f", abs(hitY - cameraY)))")
                 continue
             }
             
@@ -666,11 +672,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
             // CRITICAL: Enforce MINIMUM 3m distance from camera to prevent large objects spawning on/near camera
             if distanceFromCamera < 3.0 {
-                // Too close to camera - skip this position
+                Swift.print("⚠️ Too close to camera rejected at attempt \(attempts) - distance: \(String(format: "%.2f", distanceFromCamera))m")
                 continue
             }
 
             if distanceFromCamera < minDistance || distanceFromCamera > maxDistance {
+                Swift.print("⚠️ Distance out of range rejected at attempt \(attempts) - distance: \(String(format: "%.2f", distanceFromCamera))m, min: \(String(format: "%.2f", minDistance))m, max: \(String(format: "%.2f", maxDistance))m")
                 continue
             }
             
@@ -683,12 +690,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     existingTransform.columns.3.y,
                     existingTransform.columns.3.z
                 )
-                if length(boxPosition - existingPos) < 3.0 {
+                let distanceToExisting = length(boxPosition - existingPos)
+                if distanceToExisting < 3.0 {
+                    Swift.print("⚠️ Too close to existing box rejected at attempt \(attempts) - distance: \(String(format: "%.2f", distanceToExisting))m")
                     tooClose = true
                     break
                 }
             }
-            
+
             if tooClose {
                 continue
             }
@@ -704,6 +713,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             )
             
             // Place the box
+            Swift.print("✅ Found valid position at attempt \(attempts) - placing sphere at distance: \(String(format: "%.2f", distanceFromCamera))m")
             placeBoxAtPosition(boxPosition, location: newLocation, in: arView)
             placedCount += 1
         }
