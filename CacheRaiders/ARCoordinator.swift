@@ -47,10 +47,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         self.temperatureStatusBinding = temperatureStatus
         self.collectionNotificationBinding = collectionNotification
         
-        // Set up callback for size changes
-        locationManager.onSizeChanged = { [weak self] () -> Void in
-            self?.updateLootBoxSizes()
-        }
+        // Size changes not supported - objects are randomized on placement
+        // locationManager.onSizeChanged callback removed
         
         // Store the GPS location when AR starts (this becomes our AR world origin)
         arOriginLocation = userLocationManager.currentLocation
@@ -695,12 +693,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 continue
             }
             
-            // Create a new temporary location for this box
-            let randomIndex = Int.random(in: 0..<lootBoxTypes.count)
+            // Create a new temporary location for this sphere
             let newLocation = LootBoxLocation(
                 id: UUID().uuidString,
-                name: lootBoxNames[randomIndex],
-                type: lootBoxTypes[randomIndex],
+                name: "Mysterious Sphere",
+                type: .goldenIdol, // Use goldenIdol type (doesn't matter since we only place spheres)
                 latitude: 0, // Not GPS-based
                 longitude: 0, // Not GPS-based
                 radius: 100.0 // Large radius since we're not using GPS
@@ -788,44 +785,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
     
-    // Create an occlusion plane entity for a detected wall
-    private func createOcclusionPlane(for planeAnchor: ARPlaneAnchor, in arView: ARView) {
-        // Create anchor entity at the plane's position
-        let anchorEntity = AnchorEntity(anchor: planeAnchor)
-        
-        // Create a mesh for the plane
-        let planeMesh = MeshResource.generatePlane(
-            width: planeAnchor.planeExtent.width,
-            depth: planeAnchor.planeExtent.height
-        )
-        
-        // Use OcclusionMaterial to make this plane occlude virtual objects behind it
-        let occlusionMaterial = OcclusionMaterial()
-        let occlusionEntity = ModelEntity(mesh: planeMesh, materials: [occlusionMaterial])
-        
-        // Rotate the plane to match the wall orientation
-        // Vertical planes need to be rotated 90 degrees around X axis
-        occlusionEntity.orientation = simd_quatf(angle: .pi / 2, axis: SIMD3<Float>(1, 0, 0))
-        
-        anchorEntity.addChild(occlusionEntity)
-        arView.scene.addAnchor(anchorEntity)
-        
-        occlusionPlanes[planeAnchor.identifier] = anchorEntity
-        
-        Swift.print("🧱 Created occlusion plane for wall at: \(planeAnchor.center)")
-    }
-    
-    // Update occlusion plane when ARKit refines the plane geometry
-    private func updateOcclusionPlane(_ anchorEntity: AnchorEntity, with planeAnchor: ARPlaneAnchor) {
-        guard let occlusionEntity = anchorEntity.children.first as? ModelEntity else { return }
-        
-        // Update the mesh to match the refined plane dimensions
-        let updatedMesh = MeshResource.generatePlane(
-            width: planeAnchor.planeExtent.width,
-            depth: planeAnchor.planeExtent.height
-        )
-        occlusionEntity.model?.mesh = updatedMesh
-    }
     
     func session(_ session: ARSession, didFailWithError error: Error) {
         Swift.print("❌ AR Session failed: \(error.localizedDescription)")
@@ -1319,220 +1278,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             Swift.print("⚠️ Adjusted \(location.name) placement to 5m minimum distance from camera")
         }
         
-        var boxTransform = matrix_identity_float4x4
-        boxTransform.columns.3 = SIMD4<Float>(boxPosition.x, boxPosition.y, boxPosition.z, 1.0)
-        
-        let anchor = AnchorEntity(world: boxTransform)
-        
-        // Use random size between 0.3m to 1.0m (capped at 1 meter maximum)
-        // Ensure no object renders larger than 1 meter
-        let minSize: Float = 0.3  // Minimum size (30cm)
-        let maxSize: Float = 1.0  // Maximum size (1 meter) - cap at 1m
-        let targetSize = Float.random(in: minSize...maxSize) // Random size between 0.3-1.0m
-        let baseSize = Float(location.type.size) // Base size (0.3-0.5m)
-        let sizeMultiplier = min(targetSize / baseSize, 1.0 / baseSize) // Calculate multiplier, cap to ensure max 1m
-        
-        let lootBoxContainer = LootBoxEntity.createLootBox(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
-        
-        // Position object so bottom sits on ground plane (grounded like the sphere was)
-        // Different object types have different heights
-        let objectHeight: Float
-        switch location.type {
-        case .goldenIdol:
-            objectHeight = targetSize * 0.6 // Chalice is roughly 0.6x its total size in height
-        default:
-            objectHeight = targetSize * 0.6 // Boxes are roughly 0.6x their total size in height
-        }
-        // Position so bottom of object sits on ground (sphere was at y = radius, so just touching ground)
-        lootBoxContainer.container.position.y = objectHeight / 2.0
-        
-        // Ensure object is right-side up (not upside down)
-        lootBoxContainer.container.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
-        
-        // Create orange sphere indicator (same size as before - 0.15m radius)
-        let indicatorSize: Float = 0.15 // 15cm sphere - same size as loot boxes
-        let indicatorMesh = MeshResource.generateSphere(radius: indicatorSize)
-        var indicatorMaterial = SimpleMaterial()
-        indicatorMaterial.color = .init(tint: .orange)
-        indicatorMaterial.roughness = 0.2
-        indicatorMaterial.metallic = 0.3
-        
-        let orangeIndicator = ModelEntity(mesh: indicatorMesh, materials: [indicatorMaterial])
-        orangeIndicator.name = location.id // Set name for tap detection
-        // Position sphere above the loot box (at the top of the box height)
-        orangeIndicator.position = SIMD3<Float>(0, objectHeight + indicatorSize, 0)
-        
-        // Add a point light to make it more visible
-        let light = PointLightComponent(color: .orange, intensity: 200)
-        orangeIndicator.components.set(light)
-        
-        // Add both the loot box container and the orange sphere indicator
-        anchor.addChild(lootBoxContainer.container)
-        anchor.addChild(orangeIndicator)
-        
-        // Create distance text overlay above the sphere
-        let distanceTextEntity = createDistanceTextEntity()
-        // Position text above the sphere (sphere is at objectHeight + indicatorSize, so text goes above that)
-        distanceTextEntity.position = SIMD3<Float>(0, objectHeight + indicatorSize + 0.3, 0)
-        anchor.addChild(distanceTextEntity)
-        distanceTextEntities[location.id] = distanceTextEntity
-        
-        arView.scene.addAnchor(anchor)
-        placedBoxes[location.id] = anchor
-        
-        // Store container info for opening animation
-        var info = LootBoxInfoComponent()
-        info.container = lootBoxContainer
-        anchor.components[LootBoxInfoComponent.self] = info
-        
-        Swift.print("✅ Placed \(location.name) in front of camera at: \(boxPosition)")
+        // Use the standard placement function instead of duplicating logic
+        placeBoxAtPosition(boxPosition, location: location, in: arView)
+        Swift.print("✅ Placed \(location.name) in front of camera (fallback) at: \(boxPosition)")
         Swift.print("   Distance from camera: \(String(format: "%.2f", finalDistance))m")
     }
     
-    // Update all existing loot boxes with new size settings
-    func updateLootBoxSizes() {
-        guard let arView = arView,
-              let locationManager = locationManager,
-              let _ = arOriginLocation else { return }
-        
-        Swift.print("🔄 Updating all loot box sizes...")
-        
-        for (locationId, anchor) in placedBoxes {
-            // Find the location
-            guard let location = locationManager.locations.first(where: { $0.id == locationId }) else { continue }
-            
-            // Remove old box
-            anchor.removeFromParent()
-            
-            // Calculate new position (preserve existing X/Z position, but find ground plane)
-            let currentTransform = anchor.transformMatrix(relativeTo: nil)
-            let currentXZ = SIMD3<Float>(
-                currentTransform.columns.3.x,
-                0.0,
-                currentTransform.columns.3.z
-            )
-            
-            // Use raycasting to find the ground plane at this X/Z position
-            guard let frame = arView.session.currentFrame else { continue }
-            let cameraTransform = frame.camera.transform
-            let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-            
-            let raycastOrigin = SIMD3<Float>(currentXZ.x, cameraPos.y + 1.0, currentXZ.z)
-            let raycastQuery = ARRaycastQuery(
-                origin: raycastOrigin,
-                direction: SIMD3<Float>(0, -1, 0), // Point downward
-                allowing: .estimatedPlane,
-                alignment: .horizontal
-            )
-            
-            let raycastResults = arView.session.raycast(raycastQuery)
-            var groundY: Float = currentTransform.columns.3.y // Fallback to current Y
-            
-            if let result = raycastResults.first {
-                groundY = result.worldTransform.columns.3.y
-            }
-            
-            let currentPosition = SIMD3<Float>(currentXZ.x, groundY, currentXZ.z)
-            
-            // Create new box with random size between 0.3m to 1.0m (capped at 1 meter maximum)
-            // Ensure no object renders larger than 1 meter
-            let minSize: Float = 0.3  // Minimum size (30cm)
-            let maxSize: Float = 1.0  // Maximum size (1 meter) - cap at 1m
-            let targetSize = Float.random(in: minSize...maxSize) // Random size between 0.3-1.0m
-            let baseSize = Float(location.type.size)
-            let sizeMultiplier = min(targetSize / baseSize, 1.0 / baseSize) // Calculate multiplier, cap to ensure max 1m
-            
-            let lootBoxContainer = LootBoxEntity.createLootBox(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
-            
-            // Position object so bottom sits on ground plane
-            let objectHeight: Float
-            switch location.type {
-            case .goldenIdol:
-                objectHeight = targetSize * 0.6
-            default:
-                objectHeight = targetSize * 0.6
-            }
-            lootBoxContainer.container.position.y = objectHeight / 2.0
-            
-            // Ensure object is right-side up
-            lootBoxContainer.container.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
-            
-            // Create new anchor at same position
-            var boxTransform = matrix_identity_float4x4
-            boxTransform.columns.3 = SIMD4<Float>(currentPosition.x, currentPosition.y, currentPosition.z, 1.0)
-            let newAnchor = AnchorEntity(world: boxTransform)
-            
-            // Create orange sphere indicator (same size as before - 0.15m radius)
-            let indicatorSize: Float = 0.15 // 15cm sphere - same size as loot boxes
-            let indicatorMesh = MeshResource.generateSphere(radius: indicatorSize)
-            var indicatorMaterial = SimpleMaterial()
-            indicatorMaterial.color = .init(tint: .orange)
-            indicatorMaterial.roughness = 0.2
-            indicatorMaterial.metallic = 0.3
-            
-            let orangeIndicator = ModelEntity(mesh: indicatorMesh, materials: [indicatorMaterial])
-            orangeIndicator.name = location.id
-            // Position sphere above the loot box (at the top of the box height)
-            orangeIndicator.position = SIMD3<Float>(0, objectHeight + indicatorSize, 0)
-            
-            let light = PointLightComponent(color: .orange, intensity: 200)
-            orangeIndicator.components.set(light)
-            
-            // Add both the loot box container and the orange sphere indicator
-            newAnchor.addChild(lootBoxContainer.container)
-            newAnchor.addChild(orangeIndicator)
-            
-            // Create or update distance text overlay above the sphere
-            let distanceTextEntity = createDistanceTextEntity()
-            // Position text above the sphere (sphere is at objectHeight + indicatorSize, so text goes above that)
-            distanceTextEntity.position = SIMD3<Float>(0, objectHeight + indicatorSize + 0.3, 0)
-            newAnchor.addChild(distanceTextEntity)
-            distanceTextEntities[locationId] = distanceTextEntity
-            
-            arView.scene.addAnchor(newAnchor)
-            placedBoxes[locationId] = newAnchor
-            
-            // Store container info
-            var info = LootBoxInfoComponent()
-            info.container = lootBoxContainer
-            newAnchor.components[LootBoxInfoComponent.self] = info
-            
-            // Create or update FindableObject
-            let findableObject = FindableObject(
-                locationId: locationId,
-                anchor: newAnchor,
-                sphereEntity: orangeIndicator,
-                container: lootBoxContainer,
-                location: location
-            )
-            
-            // Set callback to increment found count
-            findableObject.onFoundCallback = { [weak self] id in
-                DispatchQueue.main.async {
-                    if let locationManager = self?.locationManager {
-                        locationManager.markCollected(id)
-                    }
-                }
-            }
-            
-            findableObjects[locationId] = findableObject
-        }
-        
-        Swift.print("✅ Updated \(placedBoxes.count) loot box sizes")
-    }
     
-    // Calculate GPS offset in meters (north/south, east/west)
-    private func calculateGPSOffset(from origin: CLLocation, to target: CLLocation) -> (north: Double, east: Double) {
-        // Calculate distance and bearing
-        let distance = origin.distance(from: target)
-        let bearing = origin.bearing(to: target)
-        
-        // Convert bearing to north/east offset
-        let northOffset = distance * cos(bearing * .pi / 180.0)
-        let eastOffset = distance * sin(bearing * .pi / 180.0)
-        
-        return (north: northOffset, east: eastOffset)
-    }
     
     // MARK: - Find Loot Box Helper
     /// Finds any findable object using the FindableObject base class behavior
@@ -1871,25 +1623,4 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
     
-    // Remove any boxes that are too close to the camera (can look huge and occlude view)
-    private func cleanupBoxesNearCamera() {
-        guard let arView = arView, let frame = arView.session.currentFrame else { return }
-        let cameraTransform = frame.camera.transform
-        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-        var toRemove: [String] = []
-        for (id, anchor) in placedBoxes {
-            let t = anchor.transformMatrix(relativeTo: nil)
-            let pos = SIMD3<Float>(t.columns.3.x, t.columns.3.y, t.columns.3.z)
-            let d = length(pos - cameraPos)
-            if d < 3.0 { // within 3m of camera
-                Swift.print("🗑️ Removing box too close to camera: \(id), distance: \(String(format: "%.2f", d))m")
-                anchor.removeFromParent()
-                toRemove.append(id)
-            }
-        }
-        for id in toRemove { placedBoxes.removeValue(forKey: id) }
-    }
-    
-    // NOTE: Removed cleanupBoxesAtOrigin() - it was causing boxes to be removed incorrectly
-    // The AR origin is arbitrary and boxes within 5m of it are not necessarily problematic
 }
