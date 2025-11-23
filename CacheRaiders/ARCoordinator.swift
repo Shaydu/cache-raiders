@@ -618,8 +618,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
 
         // Detect if we're indoors by checking for vertical planes (walls)
+        // NOTE: This only works if user has moved camera around to scan environment
         let isIndoors = detectIndoorEnvironment(frame: frame)
-        Swift.print("🏠 Environment detection: \(isIndoors ? "INDOORS" : "OUTDOORS") - starting placement...")
+        Swift.print("🏠 Environment detection: \(isIndoors ? "INDOORS" : "OUTDOORS")")
+        if !isIndoors {
+            Swift.print("   💡 TIP: Move camera around to scan walls, then randomize again for indoor placement")
+        }
+        Swift.print("   Starting placement...")
 
         // Adjust placement strategy based on environment
         let (minDistance, maxDistance, placementStrategy) = getPlacementStrategy(isIndoors: isIndoors, searchDistance: Float(locationManager.maxSearchDistance))
@@ -751,6 +756,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         let isIndoors = significantPlanes.count >= 4 && totalWallArea > 20.0 // At least 20m² of wall area and 4+ walls
         Swift.print("🏗️ Found \(verticalPlanes.count) vertical planes (\(significantPlanes.count) significant, \(String(format: "%.1f", totalWallArea))m² total) -> \(isIndoors ? "INDOORS" : "OUTDOORS")")
+        if verticalPlanes.isEmpty {
+            Swift.print("   ℹ️ No walls detected yet - move camera around to scan environment")
+        }
 
         return isIndoors
     }
