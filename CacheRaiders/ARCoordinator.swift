@@ -190,33 +190,49 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 anchorTransform.columns.3.z
             )
 
-            // Find the actual loot box position (not just anchor position)
-            // Loot boxes are positioned with Y offset relative to anchor
-            var lootBoxPosition = anchorPosition
+            // Find the actual object position (chalice, treasure box, or sphere)
+            var objectPosition = anchorPosition
+            var hasContainer = false
+
             for child in anchor.children {
-                if let modelEntity = child as? ModelEntity,
-                   modelEntity.name == locationId {
-                    // This is the loot box container - get its world position
-                    let lootBoxTransform = modelEntity.transformMatrix(relativeTo: nil)
-                    lootBoxPosition = SIMD3<Float>(
-                        lootBoxTransform.columns.3.x,
-                        lootBoxTransform.columns.3.y,
-                        lootBoxTransform.columns.3.z
-                    )
-                    break
+                if let modelEntity = child as? ModelEntity {
+                    // Check if this is a loot box container (chalice or treasure box)
+                    if modelEntity.name == locationId {
+                        // This is the loot box container - get its world position
+                        let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                        objectPosition = SIMD3<Float>(
+                            objectTransform.columns.3.x,
+                            objectTransform.columns.3.y,
+                            objectTransform.columns.3.z
+                        )
+                        hasContainer = true
+                        break
+                    }
+                    // Check if this is a standalone sphere
+                    else if modelEntity.name == locationId && modelEntity.components[PointLightComponent.self] != nil {
+                        // This is a standalone sphere - get its world position
+                        let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                        objectPosition = SIMD3<Float>(
+                            objectTransform.columns.3.x,
+                            objectTransform.columns.3.y,
+                            objectTransform.columns.3.z
+                        )
+                        hasContainer = false
+                        break
+                    }
                 }
             }
 
-            // Use the actual loot box position for distance calculations
-            let direction = lootBoxPosition - cameraPosition
+            // Use the actual object position for distance calculations
+            let direction = objectPosition - cameraPosition
             let distance = length(direction)
-            
-            // PROXIMITY DETECTION: Auto-find when within 1m of loot box
+
+            // PROXIMITY DETECTION: Auto-find when within 1m of object
             let findDistance: Float = 1.0 // 1 meter threshold for finding
-            
-            // Check if camera is within 1m of the loot box
+
+            // Check if camera is within 1m of the object
             if distance <= findDistance && !foundLootBoxes.contains(locationId) {
-                // Find the sphere entity for animation
+                // Find the sphere/point light entity for animation (if it exists)
                 var sphereEntity: ModelEntity? = nil
                 for child in anchor.children {
                     if let modelEntity = child as? ModelEntity,
@@ -225,46 +241,27 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         break
                     }
                 }
-                
+
                 // Trigger finding (sound, confetti, animation, increment count)
                 findLootBox(locationId: locationId, anchor: anchor, cameraPosition: cameraPosition, sphereEntity: sphereEntity)
                 continue // Skip occlusion check
             }
-            
-            // COLLISION DETECTION: Hide objects when camera is too close (within their boundary)
-            // Loot box size: 0.3m total (0.15m radius), sphere: 0.15m radius
-            // Add 0.1m buffer to prevent camera from entering boundary
-            let lootBoxRadius: Float = 0.15 // Half of 0.3m total size
-            let sphereRadius: Float = 0.15 // Sphere indicator radius
-            let buffer: Float = 0.1 // Safety buffer
-            let minDistanceForLootBox = lootBoxRadius + buffer
-            let minDistanceForSphere = sphereRadius + buffer
 
-            // Check if camera is too close to the actual loot box position
-            var isCameraTooClose = false
-            if distance < minDistanceForLootBox {
-                isCameraTooClose = true
+            // COLLISION DETECTION: Hide objects when camera is too close (within their boundary)
+            // Different object types have different sizes
+            let buffer: Float = 0.1 // Safety buffer
+            var minDistanceForObject: Float
+
+            if hasContainer {
+                // Chalice or treasure box - use larger collision radius
+                minDistanceForObject = 0.25 + buffer // 0.25m radius + buffer
+            } else {
+                // Standalone sphere - use sphere radius
+                minDistanceForObject = 0.15 + buffer // 0.15m radius + buffer
             }
-            
-            // Also check distance to sphere indicator (positioned above the box)
-            var spherePosition = anchorPosition
-            for child in anchor.children {
-                if let modelEntity = child as? ModelEntity,
-                   modelEntity.components[PointLightComponent.self] != nil {
-                    // This is the sphere - get its world position
-                    let sphereTransform = modelEntity.transformMatrix(relativeTo: nil)
-                    spherePosition = SIMD3<Float>(
-                        sphereTransform.columns.3.x,
-                        sphereTransform.columns.3.y,
-                        sphereTransform.columns.3.z
-                    )
-                    let sphereDistance = length(spherePosition - cameraPosition)
-                    if sphereDistance < minDistanceForSphere {
-                        isCameraTooClose = true
-                    }
-                    break
-                }
-            }
+
+            // Check if camera is too close to the object
+            let isCameraTooClose = distance < minDistanceForObject
             
             // If camera is too close, hide all children to prevent camera from appearing inside
             if isCameraTooClose {
@@ -291,9 +288,23 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 continue
             }
             
+            // Skip occlusion check if too far or too close
+            guard distance > 0.1 && distance < 50.0 && !isCameraTooClose else {
+                // Show/hide all children based on camera proximity
+                let shouldShow = !isCameraTooClose && distance < 50.0
+                for child in anchor.children {
+                    if let modelEntity = child as? ModelEntity {
+                        modelEntity.isEnabled = shouldShow
+                    } else {
+                        child.isEnabled = shouldShow
+                    }
+                }
+                continue
+            }
+
             let normalizedDirection = direction / distance
 
-            // Perform raycast from camera to actual loot box position to check for walls
+            // Perform raycast from camera to object position to check for walls
             // Use vertical plane detection to find walls
             let raycastQuery = ARRaycastQuery(
                 origin: cameraPosition,
@@ -301,28 +312,28 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 allowing: .estimatedPlane,
                 alignment: .vertical // Check for vertical planes (walls)
             )
-            
+
             let raycastResults = arView.session.raycast(raycastQuery)
-            
-            // If we hit a vertical plane (wall) before reaching the box, hide it
+
+            // If we hit a vertical plane (wall) before reaching the object, hide it
             var isOccluded = false
             for result in raycastResults {
-                // Check if the hit point is closer than the box (wall is between camera and box)
+                // Check if the hit point is closer than the object (wall is between camera and object)
                 let hitPoint = SIMD3<Float>(
                     result.worldTransform.columns.3.x,
                     result.worldTransform.columns.3.y,
                     result.worldTransform.columns.3.z
                 )
                 let hitDistance = length(hitPoint - cameraPosition)
-                
-                // If wall is closer than box (with some tolerance), box is occluded
+
+                // If wall is closer than object (with some tolerance), object is occluded
                 if hitDistance < distance - 0.3 { // 0.3m tolerance
                     isOccluded = true
                     break
                 }
             }
-            
-            // Show/hide all children (loot box container and orb indicator) based on occlusion
+
+            // Show/hide all children based on occlusion
             for child in anchor.children {
                 if let modelEntity = child as? ModelEntity {
                     modelEntity.isEnabled = !isOccluded
@@ -383,27 +394,36 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 anchorTransform.columns.3.y,
                 anchorTransform.columns.3.z
             )
-            
-            // Find the sphere indicator position (more visible and accurate - this is what user sees)
-            // The sphere is positioned above the loot box
-            var spherePosition = anchorPosition
+
+            // Find the actual object position (chalice, treasure box, or sphere)
+            var objectPosition = anchorPosition
             for child in anchor.children {
-                if let modelEntity = child as? ModelEntity,
-                   modelEntity.name == locationId,
-                   modelEntity.components[PointLightComponent.self] != nil {
-                    // This is the orange sphere - get its world position
-                    let sphereTransform = modelEntity.transformMatrix(relativeTo: nil)
-                    spherePosition = SIMD3<Float>(
-                        sphereTransform.columns.3.x,
-                        sphereTransform.columns.3.y,
-                        sphereTransform.columns.3.z
-                    )
-                    break
+                if let modelEntity = child as? ModelEntity {
+                    // Check for loot box containers (chalice or treasure box)
+                    if modelEntity.name == locationId {
+                        let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                        objectPosition = SIMD3<Float>(
+                            objectTransform.columns.3.x,
+                            objectTransform.columns.3.y,
+                            objectTransform.columns.3.z
+                        )
+                        break
+                    }
+                    // Check for standalone spheres
+                    else if modelEntity.name == locationId && modelEntity.components[PointLightComponent.self] != nil {
+                        let objectTransform = modelEntity.transformMatrix(relativeTo: nil)
+                        objectPosition = SIMD3<Float>(
+                            objectTransform.columns.3.x,
+                            objectTransform.columns.3.y,
+                            objectTransform.columns.3.z
+                        )
+                        break
+                    }
                 }
             }
-            
-            // Calculate distance in AR world space (meters) - use sphere position for accuracy
-            let distance = Double(length(spherePosition - cameraPosition))
+
+            // Calculate distance in AR world space (meters) - use object position for accuracy
+            let distance = Double(length(objectPosition - cameraPosition))
             
             if distance < minDistance {
                 minDistance = distance
