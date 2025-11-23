@@ -81,8 +81,9 @@ class LootBoxLocationManager: ObservableObject {
                 }
             }
             
-            locations = loadedLocations
-            print("✅ Loaded \(locations.count) loot box locations")
+        locations = loadedLocations
+        let collectedCount = locations.filter { $0.collected }.count
+        print("✅ Loaded \(locations.count) loot box locations (\(collectedCount) collected)")
         } catch {
             // This is expected on first run - no saved locations file exists yet
             if (error as NSError).code == 260 { // File not found
@@ -194,14 +195,17 @@ class LootBoxLocationManager: ObservableObject {
     // Mark location as collected
     func markCollected(_ locationId: String) {
         if let index = locations.firstIndex(where: { $0.id == locationId }) {
+            print("✅ Marking location \(locations[index].name) (ID: \(locationId)) as collected")
             // Create a new location with collected = true to trigger @Published update
             var updatedLocation = locations[index]
             updatedLocation.collected = true
             locations[index] = updatedLocation
             saveLocations()
-            
+
             // Explicitly notify observers (in case @Published doesn't catch the change)
             objectWillChange.send()
+        } else {
+            print("⚠️ Could not find location with ID \(locationId) to mark as collected")
         }
     }
     

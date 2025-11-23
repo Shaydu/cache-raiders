@@ -35,7 +35,8 @@ struct LootBoxMapView: View {
         
         // Add all loot box locations
         annotations.append(contentsOf: locationManager.locations.map { location in
-            MapAnnotationItem(
+            print("📍 Map showing location: \(location.name) at (\(location.latitude), \(location.longitude)) - collected: \(location.collected)")
+            return MapAnnotationItem(
                 id: location.id,
                 coordinate: location.coordinate,
                 isUserLocation: false,
