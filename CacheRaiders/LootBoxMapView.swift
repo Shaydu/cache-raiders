@@ -29,6 +29,7 @@ struct LootBoxMapView: View {
     // Map stability controls
     @State private var shouldAutoCenter = false // Start with manual control
     @State private var lastUpdateTime = Date()
+    @State private var lastAnnotationCount: Int = 0 // Track annotation count to reduce logging
 
     // Feedback state
     @State private var showSuccessMessage = false
@@ -47,13 +48,18 @@ struct LootBoxMapView: View {
         let selectedId = locationManager.selectedDatabaseObjectId
         _ = selectedId // Explicitly use to create dependency
         
+        // Explicitly access user location and heading to create dependencies for SwiftUI updates
+        let userLocation = userLocationManager.currentLocation
+        let userHeading = userLocationManager.heading
+        _ = userHeading // Explicitly use to create dependency
+        
         var annotations: [MapAnnotationItem] = []
         
         // Add user location pin
-        if let userLocation = userLocationManager.currentLocation {
+        if let location = userLocation {
             annotations.append(MapAnnotationItem(
                 id: "user_location",
-                coordinate: userLocation.coordinate,
+                coordinate: location.coordinate,
                 isUserLocation: true,
                 lootBoxLocation: nil
             ))
@@ -90,7 +96,7 @@ struct LootBoxMapView: View {
             
             // If showFoundOnMap is disabled, exclude collected items
             if !showFound && location.collected {
-                Swift.print("🗺️ Filtering out collected item '\(location.name)' (showFoundOnMap=\(showFound))")
+                // Removed debug print to improve performance
                 return false
             }
             
@@ -105,7 +111,7 @@ struct LootBoxMapView: View {
             
             // Include map-added spheres
             if location.type == .sphere && location.source == .map {
-                print("🗺️ Including map sphere: \(location.name) at (\(location.latitude), \(location.longitude))")
+                // Removed debug print to improve performance
                 return true
             }
             
@@ -123,11 +129,15 @@ struct LootBoxMapView: View {
                 )
             })
         
-        let selectionInfo = selectedId != nil ? " (showing selected: \(selectedId!))" : " (showing ALL items)"
-        Swift.print("🗺️ Map annotations: \(annotations.count) total\(selectionInfo)")
-        Swift.print("   Total locations in manager: \(locationManager.locations.count)")
-        Swift.print("   Filtered locations count: \(filteredLocations.count)")
-        Swift.print("   Show found items: \(showFound)")
+        // Removed excessive debug logging to improve performance
+        // Only log when count changes significantly or in debug builds
+        #if DEBUG
+        if annotations.count != lastAnnotationCount {
+            let selectionInfo = selectedId != nil ? " (showing selected: \(selectedId!))" : " (showing ALL items)"
+            Swift.print("🗺️ Map annotations: \(annotations.count) total\(selectionInfo)")
+            lastAnnotationCount = annotations.count
+        }
+        #endif
         
         return annotations
     }
@@ -432,9 +442,10 @@ struct LootBoxMapView: View {
             }
             
             // Only auto-center if enabled and debounce to prevent rapid updates
+            // Increased debounce time from 1.0s to 2.0s to reduce map jumping
             if shouldAutoCenter && hasInitialized {
                 let now = Date()
-                if now.timeIntervalSince(lastUpdateTime) > 1.0 { // Minimum 1 second between updates
+                if now.timeIntervalSince(lastUpdateTime) > 2.0 { // Minimum 2 seconds between updates
                     lastUpdateTime = now
                     updateRegion()
                 }
@@ -442,7 +453,7 @@ struct LootBoxMapView: View {
         }
         .onChange(of: locationManager.showFoundOnMap) {
             // Force view update when showFoundOnMap toggle changes
-            Swift.print("🗺️ showFoundOnMap changed to: \(locationManager.showFoundOnMap)")
+            // Removed debug print to improve performance
         }
     }
     

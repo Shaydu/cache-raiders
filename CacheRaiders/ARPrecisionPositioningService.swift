@@ -9,6 +9,10 @@ import CoreLocation
 class ARPrecisionPositioningService {
     weak var arView: ARView?
     
+    /// Fixed ground level at AR origin (Y coordinate) - set when AR session starts
+    /// This ensures objects stay fixed in space when camera moves
+    private var arOriginGroundLevel: Float?
+    
     /// Distance threshold for switching from GPS to AR-based positioning (in meters)
     /// Within this distance, we use AR refinement for inch-level accuracy
     private let arRefinementThreshold: Double = 5.0 // 5 meters
@@ -25,6 +29,13 @@ class ARPrecisionPositioningService {
     
     init(arView: ARView?) {
         self.arView = arView
+    }
+    
+    /// Sets the fixed ground level at AR origin (should be called when AR session starts)
+    /// This ensures Y coordinates are calculated relative to a fixed reference, not the moving camera
+    func setAROriginGroundLevel(_ groundLevel: Float) {
+        arOriginGroundLevel = groundLevel
+        Swift.print("📍 ARPrecisionPositioningService: Set fixed ground level to \(String(format: "%.2f", groundLevel))m")
     }
     
     /// Converts GPS coordinates to precise AR world position with inch-level accuracy
@@ -45,9 +56,13 @@ class ARPrecisionPositioningService {
             return nil
         }
 
-        // CRITICAL: Use AR origin for positioning, not current user location
-        // This ensures objects stay fixed when camera/user moves
-        let originGPS = arOriginGPS ?? userGPS
+        // CRITICAL: Require AR origin to be set - never use current user location as fallback
+        // Using current user location causes objects to drift when the phone moves
+        guard let originGPS = arOriginGPS else {
+            Swift.print("⚠️ ARPrecisionPositioningService: AR origin not set - cannot place objects accurately")
+            Swift.print("   Objects will drift if placed without a fixed AR origin")
+            return nil
+        }
 
         let distance = userGPS.distance(from: targetGPS)
         let cameraPos = SIMD3<Float>(
@@ -124,12 +139,13 @@ class ARPrecisionPositioningService {
         }
         
         // Step 3: Validate we have enough successful raycasts
-        guard raycastResults.count >= minRaycastSuccessCount else {
-            Swift.print("⚠️ ARPrecisionPositioningService: Only \(raycastResults.count) successful raycasts (need \(minRaycastSuccessCount))")
-            // Fallback to single raycast at center
-            if let surfaceY = performPrecisionRaycast(x: roughPosition.x, z: roughPosition.z, cameraPos: cameraPos) {
-                return SIMD3<Float>(roughPosition.x, surfaceY, roughPosition.z)
-            }
+        // For close proximity, be more lenient - accept fewer successful raycasts
+        let requiredSuccessCount = max(1, minRaycastSuccessCount / 2) // At least 1, but prefer half of required
+        
+        guard raycastResults.count >= requiredSuccessCount else {
+            Swift.print("⚠️ ARPrecisionPositioningService: Only \(raycastResults.count) successful raycasts (need \(requiredSuccessCount))")
+            Swift.print("   Falling back to rough GPS position without AR refinement")
+            // Return rough position as fallback - better than failing completely
             return roughPosition
         }
         
@@ -162,16 +178,54 @@ class ARPrecisionPositioningService {
     private func performPrecisionRaycast(x: Float, z: Float, cameraPos: SIMD3<Float>) -> Float? {
         guard let arView = arView else { return nil }
         
-        // Raycast from above the target position downward
+        // Try multiple raycast strategies for better success rate
+        // Strategy 1: Raycast from above target position (preferred)
         let raycastOrigin = SIMD3<Float>(x, cameraPos.y + 1.0, z)
-        let raycastQuery = ARRaycastQuery(
+        
+        // Try with existingPlane first (more reliable if plane is already detected)
+        var raycastQuery = ARRaycastQuery(
             origin: raycastOrigin,
             direction: SIMD3<Float>(0, -1, 0),
-            allowing: .estimatedPlane,
+            allowing: .existingPlaneGeometry,
             alignment: .horizontal
         )
         
-        let results = arView.session.raycast(raycastQuery)
+        var results = arView.session.raycast(raycastQuery)
+        
+        // If no results, try with estimatedPlane (works with less precise detection)
+        if results.isEmpty {
+            raycastQuery = ARRaycastQuery(
+                origin: raycastOrigin,
+                direction: SIMD3<Float>(0, -1, 0),
+                allowing: .estimatedPlane,
+                alignment: .horizontal
+            )
+            results = arView.session.raycast(raycastQuery)
+        }
+        
+        // If still no results, try raycasting from camera position toward target
+        if results.isEmpty {
+            let directionToTarget = normalize(SIMD3<Float>(x, 0, z) - SIMD3<Float>(cameraPos.x, 0, cameraPos.z))
+            let raycastOriginFromCamera = SIMD3<Float>(cameraPos.x, cameraPos.y, cameraPos.z)
+            raycastQuery = ARRaycastQuery(
+                origin: raycastOriginFromCamera,
+                direction: directionToTarget,
+                allowing: .existingPlaneGeometry,
+                alignment: .horizontal
+            )
+            results = arView.session.raycast(raycastQuery)
+            
+            // Also try with estimatedPlane
+            if results.isEmpty {
+                raycastQuery = ARRaycastQuery(
+                    origin: raycastOriginFromCamera,
+                    direction: directionToTarget,
+                    allowing: .estimatedPlane,
+                    alignment: .horizontal
+                )
+                results = arView.session.raycast(raycastQuery)
+            }
+        }
         
         // Filter out surfaces above camera (ceilings) and get the highest valid surface
         let validSurfaces = results
@@ -205,8 +259,14 @@ class ARPrecisionPositioningService {
         let x = Float(distance) * sin(bearingRad)  // East-West offset from origin
         let z = Float(distance) * cos(bearingRad)  // North-South offset from origin
 
-        // Y coordinate: use default ground height (camera height - 1.5m for floor)
-        let y = cameraPos.y - 1.5
+        // CRITICAL: Y coordinate must use fixed AR origin ground level, NOT current camera position
+        // Using camera position causes objects to move when camera moves
+        guard let fixedGroundLevel = arOriginGroundLevel else {
+            Swift.print("❌ ARPrecisionPositioningService: AR origin ground level not set - cannot calculate position")
+            return nil
+        }
+        
+        let y = fixedGroundLevel
 
         return SIMD3<Float>(x, y, z)
     }
@@ -225,6 +285,15 @@ class ARPrecisionPositioningService {
     ///   - cameraPos: Current camera position
     /// - Returns: Precise Y coordinate, or nil if no surface found
     func getPreciseSurfaceHeight(x: Float, z: Float, cameraPos: SIMD3<Float>) -> Float? {
+        // Calculate distance from camera to target position
+        let targetPos = SIMD3<Float>(x, 0, z)
+        let cameraPos2D = SIMD3<Float>(cameraPos.x, 0, cameraPos.z)
+        let distanceFromCamera = length(targetPos - cameraPos2D)
+        
+        // For far distances (>5m), ARKit may not have detected planes
+        // In this case, fall back to fixed ground level if raycasts fail
+        let isFarDistance = distanceFromCamera > 5.0
+        
         // Use multi-raycast averaging for precision
         var heights: [Float] = []
         let gridStep = raycastGridSize / Float(raycastGridCount - 1)
@@ -241,14 +310,27 @@ class ARPrecisionPositioningService {
             }
         }
         
-        guard heights.count >= minRaycastSuccessCount else {
-            // Fallback to single raycast
-            return performPrecisionRaycast(x: x, z: z, cameraPos: cameraPos)
+        // For far distances, be more lenient - accept fewer successful raycasts
+        let requiredSuccessCount = isFarDistance ? max(1, minRaycastSuccessCount / 3) : minRaycastSuccessCount
+        
+        if heights.count >= requiredSuccessCount {
+            // Average the heights for precision
+            let avgHeight = heights.reduce(0, +) / Float(heights.count)
+            Swift.print("✅ ARPrecisionPositioningService: Found surface using \(heights.count) raycasts (required: \(requiredSuccessCount))")
+            return avgHeight
         }
         
-        // Average the heights for precision
-        let avgHeight = heights.reduce(0, +) / Float(heights.count)
-        return avgHeight
+        // If raycasts failed and we're at far distance, fall back to fixed ground level
+        if isFarDistance, let fixedGroundLevel = arOriginGroundLevel {
+            Swift.print("⚠️ ARPrecisionPositioningService: Only \(heights.count) successful raycasts (need \(requiredSuccessCount))")
+            Swift.print("   Falling back to fixed ground level for far distance placement")
+            return fixedGroundLevel
+        }
+        
+        // For close distances, require successful raycasts
+        Swift.print("❌ ARPrecisionPositioningService: Only \(heights.count) successful raycasts (need \(requiredSuccessCount))")
+        Swift.print("   Cannot provide precise surface height without sufficient surface detection")
+        return nil
     }
 }
 

@@ -485,13 +485,48 @@ class LootBoxAnimation {
         Swift.print("   Sound file: level-up-01.mp3 (from bundle)")
     }
     
-    /// Creates a confetti effect at the specified position
+    /// Creates a confetti effect at the specified position (legacy method - uses parent entity)
     /// - Parameters:
     ///   - position: The position relative to parent where confetti should appear
     ///   - parent: The parent entity to attach confetti to
     static func createConfettiEffect(at position: SIMD3<Float>, parent: Entity) {
+        createConfettiEffectInternal(atWorldPosition: nil, arView: nil, at: position, parent: parent)
+    }
+    
+    /// Creates a confetti effect at the specified world position (new method - persists after anchor removal)
+    /// - Parameters:
+    ///   - atWorldPosition: World position where confetti should appear (in AR space)
+    ///   - arView: Optional ARView to attach confetti to scene. If nil, uses parent-based approach (legacy)
+    ///   - at: Legacy parameter - relative position to parent (only used if arView is nil)
+    ///   - parent: Legacy parameter - parent entity (only used if arView is nil)
+    private static func createConfettiEffectInternal(atWorldPosition worldPos: SIMD3<Float>? = nil, arView: ARView? = nil, at position: SIMD3<Float>? = nil, parent: Entity? = nil) {
         // Play the level-up sound when confetti animation is triggered
         playOpeningSound()
+        
+        // Determine parent entity and initial position
+        let parentEntity: Entity
+        let initialPosition: SIMD3<Float>
+        
+        if let worldPos = worldPos, let arView = arView {
+            // New approach: Create temporary anchor at world position for confetti
+            // This anchor persists even after the object anchor is removed
+            let confettiAnchor = AnchorEntity(world: worldPos)
+            arView.scene.addAnchor(confettiAnchor)
+            parentEntity = confettiAnchor
+            initialPosition = SIMD3<Float>(0, 0, 0) // Relative to anchor (which is at world position)
+            
+            // Auto-remove anchor after confetti animation completes (2 seconds + buffer)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                confettiAnchor.removeFromParent()
+            }
+        } else if let position = position, let parent = parent {
+            // Legacy approach: Use provided parent and relative position
+            parentEntity = parent
+            initialPosition = position
+        } else {
+            Swift.print("⚠️ createConfettiEffect: Invalid parameters - need either (worldPos + arView) or (position + parent)")
+            return
+        }
         
         // Confetti colors - vibrant celebration colors
         let confettiColors: [UIColor] = [
@@ -521,8 +556,8 @@ class LootBoxAnimation {
             
             let particle = ModelEntity(mesh: particleMesh, materials: [particleMaterial])
             
-            // Set initial position relative to parent (at the loot box location)
-            particle.position = position
+            // Set initial position relative to parent
+            particle.position = initialPosition
             
             // Random initial velocity direction (burst outward)
             let angle1 = Float.random(in: 0...(Float.pi * 2)) // Horizontal angle
@@ -535,7 +570,7 @@ class LootBoxAnimation {
                 sin(angle1) * cos(angle2) * speed
             )
             
-            parent.addChild(particle)
+            parentEntity.addChild(particle)
             
             // Animate confetti particle
             animateConfettiParticle(particle: particle, velocity: velocity, index: i)

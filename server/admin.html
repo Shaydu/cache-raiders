@@ -416,20 +416,22 @@
         
         /* User location label styling */
         .user-location-label {
-            background: rgba(33, 150, 243, 0.9) !important;
+            background: rgba(33, 150, 243, 0.95) !important;
             color: #fff !important;
             border: 2px solid #fff !important;
-            border-radius: 4px !important;
+            border-radius: 6px !important;
             padding: 4px 8px !important;
-            font-size: 12px !important;
+            font-size: 10px !important;
             font-weight: bold !important;
             white-space: nowrap !important;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4) !important;
             text-align: center !important;
+            z-index: 2000 !important;
+            pointer-events: none !important;
         }
         
         .user-location-label::before {
-            border-top-color: rgba(33, 150, 243, 0.9) !important;
+            border-top-color: rgba(33, 150, 243, 0.95) !important;
         }
     </style>
 </head>
@@ -620,6 +622,7 @@
                 // Listen for real-time user location updates
                 socket.on('user_location_updated', (data) => {
                     console.log('📨 Received user_location_updated event:', data);
+                    console.log(`   Device UUID: ${data.device_uuid?.substring(0, 8)}..., Location: (${data.latitude?.toFixed(6)}, ${data.longitude?.toFixed(6)})`);
                     updateUserLocationMarker(data);
                 });
             } catch (error) {
@@ -687,14 +690,18 @@
                 const existingTooltip = userLocationMarkers[deviceUuid].getTooltip();
                 if (existingTooltip) {
                     existingTooltip.setContent(playerName);
+                    // Ensure tooltip is open
+                    if (!existingTooltip.isOpen()) {
+                        userLocationMarkers[deviceUuid].openTooltip();
+                    }
                 } else {
                     userLocationMarkers[deviceUuid].bindTooltip(playerName, {
                         permanent: true,
                         direction: 'bottom',
-                        offset: [0, 10],
+                        offset: [0, 12],
                         className: 'user-location-label',
-                        opacity: 0.9
-                    });
+                        opacity: 1.0
+                    }).openTooltip();
                 }
             } else {
                 // Create new marker - blue dot to contrast with green/red object markers
@@ -721,10 +728,11 @@
                     .bindTooltip(playerName, {
                         permanent: true,
                         direction: 'bottom',
-                        offset: [0, 10],
+                        offset: [0, 12],
                         className: 'user-location-label',
-                        opacity: 0.9
-                    });
+                        opacity: 1.0
+                    })
+                    .openTooltip();
                 
                 userLocationMarkers[deviceUuid] = marker;
                 console.log(`✅ Added blue dot for user: ${playerName} at (${lat}, ${lng})`);
@@ -1311,14 +1319,62 @@
                 
                 // Add or update markers for active users
                 Object.entries(locations).forEach(([deviceUuid, location]) => {
-                    const playerName = playerMap[deviceUuid] || `User ${deviceUuid.substring(0, 8)}`;
+                    let playerName = playerMap[deviceUuid] || `User ${deviceUuid.substring(0, 8)}`;
                     const lat = location.latitude;
                     const lng = location.longitude;
                     const accuracy = location.accuracy;
                     const heading = location.heading;
                     const updatedAt = new Date(location.updated_at).toLocaleTimeString();
                     
-                    // Create or update marker and circle using the helper function
+                    console.log(`📍 Processing user location: ${deviceUuid.substring(0, 8)}... (${playerName}) at (${lat.toFixed(6)}, ${lng.toFixed(6)})`);
+                    
+                    // If player name not in cache, fetch it asynchronously and update marker when ready
+                    if (!playerMap[deviceUuid]) {
+                        // Fetch player name asynchronously and update marker when ready
+                        fetch(`${API_BASE}/api/players/${deviceUuid}`)
+                            .then(response => response.ok ? response.json() : null)
+                            .then(player => {
+                                if (player && player.player_name) {
+                                    playerMap[deviceUuid] = player.player_name;
+                                    console.log(`✅ Fetched player name for ${deviceUuid.substring(0, 8)}...: ${player.player_name}`);
+                                    // Update marker with actual player name
+                                    if (userLocationMarkers[deviceUuid]) {
+                                        const existingTooltip = userLocationMarkers[deviceUuid].getTooltip();
+                                        if (existingTooltip) {
+                                            existingTooltip.setContent(player.player_name);
+                                        } else {
+                                            userLocationMarkers[deviceUuid].unbindTooltip();
+                                            userLocationMarkers[deviceUuid].bindTooltip(player.player_name, {
+                                                permanent: true,
+                                                direction: 'bottom',
+                                                offset: [0, 12],
+                                                className: 'user-location-label',
+                                                opacity: 1.0
+                                            }).openTooltip();
+                                        }
+                                        // Also update popup
+                                        userLocationMarkers[deviceUuid].setPopupContent(`
+                                            <strong>📍 ${player.player_name}</strong><br>
+                                            <span style="color: #2196F3; font-weight: bold;">● User Location</span><br>
+                                            Location: ${lat.toFixed(6)}, ${lng.toFixed(6)}<br>
+                                            ${accuracy ? `Accuracy: ${accuracy.toFixed(1)}m<br>` : ''}
+                                            ${heading !== null && heading !== undefined ? `Heading: ${heading.toFixed(0)}°<br>` : ''}
+                                            Updated: ${updatedAt}
+                                        `);
+                                    }
+                                } else {
+                                    // Player not found, use default name
+                                    playerMap[deviceUuid] = `User ${deviceUuid.substring(0, 8)}`;
+                                }
+                            })
+                            .catch((error) => {
+                                // Keep default name if fetch fails
+                                console.warn(`⚠️ Failed to fetch player name for ${deviceUuid.substring(0, 8)}...:`, error);
+                                playerMap[deviceUuid] = `User ${deviceUuid.substring(0, 8)}`;
+                            });
+                    }
+                    
+                    // Create or update marker and circle using the helper function (always create/update immediately)
                     createOrUpdateUserMarker(deviceUuid, lat, lng, accuracy, heading, updatedAt, playerName);
                 });
             } catch (error) {

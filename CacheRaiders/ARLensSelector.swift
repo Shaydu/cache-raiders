@@ -76,8 +76,11 @@ struct ARLensSelector: View {
     private func loadAvailableLenses() {
         availableLenses = ARLensHelper.getAvailableLenses()
         // If no lens is selected and we have available lenses, select the default
+        // Defer state modification to avoid "Modifying state during view update" warning
         if locationManager.selectedARLens == nil, let defaultLens = ARLensHelper.getDefaultLens() {
-            locationManager.setSelectedARLens(defaultLens.id)
+            DispatchQueue.main.async {
+                locationManager.setSelectedARLens(defaultLens.id)
+            }
         }
     }
     

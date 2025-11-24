@@ -67,9 +67,42 @@ class FindableObject: Findable {
         // DEFAULT BEHAVIOR #1: Create confetti effect immediately
         // (Sound will play automatically when confetti is created)
         Swift.print("🎊 Creating confetti effect...")
-        let parentEntity = anchor
-        let confettiPosition = SIMD3<Float>(0, 0.15, 0) // At object center
-        LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
+        
+        // Get world position of anchor before it's removed
+        let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+        let anchorWorldPos = SIMD3<Float>(
+            anchorTransform.columns.3.x,
+            anchorTransform.columns.3.y + 0.15, // Slightly above object center
+            anchorTransform.columns.3.z
+        )
+        
+        // Try to get ARView from anchor's scene
+        // The anchor's scene should have a reference to the ARView
+        var arView: ARView? = nil
+        if let scene = anchor.scene {
+            // Try to find ARView by checking if scene has a way to access it
+            // RealityKit doesn't directly expose ARView from Scene, so we'll use a workaround
+            // Create a temporary anchor instead
+        }
+        
+        // Create confetti at world position using temporary anchor approach
+        // This will persist even after the object anchor is removed
+        if let scene = anchor.scene {
+            // Create temporary anchor at world position for confetti
+            let confettiAnchor = AnchorEntity(world: anchorWorldPos)
+            scene.addAnchor(confettiAnchor)
+            
+            // Create confetti relative to this temporary anchor
+            LootBoxAnimation.createConfettiEffect(at: SIMD3<Float>(0, 0, 0), parent: confettiAnchor)
+            
+            // Auto-remove confetti anchor after animation completes (2 seconds + buffer)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                confettiAnchor.removeFromParent()
+            }
+        } else {
+            // Fallback: use legacy approach with original anchor
+            LootBoxAnimation.createConfettiEffect(at: SIMD3<Float>(0, 0.15, 0), parent: anchor)
+        }
         
         // DEFAULT BEHAVIOR #2: Perform find animation (overrideable by child classes)
         // This method determines which animation to play based on location type

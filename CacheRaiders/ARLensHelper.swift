@@ -4,6 +4,9 @@ import ARKit
 // MARK: - AR Lens Helper
 /// Helper for managing AR camera lens selection
 struct ARLensHelper {
+    // Cache for available lenses to avoid re-scanning and re-logging
+    private static var cachedLenses: [LensOption]?
+    private static var hasLoggedFormats = false
     /// Represents an available AR camera lens
     struct LensOption: Identifiable, Hashable {
         let id: String // Camera type identifier (e.g., "wide", "ultraWide", "telephoto")
@@ -79,21 +82,31 @@ struct ARLensHelper {
     
     /// Get all available lens options for the current device (one per camera type)
     static func getAvailableLenses() -> [LensOption] {
+        // Return cached result if available
+        if let cached = cachedLenses {
+            return cached
+        }
+        
         guard ARWorldTrackingConfiguration.isSupported else {
             print("⚠️ AR World Tracking not supported on this device")
             return []
         }
         
         let supportedFormats = ARWorldTrackingConfiguration.supportedVideoFormats
-        print("📷 Found \(supportedFormats.count) supported AR video formats")
         
-        // Log all available formats for debugging
-        for (index, format) in supportedFormats.enumerated() {
-            let resolution = format.imageResolution
-            let totalPixels = resolution.width * resolution.height
-            let aspectRatio = Double(resolution.width) / Double(resolution.height)
-            let cameraType = identifyCameraType(from: format)
-            print("   [\(index)] \(cameraType.displayName): \(resolution.width)x\(resolution.height) (\(String(format: "%.1f", Double(totalPixels)/1_000_000))M pixels), \(format.framesPerSecond)fps, aspect: \(String(format: "%.2f", aspectRatio))")
+        // Only log formats once (first time)
+        let shouldLog = !hasLoggedFormats
+        if shouldLog {
+            print("📷 Found \(supportedFormats.count) supported AR video formats")
+            
+            // Log all available formats for debugging (only once)
+            for (index, format) in supportedFormats.enumerated() {
+                let resolution = format.imageResolution
+                let totalPixels = resolution.width * resolution.height
+                let aspectRatio = Double(resolution.width) / Double(resolution.height)
+                let cameraType = identifyCameraType(from: format)
+                print("   [\(index)] \(cameraType.displayName): \(resolution.width)x\(resolution.height) (\(String(format: "%.1f", Double(totalPixels)/1_000_000))M pixels), \(format.framesPerSecond)fps, aspect: \(String(format: "%.2f", aspectRatio))")
+            }
         }
         
         // Group formats by camera type and pick the best one from each group
@@ -121,7 +134,10 @@ struct ARLensHelper {
             }
         }
         
-        print("📷 Detected \(bestFormatsByType.count) camera type(s): \(bestFormatsByType.keys.map { $0.displayName }.joined(separator: ", "))")
+        // Only log detection once
+        if shouldLog {
+            print("📷 Detected \(bestFormatsByType.count) camera type(s): \(bestFormatsByType.keys.map { $0.displayName }.joined(separator: ", "))")
+        }
         
         // Convert to lens options, sorted by camera type order
         var lenses: [LensOption] = []
@@ -133,14 +149,19 @@ struct ARLensHelper {
                     name: cameraType.displayName,
                     videoFormat: format
                 ))
-                print("✅ Added lens option: \(cameraType.displayName) (\(resolution.width)x\(resolution.height) @ \(format.framesPerSecond)fps)")
+                // Only log lens options once
+                if shouldLog {
+                    print("✅ Added lens option: \(cameraType.displayName) (\(resolution.width)x\(resolution.height) @ \(format.framesPerSecond)fps)")
+                }
             }
         }
         
         // If we only detected one camera type, it might be that the device only supports one
         // or our heuristics need improvement. Show all formats as separate options as fallback.
         if lenses.count == 1 && supportedFormats.count > 1 {
-            print("⚠️ Only one camera type detected but multiple formats available. Showing all formats as options.")
+            if shouldLog {
+                print("⚠️ Only one camera type detected but multiple formats available. Showing all formats as options.")
+            }
             // Create separate options for each format with resolution info
             var fallbackLenses: [LensOption] = []
             for (index, format) in supportedFormats.enumerated() {
@@ -152,9 +173,12 @@ struct ARLensHelper {
                     videoFormat: format
                 ))
             }
+            cachedLenses = fallbackLenses
             return fallbackLenses
         }
         
+        cachedLenses = lenses
+        hasLoggedFormats = true // Mark as logged after first run
         return lenses
     }
     

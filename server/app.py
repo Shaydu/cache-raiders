@@ -689,6 +689,10 @@ def update_user_location(device_uuid: str):
     else:
         print(f"📍 User location updated: {device_uuid[:8]}... at ({latitude:.6f}, {longitude:.6f})")
     
+    # Log total active users
+    print(f"   Total users in memory: {len(user_locations)}")
+    print(f"   User UUIDs: {list(user_locations.keys())}")
+    
     # Broadcast location update via WebSocket
     socketio.emit('user_location_updated', {
         'device_uuid': device_uuid,
@@ -742,6 +746,8 @@ def get_all_user_locations():
             active_locations[device_uuid] = location_data
     
     print(f"📍 Returning {len(active_locations)} active user locations (out of {len(user_locations)} total)")
+    if active_locations:
+        print(f"   Active device UUIDs: {list(active_locations.keys())}")
     return jsonify(active_locations), 200
 
 @app.route('/api/players/<device_uuid>', methods=['POST', 'PUT'])

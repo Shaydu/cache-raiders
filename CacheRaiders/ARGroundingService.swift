@@ -19,18 +19,22 @@ class ARGroundingService {
     
     /// Finds the highest horizontal surface that blocks the floor at the given X/Z coordinates.
     /// If no surface blocks the floor, returns the floor position.
+    /// Uses multiple raycast strategies to ensure reliable surface detection.
     /// - Parameters:
     ///   - x: X coordinate in AR world space
     ///   - z: Z coordinate in AR world space
     ///   - cameraPos: Current camera position (used for raycast origin and validation)
+    ///   - silent: If true, suppresses warning logs (used for fallback searches)
     /// - Returns: The Y coordinate of the surface to place the object on, or nil if no valid surface found
-    func findHighestBlockingSurface(x: Float, z: Float, cameraPos: SIMD3<Float>) -> Float? {
+    func findHighestBlockingSurface(x: Float, z: Float, cameraPos: SIMD3<Float>, silent: Bool = false) -> Float? {
         guard let arView = arView else {
-            Swift.print("⚠️ ARGroundingService: No AR view available")
+            if !silent {
+                Swift.print("⚠️ ARGroundingService: No AR view available")
+            }
             return nil
         }
         
-        // Raycast downward from above the target position to find all horizontal surfaces
+        // Strategy 1: Raycast downward from above the target position
         let raycastOrigin = SIMD3<Float>(x, cameraPos.y + 1.0, z)
         let raycastQuery = ARRaycastQuery(
             origin: raycastOrigin,
@@ -40,10 +44,44 @@ class ARGroundingService {
         )
         
         // Get all raycast results (not just the first one)
-        let raycastResults = arView.session.raycast(raycastQuery)
+        var raycastResults = arView.session.raycast(raycastQuery)
+        
+        // Strategy 2: If no results from center, try nearby positions in a small grid pattern
+        if raycastResults.isEmpty {
+            let searchOffsets: [SIMD2<Float>] = [
+                SIMD2<Float>(0, 0),
+                SIMD2<Float>(0.2, 0),
+                SIMD2<Float>(-0.2, 0),
+                SIMD2<Float>(0, 0.2),
+                SIMD2<Float>(0, -0.2),
+                SIMD2<Float>(0.15, 0.15),
+                SIMD2<Float>(-0.15, 0.15),
+                SIMD2<Float>(0.15, -0.15),
+                SIMD2<Float>(-0.15, -0.15)
+            ]
+            
+            for offset in searchOffsets {
+                let offsetX = x + offset.x
+                let offsetZ = z + offset.y
+                let offsetOrigin = SIMD3<Float>(offsetX, cameraPos.y + 1.0, offsetZ)
+                let offsetQuery = ARRaycastQuery(
+                    origin: offsetOrigin,
+                    direction: SIMD3<Float>(0, -1, 0),
+                    allowing: .estimatedPlane,
+                    alignment: .horizontal
+                )
+                raycastResults.append(contentsOf: arView.session.raycast(offsetQuery))
+                if !raycastResults.isEmpty {
+                    break // Found at least one result, proceed
+                }
+            }
+        }
         
         guard !raycastResults.isEmpty else {
-            Swift.print("⚠️ ARGroundingService: No horizontal surfaces found at position (x: \(String(format: "%.2f", x)), z: \(String(format: "%.2f", z)))")
+            // Only log if this is the primary search (not a fallback search)
+            if !silent {
+                Swift.print("⚠️ ARGroundingService: No horizontal surfaces found at position (x: \(String(format: "%.2f", x)), z: \(String(format: "%.2f", z)))")
+            }
             return nil
         }
         
@@ -57,11 +95,13 @@ class ARGroundingService {
             .sorted { $0.y < $1.y } // Sort from lowest (floor) to highest
         
         guard !validSurfaces.isEmpty else {
-            Swift.print("⚠️ ARGroundingService: No valid horizontal surfaces found (all were ceilings)")
+            if !silent {
+                Swift.print("⚠️ ARGroundingService: No valid horizontal surfaces found (all were ceilings)")
+            }
             return nil
         }
         
-        // Find all surfaces that are at the target X/Z position (within tolerance)
+        // Find all surfaces that are at or near the target X/Z position (within tolerance)
         // These are surfaces that the object would actually rest on
         var surfacesAtTargetPosition: [(y: Float, transform: simd_float4x4)] = []
 
@@ -78,14 +118,46 @@ class ARGroundingService {
 
             if horizontalDistance <= horizontalTolerance {
                 surfacesAtTargetPosition.append(surface)
-                Swift.print("✅ ARGroundingService: Found surface at target position - Y: \(String(format: "%.2f", surfaceY)), distance: \(String(format: "%.2f", horizontalDistance))m")
+                // Only log success for primary searches to reduce verbosity
+                if !silent {
+                    Swift.print("✅ ARGroundingService: Found surface at target position - Y: \(String(format: "%.2f", surfaceY)), distance: \(String(format: "%.2f", horizontalDistance))m")
+                }
             }
         }
 
-        // If no surfaces found at target position, fall back to the floor (lowest surface)
-        guard !surfacesAtTargetPosition.isEmpty else {
+        // If no surfaces found at target position, use the nearest valid surface (within expanded tolerance)
+        if surfacesAtTargetPosition.isEmpty {
+            // Find the closest surface within expanded tolerance (1.0m)
+            let expandedTolerance: Float = 1.0
+            var closestSurface: (y: Float, distance: Float)?
+            
+            for surface in validSurfaces {
+                let surfaceTransform = surface.transform
+                let surfaceX = surfaceTransform.columns.3.x
+                let surfaceZ = surfaceTransform.columns.3.z
+                let horizontalDistance = sqrt(
+                    pow(surfaceX - x, 2) + pow(surfaceZ - z, 2)
+                )
+                
+                if horizontalDistance <= expandedTolerance {
+                    if closestSurface == nil || horizontalDistance < closestSurface!.distance {
+                        closestSurface = (surface.y, horizontalDistance)
+                    }
+                }
+            }
+            
+            if let closest = closestSurface {
+                if !silent {
+                    Swift.print("✅ ARGroundingService: Using closest surface near target position - Y: \(String(format: "%.2f", closest.y)), distance: \(String(format: "%.2f", closest.distance))m")
+                }
+                return closest.y
+            }
+            
+            // Final fallback: use the lowest valid surface (floor)
             let floorY = validSurfaces.first!.y
-            Swift.print("✅ ARGroundingService: No surfaces at target position, using floor at Y: \(String(format: "%.2f", floorY))")
+            if !silent {
+                Swift.print("✅ ARGroundingService: No surfaces at target position, using floor at Y: \(String(format: "%.2f", floorY))")
+            }
             return floorY
         }
 
@@ -94,7 +166,9 @@ class ARGroundingService {
 
         // Return the HIGHEST surface at the target position (this is the topmost plane the object should rest on)
         let highestSurface = sortedSurfaces.first!
-        Swift.print("✅ ARGroundingService: Using highest surface at target position - Y: \(String(format: "%.2f", highestSurface.y))")
+        if !silent {
+            Swift.print("✅ ARGroundingService: Using highest surface at target position - Y: \(String(format: "%.2f", highestSurface.y))")
+        }
         return highestSurface.y
     }
     
@@ -139,7 +213,8 @@ class ARGroundingService {
         for offset in offsets {
             let searchX = centerX + offset.x
             let searchZ = centerZ + offset.z
-            if let surfaceY = findHighestBlockingSurface(x: searchX, z: searchZ, cameraPos: cameraPos) {
+            // Use silent mode for fallback searches to reduce log spam
+            if let surfaceY = findHighestBlockingSurface(x: searchX, z: searchZ, cameraPos: cameraPos, silent: true) {
                 return surfaceY
             }
         }
@@ -176,12 +251,12 @@ class ARGroundingService {
     ///   - objectType: The type of object being placed (for default height)
     /// - Returns: The Y coordinate to place the object at
     func findSurfaceOrDefault(x: Float, z: Float, cameraPos: SIMD3<Float>, objectType: LootBoxType) -> Float {
-        // Try to find actual surface
-        if let surfaceY = findHighestBlockingSurface(x: x, z: z, cameraPos: cameraPos) {
+        // Try to find actual surface (silent mode to reduce log spam)
+        if let surfaceY = findHighestBlockingSurface(x: x, z: z, cameraPos: cameraPos, silent: true) {
             return surfaceY
         }
 
-        // Try wider search
+        // Try wider search (already uses silent mode internally)
         if let surfaceY = findSurfaceWithFallback(centerX: x, centerZ: z, cameraPos: cameraPos) {
             Swift.print("✅ ARGroundingService: Found surface via fallback search")
             return surfaceY

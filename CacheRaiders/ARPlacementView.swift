@@ -163,13 +163,20 @@ struct ARPlacementView: View {
                     offsetY: Double(arPosition.y),
                     offsetZ: Double(arPosition.z)
                 )
-                print("✅ Stored AR coordinates for mm-precision: offset=(\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
+                print("✅ [Placement] Stored AR coordinates for mm-precision:")
+                print("   Object ID: \(objectId)")
+                print("   AR Origin GPS: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
+                print("   AR Offset: X=\(String(format: "%.4f", arPosition.x))m, Y=\(String(format: "%.4f", arPosition.y))m, Z=\(String(format: "%.4f", arPosition.z))m")
+                print("   Grounding Height: \(String(format: "%.4f", groundingHeight))m")
             }
             
             // Also update grounding height for accurate placement
             try await APIService.shared.updateGroundingHeight(objectId: objectId, height: groundingHeight)
             // Note: Scale is stored locally or could be added to API in the future
-            print("📏 Object scale set to \(scale)x (stored locally)")
+            print("📏 [Placement] Object scale set to \(scale)x (stored locally)")
+            print("📍 [Placement] Object saved to API - GPS: (\(String(format: "%.6f", coordinate.latitude)), \(String(format: "%.6f", coordinate.longitude)))")
+            print("💡 [Placement] Object should appear in main AR view via checkAndPlaceBoxes")
+            print("   ⚠️ If object disappears, check if checkAndPlaceBoxes is finding it in nearbyLocations")
             // Don't reload locations immediately - object is already placed correctly in AR
             // Reloading would trigger checkAndPlaceBoxes which would re-place the object and cause it to move
             // The coordinates are saved, so the object will be placed correctly on next app launch or manual reload
@@ -197,11 +204,18 @@ struct ARPlacementView: View {
             newLocation.ar_offset_y = Double(arPosition.y)
             newLocation.ar_offset_z = Double(arPosition.z)
             newLocation.ar_placement_timestamp = Date()
-            print("✅ Storing AR coordinates for mm-precision: offset=(\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
+            print("✅ [Placement] Storing AR coordinates for new object:")
+            print("   AR Origin GPS: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
+            print("   AR Offset: X=\(String(format: "%.4f", arPosition.x))m, Y=\(String(format: "%.4f", arPosition.y))m, Z=\(String(format: "%.4f", arPosition.z))m")
         }
 
         do {
             let createdObject = try await APIService.shared.createObject(newLocation)
+            print("✅ [Placement] Created new object in API:")
+            print("   Object ID: \(createdObject.id)")
+            print("   Name: \(createdObject.name)")
+            print("   Type: \(createdObject.type)")
+            print("   GPS: (\(String(format: "%.6f", createdObject.latitude)), \(String(format: "%.6f", createdObject.longitude)))")
             
             // Update AR coordinates after creation (if API supports it)
             if let arOrigin = arOrigin {
@@ -213,12 +227,16 @@ struct ARPlacementView: View {
                     offsetY: Double(arPosition.y),
                     offsetZ: Double(arPosition.z)
                 )
+                print("✅ [Placement] AR coordinates updated in API")
             }
             
             // Update grounding height for the newly created object
             try await APIService.shared.updateGroundingHeight(objectId: createdObject.id, height: groundingHeight)
             // Note: Scale is stored locally or could be added to API in the future
-            print("📏 Object scale set to \(scale)x (stored locally)")
+            print("📏 [Placement] Object scale set to \(scale)x (stored locally)")
+            print("📍 [Placement] Object saved to API - GPS: (\(String(format: "%.6f", coordinate.latitude)), \(String(format: "%.6f", coordinate.longitude)))")
+            print("💡 [Placement] Object should appear in main AR view via checkAndPlaceBoxes")
+            print("   ⚠️ If object disappears, check if checkAndPlaceBoxes is finding it in nearbyLocations")
             // Don't reload locations immediately - object is already placed correctly in AR
             // Reloading would trigger checkAndPlaceBoxes which would re-place the object and cause it to move
             // The coordinates are saved, so the object will be placed correctly on next app launch or manual reload
@@ -400,13 +418,13 @@ struct ARPlacementARView: UIViewRepresentable {
             precisionPositioningService = ARPrecisionPositioningService(arView: arView)
 
             // Set AR origin on first location update with good GPS accuracy
-            // For < 6m AR-to-GPS conversion accuracy, we need < 6m GPS accuracy
+            // For < 7.5m AR-to-GPS conversion accuracy, we need < 7.5m GPS accuracy
             if let userLocation = userLocationManager.currentLocation,
-               userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 6.0 {
+               userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 7.5 {
                 arOriginGPS = userLocation
                 print("📍 AR Origin set for placement: accuracy=\(String(format: "%.2f", userLocation.horizontalAccuracy))m")
             } else if arOriginGPS == nil {
-                print("⚠️ Waiting for better GPS accuracy (< 6m) before setting AR origin")
+                print("⚠️ Waiting for better GPS accuracy (< 7.5m) before setting AR origin")
             }
 
             // Set up AR session delegate to update crosshair position and reticle
@@ -572,18 +590,21 @@ struct ARPlacementARView: UIViewRepresentable {
             }
             outlineEntity.scale *= 1.05 // Slightly larger for outline effect
             
-            // Create simple shadow box that scales with the object
+            // Create simple shadow plane that scales with the object
             // Shadow size is proportional to object size
             let shadowSize = size * 0.8 // Shadow is 80% of object size
-            let shadowThickness: Float = 0.02 // 2cm thick box for visibility
             
-            // Create a simple box for the shadow (simplified for performance)
-            let shadowMesh = MeshResource.generateBox(width: shadowSize, height: shadowThickness, depth: shadowSize)
+            // Create a flat plane for the shadow (not a box) - this ensures it's always visible as a 2D square
+            // Use a plane mesh that lies flat on the ground (X-Z plane)
+            let shadowMesh = MeshResource.generatePlane(width: shadowSize, depth: shadowSize)
             // Use UnlitMaterial for shadow to ensure it's always visible regardless of lighting
             var shadowMaterial = UnlitMaterial()
             shadowMaterial.color = .init(tint: UIColor.black.withAlphaComponent(0.5))
             let shadowEntity = ModelEntity(mesh: shadowMesh, materials: [shadowMaterial])
             shadowEntity.name = "shadow" // Tag shadow for easy identification
+            
+            // Rotate the plane to lie flat on the ground (rotate 90 degrees around X axis)
+            shadowEntity.orientation = simd_quatf(angle: -Float.pi / 2, axis: SIMD3<Float>(1, 0, 0))
             
             // Position shadow slightly below the object (on the ground)
             // Position depends on object type - adjust based on object height
@@ -813,7 +834,35 @@ struct ARPlacementARView: UIViewRepresentable {
             placedObjectAnchor = anchor
             placedObjectEntity = entity
             
-            print("✅ Object '\(location.name)' placed immediately in AR at position: \(position)")
+            print("✅ [Placement] Object '\(location.name)' placed immediately in AR at position: \(position)")
+            print("   AR Position: X=\(String(format: "%.4f", position.x))m, Y=\(String(format: "%.4f", position.y))m, Z=\(String(format: "%.4f", position.z))m")
+            print("   Object ID: \(location.id)")
+            print("   ⚠️ NOTE: This object is in placement view's AR scene - it will disappear when view dismisses")
+            print("   💡 Object should reappear in main AR view after checkAndPlaceBoxes runs")
+            
+            // Log location again after 1 second to see if it moved or disappeared
+            Task {
+                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                await MainActor.run {
+                    if let anchor = placedObjectAnchor {
+                        let currentPos = anchor.position
+                        let isStillInScene = anchor.parent != nil
+                        print("📍 [Placement] Object '\(location.name)' location after 1 second:")
+                        print("   AR Position: X=\(String(format: "%.4f", currentPos.x))m, Y=\(String(format: "%.4f", currentPos.y))m, Z=\(String(format: "%.4f", currentPos.z))m")
+                        print("   Still in scene: \(isStillInScene ? "YES" : "NO")")
+                        print("   Anchor parent: \(anchor.parent != nil ? "exists" : "nil")")
+                        if !isStillInScene {
+                            print("   ⚠️ WARNING: Object was removed from scene!")
+                        } else if currentPos.x != position.x || currentPos.y != position.y || currentPos.z != position.z {
+                            print("   ⚠️ WARNING: Object moved! Original: \(position), Current: \(currentPos)")
+                        } else {
+                            print("   ✅ Object still at original position")
+                        }
+                    } else {
+                        print("   ⚠️ WARNING: placedObjectAnchor is nil - object was removed!")
+                    }
+                }
+            }
         }
 
         @objc func handleLongPress(_ sender: UILongPressGestureRecognizer) {

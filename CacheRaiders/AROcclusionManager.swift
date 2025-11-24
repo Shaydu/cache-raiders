@@ -21,8 +21,10 @@ class AROcclusionManager {
     
     /// Start occlusion checking to hide loot boxes behind walls
     func startOcclusionChecking() {
-        // Check occlusion periodically (every 0.2 seconds = 5 times per second)
-        occlusionCheckTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+        // Check occlusion periodically (every 1.0 seconds)
+        // Reduced from 0.5s to improve framerate - raycasting is expensive
+        // Occlusion doesn't need to update frequently - 1 FPS is sufficient
+        occlusionCheckTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.checkOcclusionForPlacedBoxes()
         }
     }
@@ -123,10 +125,11 @@ class AROcclusionManager {
     
     /// Check occlusion for all placed boxes
     func checkOcclusionForPlacedBoxes() {
+        let startTime = CFAbsoluteTimeGetCurrent()
         guard let arView = arView, let frame = arView.session.currentFrame else { return }
-        
-        // Update distance texts and direction (delegate to distance tracker)
-        distanceTracker?.updateDistanceTexts()
+
+        // PERFORMANCE: Distance text updates moved to distance tracker's own timer (1s interval)
+        // Only update direction here (lightweight calculation)
         distanceTracker?.updateNearestObjectDirection()
         
         let cameraTransform = frame.camera.transform
@@ -186,12 +189,12 @@ class AROcclusionManager {
             var minDistanceForObject: Float
             
             // Get the actual object size from the container
-            // Objects can be 0.3m to 1.0m in size, so we need to calculate based on actual size
+            // Objects can be 0.25m to 0.61m (2 feet) in size, so we need to calculate based on actual size
             if hasContainer {
                 // For containers (chalice or treasure box), get the actual size
                 // The container's scale or bounds would give us the actual size
-                // For now, use a safe estimate based on max possible size (1.0m)
-                // Using half the max size (0.5m) as radius, plus small buffer
+                // For now, use a safe estimate based on max possible size (0.61m = 2 feet)
+                // Using half the max size (0.305m) as radius, plus small buffer
                 minDistanceForObject = 0.25 + buffer // Reduced to 0.35m - only hide when very close
             } else {
                 // Standalone sphere - use sphere radius
@@ -281,8 +284,13 @@ class AROcclusionManager {
                 }
             }
         }
+
+        let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+        if elapsed > 10.0 { // Only log if takes more than 10ms
+            Swift.print("⏱️ [PERF] checkOcclusionForPlacedBoxes took \(String(format: "%.1f", elapsed))ms for \(placedBoxes.count) objects")
+        }
     }
-    
+
     deinit {
         occlusionCheckTimer?.invalidate()
     }

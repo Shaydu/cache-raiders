@@ -28,7 +28,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var tapHandler: ARTapHandler?
     private var databaseIndicatorService: ARDatabaseIndicatorService?
     private var groundingService: ARGroundingService?
-    private var precisionPositioningService: ARPrecisionPositioningService?
+    private var precisionPositioningService: ARPrecisionPositioningService? // Legacy - kept for compatibility
+    private var geospatialService: ARGeospatialService? // New ENU-based geospatial service
     
     weak var arView: ARView?
     private var locationManager: LootBoxLocationManager?
@@ -37,6 +38,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var placedBoxes: [String: AnchorEntity] = [:]
     private var findableObjects: [String: FindableObject] = [:] // Track all findable objects
     private var arOriginLocation: CLLocation? // GPS location when AR session started
+    private var arOriginSetTime: Date? // When AR origin was set (for degraded mode timeout)
+    private var isDegradedMode: Bool = false // True if operating without GPS (AR-only mode)
+    private var arOriginGroundLevel: Float? // Fixed ground level at AR origin (never changes)
     var distanceToNearestBinding: Binding<Double?>?
     var temperatureStatusBinding: Binding<String?>?
     var collectionNotificationBinding: Binding<String?>?
@@ -45,12 +49,19 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var sphereModeActive: Bool = false // Track when we're in sphere randomization mode
     private var hasAutoRandomized: Bool = false // Track if we've already auto-randomized spheres
     private var shouldForceReplacement: Bool = false // Force re-placement after reset when AR is ready
+    var lastAppliedLensId: String? = nil // Track last applied AR lens to prevent redundant session resets
 
     // Arrow direction tracking
     @Published var nearestObjectDirection: Double? = nil // Direction in degrees (0 = north, 90 = east, etc.)
     
     // Viewport visibility tracking for chime sounds
     private var objectsInViewport: Set<String> = [] // Track which objects are currently visible
+    private var lastViewportCheck: Date = Date() // Throttle viewport checks to improve framerate
+    
+    // Throttling for object recognition and placement checks
+    private var lastRecognitionTime: Date = Date() // Throttle object recognition to improve framerate
+    private var lastDegradedModeLogTime: Date? // Throttle degraded mode logging
+    private var lastPlacementCheck: Date = Date() // Throttle box placement checks to improve framerate
     
     override init() {
         super.init()
@@ -241,6 +252,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Store the GPS location when AR starts (this becomes our AR world origin)
         arOriginLocation = userLocationManager.currentLocation
         
+        // Set AR coordinator reference in user location manager for enhanced location tracking
+        userLocationManager.arCoordinator = self
+        
         // Initialize managers
         environmentManager = AREnvironmentManager(arView: arView, locationManager: locationManager)
         // Only initialize object recognizer if enabled (saves battery/processing)
@@ -255,7 +269,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         tapHandler = ARTapHandler(arView: arView, locationManager: locationManager)
         databaseIndicatorService = ARDatabaseIndicatorService()
         groundingService = ARGroundingService(arView: arView)
-        precisionPositioningService = ARPrecisionPositioningService(arView: arView)
+        precisionPositioningService = ARPrecisionPositioningService(arView: arView) // Legacy
+        geospatialService = ARGeospatialService() // New ENU-based service
 
         // Start periodic grounding checks to ensure objects stay on surfaces
         // This continuously monitors for better surface data and re-grounds objects when found
@@ -384,16 +399,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var lastGroundingCheck: [String: Date] = [:]
 
     /// Starts periodic grounding checks to ensure objects stay on surfaces
+    /// DISABLED: Periodic grounding causes objects to move when camera moves
+    /// Objects are now placed once and never moved to ensure stability
     private func startPeriodicGrounding() {
-        // Stop any existing timer
-        groundingTimer?.invalidate()
-
-        // Check grounding every 2 seconds
-        groundingTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.performGroundingCheck()
-        }
-
-        Swift.print("✅ Started periodic grounding checks (every 2 seconds)")
+        // DISABLED: Periodic grounding causes drift
+        // Objects are placed at final positions and never modified
+        // This ensures maximum stability and prevents objects from moving when camera moves
+        Swift.print("⏸️ Periodic grounding DISABLED - objects stay fixed at placement position for maximum stability")
     }
 
     /// Stops periodic grounding checks
@@ -404,67 +416,57 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
 
     /// Performs a grounding check on all placed objects
-    /// This runs periodically to catch objects that were placed before surfaces were detected
+    /// DISABLED: This function is disabled to prevent objects from moving after placement
+    /// Objects are placed once at their final position and never modified
     private func performGroundingCheck() {
-        guard let arView = arView,
-              let frame = arView.session.currentFrame else { return }
-
-        let cameraTransform = frame.camera.transform
-        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-
-        let now = Date()
-        var regroundedCount = 0
-
-        for (locationId, anchor) in placedBoxes {
-            // Rate limit: only check each object every 5 seconds to reduce raycasting overhead
-            if let lastCheck = lastGroundingCheck[locationId],
-               now.timeIntervalSince(lastCheck) < 5.0 {
-                continue
-            }
-            lastGroundingCheck[locationId] = now
-
-            // Get anchor's current position
-            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
-            let currentX = anchorTransform.columns.3.x
-            let currentZ = anchorTransform.columns.3.z
-            let currentY = anchorTransform.columns.3.y
-
-            // Try to find a surface at this X/Z position
-            if let surfaceY = groundingService?.findHighestBlockingSurface(x: currentX, z: currentZ, cameraPos: cameraPos) {
-                // Check if object is significantly above or below the detected surface
-                let heightDifference = abs(currentY - surfaceY)
-
-                // Re-ground if more than 10cm off the surface (floating or sunk)
-                if heightDifference > 0.1 {
-                    Swift.print("🔧 Re-grounding '\(locationId)': Y=\(String(format: "%.2f", currentY)) → Y=\(String(format: "%.2f", surfaceY)) (Δ=\(String(format: "%.2f", heightDifference))m)")
-
-                    // Smoothly move anchor to new position (interpolate to avoid jarring jumps)
-                    let newY = surfaceY
-                    anchor.transform.translation = SIMD3<Float>(currentX, newY, currentZ)
-                    regroundedCount += 1
-
-                    // Store updated grounding height to database
-                    if let location = locationManager?.locations.first(where: { $0.id == locationId }) {
-                        Task {
-                            do {
-                                try await APIService.shared.updateGroundingHeight(objectId: location.id, height: Double(newY))
-                            } catch {
-                                // Silently fail - grounding still works locally
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if regroundedCount > 0 {
-            Swift.print("✅ Periodic check: Re-grounded \(regroundedCount) object(s)")
-        }
+        // DISABLED: Moving objects after placement causes drift
+        // Objects maintain their exact placement position for maximum stability
     }
 
     /// Re-grounds all placed objects immediately (called when new planes detected)
-    /// This is more aggressive than periodic checks - forces immediate re-grounding
+    /// DISABLED: This function is disabled to prevent objects from moving after placement
+    /// Objects are placed once at their final position and never modified
     private func regroundAllObjects() {
+        // DISABLED: Moving objects after placement causes drift
+        // Objects maintain their exact placement position for maximum stability
+        Swift.print("⏸️ Re-grounding disabled - objects stay fixed at placement position")
+    }
+    
+    /// Enters degraded AR-only mode when GPS is unavailable
+    /// In this mode, objects are placed relative to AR origin (0,0,0) without GPS coordinates
+    private func enterDegradedMode(cameraPos: SIMD3<Float>, frame: ARFrame) {
+        guard arOriginLocation == nil else { return } // Already set
+        
+        isDegradedMode = true
+        
+        // Set AR origin to current camera position (0,0,0 in AR space)
+        // This is the AR session origin, not a GPS location
+        arOriginLocation = nil // No GPS in degraded mode
+        arOriginSetTime = Date()
+        
+        // Set fixed ground level using surface detection or camera estimate
+        let groundLevel: Float
+        if let surfaceY = groundingService?.findHighestBlockingSurface(x: 0, z: 0, cameraPos: cameraPos) {
+            groundLevel = surfaceY
+            Swift.print("📍 Degraded mode: Ground level from surface detection: \(String(format: "%.2f", groundLevel))m")
+        } else {
+            groundLevel = cameraPos.y - 1.5
+            Swift.print("📍 Degraded mode: Ground level estimated: \(String(format: "%.2f", groundLevel))m")
+        }
+        
+        arOriginGroundLevel = groundLevel
+        geospatialService?.enterDegradedMode(groundLevel: groundLevel)
+        precisionPositioningService?.setAROriginGroundLevel(groundLevel) // Legacy compatibility
+        
+        Swift.print("⚠️ ENTERED DEGRADED MODE (AR-only, no GPS)")
+        Swift.print("   Objects will be placed relative to AR origin (0,0,0)")
+        Swift.print("   Ground level: \(String(format: "%.2f", groundLevel))m (FIXED - never changes)")
+        Swift.print("   GPS-based objects will not be placed in this mode")
+        Swift.print("   AR-only objects (tap-to-place, randomize) will work normally")
+    }
+    
+    /// Legacy function - kept for compatibility but disabled
+    private func regroundAllObjectsLegacy() {
         guard let arView = arView,
               let frame = arView.session.currentFrame else { return }
 
@@ -485,16 +487,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 // Check if object is significantly above the detected surface (floating)
                 let heightDifference = currentY - surfaceY
 
-                if heightDifference > 0.05 { // More than 5cm above surface = floating (stricter for immediate re-grounding)
-                    Swift.print("🔧 Immediate re-ground '\(locationId)': Y=\(String(format: "%.2f", currentY)) → Y=\(String(format: "%.2f", surfaceY)) (dropped \(String(format: "%.2f", heightDifference))m)")
-
-                    // Update anchor position (move to new surface)
-                    anchor.transform.translation = SIMD3<Float>(currentX, surfaceY, currentZ)
-                    regroundedCount += 1
-
-                    // Update last check time
-                    lastGroundingCheck[locationId] = Date()
-                }
+                // DISABLED: Never re-ground objects - they should stay exactly where they were placed
+                // Objects should NEVER move after being placed, especially for the user who placed them
+                // if heightDifference > 0.05 { // More than 5cm above surface = floating
+                //     Swift.print("🔧 Immediate re-ground '\(locationId)': Y=\(String(format: "%.2f", currentY)) → Y=\(String(format: "%.2f", surfaceY)) (dropped \(String(format: "%.2f", heightDifference))m)")
+                //     anchor.transform.translation = SIMD3<Float>(currentX, surfaceY, currentZ)
+                //     regroundedCount += 1
+                //     lastGroundingCheck[locationId] = Date()
+                // }
             }
         }
 
@@ -504,38 +504,53 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
     
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
+        let startTime = CFAbsoluteTimeGetCurrent()
         guard let arView = arView else { return }
 
-        // Debug: Log what we're working with
-        Swift.print("🔍 checkAndPlaceBoxes called:")
-        Swift.print("   User location: (\(String(format: "%.6f", userLocation.coordinate.latitude)), \(String(format: "%.6f", userLocation.coordinate.longitude)))")
-        Swift.print("   Nearby locations count: \(nearbyLocations.count)")
-        Swift.print("   Currently placed boxes: \(placedBoxes.count)")
-        if let selectedId = locationManager?.selectedDatabaseObjectId {
-            Swift.print("   Selected object ID: \(selectedId)")
+        // PERFORMANCE: Logging disabled - print statements are EXTREMELY expensive (blocks main thread)
+        // 677 print statements in codebase causing major freezing
+        // Only log critical errors and performance metrics
+        let debugLogging = false // Set to true only when actively debugging
+
+        if debugLogging {
+            Swift.print("🔍 checkAndPlaceBoxes called:")
+            Swift.print("   Nearby: \(nearbyLocations.count), Placed: \(placedBoxes.count)")
         }
 
-        for (index, location) in nearbyLocations.enumerated() {
-            let dist = userLocation.distance(from: location.location)
-            Swift.print("   [\(index)] \(location.name) (ID: \(location.id)) - Distance: \(String(format: "%.1f", dist))m, Type: \(location.type.displayName)")
-        }
-
-        // CRITICAL: Remove objects that are no longer in the nearbyLocations list (e.g., when selection changes)
-        // This ensures only the selected object(s) are shown in AR
+        // CRITICAL: Only remove objects that are no longer in the nearbyLocations list AND are not manually placed
+        // Manually placed objects (with AR coordinates) should NEVER be removed or moved
         let nearbyLocationIds = Set(nearbyLocations.map { $0.id })
         var objectsToRemove: [String] = []
+        var manuallyPlacedObjects: Set<String> = []
 
         for (locationId, _) in placedBoxes {
-            // If this placed object is not in the current nearby locations list, mark it for removal
+            // Check if this object was manually placed (has AR coordinates)
+            // Manually placed objects should NEVER be removed OR re-placed
+            if let existingLocation = locationManager?.locations.first(where: { $0.id == locationId }) {
+                let isManuallyPlaced = existingLocation.ar_offset_x != nil &&
+                                      existingLocation.ar_offset_y != nil &&
+                                      existingLocation.ar_offset_z != nil
+
+                if isManuallyPlaced {
+                    manuallyPlacedObjects.insert(locationId)
+                }
+            }
+
+            // If this placed object is not in the current nearby locations list, check if it should be removed
             if !nearbyLocationIds.contains(locationId) {
+                // Never remove manually placed objects
+                if manuallyPlacedObjects.contains(locationId) {
+                    continue
+                }
+
+                // Only remove objects that weren't manually placed
                 objectsToRemove.append(locationId)
             }
         }
 
-        // Remove the unselected objects from the scene
+        // Remove the unselected objects from the scene (but never manually placed ones)
         for locationId in objectsToRemove {
             if let anchor = placedBoxes[locationId] {
-                Swift.print("🗑️ Removing unselected object '\(locationId)' from AR scene")
                 anchor.removeFromParent()
                 placedBoxes.removeValue(forKey: locationId)
                 findableObjects.removeValue(forKey: locationId)
@@ -543,14 +558,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
 
-        if !objectsToRemove.isEmpty {
-            Swift.print("✅ Removed \(objectsToRemove.count) unselected object(s) from AR scene")
-        }
-
         // Allow GPS-based loot boxes even when spheres are active
         // Limit to maximum 6 objects total (3 spheres + 3 GPS boxes)
         guard placedBoxes.count < 6 else {
-            Swift.print("🎯 Maximum 6 objects reached - not placing more GPS boxes (current: \(placedBoxes.count))")
             return
         }
 
@@ -559,6 +569,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             guard placedBoxes.count < 6 else { break }
 
             // Skip locations that are already placed (double-check to prevent duplicates)
+            // CRITICAL: Never re-place objects that are already placed - they should stay fixed
+            // This is especially important for manually placed objects with AR coordinates
             if placedBoxes[location.id] != nil {
                 continue
             }
@@ -566,21 +578,20 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Skip tap-created locations (lat: 0, lon: 0) - they're placed manually via tap
             // These should not be placed again by checkAndPlaceBoxes
             if location.latitude == 0 && location.longitude == 0 {
-                Swift.print("⏭️ Skipping \(location.name) - tap-created location (AR-only)")
                 continue
             }
 
             // Skip if already collected (critical check to prevent re-placement after finding)
             if location.collected {
-                Swift.print("⏭️ Skipping \(location.name) - already collected")
                 continue
             }
             
             // CRITICAL: Check for GPS collision - if another object with same/similar GPS coordinates is already placed OR in the current batch
-            // This prevents stacking when multiple objects share GPS coordinates
+            // Instead of skipping, offset the location by 5m in a random direction
+            var locationToPlace = location
             if location.latitude != 0 && location.longitude != 0 {
-                var hasGPSCollision = false
                 let newLoc = CLLocation(latitude: location.latitude, longitude: location.longitude)
+                var offsetApplied = false
                 
                 // First check against already-placed objects
                 for (existingId, _) in placedBoxes {
@@ -589,76 +600,108 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         // Check if GPS coordinates are very close (within 1 meter)
                         let existingLoc = CLLocation(latitude: existingLocation.latitude, longitude: existingLocation.longitude)
                         let gpsDistance = existingLoc.distance(from: newLoc)
-                        
+
                         if gpsDistance < 1.0 {
-                            Swift.print("⏭️ Skipping \(location.name) - GPS collision with already-placed '\(existingLocation.name)'")
-                            Swift.print("   GPS distance: \(String(format: "%.2f", gpsDistance))m (too close)")
-                            hasGPSCollision = true
+                            // Offset by 5 meters in a random direction
+                            let randomBearing = Double.random(in: 0..<360) // Random direction 0-360 degrees
+                            let offsetCoordinate = newLoc.coordinate.coordinate(atDistance: 5.0, atBearing: randomBearing)
+                            
+                            // Create a new location with offset coordinates
+                            locationToPlace = LootBoxLocation(
+                                id: location.id,
+                                name: location.name,
+                                type: location.type,
+                                latitude: offsetCoordinate.latitude,
+                                longitude: offsetCoordinate.longitude,
+                                radius: location.radius,
+                                collected: location.collected,
+                                source: location.source
+                            )
+                            // Copy AR-related properties if they exist
+                            locationToPlace.grounding_height = location.grounding_height
+                            locationToPlace.ar_origin_latitude = location.ar_origin_latitude
+                            locationToPlace.ar_origin_longitude = location.ar_origin_longitude
+                            locationToPlace.ar_offset_x = location.ar_offset_x
+                            locationToPlace.ar_offset_y = location.ar_offset_y
+                            locationToPlace.ar_offset_z = location.ar_offset_z
+                            locationToPlace.ar_placement_timestamp = location.ar_placement_timestamp
+
+                            offsetApplied = true
                             break
                         }
                     }
                 }
-                
+
                 // Also check against other locations in the current batch (to prevent placing duplicates in same loop)
-                if !hasGPSCollision {
+                if !offsetApplied {
                     for otherLocation in nearbyLocations {
                         // Skip self and already-placed objects (we checked those above)
                         if otherLocation.id == location.id || placedBoxes[otherLocation.id] != nil {
                             continue
                         }
-                        
+
                         // Check if GPS coordinates are very close (within 1 meter)
                         let otherLoc = CLLocation(latitude: otherLocation.latitude, longitude: otherLocation.longitude)
                         let gpsDistance = newLoc.distance(from: otherLoc)
-                        
+
                         if gpsDistance < 1.0 {
-                            Swift.print("⏭️ Skipping \(location.name) - GPS collision with '\(otherLocation.name)' in current batch")
-                            Swift.print("   GPS distance: \(String(format: "%.2f", gpsDistance))m (too close)")
-                            Swift.print("   💡 Multiple objects at same GPS location - only placing first one")
-                            hasGPSCollision = true
+                            // Offset by 5 meters in a random direction
+                            let randomBearing = Double.random(in: 0..<360) // Random direction 0-360 degrees
+                            let offsetCoordinate = newLoc.coordinate.coordinate(atDistance: 5.0, atBearing: randomBearing)
+                            
+                            // Create a new location with offset coordinates
+                            locationToPlace = LootBoxLocation(
+                                id: location.id,
+                                name: location.name,
+                                type: location.type,
+                                latitude: offsetCoordinate.latitude,
+                                longitude: offsetCoordinate.longitude,
+                                radius: location.radius,
+                                collected: location.collected,
+                                source: location.source
+                            )
+                            // Copy AR-related properties if they exist
+                            locationToPlace.grounding_height = location.grounding_height
+                            locationToPlace.ar_origin_latitude = location.ar_origin_latitude
+                            locationToPlace.ar_origin_longitude = location.ar_origin_longitude
+                            locationToPlace.ar_offset_x = location.ar_offset_x
+                            locationToPlace.ar_offset_y = location.ar_offset_y
+                            locationToPlace.ar_offset_z = location.ar_offset_z
+                            locationToPlace.ar_placement_timestamp = location.ar_placement_timestamp
+
+                            offsetApplied = true
                             break
                         }
                     }
                 }
-                
-                if hasGPSCollision {
-                    continue
-                }
             }
-
-            // Place box if it's nearby (within maxSearchDistance), hasn't been placed, and isn't collected
-            // The box will appear in AR when you're within the search distance
-            // (location.collected check already done above, so we know it's not collected)
-            Swift.print("🎯 Attempting to place: \(location.name) (ID: \(location.id), Type: \(location.type.displayName))")
 
             // Skip AR-only items that are already placed (they're placed directly in randomizeLootBoxes)
             // BUT: Don't skip spheres with valid GPS coordinates - they should be placed via GPS
             // Spheres from the API/map have GPS coordinates and should appear in AR
             if location.isAROnly && location.type != .sphere {
-                Swift.print("⏭️ Skipping \(location.name) - AR-only item (should be placed via randomizeLootBoxes)")
                 continue
             }
-            
+
             // Determine placement method based on type
-            if location.type == .sphere {
+            // Use locationToPlace (which may have been offset to avoid GPS collisions)
+            if locationToPlace.type == .sphere {
                 // Spheres with GPS coordinates should be placed via GPS positioning
-                if location.latitude != 0 || location.longitude != 0 {
-                    Swift.print("   → Placement path: Sphere (GPS-based)")
-                    Swift.print("   → Calling placeARSphereAtLocation()")
-                    placeARSphereAtLocation(location, in: arView)
+                if locationToPlace.latitude != 0 || locationToPlace.longitude != 0 {
+                    placeARSphereAtLocation(locationToPlace, in: arView)
                 } else {
                     // Sphere with no GPS - skip it (should be placed via randomizeLootBoxes)
-                    Swift.print("⏭️ Skipping \(location.name) - AR-only sphere (should be placed via randomizeLootBoxes)")
                     continue
                 }
             } else {
-                Swift.print("   → Placement path: Regular GPS treasure box")
-                Swift.print("   → Calling placeLootBoxAtLocation()")
-                placeLootBoxAtLocation(location, in: arView)
+                placeLootBoxAtLocation(locationToPlace, in: arView)
             }
         }
+
+        let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+        Swift.print("⏱️ [PERF] checkAndPlaceBoxes took \(String(format: "%.1f", elapsed))ms for \(nearbyLocations.count) nearby locations")
     }
-    
+
 
     // Regenerate loot boxes at random locations in the AR room
     func randomizeLootBoxes() {
@@ -912,27 +955,223 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         )
     }
 
+    // MARK: - AR-Enhanced Location
+    
+    /// Get AR-enhanced GPS location (more accurate than raw GPS)
+    /// Converts current AR camera position to GPS coordinates using AR origin
+    /// Returns nil if AR origin not set or AR not available
+    func getAREnhancedLocation() -> (latitude: Double, longitude: Double, arOffsetX: Double, arOffsetY: Double, arOffsetZ: Double)? {
+        guard let arView = arView,
+              let frame = arView.session.currentFrame,
+              let arOrigin = arOriginLocation else {
+            return nil
+        }
+        
+        // Get current camera position in AR world space
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(
+            cameraTransform.columns.3.x,
+            cameraTransform.columns.3.y,
+            cameraTransform.columns.3.z
+        )
+        
+        // Convert AR position to GPS coordinates
+        // AR origin is at (0,0,0) in AR space, so camera position is the offset
+        let distance = sqrt(cameraPos.x * cameraPos.x + cameraPos.z * cameraPos.z) // Horizontal distance
+        let bearing = atan2(Double(cameraPos.x), -Double(cameraPos.z)) * 180.0 / .pi // Bearing in degrees (0 = north)
+        let normalizedBearing = (bearing + 360.0).truncatingRemainder(dividingBy: 360.0)
+        
+        // Calculate GPS coordinate from AR origin
+        let enhancedGPS = arOrigin.coordinate.coordinate(atDistance: Double(distance), atBearing: normalizedBearing)
+        
+        return (
+            latitude: enhancedGPS.latitude,
+            longitude: enhancedGPS.longitude,
+            arOffsetX: Double(cameraPos.x),
+            arOffsetY: Double(cameraPos.y),
+            arOffsetZ: Double(cameraPos.z)
+        )
+    }
+    
     // MARK: - Object Recognition (delegated to ARObjectRecognizer)
-
+    
     // MARK: - ARSessionDelegate
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        // Set AR origin on first frame if not set
-        // Only use GPS with good accuracy (< 6m) for precise AR-to-GPS conversion
-        if arOriginLocation == nil,
-           let userLocation = userLocationManager?.currentLocation {
-            // Check GPS accuracy - for < 6m resolution, we need < 6m GPS accuracy
-            if userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 6.0 {
-                arOriginLocation = userLocation
-                Swift.print("📍 AR Origin set at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
-                Swift.print("   GPS accuracy: \(String(format: "%.2f", userLocation.horizontalAccuracy))m (good for < 6m AR-to-GPS conversion)")
+        // CRITICAL: Set AR origin on first frame if not set - NEVER change it after
+        // Changing the AR origin causes all objects to drift/shift position
+        // Supports two modes:
+        // 1. Accurate mode: Wait for GPS with good accuracy (< 7.5m) for precise AR-to-GPS conversion
+        // 2. Degraded mode: Use AR-only positioning if GPS unavailable after timeout
+        
+        if arOriginLocation == nil {
+            let cameraTransform = frame.camera.transform
+            let cameraPos = SIMD3<Float>(
+                cameraTransform.columns.3.x,
+                cameraTransform.columns.3.y,
+                cameraTransform.columns.3.z
+            )
+            
+            // Try to get GPS location
+            if let userLocation = userLocationManager?.currentLocation {
+                // Check GPS accuracy - for < 7.5m resolution, we need < 7.5m GPS accuracy
+                if userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 7.5 {
+                    // ACCURATE MODE: GPS available with good accuracy
+                    // Step 1: Set ENU origin from GPS (geospatial coordinate frame)
+                    if geospatialService?.setENUOrigin(from: userLocation) == true {
+                        arOriginLocation = userLocation
+                        arOriginSetTime = Date()
+                        isDegradedMode = false
+                        
+                        // Step 2: Set AR session origin (VIO tracking origin at 0,0,0)
+                        // Set fixed ground level at AR origin (using surface detection if available)
+                        let groundLevel: Float
+                        if let surfaceY = groundingService?.findHighestBlockingSurface(x: 0, z: 0, cameraPos: cameraPos) {
+                            // Use detected surface for accurate ground level
+                            groundLevel = surfaceY
+                            Swift.print("📍 AR Origin ground level from surface detection: \(String(format: "%.2f", groundLevel))m")
+                        } else {
+                            // Fallback: estimate from camera position
+                            groundLevel = cameraPos.y - 1.5
+                            Swift.print("📍 AR Origin ground level estimated: \(String(format: "%.2f", groundLevel))m (camera Y: \(String(format: "%.2f", cameraPos.y))m)")
+                        }
+                        
+                        arOriginGroundLevel = groundLevel
+                        geospatialService?.setARSessionOrigin(arPosition: SIMD3<Float>(0, 0, 0), groundLevel: groundLevel)
+                        precisionPositioningService?.setAROriginGroundLevel(groundLevel) // Legacy compatibility
+                        
+                        Swift.print("✅ AR Origin SET (ACCURATE MODE) at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+                        Swift.print("   GPS accuracy: \(String(format: "%.2f", userLocation.horizontalAccuracy))m")
+                        Swift.print("   Ground level: \(String(format: "%.2f", groundLevel))m (FIXED - never changes)")
+                        Swift.print("   ⚠️ AR origin will NOT change - all objects positioned relative to this fixed point")
+                        Swift.print("   📐 Using ENU coordinate system for geospatial positioning")
+                    }
+                } else {
+                    // GPS available but accuracy too low
+                    // Wait up to 10 seconds for better GPS, then enter degraded mode
+                    let waitTime: TimeInterval = 10.0
+                    if let setTime = arOriginSetTime {
+                        if Date().timeIntervalSince(setTime) > waitTime {
+                            // Timeout reached - enter degraded mode
+                            enterDegradedMode(cameraPos: cameraPos, frame: frame)
+                        } else {
+                            Swift.print("⏳ Waiting for better GPS accuracy (current: \(String(format: "%.2f", userLocation.horizontalAccuracy))m, need: < 7.5m)")
+                        }
+                    } else {
+                        // First time seeing low accuracy - start timer
+                        arOriginSetTime = Date()
+                        Swift.print("⚠️ GPS accuracy too low: \(String(format: "%.2f", userLocation.horizontalAccuracy))m")
+                        Swift.print("   Will wait \(Int(waitTime))s for better GPS, then enter degraded AR-only mode")
+                    }
+                }
             } else {
-                Swift.print("⚠️ GPS accuracy too low for precise AR origin: \(String(format: "%.2f", userLocation.horizontalAccuracy))m")
-                Swift.print("   Will wait for better GPS fix before setting AR origin")
+                // No GPS location available
+                // Wait up to 5 seconds for GPS, then enter degraded mode
+                let waitTime: TimeInterval = 5.0
+                if let setTime = arOriginSetTime {
+                    if Date().timeIntervalSince(setTime) > waitTime {
+                        // Timeout reached - enter degraded mode
+                        enterDegradedMode(cameraPos: cameraPos, frame: frame)
+                    } else {
+                        Swift.print("⏳ Waiting for GPS location...")
+                    }
+                } else {
+                    // First time - start timer
+                    arOriginSetTime = Date()
+                    Swift.print("⚠️ No GPS location available")
+                    Swift.print("   Will wait \(Int(waitTime))s for GPS, then enter degraded AR-only mode")
+                }
             }
         }
         
-        // Perform object recognition on camera frame
-        objectRecognizer?.performObjectRecognition(on: frame.capturedImage)
+        // Step 5.5: Check if we should exit degraded mode (GPS accuracy improved)
+        // Note: This check happens even when arOriginLocation == nil because degraded mode sets it to nil
+        // The existing code above will also try to set origin, but this provides explicit degraded mode exit
+        if isDegradedMode, let userLocation = userLocationManager?.currentLocation {
+            // Use hysteresis: require better accuracy (< 6.5m) to exit degraded mode than to enter (< 7.5m)
+            // This prevents rapid mode switching when GPS accuracy fluctuates around the threshold
+            if userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 6.5 {
+                // GPS accuracy improved significantly - exit degraded mode and set AR origin
+                let cameraTransform = frame.camera.transform
+                let cameraPos = SIMD3<Float>(
+                    cameraTransform.columns.3.x,
+                    cameraTransform.columns.3.y,
+                    cameraTransform.columns.3.z
+                )
+                
+                // Set ENU origin from GPS (geospatial coordinate frame)
+                if geospatialService?.setENUOrigin(from: userLocation) == true {
+                    arOriginLocation = userLocation
+                    arOriginSetTime = Date()
+                    isDegradedMode = false
+                    
+                    // Set fixed ground level
+                    let groundLevel: Float
+                    if let surfaceY = groundingService?.findHighestBlockingSurface(x: 0, z: 0, cameraPos: cameraPos) {
+                        groundLevel = surfaceY
+                        Swift.print("📍 Exiting degraded mode: Ground level from surface detection: \(String(format: "%.2f", groundLevel))m")
+                    } else {
+                        groundLevel = cameraPos.y - 1.5
+                        Swift.print("📍 Exiting degraded mode: Ground level estimated: \(String(format: "%.2f", groundLevel))m")
+                    }
+                    
+                    arOriginGroundLevel = groundLevel
+                    geospatialService?.setARSessionOrigin(arPosition: SIMD3<Float>(0, 0, 0), groundLevel: groundLevel)
+                    precisionPositioningService?.setAROriginGroundLevel(groundLevel)
+                    
+                    Swift.print("✅ EXITED DEGRADED MODE - GPS accuracy improved!")
+                    Swift.print("   AR Origin SET at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+                    Swift.print("   GPS accuracy: \(String(format: "%.2f", userLocation.horizontalAccuracy))m")
+                    Swift.print("   Ground level: \(String(format: "%.2f", groundLevel))m (FIXED)")
+                    Swift.print("   GPS-based objects can now be placed")
+                }
+            } else if userLocation.horizontalAccuracy >= 0 {
+                // Still in degraded mode, but log current accuracy for debugging
+                // Only log occasionally to avoid spam (every 5 seconds)
+                if let lastLog = lastDegradedModeLogTime, Date().timeIntervalSince(lastLog) < 5.0 {
+                    // Skip logging
+                } else {
+                    lastDegradedModeLogTime = Date()
+                    Swift.print("⏳ Still in degraded mode - GPS accuracy: \(String(format: "%.2f", userLocation.horizontalAccuracy))m (need: < 6.5m to exit)")
+                }
+            }
+        }
+        
+        // Step 6: Apply smooth corrections when better GPS arrives (no teleporting)
+        // Check if we have a better GPS fix than when origin was set
+        if let geospatial = geospatialService,
+           geospatial.hasENUOrigin,
+           let userLocation = userLocationManager?.currentLocation,
+           let origin = arOriginLocation,
+           userLocation.horizontalAccuracy < origin.horizontalAccuracy {
+            // Better GPS available - compute smooth correction
+            if let correction = geospatial.computeSmoothCorrection(from: userLocation) {
+                Swift.print("🔧 Applying smooth correction for better GPS accuracy")
+                Swift.print("   Correction offset: (\(String(format: "%.4f", correction.x)), \(String(format: "%.4f", correction.y)), \(String(format: "%.4f", correction.z)))m")
+                
+                // Apply correction to all placed objects (smooth, not teleport)
+                // Note: In practice, you might want to animate this over time
+                for (locationId, anchor) in placedBoxes {
+                    let currentTransform = anchor.transformMatrix(relativeTo: nil)
+                    let currentPos = SIMD3<Float>(
+                        currentTransform.columns.3.x,
+                        currentTransform.columns.3.y,
+                        currentTransform.columns.3.z
+                    )
+                    let correctedPos = currentPos + correction
+                    anchor.transform.translation = correctedPos
+                }
+                
+                Swift.print("✅ Applied smooth correction to \(placedBoxes.count) object(s)")
+            }
+        }
+        
+        // Perform object recognition on camera frame (throttled to improve framerate)
+        // Only run recognition every 2 seconds to reduce CPU usage
+        let now = Date()
+        if now.timeIntervalSince(lastRecognitionTime) > 2.0 {
+            lastRecognitionTime = now
+            objectRecognizer?.performObjectRecognition(on: frame.capturedImage)
+        }
 
         // Check for nearby locations when AR is tracking
         if frame.camera.trackingState == .normal,
@@ -940,16 +1179,24 @@ class ARCoordinator: NSObject, ARSessionDelegate {
            let locationManager = locationManager {
             let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
             
-            // Force re-placement after reset if flag is set
-            if shouldForceReplacement {
-                Swift.print("🔄 Force re-placement triggered - re-placing all nearby objects")
-                Swift.print("   📍 Found \(nearby.count) nearby locations within \(locationManager.maxSearchDistance)m")
-                shouldForceReplacement = false
-                // Clear placedBoxes to ensure all objects can be re-placed
-                // (removeAllPlacedObjects already cleared it, but double-check)
-                checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
-            } else {
-                checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+            // Throttle box placement checks to improve framerate
+            // Only check every 2 seconds instead of every frame (60fps)
+            // Objects don't need frequent re-placement checks
+            let placementNow = Date()
+            if shouldForceReplacement || placementNow.timeIntervalSince(lastPlacementCheck) > 2.0 {
+                lastPlacementCheck = placementNow
+                
+                // Force re-placement after reset if flag is set
+                if shouldForceReplacement {
+                    Swift.print("🔄 Force re-placement triggered - re-placing all nearby objects")
+                    Swift.print("   📍 Found \(nearby.count) nearby locations within \(locationManager.maxSearchDistance)m")
+                    shouldForceReplacement = false
+                    // Clear placedBoxes to ensure all objects can be re-placed
+                    // (removeAllPlacedObjects already cleared it, but double-check)
+                    checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+                } else {
+                    checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+                }
             }
 
             // No automatic sphere spawning - user must add items manually via map
@@ -959,7 +1206,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // }
             
             // Check viewport visibility and play chime when objects enter
-            checkViewportVisibility()
+            // Throttle to every 1.0 seconds to improve framerate (was 0.5s)
+            // Viewport checking is expensive (screen projections) and doesn't need high frequency
+            let now = Date()
+            if now.timeIntervalSince(lastViewportCheck) > 1.0 {
+                lastViewportCheck = now
+                checkViewportVisibility()
+            }
         }
     }
     
@@ -1048,35 +1301,137 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     
     func session(_ session: ARSession, didFailWithError error: Error) {
-        Swift.print("❌ AR Session failed: \(error.localizedDescription)")
+        if let arError = error as? ARError {
+            let errorCode = arError.code
+            var errorDescription = "Unknown AR error"
+            
+            switch arError.code {
+            case .unsupportedConfiguration:
+                errorDescription = "AR configuration not supported on this device"
+            case .sensorUnavailable:
+                errorDescription = "AR sensor unavailable - camera or motion sensors not available"
+            case .sensorFailed:
+                errorDescription = "AR sensor failed - camera or motion sensors failed"
+            case .cameraUnauthorized:
+                errorDescription = "Camera access denied - check camera permissions"
+            case .worldTrackingFailed:
+                errorDescription = "World tracking failed - unable to track position"
+            case .invalidReferenceImage:
+                errorDescription = "Invalid reference image"
+            case .invalidReferenceObject:
+                errorDescription = "Invalid reference object"
+            case .invalidWorldMap:
+                errorDescription = "Invalid world map"
+            case .invalidConfiguration:
+                errorDescription = "Invalid AR configuration"
+            case .insufficientFeatures:
+                errorDescription = "Insufficient features - not enough visual features to track"
+            case .objectMergeFailed:
+                errorDescription = "Object merge failed"
+            case .fileIOFailed:
+                errorDescription = "File I/O failed"
+            case .requestFailed:
+                errorDescription = "AR request failed"
+            case .invalidCollaborationData:
+                errorDescription = "Invalid collaboration data"
+            case .geoTrackingNotAvailableAtLocation:
+                errorDescription = "GeoTracking not available at this location"
+            case .geoTrackingFailed:
+                errorDescription = "GeoTracking failed"
+            @unknown default:
+                errorDescription = "Unknown AR error code: \(errorCode.rawValue)"
+            }
+            
+            Swift.print("❌ [AR Session Error] \(errorDescription) (ARError code: \(errorCode.rawValue))")
+            let nsError = arError as NSError
+            if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+                Swift.print("   Underlying error: \(underlyingError.localizedDescription)")
+            }
+            if let failureReason = nsError.localizedFailureReason {
+                Swift.print("   Failure reason: \(failureReason)")
+            }
+            if let recoverySuggestion = nsError.localizedRecoverySuggestion {
+                Swift.print("   Recovery suggestion: \(recoverySuggestion)")
+            }
+        } else {
+            Swift.print("❌ [AR Session Error] \(error.localizedDescription)")
+            Swift.print("   Error type: \(type(of: error))")
+            
+            // Check for FigCaptureSourceRemote errors (camera capture errors)
+            let errorString = String(describing: error)
+            if errorString.contains("FigCaptureSourceRemote") || errorString.contains("err=-12784") {
+                Swift.print("   ⚠️ Camera capture error detected - this may be a temporary camera issue")
+                Swift.print("   This error (err=-12784) is often related to camera resource conflicts")
+            }
+        }
+        
         // Try to restart the session
+        Swift.print("🔄 [AR Session] Attempting to restart AR session...")
         if let arView = arView {
             let config = ARWorldTrackingConfiguration()
             config.planeDetection = [.horizontal, .vertical] // Horizontal for ground, vertical for wall detection (occlusion)
             config.environmentTexturing = .automatic
+            
+            // Apply selected lens if available
+            if let locationManager = locationManager,
+               let selectedLensId = locationManager.selectedARLens,
+               let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
+                config.videoFormat = videoFormat
+            }
+            
             arView.session.run(config, options: [.resetTracking])
+            Swift.print("✅ [AR Session] AR session restart initiated")
+        } else {
+            Swift.print("⚠️ [AR Session] Cannot restart - ARView is nil")
         }
     }
     
     func sessionWasInterrupted(_ session: ARSession) {
-        Swift.print("⚠️ AR Session was interrupted")
+        Swift.print("⚠️ [AR Session] AR Session was interrupted")
+        Swift.print("   This usually happens when the app goes to background or another app uses the camera")
     }
     
     func sessionInterruptionEnded(_ session: ARSession) {
-        Swift.print("✅ AR Session interruption ended, restarting...")
+        Swift.print("✅ [AR Session] AR Session interruption ended, restarting...")
         if let arView = arView {
             let config = ARWorldTrackingConfiguration()
             config.planeDetection = [.horizontal, .vertical] // Horizontal for ground, vertical for wall detection (occlusion)
             config.environmentTexturing = .automatic
+            
+            // Apply selected lens if available
+            if let locationManager = locationManager,
+               let selectedLensId = locationManager.selectedARLens,
+               let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
+                config.videoFormat = videoFormat
+            }
+            
             arView.session.run(config, options: [.resetTracking])
+            Swift.print("✅ [AR Session] AR session restarted after interruption")
+        } else {
+            Swift.print("⚠️ [AR Session] Cannot restart - ARView is nil")
         }
     }
     
     // MARK: - Loot Box Placement
     private func placeLootBoxAtLocation(_ location: LootBoxLocation, in arView: ARView) {
-        guard let frame = arView.session.currentFrame,
-              let userLocation = userLocationManager?.currentLocation else {
-            Swift.print("⚠️ No AR frame or user location available for \(location.name)")
+        // CRITICAL: Check if already placed to prevent infinite loops
+        if placedBoxes[location.id] != nil {
+            return // Already placed, skip silently
+        }
+
+        // Check AR frame availability
+        guard let frame = arView.session.currentFrame else {
+            Swift.print("⚠️ [Placement] Cannot place '\(location.name)': AR frame not available")
+            Swift.print("   AR session configuration: \(arView.session.configuration != nil ? "configured" : "not configured")")
+            Swift.print("   This usually means AR is still initializing or was interrupted")
+            return
+        }
+        
+        // Check user location availability
+        guard let userLocation = userLocationManager?.currentLocation else {
+            Swift.print("⚠️ [Placement] Cannot place '\(location.name)': User location not available")
+            Swift.print("   GPS status: \(userLocationManager?.authorizationStatus == .authorizedWhenInUse || userLocationManager?.authorizationStatus == .authorizedAlways ? "authorized" : "not authorized")")
+            Swift.print("   This usually means GPS is still acquiring location or permissions were denied")
             return
         }
         
@@ -1137,8 +1492,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
             
             if useARCoordinates {
-                // Use stored AR coordinates directly (mm-precision) - NO re-grounding
+                // Use stored AR coordinates directly (mm-precision) - NEVER re-ground
                 // This preserves the exact placement position where the user placed it
+                // Objects should NEVER move after being placed, especially for the user who placed them
                 let arPosition = SIMD3<Float>(
                     Float(arOffsetX),
                     Float(arOffsetY),
@@ -1146,89 +1502,157 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 )
                 
                 // Use exact stored position - don't re-ground to preserve user's placement
-                Swift.print("✅ Using exact stored AR coordinates for \(location.type.displayName) (mm-precision, no re-grounding)")
+                Swift.print("✅ [Placement] Using exact stored AR coordinates for \(location.name) (mm-precision, no re-grounding)")
+                Swift.print("   Object ID: \(location.id)")
                 Swift.print("   Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
+                Swift.print("   Object will stay fixed at this position (never moves)")
                 
                 placeBoxAtPosition(arPosition, location: location, in: arView)
+                
+                // Log location again after 1 second to verify it's still there
+                Task {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                    await MainActor.run {
+                        if let anchor = placedBoxes[location.id] {
+                            let currentPos = anchor.position
+                            let isStillInScene = anchor.parent != nil
+                            Swift.print("📍 [Placement] Object '\(location.name)' location after 1 second:")
+                            Swift.print("   AR Position: X=\(String(format: "%.4f", currentPos.x))m, Y=\(String(format: "%.4f", currentPos.y))m, Z=\(String(format: "%.4f", currentPos.z))m")
+                            Swift.print("   Still in scene: \(isStillInScene ? "YES" : "NO")")
+                            Swift.print("   Anchor parent: \(anchor.parent != nil ? "exists" : "nil")")
+                            if !isStillInScene {
+                                Swift.print("   ⚠️ WARNING: Object was removed from scene!")
+                            } else if abs(currentPos.x - arPosition.x) > 0.001 || abs(currentPos.y - arPosition.y) > 0.001 || abs(currentPos.z - arPosition.z) > 0.001 {
+                                Swift.print("   ⚠️ WARNING: Object moved! Original: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z))), Current: (\(String(format: "%.4f", currentPos.x)), \(String(format: "%.4f", currentPos.y)), \(String(format: "%.4f", currentPos.z)))")
+                            } else {
+                                Swift.print("   ✅ Object still at original position")
+                            }
+                        } else {
+                            // Check if object was collected (normal case - not an error)
+                            let wasCollected = locationManager?.locations.first(where: { $0.id == location.id })?.collected ?? false
+                            if wasCollected {
+                                Swift.print("   ℹ️ Object '\(location.name)' was collected (removed from placedBoxes - this is normal)")
+                            } else if findableObjects[location.id] == nil {
+                                Swift.print("   ⚠️ WARNING: Object '\(location.name)' not found in placedBoxes and not in findableObjects - may have been removed unexpectedly")
+                            } else {
+                                Swift.print("   ℹ️ Object '\(location.name)' not in placedBoxes but still in findableObjects (may be in transition)")
+                            }
+                        }
+                    }
+                }
                 return
             }
         }
         
         // Fallback to GPS-based placement if AR coordinates not available
         if location.latitude != 0 || location.longitude != 0 {
-            // Use precision positioning service for inch-level accuracy
+            // CRITICAL: Require AR origin to be set before placing GPS-based objects
+            // In degraded mode, GPS-based objects cannot be placed
+            if isDegradedMode {
+                Swift.print("⚠️ Cannot place GPS-based object '\(location.name)': Operating in degraded AR-only mode")
+                Swift.print("   GPS-based objects require accurate GPS fix (< 7.5m accuracy)")
+                Swift.print("   Use AR-only placement (tap-to-place or randomize) instead")
+                return
+            }
+            
+            guard let arOrigin = arOriginLocation else {
+                Swift.print("⚠️ Cannot place \(location.name): AR origin not set yet")
+                Swift.print("   Waiting for AR origin to be established (requires GPS accuracy < 7.5m)")
+                Swift.print("   Will enter degraded mode if GPS unavailable")
+                return
+            }
+            
+            // Use ENU-based geospatial service for GPS to AR conversion
             let targetLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
             let distance = userLocation.distance(from: targetLocation)
             
             Swift.print("📍 Placing \(location.name) at GPS distance \(String(format: "%.2f", distance))m")
+            Swift.print("   Using fixed AR origin: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
             
-            // Get precise AR position using precision positioning service
-            if let precisePosition = precisionPositioningService?.convertGPSToARPosition(
-                targetGPS: targetLocation,
-                userGPS: userLocation,
-                cameraTransform: cameraTransform,
-                arOriginGPS: arOriginLocation
-            ) {
-                // Always re-detect the surface to ensure objects are placed on the ground
-                // Objects should always be placed directly on the detected surface, not at a stored height
+            // Step 1: Convert GPS to ENU, then ENU to AR (new architecture)
+            var precisePosition: SIMD3<Float>?
+            if let geospatial = geospatialService, geospatial.hasENUOrigin {
+                // Use new ENU-based conversion
+                if let arPos = geospatial.convertGPSToAR(targetLocation) {
+                    precisePosition = arPos
+                    Swift.print("✅ Using ENU coordinate system for GPS conversion")
+                }
+            }
+            
+            // Fallback to legacy precision positioning service if ENU not available
+            if precisePosition == nil {
+                if let legacyPosition = precisionPositioningService?.convertGPSToARPosition(
+                    targetGPS: targetLocation,
+                    userGPS: userLocation,
+                    cameraTransform: cameraTransform,
+                    arOriginGPS: arOrigin
+                ) {
+                    precisePosition = legacyPosition
+                    Swift.print("⚠️ Using legacy precision positioning service (ENU not available)")
+                }
+            }
+            
+            if let precisePosition = precisePosition {
+                // CRITICAL: If object already has AR coordinates stored, use them instead of re-converting GPS
+                // This prevents objects from moving when GPS-to-AR conversion gives slightly different results
                 let finalPosition: SIMD3<Float>
                 
-                if distance < 5.0 {
-                    // Close proximity: precision service already handled surface detection
-                    // Always re-detect surface to ensure object is on ground
-                    if let surfaceY = groundingService?.findHighestBlockingSurface(x: precisePosition.x, z: precisePosition.z, cameraPos: cameraPos) {
-                        finalPosition = SIMD3<Float>(precisePosition.x, surfaceY, precisePosition.z)
-                        Swift.print("✅ Placed \(location.type.displayName) on ground surface at (\(String(format: "%.4f", finalPosition.x)), \(String(format: "%.4f", finalPosition.y)), \(String(format: "%.4f", finalPosition.z)))")
-                    } else {
-                        finalPosition = precisePosition
-                        Swift.print("✅ Placed \(location.type.displayName) using precision positioning at (\(String(format: "%.4f", precisePosition.x)), \(String(format: "%.4f", precisePosition.y)), \(String(format: "%.4f", precisePosition.z)))")
-                    }
+                if let storedArX = location.ar_offset_x,
+                   let storedArY = location.ar_offset_y,
+                   let storedArZ = location.ar_offset_z {
+                    // Object has stored AR coordinates - use them directly to prevent movement
+                    finalPosition = SIMD3<Float>(Float(storedArX), Float(storedArY), Float(storedArZ))
+                    Swift.print("✅ Using stored AR coordinates for \(location.type.displayName) (prevents movement from GPS conversion)")
+                    Swift.print("   Stored position: (\(String(format: "%.4f", finalPosition.x)), \(String(format: "%.4f", finalPosition.y)), \(String(format: "%.4f", finalPosition.z)))m")
                 } else {
-                    // Far distance: use precision service position but still find surface
-                    if let surfaceY = precisionPositioningService?.getPreciseSurfaceHeight(
-                        x: precisePosition.x,
-                        z: precisePosition.z,
-                        cameraPos: cameraPos
-                    ) {
+                    // No stored AR coordinates - this is first placement, detect surface and store result
+                    if distance < 5.0 {
+                        // Close proximity: detect surface for first placement
+                        let surfaceY = groundingService?.findSurfaceOrDefault(
+                            x: precisePosition.x,
+                            z: precisePosition.z,
+                            cameraPos: cameraPos,
+                            objectType: location.type
+                        ) ?? precisePosition.y
                         finalPosition = SIMD3<Float>(precisePosition.x, surfaceY, precisePosition.z)
-                        Swift.print("✅ Placed \(location.type.displayName) on ground surface at GPS-based AR position (Y: \(String(format: "%.4f", surfaceY)))")
+                        // PERFORMANCE: Logging disabled - runs in placement loop
                     } else {
-                        // Fallback to standard grounding service
-                        if let surfaceY = groundingService?.findHighestBlockingSurface(x: precisePosition.x, z: precisePosition.z, cameraPos: cameraPos) {
+                        // Far distance: use fixed ground level for stability
+                        if let fixedGroundLevel = arOriginGroundLevel {
+                            finalPosition = SIMD3<Float>(precisePosition.x, fixedGroundLevel, precisePosition.z)
+                            Swift.print("✅ First placement: Using fixed AR origin ground level")
+                        } else if let surfaceY = precisionPositioningService?.getPreciseSurfaceHeight(
+                            x: precisePosition.x,
+                            z: precisePosition.z,
+                            cameraPos: cameraPos
+                        ) {
                             finalPosition = SIMD3<Float>(precisePosition.x, surfaceY, precisePosition.z)
-                            Swift.print("✅ Placed \(location.type.displayName) on ground surface (fallback) (Y: \(String(format: "%.2f", surfaceY)))")
+                            Swift.print("✅ First placement: Using detected surface")
                         } else {
-                            finalPosition = precisePosition
-                            Swift.print("⚠️ No surface found - using GPS position directly")
+                            Swift.print("❌ Cannot place \(location.type.displayName): No surface or ground level available")
+                            return
                         }
                     }
+                    
+                    // Store AR coordinates after first placement so object never moves
+                    // PERFORMANCE: Logging disabled
                 }
                 
+                // Check distance from camera BEFORE placing (early rejection)
+                let distanceFromCamera = length(finalPosition - cameraPos)
+                if distanceFromCamera < 3.0 {
+                    // PERFORMANCE: Logging disabled - this runs in retry loop
+                    return
+                }
+                
+                // PERFORMANCE: Logging disabled
                 placeBoxAtPosition(finalPosition, location: location, in: arView)
                 return
             } else {
-                // Fallback to standard GPS-to-AR conversion if precision service fails
-                Swift.print("⚠️ Precision positioning failed, using standard GPS conversion")
-                let bearing = userLocation.bearing(to: targetLocation)
-                let bearingRad = Float(bearing * .pi / 180.0)
-                
-                let cameraForward = SIMD3<Float>(-cameraTransform.columns.2.x, 0, -cameraTransform.columns.2.z)
-                let cameraRight = SIMD3<Float>(cameraTransform.columns.0.x, 0, cameraTransform.columns.0.z)
-                let forwardDir = normalize(cameraForward)
-                let rightDir = normalize(cameraRight)
-                
-                let offsetX = Float(distance) * sin(bearingRad)
-                let offsetZ = Float(distance) * cos(bearingRad)
-                let targetPos = cameraPos + rightDir * offsetX + forwardDir * offsetZ
-                
-                if let surfaceY = groundingService?.findHighestBlockingSurface(x: targetPos.x, z: targetPos.z, cameraPos: cameraPos) {
-                    let itemPosition = SIMD3<Float>(targetPos.x, surfaceY, targetPos.z)
-                    placeBoxAtPosition(itemPosition, location: location, in: arView)
-                    return
-                } else {
-                    placeBoxAtPosition(targetPos, location: location, in: arView)
-                    return
-                }
+                // Precision positioning service failed - cannot place object accurately
+                Swift.print("❌ Cannot place \(location.name): Precision positioning service failed")
+                Swift.print("   Object placement requires proper AR origin and ground level initialization")
+                return
             }
         }
         
@@ -1294,9 +1718,24 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     // Place an AR sphere at a GPS location (for map-added spheres)
     private func placeARSphereAtLocation(_ location: LootBoxLocation, in arView: ARView) {
-        guard let frame = arView.session.currentFrame,
-              let userLocation = userLocationManager?.currentLocation else {
-            Swift.print("⚠️ No AR frame or user location available for sphere \(location.name)")
+        // CRITICAL: Check if already placed to prevent infinite loops
+        if placedBoxes[location.id] != nil {
+            return // Already placed, skip silently
+        }
+
+        // Check AR frame availability
+        guard let frame = arView.session.currentFrame else {
+            Swift.print("⚠️ [Placement] Cannot place sphere '\(location.name)': AR frame not available")
+            Swift.print("   AR session configuration: \(arView.session.configuration != nil ? "configured" : "not configured")")
+            Swift.print("   This usually means AR is still initializing or was interrupted")
+            return
+        }
+        
+        // Check user location availability
+        guard let userLocation = userLocationManager?.currentLocation else {
+            Swift.print("⚠️ [Placement] Cannot place sphere '\(location.name)': User location not available")
+            Swift.print("   GPS status: \(userLocationManager?.authorizationStatus == .authorizedWhenInUse || userLocationManager?.authorizationStatus == .authorizedAlways ? "authorized" : "not authorized")")
+            Swift.print("   This usually means GPS is still acquiring location or permissions were denied")
             return
         }
 
@@ -1381,12 +1820,18 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     }
                 }
                 
-                Swift.print("✅ Placed AR sphere '\(location.name)' using stored AR coordinates at (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
+                Swift.print("✅ Placed AR sphere '\(location.name)' using stored AR coordinates at (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f",    arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
                 return
             }
         }
         
         // Fallback to GPS-based placement if AR coordinates not available
+        // Check if we're in degraded mode
+        if isDegradedMode {
+            Swift.print("⚠️ Cannot place GPS-based sphere '\(location.name)': Operating in degraded AR-only mode")
+            return
+        }
+        
         let locationCLLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
         
         // Use precision positioning service for inch-level accuracy
@@ -1406,7 +1851,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             let bearing = arOrigin.bearing(to: locationCLLocation)
             let x = Float(distance * sin(bearing * .pi / 180.0))
             let z = Float(distance * cos(bearing * .pi / 180.0))
-            let groundY = groundingService?.findHighestBlockingSurface(x: x, z: z, cameraPos: cameraPos) ?? (cameraPos.y - 1.5)
+            
+            // Use fixed ground level if available, otherwise detect surface
+            let groundY: Float
+            if let fixedGroundLevel = arOriginGroundLevel {
+                groundY = fixedGroundLevel
+                Swift.print("✅ Using fixed AR origin ground level for sphere: Y=\(String(format: "%.2f", groundY))")
+            } else if let surfaceY = groundingService?.findHighestBlockingSurface(x: x, z: z, cameraPos: cameraPos) {
+                groundY = surfaceY
+            } else {
+                groundY = cameraPos.y - 1.5
+            }
             
             let sphereRadius: Float = 0.15
             let sphereMesh = MeshResource.generateSphere(radius: sphereRadius)
@@ -1457,14 +1912,24 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let sphere = ModelEntity(mesh: sphereMesh, materials: [sphereMaterial])
         sphere.name = location.id
 
-        // Use precise position (already includes surface detection for close proximity)
+        // Use precise position with fixed ground level for stability
+        // Prefer fixed ground level to prevent objects from moving when camera moves
         let groundY: Float
         if distance < 5.0 {
             // Close proximity: precision service already handled surface detection
-            groundY = precisePosition.y
+            // But prefer fixed ground level if available for stability
+            if let fixedGroundLevel = arOriginGroundLevel {
+                groundY = fixedGroundLevel
+                Swift.print("✅ Using fixed AR origin ground level for close sphere (ensures stability)")
+            } else {
+                groundY = precisePosition.y
+            }
         } else {
-            // Far distance: use precision surface detection
-            if let surfaceY = precisionPositioningService?.getPreciseSurfaceHeight(
+            // Far distance: prefer fixed ground level, fallback to surface detection
+            if let fixedGroundLevel = arOriginGroundLevel {
+                groundY = fixedGroundLevel
+                Swift.print("✅ Using fixed AR origin ground level for far sphere (ensures stability)")
+            } else if let surfaceY = precisionPositioningService?.getPreciseSurfaceHeight(
                 x: precisePosition.x,
                 z: precisePosition.z,
                 cameraPos: cameraPos
@@ -1576,18 +2041,32 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
-        // CRITICAL: Ensure object is grounded on the highest horizontal surface that blocks the floor
-        // This places objects on tables/raised surfaces if they block the floor, otherwise on the floor
+        // CRITICAL: Always ensure object is grounded on a horizontal surface
+        // This ensures artifacts sit on the ground or whatever horizontal surface is beneath them
         var groundedPosition = boxPosition
-        if let surfaceY = groundingService?.findHighestBlockingSurface(x: boxPosition.x, z: boxPosition.z, cameraPos: cameraPos) {
+        
+        // Always try to find and use the actual detected surface first
+        if let surfaceY = groundingService?.findSurfaceOrDefault(
+            x: boxPosition.x,
+            z: boxPosition.z,
+            cameraPos: cameraPos,
+            objectType: location.type
+        ) {
+            // Use detected surface Y coordinate - object will sit on this surface
             groundedPosition = SIMD3<Float>(boxPosition.x, surfaceY, boxPosition.z)
-            Swift.print("✅ Grounded object on surface at Y: \(String(format: "%.2f", surfaceY))")
+            Swift.print("✅ Grounded object on detected horizontal surface at Y: \(String(format: "%.2f", surfaceY))")
         } else {
-            // No surface detected - use default ground height for object type
+            // Fallback: should not reach here as findSurfaceOrDefault always returns a value
+            // But keep this for safety
             let defaultY = groundingService?.getDefaultGroundHeight(for: location.type, cameraPos: cameraPos) ?? (cameraPos.y - 1.5)
             groundedPosition = SIMD3<Float>(boxPosition.x, defaultY, boxPosition.z)
-            Swift.print("⚠️ No horizontal surface detected - using default height for \(location.type.displayName): Y=\(String(format: "%.2f", defaultY))")
-            Swift.print("   💡 Object will auto-adjust when surfaces are detected")
+            Swift.print("⚠️ Grounding fallback - using default height: Y=\(String(format: "%.2f", defaultY))")
+        }
+        
+        // Verify object is not floating (should be at or very close to detected surface)
+        let heightDifference = abs(groundedPosition.y - boxPosition.y)
+        if heightDifference > 0.1 {
+            Swift.print("📏 Grounding adjustment: Y changed by \(String(format: "%.3f", heightDifference))m to sit on surface")
         }
         
         // DEBUG: Log position details
@@ -1621,7 +2100,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Use factory to create entity - each factory encapsulates its own creation logic
         Swift.print("🎯 Creating \(location.type.displayName) using factory for \(location.name)")
         Swift.print("   Location type: \(location.type), Factory type: \(type(of: location.type.factory))")
-        let sizeMultiplier = Float.random(in: 0.5...1.0) // Vary size for variety
+        // Calculate size multiplier to ensure final size doesn't exceed 2 feet (0.61m)
+        // Max multiplier = 0.61 / baseSize, capped at 1.0
+        let baseSize = location.type.size
+        let maxMultiplier = min(1.0, 0.61 / baseSize) // Ensure final size <= 0.61m
+        let minMultiplier = max(0.5, maxMultiplier * 0.7) // Keep some variety but stay under limit
+        let sizeMultiplier = Float.random(in: minMultiplier...maxMultiplier) // Vary size for variety, capped at 2 feet
         let factory = location.type.factory
         
         // CRITICAL: Verify each type uses its correct factory to ensure proper separation
@@ -1679,8 +2163,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         findableObjects[location.id] = findableObject
         Swift.print("   ✅ Stored FindableObject in findableObjects dictionary")
         
-        // Add orange database indicator if this object is from the shared database
-        databaseIndicatorService?.addDatabaseIndicator(to: anchor, location: location, in: arView)
+        // Database indicators removed - no longer adding visual indicators to objects
     }
     
     // MARK: - Distance Text Overlay (delegated to ARDistanceTracker)
@@ -2111,7 +2594,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // If no location-based system or not at a location, allow manual placement
         // Place a test loot box where user taps (for testing without locations)
         if placedBoxes.count >= 3 {
-            Swift.print("🎯 Maximum 3 objects reached - cannot place more via tap")
             return
         }
 
@@ -2170,7 +2652,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         // Limit to maximum objects
         guard placedBoxes.count < 6 else {
-            Swift.print("🎯 Maximum 6 objects reached - not placing sphere")
             return
         }
 
@@ -2312,7 +2793,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         // Limit to maximum objects
         guard placedBoxes.count < 6 else {
-            Swift.print("🎯 Maximum 6 objects reached - not placing item")
             return
         }
 

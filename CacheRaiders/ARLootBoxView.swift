@@ -13,6 +13,8 @@ struct ARLootBoxView: UIViewRepresentable {
     @Binding var nearestObjectDirection: Double?
     @State private var arView: ARView?
     @State private var lastLocationsCount: Int = 0 // Track location count to detect new additions
+    @State private var lastUpdateTime: Date = Date() // Throttle updateUIView to prevent excessive calls
+    private let updateThrottleInterval: TimeInterval = 0.1 // Update at most every 100ms (10 FPS for UI updates)
     
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
@@ -56,12 +58,28 @@ struct ARLootBoxView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: ARView, context: Context) {
-        // Check if lens has changed and update AR configuration if needed
-        let currentConfig = uiView.session.configuration as? ARWorldTrackingConfiguration
-        let currentLensId = locationManager.selectedARLens
-        let currentVideoFormat = ARLensHelper.getVideoFormat(for: currentLensId)
-        let needsLensUpdate = currentConfig?.videoFormat != currentVideoFormat
+        // Throttle updateUIView to prevent excessive calls and freezing
+        let now = Date()
+        let timeSinceLastUpdate = now.timeIntervalSince(lastUpdateTime)
+        let shouldUpdate = timeSinceLastUpdate >= updateThrottleInterval
         
+        // Always handle critical updates (lens changes, location changes)
+        let currentLocationsCount = locationManager.locations.count
+        let locationsChanged = currentLocationsCount != lastLocationsCount
+        let currentLensId = locationManager.selectedARLens
+        // Only update lens if the ID actually changed (not just video format object comparison)
+        // Use coordinator's persistent property instead of @State which wasn't working
+        let needsLensUpdate = currentLensId != context.coordinator.lastAppliedLensId
+        let hasCriticalUpdate = locationsChanged || needsLensUpdate || uiView.session.configuration == nil
+        
+        // Only proceed if we should update OR if there's a critical update
+        guard shouldUpdate || hasCriticalUpdate else {
+            return // Skip this update to prevent excessive calls
+        }
+        
+        lastUpdateTime = now
+        
+        // Check if lens has changed and update AR configuration if needed
         // Ensure AR session is running or update if lens changed
         if uiView.session.configuration == nil || needsLensUpdate {
             let config = ARWorldTrackingConfiguration()
@@ -77,35 +95,47 @@ struct ARLootBoxView: UIViewRepresentable {
                 config.videoFormat = videoFormat
                 print("📷 Updating AR lens to: \(selectedLensId)")
             }
-            
+
             let options: ARSession.RunOptions = needsLensUpdate ? [.resetTracking] : [.resetTracking]
             uiView.session.run(config, options: options)
+
+            // Remember the lens we just applied to prevent redundant updates
+            context.coordinator.lastAppliedLensId = currentLensId
         }
         
         // Check if locations have changed (new object added)
-        let currentLocationsCount = locationManager.locations.count
-        let locationsChanged = currentLocationsCount != lastLocationsCount
         if locationsChanged {
             lastLocationsCount = currentLocationsCount
-            print("🔄 Detected location change: count changed to \(currentLocationsCount)")
+            // PERFORMANCE: Logging disabled - runs frequently
         }
-        
+
         // Update nearby locations when user location changes OR when locations change
+        // Move expensive operations to background thread to prevent freezing
         if let userLocation = userLocationManager.currentLocation {
-            // Update location manager with current location for API refresh timer
+            // Update location manager with current location for API refresh timer (lightweight)
             locationManager.updateUserLocation(userLocation)
-            
-            let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
+
+            // Defer state updates to avoid "Modifying state during view update" warning
+            let coordinator = context.coordinator
+            let shouldCheckPlacement = locationsChanged
+
             DispatchQueue.main.async {
-                nearbyLocations = nearby
-            }
-            
-            // Always check and place boxes when we have a user location
-            // This ensures newly placed objects appear immediately
-            context.coordinator.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
-            
-            if locationsChanged {
-                print("✅ Triggered placement check due to location change (new object may have been added)")
+                Task.detached(priority: .userInitiated) {
+                    let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
+
+                    // Update UI on main thread
+                    await MainActor.run {
+                        nearbyLocations = nearby
+                    }
+
+                    // CRITICAL FIX: Only call checkAndPlaceBoxes when locations actually changed
+                    // This prevents re-placement of already-placed objects on every frame
+                    // Objects should be placed ONCE and stay fixed at their AR coordinates
+                    if shouldCheckPlacement {
+                        // PERFORMANCE: Logging disabled
+                        coordinator.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+                    }
+                }
             }
         }
         

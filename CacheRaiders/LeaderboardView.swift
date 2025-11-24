@@ -92,11 +92,12 @@ struct LeaderboardView: View {
     
     private func loadLeaderboard() {
         guard !isLoading else { return }
-        
+
         isLoading = true
         errorMessage = nil
-        
-        Task {
+
+        // Run on background thread to avoid blocking UI
+        Task.detached(priority: .userInitiated) {
             do {
                 let stats = try await APIService.shared.getStats()
                 await MainActor.run {
@@ -202,6 +203,7 @@ struct LeaderboardRow: View {
 #Preview {
     LeaderboardView()
 }
+
 
 
 

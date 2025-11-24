@@ -41,6 +41,12 @@ enum ItemSource: String, Codable {
     }
 }
 
+// MARK: - Database Stats
+struct DatabaseStats: Equatable {
+    let foundByYou: Int
+    let totalVisible: Int
+}
+
 // MARK: - Loot Box Location Model
 struct LootBoxLocation: Codable, Identifiable, Equatable {
     let id: String
@@ -180,7 +186,7 @@ class LootBoxLocationManager: ObservableObject {
     @Published var enableObjectRecognition: Bool = false // Default: object recognition disabled (saves battery/processing)
     @Published var enableAudioMode: Bool = false // Default: audio mode disabled
     @Published var lootBoxMinSize: Double = 0.25 // Default 0.25m (minimum size)
-    @Published var lootBoxMaxSize: Double = 1.0 // Default 1.0m (maximum size) - reduced from 3.0m
+    @Published var lootBoxMaxSize: Double = 0.61 // Default 0.61m (2 feet maximum size)
     @Published var arZoomLevel: Double = 1.0 // Default 1.0x zoom (normal view)
     @Published var selectedARLens: String? = nil // Selected AR camera lens identifier (nil = default/wide)
     @Published var shouldRandomize: Bool = false // Trigger for randomizing loot boxes in AR
@@ -189,7 +195,8 @@ class LootBoxLocationManager: ObservableObject {
     @Published var pendingARItem: LootBoxLocation? // Item to place in AR room
     @Published var shouldResetARObjects: Bool = false // Trigger for removing all AR objects when locations are reset
     @Published var selectedDatabaseObjectId: String? = nil // Selected database object to find (only one at a time)
-    @Published var databaseStats: (foundByYou: Int, totalVisible: Int)? = nil // Database stats for loot box counter
+    @Published var databaseStats: DatabaseStats? = nil // Database stats for loot box counter
+    @Published var showOnlyNextItem: Bool = false // Show only the next unfound item in the list
     var onSizeChanged: (() -> Void)? // Callback when size settings change
     var onObjectCollectedByOtherUser: ((String) -> Void)? // Callback when object is collected by another user (to remove from AR)
     private let locationsFileName = "lootBoxLocations.json"
@@ -205,11 +212,13 @@ class LootBoxLocationManager: ObservableObject {
     private let selectedDatabaseObjectIdKey = "selectedDatabaseObjectId"
     private let arZoomLevelKey = "arZoomLevel"
     private let selectedARLensKey = "selectedARLens"
+    private let showOnlyNextItemKey = "showOnlyNextItem"
     
-    // API refresh timer - refreshes from API every 30 seconds when enabled
+    // API refresh timer - refreshes from API periodically when enabled
     private var apiRefreshTimer: Timer?
-    private let apiRefreshInterval: TimeInterval = 30.0 // 30 seconds
+    private let apiRefreshInterval: TimeInterval = 120.0 // 120 seconds (2 minutes) - reduced frequency for better performance
     private var lastKnownUserLocation: CLLocation?
+    private var isRefreshingFromAPI: Bool = false // Prevent concurrent API refreshes
     
     init() {
         // Don't load existing locations on init - start with clean slate
@@ -225,6 +234,7 @@ class LootBoxLocationManager: ObservableObject {
         loadSelectedDatabaseObjectId()
         loadARZoomLevel()
         loadSelectedARLens()
+        loadShowOnlyNextItem()
         
         // API sync is always enabled - start refresh timer
         startAPIRefreshTimer()
@@ -513,6 +523,59 @@ class LootBoxLocationManager: ObservableObject {
         }
     }
     
+    // Unmark location as collected
+    func unmarkCollected(_ locationId: String) {
+        if let index = locations.firstIndex(where: { $0.id == locationId }) {
+            print("🔄 Unmarking location \(locations[index].name) (ID: \(locationId)) as not collected")
+            // Create a new location with collected = false to trigger @Published update
+            var updatedLocation = locations[index]
+            updatedLocation.collected = false
+            locations[index] = updatedLocation
+
+            // Save all locations except temporary AR-only items
+            if updatedLocation.shouldPersist {
+                saveLocations()
+                print("💾 Saved locations (including uncollected status for \(locationId))")
+                
+                // Also sync to API if enabled
+                if useAPISync {
+                    Task {
+                        await unmarkCollectedInAPI(locationId)
+                    }
+                }
+            } else {
+                print("⏭️ Skipping save for temporary AR item: \(locationId)")
+            }
+
+            // Explicitly notify observers (in case @Published doesn't catch the change)
+            objectWillChange.send()
+        } else {
+            print("⚠️ Could not find location with ID \(locationId) to unmark as collected")
+        }
+    }
+    
+    // Toggle collected status
+    func toggleCollected(_ locationId: String) {
+        if let index = locations.firstIndex(where: { $0.id == locationId }) {
+            let location = locations[index]
+            if location.collected {
+                unmarkCollected(locationId)
+            } else {
+                markCollected(locationId)
+            }
+        }
+    }
+    
+    // Unmark collected in API
+    private func unmarkCollectedInAPI(_ locationId: String) async {
+        do {
+            try await APIService.shared.unmarkFound(objectId: locationId)
+            print("✅ Successfully unmarked \(locationId) as not collected in API")
+        } catch {
+            print("❌ Failed to unmark \(locationId) as not collected in API: \(error.localizedDescription)")
+        }
+    }
+    
     // Get nearby locations within radius
     func getNearbyLocations(userLocation: CLLocation) -> [LootBoxLocation] {
         return locations.filter { location in
@@ -528,7 +591,7 @@ class LootBoxLocationManager: ObservableObject {
             // CRITICAL: If a specific object is selected, ALWAYS include it regardless of distance
             // This ensures the selected object appears in AR even if it's far away
             if let selectedId = selectedDatabaseObjectId, location.id == selectedId {
-                print("🎯 Including selected object '\(location.name)' (ID: \(selectedId)) in nearby list (ignoring distance)")
+                // PERFORMANCE: Logging disabled - this runs in filter loop, causes massive spam
                 return true
             }
 
@@ -683,6 +746,16 @@ class LootBoxLocationManager: ObservableObject {
     func setSelectedDatabaseObjectId(_ objectId: String?) {
         selectedDatabaseObjectId = objectId
         saveSelectedDatabaseObjectId()
+    }
+    
+    // Save show only next item preference
+    func saveShowOnlyNextItem() {
+        UserDefaults.standard.set(showOnlyNextItem, forKey: showOnlyNextItemKey)
+    }
+    
+    // Load show only next item preference
+    private func loadShowOnlyNextItem() {
+        showOnlyNextItem = UserDefaults.standard.bool(forKey: showOnlyNextItemKey)
 
         // Clear all AR objects since we're changing the filter
         // This ensures old objects don't remain visible when filtering to a specific object
@@ -745,25 +818,43 @@ class LootBoxLocationManager: ObservableObject {
     /// Start the API refresh timer to periodically sync from API
     private func startAPIRefreshTimer() {
         stopAPIRefreshTimer() // Stop any existing timer first
-        
+
         apiRefreshTimer = Timer.scheduledTimer(withTimeInterval: apiRefreshInterval, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             guard self.useAPISync else {
                 self.stopAPIRefreshTimer()
                 return
             }
-            
+
+            // Prevent concurrent refreshes to avoid UI blocking
+            guard !self.isRefreshingFromAPI else {
+                print("⏭️ Skipping API refresh - already in progress")
+                return
+            }
+
             print("🔄 Auto-refreshing from API (every \(Int(self.apiRefreshInterval))s)...")
-            Task {
+
+            // Run on background thread with lower priority to avoid blocking UI
+            Task.detached(priority: .utility) { [weak self] in
+                guard let self = self else { return }
+
+                await MainActor.run {
+                    self.isRefreshingFromAPI = true
+                }
+
                 await self.loadLocationsFromAPI(userLocation: self.lastKnownUserLocation)
+
+                await MainActor.run {
+                    self.isRefreshingFromAPI = false
+                }
             }
         }
-        
-        // Add timer to common run loop modes so it works even when scrolling
+
+        // Add timer to main run loop (not common) to avoid blocking during scrolling
         if let timer = apiRefreshTimer {
-            RunLoop.current.add(timer, forMode: .common)
+            RunLoop.main.add(timer, forMode: .default)
         }
-        
+
         print("✅ Started API refresh timer (every \(Int(apiRefreshInterval))s)")
     }
     
@@ -900,7 +991,7 @@ class LootBoxLocationManager: ObservableObject {
                 // Update database stats for the counter display
                 // foundByYou = number of items YOU have found (collected = true) from ALL objects
                 // totalVisible = total number of items in database (matching Settings view)
-                self.databaseStats = (foundByYou: allCollectedCount, totalVisible: allTotalCount)
+                self.databaseStats = DatabaseStats(foundByYou: allCollectedCount, totalVisible: allTotalCount)
                 print("📊 Updated database stats: \(allCollectedCount) found / \(allTotalCount) total (matches Settings view)")
                 print("📊 Unfound items: \(allTotalCount - allCollectedCount)")
                 

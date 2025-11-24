@@ -4,6 +4,8 @@ import AVFoundation
 // MARK: - Audio Ping Service
 /// Plays a ping sound once per second with pitch that increases as distance decreases
 class AudioPingService {
+    static let shared = AudioPingService()
+    
     private var pingTimer: Timer?
     private var audioEngine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
@@ -20,7 +22,7 @@ class AudioPingService {
     private let minPitch: Float = 0.5 // Low pitch when far away
     private let maxPitch: Float = 2.0 // High pitch when very close
     
-    init() {
+    private init() {
         setupAudioEngine()
     }
     
@@ -113,15 +115,39 @@ class AudioPingService {
         currentDistance = distance
     }
     
-    /// Play a single ping sound with pitch based on current distance
-    private func playPing() {
+    /// Play a single submarine ping sound (for location updates)
+    /// Uses a fixed medium pitch for location pings
+    func playLocationPing() {
+        // Ensure audio engine is set up
+        if audioEngine == nil || playerNode == nil {
+            setupAudioEngine()
+        }
+        
+        guard let engine = audioEngine, let player = playerNode else {
+            Swift.print("❌ Cannot play location ping: audio engine not available")
+            return
+        }
+        
+        // Ensure engine is running
+        if !engine.isRunning {
+            do {
+                try engine.start()
+            } catch {
+                Swift.print("❌ Could not start audio engine for location ping: \(error)")
+                return
+            }
+        }
+        
+        // Play the ping at normal pitch
+        playSinglePing(pitch: 1.0)
+    }
+    
+    /// Play a single ping with specified pitch multiplier
+    private func playSinglePing(pitch: Float) {
         guard let engine = audioEngine, let player = playerNode else {
             Swift.print("❌ Cannot play ping: audio engine or player node not initialized")
             return
         }
-        
-        // Calculate pitch based on distance
-        let pitch = calculatePitch(for: currentDistance)
         
         // Get or create the time pitch unit
         guard let timePitch = engine.attachedNodes.first(where: { $0 is AVAudioUnitTimePitch }) as? AVAudioUnitTimePitch else {
@@ -130,12 +156,10 @@ class AudioPingService {
         }
         
         // Set pitch (in cents, where 0 = no change, 1200 = one octave up, -1200 = one octave down)
-        // Convert our pitch multiplier to cents: pitch 2.0 = +1200 cents (one octave up), 0.5 = -1200 cents (one octave down)
         let pitchInCents = (pitch - 1.0) * 1200.0
         timePitch.pitch = pitchInCents
         
         // Generate a simple beep sound programmatically
-        // Create a sine wave tone
         let duration: Double = 0.1 // 100ms ping
         let frequency: Double = 800.0 // Base frequency in Hz
         
@@ -179,6 +203,15 @@ class AudioPingService {
         if !player.isPlaying {
             player.play()
         }
+    }
+    
+    /// Play a single ping sound with pitch based on current distance
+    private func playPing() {
+        // Calculate pitch based on distance
+        let pitch = calculatePitch(for: currentDistance)
+        
+        // Play the ping with calculated pitch
+        playSinglePing(pitch: pitch)
         
         // Log ping sound (only when distance changes significantly to avoid spam)
         // Log if this is first ping, or if distance changed by more than 2 meters

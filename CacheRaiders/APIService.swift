@@ -20,9 +20,9 @@ struct APIObject: Codable {
     let ar_offset_y: Double?
     let ar_offset_z: Double?
     let ar_placement_timestamp: String?
-    let collected: Bool
-    let found_by: String?
-    let found_at: String?
+    var collected: Bool  // Mutable: state that changes when objects are found/unfound
+    var found_by: String?  // Mutable: state that changes when objects are found/unfound
+    var found_at: String?  // Mutable: state that changes when objects are found/unfound
 }
 
 struct CreateObjectRequest: Codable {
@@ -440,6 +440,42 @@ class APIService {
         )
     }
     
+    /// Update user's current location (for web map display)
+    func updateUserLocation(latitude: Double, longitude: Double, accuracy: Double? = nil, heading: Double? = nil, arOffsetX: Double? = nil, arOffsetY: Double? = nil, arOffsetZ: Double? = nil) async throws {
+        guard let url = URL(string: "\(baseURL)/api/users/\(currentUserID)/location") else {
+            throw APIError.invalidURL
+        }
+        
+        struct LocationUpdate: Codable {
+            let latitude: Double
+            let longitude: Double
+            let accuracy: Double?
+            let heading: Double?
+            let ar_offset_x: Double?
+            let ar_offset_y: Double?
+            let ar_offset_z: Double?
+        }
+        
+        struct UpdateResponse: Codable {
+            let message: String?
+        }
+        
+        let body = LocationUpdate(
+            latitude: latitude,
+            longitude: longitude,
+            accuracy: accuracy,
+            heading: heading,
+            ar_offset_x: arOffsetX,
+            ar_offset_y: arOffsetY,
+            ar_offset_z: arOffsetZ
+        )
+        let encoder = JSONEncoder()
+        let bodyData = try encoder.encode(body)
+        
+        // Fire and forget - don't wait for response
+        let _: UpdateResponse = try await makeRequest(url: url, method: "POST", body: bodyData)
+    }
+    
     /// Update AR offset positioning data for centimeter-level accuracy
     func updateAROffset(
         objectId: String,
@@ -495,7 +531,8 @@ class APIService {
             latitude: apiObject.latitude,
             longitude: apiObject.longitude,
             radius: apiObject.radius,
-            collected: apiObject.collected
+            collected: apiObject.collected,
+            source: .api  // Explicitly set source to .api so items show on map
         )
         
         // Set AR coordinates if available (for cm-level precision indoor placement)

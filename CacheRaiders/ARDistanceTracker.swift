@@ -17,6 +17,7 @@ class ARDistanceTracker: ObservableObject {
     var distanceTextEntities: [String: ModelEntity] = [:]
     var foundLootBoxes: Set<String> = []
     var proximitySoundPlayed: Set<String> = []
+    private var lastDistanceText: [String: String] = [:] // Cache last text to avoid recreating textures
     
     var distanceToNearestBinding: Binding<Double?>?
     var temperatureStatusBinding: Binding<String?>?
@@ -32,14 +33,17 @@ class ARDistanceTracker: ObservableObject {
         self.arView = arView
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
-        self.audioPingService = AudioPingService()
+        self.audioPingService = AudioPingService.shared
     }
     
     /// Start distance logging
     func startDistanceLogging() {
-        // Check every 0.5 seconds for more responsive warmer/colder feedback
-        distanceLogger = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        // Check every 1.0 seconds for better performance
+        // Reduced from 0.5s to improve framerate - distance calculations are expensive
+        distanceLogger = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.logDistanceToNearestLootBox()
+            // Also update distance text overlays at same interval (moved from occlusion manager)
+            self?.updateDistanceTexts()
         }
     }
     
@@ -58,8 +62,9 @@ class ARDistanceTracker: ObservableObject {
     
     /// Update distance texts for all loot boxes
     func updateDistanceTexts() {
+        let startTime = CFAbsoluteTimeGetCurrent()
         guard let arView = arView, let frame = arView.session.currentFrame else { return }
-        
+
         let cameraTransform = frame.camera.transform
         let cameraPosition = SIMD3<Float>(
             cameraTransform.columns.3.x,
@@ -104,11 +109,16 @@ class ARDistanceTracker: ObservableObject {
             // Format as feet and inches
             let distanceText = formatDistance(distance)
             
-            // Update text material
-            let newMaterial = createTextMaterial(text: distanceText)
-            if var model = textEntity.model {
-                model.materials = [newMaterial]
-                textEntity.model = model
+            // Only update texture if text changed (texture creation is expensive)
+            if lastDistanceText[locationId] != distanceText {
+                lastDistanceText[locationId] = distanceText
+                
+                // Update text material
+                let newMaterial = createTextMaterial(text: distanceText)
+                if var model = textEntity.model {
+                    model.materials = [newMaterial]
+                    textEntity.model = model
+                }
             }
             
             // Make text face camera (billboard effect)
@@ -117,14 +127,18 @@ class ARDistanceTracker: ObservableObject {
             let angle = atan2(directionToCamera.x, directionToCamera.z)
             textEntity.orientation = simd_quatf(angle: angle, axis: SIMD3<Float>(0, 1, 0))
         }
+
+        let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+        if elapsed > 5.0 { // Only log if takes more than 5ms
+            Swift.print("⏱️ [PERF] updateDistanceTexts took \(String(format: "%.1f", elapsed))ms for \(placedBoxes.count) objects")
+        }
     }
     
     /// Updates the direction to the selected object (if any) or nearest placed object
     func updateNearestObjectDirection() {
         guard let arView = arView,
               let frame = arView.session.currentFrame,
-              let locationManager = locationManager,
-              !placedBoxes.isEmpty else {
+              let locationManager = locationManager else {
             nearestObjectDirection = nil
             return
         }
@@ -141,6 +155,7 @@ class ARDistanceTracker: ObservableObject {
         
         // Priority 1: Selected object (if one is selected)
         if let selectedId = locationManager.selectedDatabaseObjectId {
+            // First try to find the selected object in placedBoxes (AR coordinates)
             if let anchor = placedBoxes[selectedId],
                let location = locationManager.locations.first(where: { $0.id == selectedId && !$0.collected }) {
                 let anchorTransform = anchor.transformMatrix(relativeTo: nil)
@@ -174,11 +189,41 @@ class ARDistanceTracker: ObservableObject {
                 }
                 
                 targetPosition = objectPos
+            } else if let location = locationManager.locations.first(where: { $0.id == selectedId && !$0.collected }),
+                      let userLocation = userLocationManager?.currentLocation,
+                      location.latitude != 0 || location.longitude != 0 {
+                // Selected object not placed yet, but we have GPS coordinates - calculate direction from GPS
+                // Convert GPS to AR position if possible, otherwise use GPS bearing
+                let targetLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
+                let distance = userLocation.distance(from: targetLocation)
+                let bearing = userLocation.bearing(to: targetLocation)
+                
+                // Try to convert GPS to AR position if we have AR origin
+                // For now, use a simplified approach: place target at estimated distance in front
+                // This is a fallback when the object isn't placed yet
+                let estimatedDistance = min(Float(distance), 50.0) // Cap at 50m for AR space
+                let cameraForward = normalize(SIMD3<Float>(forward.x, 0, forward.z))
+                
+                // Calculate direction based on GPS bearing
+                // Convert bearing (0° = north) to AR space direction
+                let bearingRad = Float(bearing * .pi / 180.0)
+                let northDirection = SIMD3<Float>(0, 0, -1) // ARKit's -Z is typically north
+                let eastDirection = SIMD3<Float>(1, 0, 0) // ARKit's +X is typically east
+                
+                // Calculate target direction in AR space from GPS bearing
+                let targetDirection = cos(bearingRad) * northDirection + sin(bearingRad) * eastDirection
+                let normalizedTargetDir = normalize(targetDirection)
+                
+                // Position target at estimated distance in the calculated direction
+                // Use camera Y position for height (assume same level)
+                targetPosition = cameraPos + normalizedTargetDir * estimatedDistance
+                targetPosition?.y = cameraPos.y // Keep at camera height
             }
         }
         
         // Priority 2: Nearest uncollected object (if no selected object or selected not found)
-        if targetPosition == nil {
+        // Only check placed boxes if we have any, and if no selected object is being tracked
+        if targetPosition == nil && !placedBoxes.isEmpty {
             var nearestDistance: Float = .infinity
             
             for (locationId, anchor) in placedBoxes {
