@@ -10,6 +10,8 @@ services:
       - ./data:/app/data
       # Mount database file
       - ./cache_raiders.db:/app/cache_raiders.db
+      # Mount admin.html for live editing (no rebuild needed)
+      - ./admin.html:/app/admin.html
     environment:
       - FLASK_ENV=production
       - PORT=5001

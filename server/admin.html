@@ -440,6 +440,9 @@
         <div>
             <h1>🗺️ CacheRaiders Admin</h1>
             <p style="color: #999; font-size: 12px;">Click on the map to place new objects</p>
+            <button class="btn-secondary" style="margin-top: 10px;" onclick="centerOnBrowserLocation()">
+                Center on My Location
+            </button>
         </div>
         
         <div class="section">
@@ -512,6 +515,20 @@
         </div>
         
         <div class="section">
+            <h2>📱 Server Connection</h2>
+            <p style="color: #ccc; font-size: 12px; margin-bottom: 10px;">Scan this QR code with your iOS app to connect:</p>
+            <div style="text-align: center; margin: 15px 0;">
+                <canvas id="qrcode" style="background: white; padding: 10px; border-radius: 8px; display: inline-block;"></canvas>
+            </div>
+            <div style="margin: 10px 0;">
+                <input type="text" id="serverURL" readonly style="width: 100%; padding: 8px; background: #1a1a1a; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px; font-family: monospace;" value="">
+            </div>
+            <button class="btn-secondary" onclick="copyServerURL()" style="margin-top: 5px;">
+                📋 Copy URL
+            </button>
+        </div>
+        
+        <div class="section">
             <h2>👥 Player Management</h2>
             <button class="btn-secondary" onclick="loadPlayers()">Refresh Players</button>
             <div class="objects-list" id="playersList">
@@ -549,6 +566,9 @@
     <!-- Socket.IO Client -->
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     
+    <!-- QR Code Library -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    
     <script>
         // Configuration
         const API_BASE = window.location.origin;
@@ -560,6 +580,27 @@
         let selectedMarker = null;
         let socket = null; // WebSocket connection
         let playerMap = {}; // Cache of player names by device UUID
+        
+        // Center map on the browser's current location
+        function centerOnBrowserLocation() {
+            if (!navigator.geolocation) {
+                showStatus('Geolocation is not supported by this browser.', 'error');
+                return;
+            }
+            
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lng = pos.coords.longitude;
+                    // Use a close zoom so you can see objects around you
+                    map.setView([lat, lng], 17);
+                    showStatus(`Centered map on your location: ${lat.toFixed(5)}, ${lng.toFixed(5)}`, 'success');
+                },
+                (err) => {
+                    showStatus(`Unable to get your location: ${err.message}`, 'error');
+                }
+            );
+        }
         
         // Initialize map
         function initMap() {
@@ -1276,8 +1317,43 @@
             }
         });
         
+        // Initialize QR code
+        function initQRCode() {
+            const serverURL = API_BASE;
+            document.getElementById('serverURL').value = serverURL;
+            
+            // Generate QR code
+            QRCode.toCanvas(document.getElementById('qrcode'), serverURL, {
+                width: 200,
+                margin: 2,
+                color: {
+                    dark: '#000000',
+                    light: '#FFFFFF'
+                }
+            }, function (error) {
+                if (error) {
+                    console.error('QR code generation error:', error);
+                } else {
+                    console.log('✅ QR code generated for:', serverURL);
+                }
+            });
+        }
+        
+        function copyServerURL() {
+            const urlInput = document.getElementById('serverURL');
+            urlInput.select();
+            urlInput.setSelectionRange(0, 99999); // For mobile devices
+            try {
+                document.execCommand('copy');
+                showStatus('Server URL copied to clipboard!', 'success');
+            } catch (err) {
+                showStatus('Failed to copy URL. Please copy manually.', 'error');
+            }
+        }
+        
         // Initialize on page load
         initMap();
+        initQRCode();
         
         // Load players on page load
         loadPlayers();
