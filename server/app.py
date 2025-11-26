@@ -2,16 +2,19 @@
 CacheRaiders API Server
 Simple REST API for tracking loot box objects, their locations, and who found them.
 """
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 import sqlite3
 import os
 import math
+import socket
+import io
+import qrcode
 from datetime import datetime
 from typing import Optional, List, Dict
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)  # Enable CORS for iOS app
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')  # Enable WebSocket support
 
@@ -996,6 +999,120 @@ def delete_object(object_id: str):
 def admin_ui():
     """Serve the admin web UI."""
     return send_from_directory(os.path.dirname(__file__), 'admin.html')
+
+@app.route('/api/server-info', methods=['GET'])
+def get_server_info():
+    """Get server network information including IP address."""
+    def get_local_ip():
+        """Get the local network IP address."""
+        # First, check if HOST_IP environment variable is set (useful for Docker)
+        host_ip = os.environ.get('HOST_IP')
+        if host_ip:
+            return host_ip
+        
+        try:
+            # Connect to a remote address to determine local IP
+            # This doesn't actually send data, just determines the route
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                # Connect to a public DNS server (doesn't actually connect)
+                s.connect(('8.8.8.8', 80))
+                ip = s.getsockname()[0]
+                
+                # If we're in Docker and got a container IP (172.x.x.x or 10.x.x.x), 
+                # try to get the host IP from the request's remote address
+                if ip.startswith('172.') or ip.startswith('10.') or ip.startswith('192.168.0.') or ip.startswith('192.168.1.'):
+                    # Check if we can get the client's IP (which might be the host)
+                    client_ip = request.remote_addr
+                    if client_ip and not client_ip.startswith('127.'):
+                        # If client is on the same network, we can infer the host IP
+                        # For now, we'll use the detected IP but log a warning
+                        print(f"⚠️ Detected container IP: {ip}, client IP: {client_ip}")
+                return ip
+            except Exception:
+                ip = '127.0.0.1'
+            finally:
+                s.close()
+            return ip
+        except Exception:
+            return '127.0.0.1'
+    
+    port = int(os.environ.get('PORT', 5001))
+    local_ip = get_local_ip()
+    
+    # Get the host from the request to determine what URL was used
+    host = request.host.split(':')[0] if ':' in request.host else request.host
+    
+    # If we got a Docker container IP, try to use the request's host if it's not localhost
+    if local_ip.startswith('172.') or (local_ip.startswith('10.') and local_ip != '127.0.0.1'):
+        # If accessed via a non-localhost address, use that
+        if host not in ['localhost', '127.0.0.1', '0.0.0.0']:
+            # Try to extract IP from host if it's an IP address
+            try:
+                socket.inet_aton(host)  # Validates IP address
+                local_ip = host
+            except:
+                pass
+    
+    # Always use the network IP for the server URL (not localhost)
+    server_url = f'http://{local_ip}:{port}'
+    
+    return jsonify({
+        'local_ip': local_ip,
+        'host': host,
+        'port': port,
+        'server_url': server_url,
+        'request_host': request.host,
+        'remote_addr': request.remote_addr
+    })
+
+@app.route('/api/qrcode', methods=['GET'])
+def generate_qrcode():
+    """Generate a QR code for the server URL."""
+    def get_local_ip():
+        """Get the local network IP address."""
+        # First, check if HOST_IP is set (useful for Docker containers)
+        host_ip = os.environ.get('HOST_IP')
+        if host_ip:
+            return host_ip
+        
+        # Otherwise, detect the IP address
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(('8.8.8.8', 80))
+                ip = s.getsockname()[0]
+            except Exception:
+                ip = '127.0.0.1'
+            finally:
+                s.close()
+            return ip
+        except Exception:
+            return '127.0.0.1'
+    
+    port = int(os.environ.get('PORT', 5001))
+    local_ip = get_local_ip()
+    server_url = f'http://{local_ip}:{port}'
+    
+    # Generate QR code
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(server_url)
+    qr.make(fit=True)
+    
+    # Create image
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    # Convert to bytes
+    img_io = io.BytesIO()
+    img.save(img_io, 'PNG')
+    img_io.seek(0)
+    
+    return Response(img_io.getvalue(), mimetype='image/png')
 
 # WebSocket event handlers
 @socketio.on('connect')

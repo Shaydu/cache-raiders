@@ -12,9 +12,14 @@ services:
       - ./cache_raiders.db:/app/cache_raiders.db
       # Mount admin.html for live editing (no rebuild needed)
       - ./admin.html:/app/admin.html
+      # Mount app.py for live editing (no rebuild needed for code changes)
+      - ./app.py:/app/app.py
+      # Mount static files for live editing
+      - ./static:/app/static
     environment:
       - FLASK_ENV=production
       - PORT=5001
+      - HOST_IP=192.168.68.50
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]

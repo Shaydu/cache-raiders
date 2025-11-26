@@ -67,7 +67,26 @@ class APIService {
     var baseURL: String {
         // Check UserDefaults for custom URL, otherwise use default
         if let customURL = UserDefaults.standard.string(forKey: "apiBaseURL"), !customURL.isEmpty {
-            return customURL
+            // Validate the stored URL - ensure it's properly formatted
+            var validatedURL = customURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // If it doesn't start with http:// or https://, add http://
+            if !validatedURL.hasPrefix("http://") && !validatedURL.hasPrefix("https://") {
+                validatedURL = "http://\(validatedURL)"
+            }
+            
+            // Validate it's a proper URL
+            if URL(string: validatedURL) != nil {
+                // If validation passed and URL changed, save the corrected version
+                if validatedURL != customURL {
+                    UserDefaults.standard.set(validatedURL, forKey: "apiBaseURL")
+                }
+                return validatedURL
+            } else {
+                // Invalid URL stored - remove it and fall back to default
+                print("⚠️ Invalid API URL stored in UserDefaults: '\(customURL)', falling back to default")
+                UserDefaults.standard.removeObject(forKey: "apiBaseURL")
+            }
         }
         // Try to get a suggested local network IP (default port is 5001)
         if let suggestedIP = getSuggestedLocalIP() {

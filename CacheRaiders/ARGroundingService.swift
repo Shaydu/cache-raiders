@@ -13,6 +13,27 @@ class ARGroundingService {
     /// Maximum height difference from camera to consider a surface valid (in meters)
     private let maxHeightDifference: Float = 2.0
     
+    // MARK: - Performance Optimization: Raycast Caching & Throttling
+    
+    /// Cache for raycast results to avoid expensive repeated raycasts
+    /// Key: grid position string "xGrid_zGrid", Value: (y coordinate, timestamp)
+    private var raycastCache: [String: (y: Float, timestamp: Date)] = [:]
+    
+    /// Cache timeout - results are valid for this duration
+    private let cacheTimeout: TimeInterval = 0.5 // 500ms cache validity
+    
+    /// Grid size for cache keys (0.5m grid - positions within 0.5m share same cache entry)
+    private let cacheGridSize: Float = 0.5
+    
+    /// Throttling: minimum time between raycast operations
+    private let minRaycastInterval: TimeInterval = 0.1 // Max 10 raycasts per second
+    
+    /// Last time a raycast was performed (for throttling)
+    private var lastRaycastTime: Date = Date()
+    
+    /// Track if we're currently performing a raycast (prevent concurrent calls)
+    private var isRaycasting: Bool = false
+    
     init(arView: ARView?) {
         self.arView = arView
     }
@@ -20,6 +41,7 @@ class ARGroundingService {
     /// Finds the highest horizontal surface that blocks the floor at the given X/Z coordinates.
     /// If no surface blocks the floor, returns the floor position.
     /// Uses multiple raycast strategies to ensure reliable surface detection.
+    /// PERFORMANCE: Uses caching and throttling to prevent freezes from excessive raycasts.
     /// - Parameters:
     ///   - x: X coordinate in AR world space
     ///   - z: Z coordinate in AR world space
@@ -34,6 +56,42 @@ class ARGroundingService {
             return nil
         }
         
+        // PERFORMANCE: Check cache first to avoid expensive raycasts
+        let cacheKey = "\(Int(x / cacheGridSize))_\(Int(z / cacheGridSize))"
+        let now = Date()
+        
+        if let cached = raycastCache[cacheKey],
+           now.timeIntervalSince(cached.timestamp) < cacheTimeout {
+            // Return cached result if still valid
+            return cached.y
+        }
+        
+        // PERFORMANCE: Throttle raycasts to prevent excessive calls
+        let timeSinceLastRaycast = now.timeIntervalSince(lastRaycastTime)
+        if timeSinceLastRaycast < minRaycastInterval {
+            // Too soon since last raycast - return cached value or default
+            if let cached = raycastCache[cacheKey] {
+                // Use cached value even if slightly expired (better than blocking)
+                return cached.y
+            }
+            // No cache available - return default height to avoid blocking
+            // This prevents freeze when called too frequently
+            return cameraPos.y - 1.5 // Default ground height
+        }
+        
+        // Prevent concurrent raycasts
+        guard !isRaycasting else {
+            // If raycast in progress, return cached or default
+            if let cached = raycastCache[cacheKey] {
+                return cached.y
+            }
+            return cameraPos.y - 1.5
+        }
+        
+        isRaycasting = true
+        lastRaycastTime = now
+        defer { isRaycasting = false }
+        
         // Strategy 1: Raycast downward from above the target position
         let raycastOrigin = SIMD3<Float>(x, cameraPos.y + 1.0, z)
         let raycastQuery = ARRaycastQuery(
@@ -47,17 +105,13 @@ class ARGroundingService {
         var raycastResults = arView.session.raycast(raycastQuery)
         
         // Strategy 2: If no results from center, try nearby positions in a small grid pattern
+        // PERFORMANCE: Limit to 3 additional attempts instead of 9 to reduce cost
         if raycastResults.isEmpty {
             let searchOffsets: [SIMD2<Float>] = [
-                SIMD2<Float>(0, 0),
                 SIMD2<Float>(0.2, 0),
                 SIMD2<Float>(-0.2, 0),
                 SIMD2<Float>(0, 0.2),
-                SIMD2<Float>(0, -0.2),
-                SIMD2<Float>(0.15, 0.15),
-                SIMD2<Float>(-0.15, 0.15),
-                SIMD2<Float>(0.15, -0.15),
-                SIMD2<Float>(-0.15, -0.15)
+                SIMD2<Float>(0, -0.2)
             ]
             
             for offset in searchOffsets {
@@ -147,14 +201,19 @@ class ARGroundingService {
             }
             
             if let closest = closestSurface {
+                let resultY = closest.y
+                // Cache the result
+                raycastCache[cacheKey] = (resultY, now)
                 if !silent {
-                    Swift.print("✅ ARGroundingService: Using closest surface near target position - Y: \(String(format: "%.2f", closest.y)), distance: \(String(format: "%.2f", closest.distance))m")
+                    Swift.print("✅ ARGroundingService: Using closest surface near target position - Y: \(String(format: "%.2f", resultY)), distance: \(String(format: "%.2f", closest.distance))m")
                 }
-                return closest.y
+                return resultY
             }
             
             // Final fallback: use the lowest valid surface (floor)
             let floorY = validSurfaces.first!.y
+            // Cache the result
+            raycastCache[cacheKey] = (floorY, now)
             if !silent {
                 Swift.print("✅ ARGroundingService: No surfaces at target position, using floor at Y: \(String(format: "%.2f", floorY))")
             }
@@ -166,10 +225,21 @@ class ARGroundingService {
 
         // Return the HIGHEST surface at the target position (this is the topmost plane the object should rest on)
         let highestSurface = sortedSurfaces.first!
-        if !silent {
-            Swift.print("✅ ARGroundingService: Using highest surface at target position - Y: \(String(format: "%.2f", highestSurface.y))")
+        let resultY = highestSurface.y
+        
+        // PERFORMANCE: Cache the result for future calls
+        raycastCache[cacheKey] = (resultY, now)
+        
+        // Clean old cache entries periodically (keep cache size manageable)
+        if raycastCache.count > 50 {
+            let cutoffTime = now.addingTimeInterval(-cacheTimeout * 2)
+            raycastCache = raycastCache.filter { $0.value.timestamp > cutoffTime }
         }
-        return highestSurface.y
+        
+        if !silent {
+            Swift.print("✅ ARGroundingService: Using highest surface at target position - Y: \(String(format: "%.2f", resultY))")
+        }
+        return resultY
     }
     
     /// Grounds a position by finding the highest blocking surface at the given X/Z coordinates.
@@ -266,6 +336,13 @@ class ARGroundingService {
         let defaultY = getDefaultGroundHeight(for: objectType, cameraPos: cameraPos)
         Swift.print("⚠️ ARGroundingService: No surface detected - using default height for \(objectType.displayName): Y=\(String(format: "%.2f", defaultY))")
         return defaultY
+    }
+    
+    /// Clears the raycast cache
+    /// Call this when AR session resets or when you want to force fresh raycasts
+    func clearCache() {
+        raycastCache.removeAll()
+        Swift.print("🧹 ARGroundingService: Raycast cache cleared")
     }
 }
 

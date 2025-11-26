@@ -14,19 +14,18 @@ struct ContentView: View {
     @State private var temperatureStatus: String?
     @State private var collectionNotification: String?
     @State private var nearestObjectDirection: Double?
-    @State private var cachedLootBoxCounter: (found: Int, total: Int) = (found: 0, total: 0) // Cache the counter to avoid recomputing on every render
     
-    // Helper function to update the cached loot box counter
-    private func updateLootBoxCounter() {
+    // Computed property for loot box counter - no state modification needed
+    private var lootBoxCounter: (found: Int, total: Int) {
         // Use database stats if available (from API sync)
         if let stats = locationManager.databaseStats {
-            cachedLootBoxCounter = (found: stats.foundByYou, total: stats.totalVisible)
+            return (found: stats.foundByYou, total: stats.totalVisible)
         } else {
             // Fallback to local data if API stats not available
             let findableLocations = locationManager.findableLocations
             let foundCount = findableLocations.filter { $0.collected }.count
             let totalCount = findableLocations.count
-            cachedLootBoxCounter = (found: foundCount, total: totalCount)
+            return (found: foundCount, total: totalCount)
         }
     }
 
@@ -179,10 +178,13 @@ struct ContentView: View {
             
             Button(action: { showSettings = true }) {
                 Image(systemName: "gearshape")
+                    .foregroundColor(.white)
                     .padding()
                     .background(.ultraThinMaterial)
                     .cornerRadius(10)
             }
+            .contentShape(Rectangle())
+            .allowsHitTesting(true)
         }
         .padding(.top)
     }
@@ -233,7 +235,7 @@ struct ContentView: View {
             Spacer()
             HStack {
                 if !locationManager.locations.isEmpty {
-                    Text("Loot Boxes Found: \(cachedLootBoxCounter.found)/\(cachedLootBoxCounter.total)")
+                    Text("Loot Boxes Found: \(lootBoxCounter.found)/\(lootBoxCounter.total)")
                         .font(.caption)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
@@ -293,9 +295,6 @@ struct ContentView: View {
 
             // Auto-connect WebSocket on app start
             WebSocketService.shared.connect()
-
-            // Update cached counter
-            updateLootBoxCounter()
         }
         .onChange(of: userLocationManager.currentLocation) { _, newLocation in
             // When we get a GPS fix, automatically load shared objects from API
@@ -311,14 +310,8 @@ struct ContentView: View {
                 }
             }
         }
-        .onChange(of: locationManager.locations) { _, _ in
-            // Update cached counter when locations change
-            updateLootBoxCounter()
-        }
-        .onChange(of: locationManager.databaseStats) { _, _ in
-            // Update cached counter when stats change
-            updateLootBoxCounter()
-        }
+        // Counter is now a computed property, so no onChange handlers needed
+        // It will automatically update when locationManager.locations or locationManager.databaseStats change
         // No automatic GPS box creation - user must add items manually via map
         // .onChange(of: userLocationManager.currentLocation) { _, newLocation in
         //     // When we get a GPS fix, check if we need to create/regenerate locations

@@ -36,6 +36,10 @@ class ARGeospatialService {
     /// Maximum correction distance before applying (prevents large jumps)
     private let maxCorrectionDistance: Float = 2.0 // 2 meters
     
+    /// Track last rejected correction to prevent spam
+    private var lastRejectedCorrection: (distance: Double, timestamp: Date)?
+    private let rejectionLogInterval: TimeInterval = 30.0 // Only log rejection every 30 seconds (same distance)
+    
     init() {
         Swift.print("📍 ARGeospatialService initialized")
     }
@@ -194,7 +198,22 @@ class ARGeospatialService {
         
         // If correction is too large, don't apply it (prevents jumps)
         if Float(distance) > maxCorrectionDistance {
-            Swift.print("⚠️ Correction too large (\(String(format: "%.2f", distance))m) - skipping to prevent jump")
+            // Throttle warning to prevent spam - only log if different distance or enough time has passed
+            let now = Date()
+            let shouldLog: Bool
+            if let lastRejected = lastRejectedCorrection {
+                let timeSinceLastLog = now.timeIntervalSince(lastRejected.timestamp)
+                // Only log if distance changed significantly (more than 20cm) OR 30 seconds passed
+                let distanceChanged = abs(lastRejected.distance - distance) > 0.2 // Different by more than 20cm
+                shouldLog = timeSinceLastLog >= rejectionLogInterval || distanceChanged
+            } else {
+                shouldLog = true
+            }
+            
+            if shouldLog {
+                Swift.print("⚠️ Correction too large (\(String(format: "%.2f", distance))m) - skipping to prevent jump (threshold: \(maxCorrectionDistance)m)")
+                lastRejectedCorrection = (distance: distance, timestamp: now)
+            }
             return nil
         }
         

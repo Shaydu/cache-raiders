@@ -46,11 +46,8 @@ class WebSocketService: ObservableObject {
     var onAllFindsReset: (() -> Void)?
     
     var baseURL: String {
-        if let customURL = UserDefaults.standard.string(forKey: "apiBaseURL"), !customURL.isEmpty {
-            return customURL
-        }
-        // Default port is 5001
-        return "http://localhost:5001"
+        // Use the same validated baseURL as APIService to ensure consistency
+        return APIService.shared.baseURL
     }
     
     private init() {

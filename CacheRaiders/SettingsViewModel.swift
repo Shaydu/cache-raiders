@@ -66,24 +66,37 @@ class SettingsViewModel: ObservableObject {
         }
         
         UserDefaults.standard.set(urlString, forKey: "apiBaseURL")
-        displayAlert(title: "URL Saved", message: "API URL updated to: \(urlString)\n\nReconnecting to new server...")
-
+        
+        // Force APIService to reload the baseURL by accessing it
+        let updatedURL = APIService.shared.baseURL
+        print("✅ API URL saved: \(urlString), APIService now using: \(updatedURL)")
+        
+        // Always try to reconnect WebSocket if API sync is enabled
         if locationManager.useAPISync {
             // Disconnect immediately
             WebSocketService.shared.disconnect()
 
-            // Reconnect on background thread with proper async/await
-            Task.detached(priority: .userInitiated) {
+            // Reconnect after a short delay to ensure disconnect completes
+            Task.detached(priority: .userInitiated) { [weak self] in
                 // Wait 500ms for disconnect to complete
                 try? await Task.sleep(nanoseconds: 500_000_000)
 
                 await MainActor.run {
+                    let currentURL = APIService.shared.baseURL
+                    print("🔌 Reconnecting WebSocket after URL update to: \(currentURL)")
                     WebSocketService.shared.connect()
                 }
 
                 // Load database objects on background thread
-                await self.loadDatabaseObjects()
+                await self?.loadDatabaseObjects()
             }
+            
+            displayAlert(title: "URL Saved", message: "API URL updated to: \(urlString)\n\nReconnecting WebSocket to new server...")
+        } else {
+            // Even if API sync is not enabled, we should still try to connect
+            // in case the user enables it later - but don't force it
+            print("ℹ️ API sync not enabled, WebSocket will connect when API sync is enabled")
+            displayAlert(title: "URL Saved", message: "API URL updated to: \(urlString)\n\nEnable 'API Sync' to connect to the server.")
         }
 
         return true

@@ -115,6 +115,15 @@ struct ARPlacementView: View {
                                         scale: scale
                                     )
                                 }
+
+                                // Reload locations so main ARCoordinator picks up the new/updated object
+                                // This ensures the object persists when we dismiss this placement view
+                                print("🔄 [Placement] Reloading locations so object persists in main AR view...")
+                                await locationManager.loadLocationsFromAPI(userLocation: userLocationManager.currentLocation)
+
+                                // Small delay to ensure the main AR view has time to place the object
+                                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+
                                 dismiss()
                             }
                         },
@@ -146,48 +155,44 @@ struct ARPlacementView: View {
     
     private func updateObjectLocation(objectId: String, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async {
         do {
-            // Update GPS location (fallback)
+            // Update GPS location
             try await APIService.shared.updateObjectLocation(
                 objectId: objectId,
                 latitude: coordinate.latitude,
                 longitude: coordinate.longitude
             )
-            
-            // Update AR coordinates for mm-precision (primary)
-            if let arOrigin = arOrigin {
-                try await APIService.shared.updateAROffset(
-                    objectId: objectId,
-                    arOriginLatitude: arOrigin.coordinate.latitude,
-                    arOriginLongitude: arOrigin.coordinate.longitude,
-                    offsetX: Double(arPosition.x),
-                    offsetY: Double(arPosition.y),
-                    offsetZ: Double(arPosition.z)
-                )
-                print("✅ [Placement] Stored AR coordinates for mm-precision:")
-                print("   Object ID: \(objectId)")
-                print("   AR Origin GPS: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
-                print("   AR Offset: X=\(String(format: "%.4f", arPosition.x))m, Y=\(String(format: "%.4f", arPosition.y))m, Z=\(String(format: "%.4f", arPosition.z))m")
-                print("   Grounding Height: \(String(format: "%.4f", groundingHeight))m")
-            }
-            
+
+            // Store the intended AR position from ARPlacementView in UserDefaults
+            // This will be used by main AR view to measure GPS error and correct it
+            let arPositionKey = "ARPlacementPosition_\(objectId)"
+            let arPositionDict: [String: Float] = [
+                "x": arPosition.x,
+                "y": arPosition.y,
+                "z": arPosition.z,
+                "origin_lat": Float(arOrigin?.coordinate.latitude ?? 0),
+                "origin_lon": Float(arOrigin?.coordinate.longitude ?? 0)
+            ]
+            UserDefaults.standard.set(arPositionDict, forKey: arPositionKey)
+
+            print("📍 [Placement] Stored intended AR position for GPS correction:")
+            print("   Object ID: \(objectId)")
+            print("   AR Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))")
+            print("   GPS (uncorrected): (\(String(format: "%.6f", coordinate.latitude)), \(String(format: "%.6f", coordinate.longitude)))")
+            print("   💡 Main AR view will measure actual placement position and correct GPS coordinates")
+
             // Also update grounding height for accurate placement
             try await APIService.shared.updateGroundingHeight(objectId: objectId, height: groundingHeight)
             // Note: Scale is stored locally or could be added to API in the future
             print("📏 [Placement] Object scale set to \(scale)x (stored locally)")
-            print("📍 [Placement] Object saved to API - GPS: (\(String(format: "%.6f", coordinate.latitude)), \(String(format: "%.6f", coordinate.longitude)))")
-            print("💡 [Placement] Object should appear in main AR view via checkAndPlaceBoxes")
-            print("   ⚠️ If object disappears, check if checkAndPlaceBoxes is finding it in nearbyLocations")
-            // Don't reload locations immediately - object is already placed correctly in AR
-            // Reloading would trigger checkAndPlaceBoxes which would re-place the object and cause it to move
-            // The coordinates are saved, so the object will be placed correctly on next app launch or manual reload
         } catch {
             print("❌ Failed to update object location: \(error)")
         }
     }
 
     private func createNewObject(type: LootBoxType, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async {
+        let objectId = UUID().uuidString
         var newLocation = LootBoxLocation(
-            id: UUID().uuidString,
+            id: objectId,
             name: "New \(type.displayName)",
             type: type,
             latitude: coordinate.latitude,
@@ -195,51 +200,34 @@ struct ARPlacementView: View {
             radius: 5.0,
             grounding_height: groundingHeight
         )
-        
-        // Store AR coordinates for mm-precision placement
-        if let arOrigin = arOrigin {
-            newLocation.ar_origin_latitude = arOrigin.coordinate.latitude
-            newLocation.ar_origin_longitude = arOrigin.coordinate.longitude
-            newLocation.ar_offset_x = Double(arPosition.x)
-            newLocation.ar_offset_y = Double(arPosition.y)
-            newLocation.ar_offset_z = Double(arPosition.z)
-            newLocation.ar_placement_timestamp = Date()
-            print("✅ [Placement] Storing AR coordinates for new object:")
-            print("   AR Origin GPS: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
-            print("   AR Offset: X=\(String(format: "%.4f", arPosition.x))m, Y=\(String(format: "%.4f", arPosition.y))m, Z=\(String(format: "%.4f", arPosition.z))m")
-        }
 
         do {
             let createdObject = try await APIService.shared.createObject(newLocation)
+
+            // Store the intended AR position from ARPlacementView in UserDefaults
+            // This will be used by main AR view to measure GPS error and correct it
+            let arPositionKey = "ARPlacementPosition_\(createdObject.id)"
+            let arPositionDict: [String: Float] = [
+                "x": arPosition.x,
+                "y": arPosition.y,
+                "z": arPosition.z,
+                "origin_lat": Float(arOrigin?.coordinate.latitude ?? 0),
+                "origin_lon": Float(arOrigin?.coordinate.longitude ?? 0)
+            ]
+            UserDefaults.standard.set(arPositionDict, forKey: arPositionKey)
+
             print("✅ [Placement] Created new object in API:")
             print("   Object ID: \(createdObject.id)")
             print("   Name: \(createdObject.name)")
             print("   Type: \(createdObject.type)")
-            print("   GPS: (\(String(format: "%.6f", createdObject.latitude)), \(String(format: "%.6f", createdObject.longitude)))")
-            
-            // Update AR coordinates after creation (if API supports it)
-            if let arOrigin = arOrigin {
-                try? await APIService.shared.updateAROffset(
-                    objectId: createdObject.id,
-                    arOriginLatitude: arOrigin.coordinate.latitude,
-                    arOriginLongitude: arOrigin.coordinate.longitude,
-                    offsetX: Double(arPosition.x),
-                    offsetY: Double(arPosition.y),
-                    offsetZ: Double(arPosition.z)
-                )
-                print("✅ [Placement] AR coordinates updated in API")
-            }
-            
+            print("   AR Position (intended): (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))")
+            print("   GPS (uncorrected): (\(String(format: "%.6f", createdObject.latitude)), \(String(format: "%.6f", createdObject.longitude)))")
+            print("   💡 Main AR view will measure actual placement position and correct GPS coordinates")
+
             // Update grounding height for the newly created object
             try await APIService.shared.updateGroundingHeight(objectId: createdObject.id, height: groundingHeight)
             // Note: Scale is stored locally or could be added to API in the future
             print("📏 [Placement] Object scale set to \(scale)x (stored locally)")
-            print("📍 [Placement] Object saved to API - GPS: (\(String(format: "%.6f", coordinate.latitude)), \(String(format: "%.6f", coordinate.longitude)))")
-            print("💡 [Placement] Object should appear in main AR view via checkAndPlaceBoxes")
-            print("   ⚠️ If object disappears, check if checkAndPlaceBoxes is finding it in nearbyLocations")
-            // Don't reload locations immediately - object is already placed correctly in AR
-            // Reloading would trigger checkAndPlaceBoxes which would re-place the object and cause it to move
-            // The coordinates are saved, so the object will be placed correctly on next app launch or manual reload
         } catch {
             print("❌ Failed to create object: \(error)")
         }

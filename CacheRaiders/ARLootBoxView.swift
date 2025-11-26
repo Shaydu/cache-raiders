@@ -93,11 +93,25 @@ struct ARLootBoxView: UIViewRepresentable {
             if let selectedLensId = currentLensId,
                let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
                 config.videoFormat = videoFormat
-                print("📷 Updating AR lens to: \(selectedLensId)")
+                print("📷 Updating AR lens to: \(selectedLensId) (format: \(videoFormat.imageResolution.width)x\(videoFormat.imageResolution.height) @ \(videoFormat.framesPerSecond)fps)")
+            } else {
+                print("📷 Using default AR lens (no specific lens selected)")
             }
 
-            let options: ARSession.RunOptions = needsLensUpdate ? [.resetTracking] : [.resetTracking]
+            // When lens changes, fully reset the session to apply the new video format
+            // This requires removing anchors and resetting tracking for the FOV change to take effect
+            let options: ARSession.RunOptions = needsLensUpdate 
+                ? [.resetTracking, .removeExistingAnchors] 
+                : [.resetTracking, .removeExistingAnchors]
+            
             uiView.session.run(config, options: options)
+            
+            // If we changed the lens, we need to re-place objects after the session resets
+            if needsLensUpdate {
+                print("🔄 Lens changed - session reset, objects will be re-placed when tracking is ready")
+                // Set flag to force re-placement when AR tracking is ready
+                context.coordinator.shouldForceReplacement = true
+            }
 
             // Remember the lens we just applied to prevent redundant updates
             context.coordinator.lastAppliedLensId = currentLensId
@@ -119,11 +133,13 @@ struct ARLootBoxView: UIViewRepresentable {
             let coordinator = context.coordinator
             let shouldCheckPlacement = locationsChanged
 
+            // Use DispatchQueue to properly defer state updates outside of view update cycle
+            // This prevents "Modifying state during view update" warnings
             DispatchQueue.main.async {
                 Task.detached(priority: .userInitiated) {
                     let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
 
-                    // Update UI on main thread
+                    // Update UI on main thread - deferred outside view update cycle
                     await MainActor.run {
                         nearbyLocations = nearby
                     }
@@ -142,14 +158,12 @@ struct ARLootBoxView: UIViewRepresentable {
         // Handle randomization trigger
         if locationManager.shouldRandomize {
             print("🎯 Randomize button pressed - triggering sphere placement...")
-            // Defer the randomization to avoid view update publishing issues
-            DispatchQueue.main.async {
+            // Defer ALL state modifications to avoid "Modifying state during view update" warning
+            Task { @MainActor in
                 context.coordinator.randomizeLootBoxes()
                 // Reset the flag after randomization is complete
-                DispatchQueue.main.async {
-                    locationManager.shouldRandomize = false
-                    print("🔄 Randomize flag reset")
-                }
+                locationManager.shouldRandomize = false
+                print("🔄 Randomize flag reset")
             }
         }
 
@@ -158,27 +172,25 @@ struct ARLootBoxView: UIViewRepresentable {
             print("🎯 Single sphere placement triggered in ARLootBoxView...")
             // Get the location ID if one was provided (from map marker)
             let locationId = locationManager.pendingSphereLocationId
-            // Defer the sphere placement to avoid view update publishing issues
-            DispatchQueue.main.async {
+            // Defer ALL state modifications to avoid "Modifying state during view update" warning
+            Task { @MainActor in
                 context.coordinator.placeSingleSphere(locationId: locationId)
                 // Reset the flags after placement is complete
-                DispatchQueue.main.async {
-                    locationManager.shouldPlaceSphere = false
-                    locationManager.pendingSphereLocationId = nil
-                    print("🔄 Single sphere flag reset")
-                }
+                locationManager.shouldPlaceSphere = false
+                locationManager.pendingSphereLocationId = nil
+                print("🔄 Single sphere flag reset")
             }
         }
 
         // Handle pending AR item placement
         if let pendingItem = locationManager.pendingARItem {
             print("🎯 Pending AR item placement triggered: \(pendingItem.name)")
-            // Clear the pending item IMMEDIATELY to prevent duplicate placements
-            // This prevents updateUIView from calling placeARItem multiple times
-            locationManager.pendingARItem = nil
-            print("🔄 Pending AR item cleared immediately to prevent duplicates")
-            // Defer the actual placement to avoid view update publishing issues
-            DispatchQueue.main.async {
+            // Defer ALL state modifications to avoid "Modifying state during view update" warning
+            Task { @MainActor in
+                // Clear the pending item to prevent duplicate placements
+                locationManager.pendingARItem = nil
+                print("🔄 Pending AR item cleared to prevent duplicates")
+                // Defer the actual placement
                 context.coordinator.placeARItem(pendingItem)
             }
         }
@@ -186,20 +198,18 @@ struct ARLootBoxView: UIViewRepresentable {
         // Handle AR object reset trigger (when locations are reset)
         if locationManager.shouldResetARObjects {
             print("🔄 Reset AR objects triggered - removing all placed objects...")
-            // Clear the flag IMMEDIATELY to prevent duplicate resets
-            locationManager.shouldResetARObjects = false
-            // Defer the reset to avoid view update publishing issues
-            DispatchQueue.main.async {
+            // Defer ALL state modifications to avoid "Modifying state during view update" warning
+            Task { @MainActor in
+                // Clear the flag to prevent duplicate resets
+                locationManager.shouldResetARObjects = false
                 context.coordinator.removeAllPlacedObjects()
                 // Update nearby locations binding so UI reflects reset state
                 // Re-placement will happen automatically on next AR frame update when tracking is ready
                 if let userLocation = userLocationManager.currentLocation {
                     let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
-                    DispatchQueue.main.async {
-                        nearbyLocations = nearby
-                        // Note: Re-placement will be triggered by session(_:didUpdate:) when AR tracking is ready
-                        // The shouldForceReplacement flag in ARCoordinator ensures objects are re-placed
-                    }
+                    nearbyLocations = nearby
+                    // Note: Re-placement will be triggered by session(_:didUpdate:) when AR tracking is ready
+                    // The shouldForceReplacement flag in ARCoordinator ensures objects are re-placed
                 }
             }
         }

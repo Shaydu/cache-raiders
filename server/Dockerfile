@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY app.py .
 COPY admin.html .
+COPY static ./static
 
 # Create directory for database (will be persisted via volume)
 RUN mkdir -p /app/data

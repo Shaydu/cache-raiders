@@ -10,6 +10,8 @@ struct SettingsView: View {
     @StateObject private var viewModel: SettingsViewModel
     @Environment(\.dismiss) var dismiss
     @State private var previousDistance: Double = 10.0
+    @State private var showQRScanner = false
+    @State private var scannedURL: String?
     
     init(locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager) {
         self.locationManager = locationManager
@@ -49,6 +51,7 @@ struct SettingsView: View {
         NavigationView {
             List {
                 searchDistanceSection
+                maxObjectLimitSection
                 findableTypesSection
                 mapDisplaySection
                 arZoomSection
@@ -56,6 +59,7 @@ struct SettingsView: View {
                 userProfileSection
                 leaderboardSection
                 apiSyncSection
+                arLensSection
                 aboutSection
             }
             .navigationTitle("Settings")
@@ -123,6 +127,42 @@ struct SettingsView: View {
                 }
                 
                 Text("Loot boxes within this distance will appear in AR")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+    
+    private var maxObjectLimitSection: some View {
+        Section("AR Object Limit") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Maximum Objects in AR: \(locationManager.maxObjectLimit)")
+                    .font(.headline)
+                
+                Slider(
+                    value: Binding(
+                        get: { Double(locationManager.maxObjectLimit) },
+                        set: { newValue in
+                            locationManager.maxObjectLimit = Int(newValue)
+                            locationManager.saveMaxObjectLimit()
+                        }
+                    ),
+                    in: 1...25,
+                    step: 1
+                )
+                
+                HStack {
+                    Text("1")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("25")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                
+                Text("Maximum number of objects that can be placed in AR at once")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -434,13 +474,26 @@ struct SettingsView: View {
                 
                 Spacer()
                 
+                Button(action: {
+                    showQRScanner = true
+                }) {
+                    HStack {
+                        Image(systemName: "qrcode.viewfinder")
+                        Text("Scan QR Code")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .tint(.blue)
+                
+                Spacer()
+                
                 Button("Use Default") {
                     viewModel.resetAPIURL()
                 }
                 .buttonStyle(.bordered)
             }
             
-            Text("Enter your computer's local IP address (e.g., 192.168.1.100:5001). Find it with: ifconfig (Mac) or ipconfig (Windows)")
+            Text("Enter your computer's local IP address (e.g., 192.168.1.100:5001). Find it with: ifconfig (Mac) or ipconfig (Windows). Or scan the QR code from the server admin page.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
             
@@ -449,6 +502,29 @@ struct SettingsView: View {
                 .foregroundColor(.blue)
         }
         .padding(.vertical, 4)
+        .sheet(isPresented: $showQRScanner) {
+            QRCodeScannerView(scannedURL: $scannedURL)
+        }
+        .onChange(of: scannedURL) { oldURL, newURL in
+            guard let url = newURL, url != oldURL else { return }
+            
+            // Defer state modification to next run loop to avoid "Modifying state during view update" warning
+            DispatchQueue.main.async {
+                // Update the form field immediately so user sees the URL
+                self.viewModel.apiURL = url
+                
+                // Save the URL and reconnect WebSocket
+                let saved = self.viewModel.saveAPIURL()
+                
+                if saved {
+                    // Reset scannedURL after processing to allow scanning again
+                    self.scannedURL = nil
+                } else {
+                    // If save failed, still reset to allow retry
+                    self.scannedURL = nil
+                }
+            }
+        }
     }
     
     private var apiSyncToggleView: some View {
@@ -809,6 +885,25 @@ struct SettingsView: View {
             .cornerRadius(8)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+    
+    private var arLensSection: some View {
+        Section("AR Camera Lens & FOV") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Select the camera lens and video format for AR view")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                
+                ARLensSelector(locationManager: locationManager)
+                    .padding(.vertical, 4)
+                
+                Text("Field of View (FOV) options:\n• Ultra Wide: Widest view (shows most area)\n• Wide: Standard view\n• Telephoto: Narrow view (zoomed in)\n\nYou can choose different resolutions and frame rates for each lens type. Higher resolution = better quality, 60fps = smoother motion.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .lineSpacing(2)
+            }
+            .padding(.vertical, 4)
+        }
     }
     
     private var aboutSection: some View {

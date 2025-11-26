@@ -8,8 +8,8 @@ class AREnvironmentManager {
     weak var arView: ARView?
     weak var locationManager: LootBoxLocationManager?
     
-    // Uniform luminance value when ambient light is disabled (0.0 to 1.0)
-    private let uniformLuminance: Float = 0.4 // 40% brightness for objects when ambient is disabled
+    // Maximum luminance value when ambient light is disabled (1.0 = full brightness)
+    private let maxLuminance: Float = 1.0 // Maximum brightness for objects when ambient is disabled
     
     init(arView: ARView?, locationManager: LootBoxLocationManager?) {
         self.arView = arView
@@ -58,7 +58,7 @@ class AREnvironmentManager {
         }
     }
     
-    /// Recursively restores materials by converting UnlitMaterial back to SimpleMaterial
+    /// Recursively restores materials by removing emissive properties and restoring normal lighting
     private func restoreMaterials(to entity: Entity) {
         // Apply to this entity if it's a ModelEntity
         if let modelEntity = entity as? ModelEntity,
@@ -66,17 +66,9 @@ class AREnvironmentManager {
             var updatedMaterials: [RealityKit.Material] = []
 
             for material in model.materials {
-                if let unlitMaterial = material as? UnlitMaterial {
-                    // Convert UnlitMaterial back to SimpleMaterial to restore lighting
-                    var simpleMaterial = SimpleMaterial()
-                    simpleMaterial.color = unlitMaterial.color
-                    simpleMaterial.roughness = 0.4 // Default roughness
-                    simpleMaterial.metallic = 0.3 // Default metallic
-                    updatedMaterials.append(simpleMaterial)
-                } else {
-                    // Keep other material types as-is
-                    updatedMaterials.append(material)
-                }
+                // Use MaterialHelper to create non-emissive material
+                let restoredMaterial = MaterialHelper.createNonEmissiveMaterial(from: material)
+                updatedMaterials.append(restoredMaterial)
             }
 
             model.materials = updatedMaterials
@@ -89,7 +81,8 @@ class AREnvironmentManager {
         }
     }
     
-    /// Recursively applies uniform luminance to an entity and all its children
+    /// Recursively applies maximum luminance to an entity and all its children
+    /// Uses emissive materials to make objects glow at maximum brightness regardless of ambient light sensor
     private func applyUniformLuminance(to entity: Entity) {
         // Apply to this entity if it's a ModelEntity
         if let modelEntity = entity as? ModelEntity,
@@ -97,19 +90,16 @@ class AREnvironmentManager {
             var updatedMaterials: [RealityKit.Material] = []
 
             for material in model.materials {
-                if let simpleMaterial = material as? SimpleMaterial {
-                    // Convert SimpleMaterial to UnlitMaterial to ignore all lighting
-                    // This makes the material render at full brightness regardless of ambient light
-                    var unlitMaterial = UnlitMaterial()
-                    unlitMaterial.color = simpleMaterial.color
-                    updatedMaterials.append(unlitMaterial)
-                } else if let unlitMaterial = material as? UnlitMaterial {
-                    // Already unlit, keep as-is
-                    updatedMaterials.append(unlitMaterial)
-                } else {
-                    // For other material types, keep original
-                    updatedMaterials.append(material)
-                }
+                // Get the base color from the material
+                let baseColor = MaterialHelper.getBaseColor(from: material)
+                
+                // Use MaterialHelper to create emissive material with maximum intensity
+                let emissiveMaterial = MaterialHelper.createEmissiveMaterial(
+                    from: material,
+                    emissiveColor: baseColor,
+                    emissiveIntensity: maxLuminance
+                )
+                updatedMaterials.append(emissiveMaterial)
             }
 
             model.materials = updatedMaterials

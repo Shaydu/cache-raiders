@@ -179,6 +179,7 @@ extension CLLocation {
 class LootBoxLocationManager: ObservableObject {
     @Published var locations: [LootBoxLocation] = []
     @Published var maxSearchDistance: Double = 100.0 // Default 100 meters
+    @Published var maxObjectLimit: Int = 6 // Default 6 objects (range: 1-25)
     @Published var showARDebugVisuals: Bool = false // Default: debug visuals disabled
     @Published var showFoundOnMap: Bool = false // Default: don't show found items on map
     @Published var disableOcclusion: Bool = false // Default: occlusion enabled (false = occlusion ON)
@@ -201,6 +202,7 @@ class LootBoxLocationManager: ObservableObject {
     var onObjectCollectedByOtherUser: ((String) -> Void)? // Callback when object is collected by another user (to remove from AR)
     private let locationsFileName = "lootBoxLocations.json"
     private let maxDistanceKey = "maxSearchDistance"
+    private let maxObjectLimitKey = "maxObjectLimit"
     private let debugVisualsKey = "showARDebugVisuals"
     private let showFoundOnMapKey = "showFoundOnMap"
     private let disableOcclusionKey = "disableOcclusion"
@@ -224,6 +226,7 @@ class LootBoxLocationManager: ObservableObject {
         // Don't load existing locations on init - start with clean slate
         // loadLocations()
         loadMaxDistance()
+        loadMaxObjectLimit()
         loadDebugVisuals()
         loadShowFoundOnMap()
         loadDisableOcclusion()
@@ -258,26 +261,29 @@ class LootBoxLocationManager: ObservableObject {
             if foundBy != currentUserId {
                 print("🔔 Another user (\(foundBy)) collected object: \(objectId)")
                 
-                // Update the location's collected status
-                if let index = self.locations.firstIndex(where: { $0.id == objectId }) {
-                    var updatedLocation = self.locations[index]
-                    updatedLocation.collected = true
-                    self.locations[index] = updatedLocation
-                    
-                    // Notify observers
-                    self.objectWillChange.send()
-                    
-                    // Notify AR coordinator to remove the object from AR scene
-                    self.onObjectCollectedByOtherUser?(objectId)
-                    
-                    print("✅ Updated location '\(updatedLocation.name)' to collected status (found by another user)")
-                } else {
-                    // Location not in our list yet - might need to reload from API
-                    print("⚠️ Object \(objectId) collected by another user but not in local locations list")
-                    // Optionally trigger a refresh from API
-                    if let userLocation = self.lastKnownUserLocation {
-                        Task {
-                            await self.loadLocationsFromAPI(userLocation: userLocation, includeFound: true)
+                // Defer state modifications to avoid "Modifying state during view update" warnings
+                Task { @MainActor in
+                    // Update the location's collected status
+                    if let index = self.locations.firstIndex(where: { $0.id == objectId }) {
+                        var updatedLocation = self.locations[index]
+                        updatedLocation.collected = true
+                        self.locations[index] = updatedLocation
+                        
+                        // Notify observers
+                        self.objectWillChange.send()
+                        
+                        // Notify AR coordinator to remove the object from AR scene
+                        self.onObjectCollectedByOtherUser?(objectId)
+                        
+                        print("✅ Updated location '\(updatedLocation.name)' to collected status (found by another user)")
+                    } else {
+                        // Location not in our list yet - might need to reload from API
+                        print("⚠️ Object \(objectId) collected by another user but not in local locations list")
+                        // Optionally trigger a refresh from API
+                        if let userLocation = self.lastKnownUserLocation {
+                            Task {
+                                await self.loadLocationsFromAPI(userLocation: userLocation, includeFound: true)
+                            }
                         }
                     }
                 }
@@ -609,6 +615,19 @@ class LootBoxLocationManager: ObservableObject {
     private func loadMaxDistance() {
         if let saved = UserDefaults.standard.object(forKey: maxDistanceKey) as? Double {
             maxSearchDistance = saved
+        }
+    }
+    
+    // Save max object limit preference
+    func saveMaxObjectLimit() {
+        UserDefaults.standard.set(maxObjectLimit, forKey: maxObjectLimitKey)
+    }
+    
+    // Load max object limit preference
+    private func loadMaxObjectLimit() {
+        if let saved = UserDefaults.standard.object(forKey: maxObjectLimitKey) as? Int {
+            // Clamp to valid range (1-25)
+            maxObjectLimit = max(1, min(25, saved))
         }
     }
     
