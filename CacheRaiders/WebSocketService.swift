@@ -594,7 +594,18 @@ class WebSocketService: ObservableObject {
             case .networkConnectionLost:
                 errorMsg = "Network connection lost. Check your Wi-Fi connection."
             case .notConnectedToInternet:
-                errorMsg = "No internet connection. Please check your network settings."
+                // Error -1009 often means can't reach local network server, not necessarily no internet
+                var troubleshooting = "Cannot reach server at \(baseURL).\n\nThis usually means:\n• Server is not running (check: python app.py in server/ directory)\n• Wrong IP address (current: \(baseURL))"
+                
+                // Check if IP looks like a router/gateway (ends in .1)
+                if baseURL.contains(".1:") || baseURL.contains(".1/") {
+                    troubleshooting += "\n⚠️ IP ends in .1 - this is usually the router, not your computer!"
+                    troubleshooting += "\n   Your computer's IP is likely 192.168.68.XX (not .1)"
+                }
+                
+                troubleshooting += "\n• Device and server are on different Wi-Fi networks\n• Firewall is blocking port 5001\n\nTroubleshooting:\n1. Verify server IP: Check your computer's IP with 'ifconfig' (Mac) or 'ipconfig' (Windows)\n2. Test in browser: Open \(baseURL)/health\n3. Check Wi-Fi: Ensure device and server are on the same network\n4. Try 'Test Multiple Ports' in Settings to find the correct server"
+                
+                errorMsg = troubleshooting
             default:
                 break
             }

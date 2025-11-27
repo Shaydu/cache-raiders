@@ -30,6 +30,10 @@ struct ARLootBoxView: UIViewRepresentable {
             print("⚠️ Scene reconstruction not supported on this device")
         }
 
+        // NOTE: environmentTexturing may produce warnings like:
+        // "Could not resolve material name 'arInPlacePostProcessCombinedPermute...'"
+        // These are HARMLESS internal RealityKit materials - they load correctly via fallback path
+
         // Note: environmentTexturing may produce harmless warnings about internal RealityKit materials
         // These warnings (e.g., 'arInPlacePostProcessCombinedPermute14.rematerial') can be safely ignored
         // They are internal framework materials used for AR post-processing effects

@@ -57,12 +57,17 @@ const UserLocationsManager = {
 
                 // Create or update marker and circle
                 this.createOrUpdateUserMarker(deviceUuid, lat, lng, accuracy, heading, updatedAt, playerName);
-            });
-
-            // Mark players as connected when we load their locations
-            Object.keys(this.userLocationMarkers).forEach(deviceUuid => {
+                
+                // Mark player as connected when we receive their location update
+                // This ensures players sending HTTP location updates are considered connected
                 WebSocketManager.markPlayerConnected(deviceUuid);
             });
+            
+            // Refresh player list connection status after processing all locations
+            // This ensures players with active location markers are shown as connected
+            if (PlayersManager && typeof PlayersManager.refreshPlayerListConnectionStatus === 'function') {
+                PlayersManager.refreshPlayerListConnectionStatus();
+            }
         } catch (error) {
             console.warn('Error loading user locations:', error);
         }

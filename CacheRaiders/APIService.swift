@@ -178,13 +178,19 @@ class APIService {
         }
         
         // Sync to server if API is available
-        Task {
-            do {
-                try await updatePlayerNameOnServer(trimmedName)
-            } catch {
-                // Silently fail - local storage is primary, server is secondary
-                print("⚠️ Failed to sync player name to server: \(error.localizedDescription)")
+        // Note: Server requires non-empty player_name, so only sync if name is not empty
+        if !trimmedName.isEmpty {
+            Task {
+                do {
+                    try await updatePlayerNameOnServer(trimmedName)
+                    print("✅ Player name synced to server: \(trimmedName)")
+                } catch {
+                    // Log error but don't fail - local storage is primary, server is secondary
+                    print("⚠️ Failed to sync player name to server: \(error.localizedDescription)")
+                }
             }
+        } else {
+            print("ℹ️ Player name is empty - not syncing to server (server requires non-empty name)")
         }
     }
     

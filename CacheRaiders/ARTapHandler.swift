@@ -265,10 +265,14 @@ class ARTapHandler {
         }
         lastTapPlacementTime = now
 
+        Swift.print("🎯 Attempting manual placement via tap...")
+
         if let result = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .horizontal).first,
            let frame = arView.session.currentFrame {
             let cameraY = frame.camera.transform.columns.3.y
             let hitY = result.worldTransform.columns.3.y
+            Swift.print("🎯 Raycast hit surface at Y=\(String(format: "%.2f", hitY)), camera Y=\(String(format: "%.2f", cameraY))")
+
             if hitY <= cameraY - 0.2 {
                 // Generate unique name for tap-placed artifact
                 let tapCount = placedBoxes.count + 1
@@ -286,8 +290,10 @@ class ARTapHandler {
                 locationManager.addLocation(testLocation)
                 onPlaceLootBoxAtTap?(testLocation, result)
             } else {
-                Swift.print("⚠️ Tap raycast hit likely ceiling. Ignoring manual placement.")
+                Swift.print("⚠️ Tap raycast hit likely ceiling (hitY=\(String(format: "%.2f", hitY)) > cameraY-0.2=\(String(format: "%.2f", cameraY - 0.2))). Ignoring manual placement.")
             }
+        } else {
+            Swift.print("⚠️ Raycast failed - no horizontal plane detected. Move device to scan floor/surfaces.")
         }
     }
 }

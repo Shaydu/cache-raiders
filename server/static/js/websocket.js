@@ -88,16 +88,33 @@ const WebSocketManager = {
 
     /**
      * Check if a player is currently connected (within last 60 seconds)
+     * Considers both WebSocket connections AND recent location updates
      */
     isPlayerConnected(deviceUuid) {
+        // Check WebSocket connection
         if (this.connectedPlayers.has(deviceUuid)) {
             const lastSeen = this.playerLastSeen[deviceUuid];
             if (lastSeen) {
                 const secondsSinceLastSeen = (Date.now() - lastSeen) / 1000;
-                return secondsSinceLastSeen < (Config.DISCONNECTED_THRESHOLD / 1000);
+                if (secondsSinceLastSeen < (Config.DISCONNECTED_THRESHOLD / 1000)) {
+                    return true;
+                }
+            } else {
+                return true; // If in set but no timestamp, assume connected
             }
-            return true; // If in set but no timestamp, assume connected
         }
+        
+        // Also check if player has sent location updates recently (via HTTP or WebSocket)
+        // This handles players who send location updates but aren't WebSocket connected
+        if (UserLocationsManager && UserLocationsManager.userLocationMarkers) {
+            const hasActiveMarker = UserLocationsManager.userLocationMarkers[deviceUuid] !== undefined;
+            if (hasActiveMarker) {
+                // Player has an active location marker, consider them connected
+                // (markers are removed when location updates stop for 5+ minutes)
+                return true;
+            }
+        }
+        
         return false;
     },
 

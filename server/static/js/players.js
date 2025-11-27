@@ -74,6 +74,7 @@ const PlayersManager = {
                             <input type="text" id="player-name-${player.device_uuid}" 
                                    value="${player.player_name || ''}" 
                                    placeholder="Enter player name"
+                                   onkeypress="if(event.key === 'Enter') PlayersManager.updatePlayerName('${player.device_uuid}')"
                                    style="flex: 1; padding: 6px; border: 1px solid #444; border-radius: 4px; background: #1a1a1a; color: #fff; font-size: 12px; min-width: 0;">
                             <div style="display: flex; gap: 6px; flex-shrink: 0;">
                                 <button onclick="PlayersManager.updatePlayerName('${player.device_uuid}')" 
@@ -135,6 +136,50 @@ const PlayersManager = {
                 }
             }
         });
+    },
+
+    /**
+     * Create a new player
+     */
+    async createNewPlayer() {
+        const deviceUuidInput = document.getElementById('newPlayerDeviceUuid');
+        const nameInput = document.getElementById('newPlayerName');
+        
+        if (!deviceUuidInput || !nameInput) return;
+
+        const deviceUuid = deviceUuidInput.value.trim();
+        const playerName = nameInput.value.trim();
+
+        if (!deviceUuid) {
+            UI.showStatus('Device UUID is required', 'error');
+            return;
+        }
+
+        if (!playerName) {
+            UI.showStatus('Player name is required', 'error');
+            return;
+        }
+
+        // Validate UUID format (basic check - should be a valid UUID string)
+        if (deviceUuid.length < 8) {
+            UI.showStatus('Device UUID appears to be invalid (too short)', 'error');
+            return;
+        }
+
+        try {
+            await ApiService.players.updateName(deviceUuid, playerName);
+            UI.showStatus(`Player "${playerName}" created/updated successfully`, 'success');
+            
+            // Clear form
+            deviceUuidInput.value = '';
+            nameInput.value = '';
+            
+            // Reload players and stats to reflect changes
+            await this.loadPlayers();
+            await StatsManager.refreshStats();
+        } catch (error) {
+            UI.showStatus('Error creating player: ' + error.message, 'error');
+        }
     },
 
     /**
