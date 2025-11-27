@@ -49,6 +49,18 @@ const App = {
                 // Connect to WebSocket for real-time updates
                 WebSocketManager.connect();
                 WebSocketManager.startConnectionMonitor();
+                
+                // Initialize diagnostics manager after WebSocket connection
+                // Wait a moment for WebSocket to connect
+                setTimeout(() => {
+                    if (DiagnosticsManager) {
+                        DiagnosticsManager.init();
+                        // Request connected clients list
+                        if (WebSocketManager.socket && WebSocketManager.socket.connected) {
+                            WebSocketManager.socket.emit('get_connected_clients');
+                        }
+                    }
+                }, 2000);
 
                 // Auto-refresh every 30 seconds
                 setInterval(() => {

@@ -12,6 +12,13 @@ struct SettingsView: View {
     @State private var previousDistance: Double = 10.0
     @State private var showQRScanner = false
     @State private var scannedURL: String?
+    @State private var isTestingConnection = false
+    @State private var testResult: WebSocketService.TestResult?
+    @State private var isTestingMultiplePorts = false
+    @State private var multiPortTestResult: WebSocketService.MultiPortTestResult?
+    @State private var isRunningNetworkDiagnostics = false
+    @State private var networkDiagnosticReport: NetworkDiagnosticReport?
+    @State private var showNetworkDiagnostics = false
     
     init(locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager) {
         self.locationManager = locationManager
@@ -562,10 +569,194 @@ struct SettingsView: View {
                 }
             }
             .padding(.vertical, 4)
+            
+            // Test Connection Button
+            Button(action: {
+                isTestingConnection = true
+                testResult = nil
+                WebSocketService.shared.testConnection { result in
+                    DispatchQueue.main.async {
+                        isTestingConnection = false
+                        testResult = result
+                        viewModel.displayAlert(
+                            title: result.connected ? "Connection Test Successful" : "Connection Test Failed",
+                            message: result.summary
+                        )
+                    }
+                }
+            }) {
+                HStack {
+                    if isTestingConnection {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "network")
+                    }
+                    Text(isTestingConnection ? "Testing Connection..." : "Test WebSocket Connection")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .disabled(isTestingConnection || isTestingMultiplePorts)
+            .padding(.vertical, 4)
+            
+            // Test Multiple Ports Button
+            Button(action: {
+                isTestingMultiplePorts = true
+                multiPortTestResult = nil
+                
+                // Extract host from baseURL
+                let baseURL = APIService.shared.baseURL
+                let host: String
+                if let url = URL(string: baseURL), let hostComponent = url.host {
+                    host = hostComponent
+                } else {
+                    // Fallback: try to extract IP from URL string
+                    let components = baseURL.replacingOccurrences(of: "http://", with: "")
+                        .replacingOccurrences(of: "https://", with: "")
+                        .split(separator: ":")
+                    host = String(components.first ?? "localhost")
+                }
+                
+                WebSocketService.shared.testMultiplePorts(baseHost: host) { result in
+                    DispatchQueue.main.async {
+                        isTestingMultiplePorts = false
+                        multiPortTestResult = result
+                        
+                        if let workingPort = result.workingPort, let workingURL = result.workingURL {
+                            // Found a working port - update the URL automatically
+                            viewModel.apiURL = workingURL
+                            _ = viewModel.saveAPIURL()
+                            viewModel.displayAlert(
+                                title: "Working Port Found!",
+                                message: "Port \(workingPort) is working!\n\nUpdated API URL to: \(workingURL)\n\nReconnecting WebSocket..."
+                            )
+                        } else {
+                            viewModel.displayAlert(
+                                title: "No Working Ports Found",
+                                message: result.summary
+                            )
+                        }
+                    }
+                }
+            }) {
+                HStack {
+                    if isTestingMultiplePorts {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "network.badge.shield.half.filled")
+                    }
+                    Text(isTestingMultiplePorts ? "Testing Ports..." : "Test Multiple Ports (Auto-Detect)")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.blue)
+            .disabled(isTestingConnection || isTestingMultiplePorts)
+            .padding(.vertical, 4)
+            
+            if let multiResult = multiPortTestResult {
+                VStack(alignment: .leading, spacing: 4) {
+                    Divider()
+                    Text("Port Test Results:")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                    Text(multiResult.summary)
+                        .font(.caption2)
+                        .foregroundColor(multiResult.workingPort != nil ? .green : .orange)
+                }
+                .padding(.vertical, 4)
+            }
+            
+            if let result = testResult {
+                VStack(alignment: .leading, spacing: 4) {
+                    Divider()
+                    Text("Last Test Results:")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.secondary)
+                    Text(result.summary)
+                        .font(.caption2)
+                        .foregroundColor(result.connected ? .green : .red)
+                }
+                .padding(.vertical, 4)
+            }
+            
+            // Run Full Diagnostics Button
+            Button(action: {
+                isTestingConnection = true
+                WebSocketService.shared.runDiagnostics { report in
+                    DispatchQueue.main.async {
+                        isTestingConnection = false
+                        viewModel.displayAlert(
+                            title: "Connection Diagnostics",
+                            message: report
+                        )
+                    }
+                }
+            }) {
+                HStack {
+                    if isTestingConnection {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "stethoscope")
+                    }
+                    Text(isTestingConnection ? "Running Diagnostics..." : "Run Full Diagnostics")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.orange)
+            .disabled(isTestingConnection || isTestingMultiplePorts)
+            .padding(.vertical, 4)
+            
+            // Network Diagnostics Button (Port & Router Testing)
+            Button(action: {
+                let serverURL = viewModel.apiURL.isEmpty ? APIService.shared.baseURL : viewModel.apiURL
+                guard !serverURL.isEmpty else {
+                    viewModel.displayAlert(title: "Error", message: "No server URL configured")
+                    return
+                }
+                
+                isRunningNetworkDiagnostics = true
+                networkDiagnosticReport = nil
+                
+                Task {
+                    let report = await NetworkDiagnosticsService.shared.runFullDiagnostics(serverURL: serverURL)
+                    await MainActor.run {
+                        networkDiagnosticReport = report
+                        isRunningNetworkDiagnostics = false
+                        showNetworkDiagnostics = true
+                    }
+                }
+            }) {
+                HStack {
+                    if isRunningNetworkDiagnostics {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "network")
+                    }
+                    Text(isRunningNetworkDiagnostics ? "Testing Network..." : "Test Ports & Router")
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.blue)
+            .disabled(isTestingConnection || isTestingMultiplePorts || isRunningNetworkDiagnostics)
+            .padding(.vertical, 4)
         }
         .padding(.vertical, 4)
         .sheet(isPresented: $showQRScanner) {
             QRCodeScannerView(scannedURL: $scannedURL)
+        }
+        .sheet(isPresented: $showNetworkDiagnostics) {
+            if let report = networkDiagnosticReport {
+                NetworkDiagnosticsView(report: report)
+            }
         }
         .onChange(of: scannedURL) { oldURL, newURL in
             guard let url = newURL, url != oldURL else { return }

@@ -25,29 +25,53 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'cache_raiders.db')
 # This allows the web map to show where users are currently located
 user_locations: Dict[str, Dict] = {}
 
+# Track connected WebSocket clients (session_id -> device_uuid)
+# Also track reverse mapping (device_uuid -> set of session_ids) for multiple connections
+connected_clients: Dict[str, str] = {}  # session_id -> device_uuid
+client_sessions: Dict[str, set] = {}  # device_uuid -> set of session_ids
+
 def get_local_ip():
     """Get the local network IP address."""
     # First, check if HOST_IP environment variable is set (useful for Docker)
     host_ip = os.environ.get('HOST_IP')
     if host_ip:
+        print(f"🌐 Using HOST_IP from environment: {host_ip}")
         return host_ip
     
+    # Try to get IP from all network interfaces using socket
     try:
-        # Connect to a remote address to determine local IP
+        import socket
+        # Get hostname to determine local IP
+        hostname = socket.gethostname()
+        # Try to get IP from hostname
+        try:
+            ip = socket.gethostbyname(hostname)
+            if ip and not ip.startswith('127.'):
+                print(f"🌐 Detected IP from hostname {hostname}: {ip}")
+                return ip
+        except socket.gaierror:
+            pass
+        
+        # Fallback: Connect to a remote address to determine local IP
         # This doesn't actually send data, just determines the route
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             # Connect to a public DNS server (doesn't actually connect)
             s.connect(('8.8.8.8', 80))
             ip = s.getsockname()[0]
-            return ip
+            if ip and not ip.startswith('127.'):
+                print(f"🌐 Detected IP via socket connection: {ip}")
+                return ip
         except Exception:
-            ip = '127.0.0.1'
+            pass
         finally:
             s.close()
-        return ip
-    except Exception:
-        return '127.0.0.1'
+    except Exception as e:
+        print(f"⚠️ Error detecting IP: {e}")
+    
+    # Last resort: return localhost
+    print("⚠️ Could not detect network IP, using 127.0.0.1")
+    return '127.0.0.1'
 
 def get_db_connection():
     """Get a database connection."""
@@ -1231,6 +1255,86 @@ def connection_test():
         'timestamp': datetime.utcnow().isoformat()
     })
 
+@app.route('/api/debug/test-port', methods=['GET'])
+def test_port():
+    """Test if a specific port is reachable from the server's perspective."""
+    import socket
+    
+    port = request.args.get('port', type=int)
+    host = request.args.get('host', '127.0.0.1')
+    timeout = request.args.get('timeout', type=float, default=3.0)
+    
+    if not port:
+        return jsonify({'error': 'port parameter required'}), 400
+    
+    result = {
+        'host': host,
+        'port': port,
+        'reachable': False,
+        'error': None,
+        'test_timestamp': datetime.utcnow().isoformat()
+    }
+    
+    try:
+        # Test TCP connectivity
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        connection_result = sock.connect_ex((host, port))
+        sock.close()
+        
+        if connection_result == 0:
+            result['reachable'] = True
+            result['message'] = f'Port {port} is reachable on {host}'
+        else:
+            result['reachable'] = False
+            result['error'] = f'Connection refused (error code: {connection_result})'
+            result['message'] = f'Port {port} is not reachable on {host}'
+            
+    except socket.timeout:
+        result['error'] = 'Connection timeout'
+        result['message'] = f'Port {port} test timed out after {timeout}s'
+    except socket.gaierror as e:
+        result['error'] = f'DNS resolution failed: {str(e)}'
+        result['message'] = f'Could not resolve host {host}'
+    except Exception as e:
+        result['error'] = str(e)
+        result['message'] = f'Error testing port {port}: {str(e)}'
+    
+    return jsonify(result)
+
+@app.route('/api/debug/test-ports', methods=['GET'])
+def test_ports():
+    """Test multiple ports for connectivity."""
+    ports_str = request.args.get('ports', '5001,5000,8080,3000,8000')
+    host = request.args.get('host', get_local_ip())
+    ports = [int(p.strip()) for p in ports_str.split(',') if p.strip().isdigit()]
+    
+    results = []
+    for port in ports:
+        # Use internal test
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2.0)
+        try:
+            connection_result = sock.connect_ex((host, port))
+            sock.close()
+            results.append({
+                'port': port,
+                'reachable': connection_result == 0,
+                'error': None if connection_result == 0 else f'Connection refused (code: {connection_result})'
+            })
+        except Exception as e:
+            results.append({
+                'port': port,
+                'reachable': False,
+                'error': str(e)
+            })
+    
+    return jsonify({
+        'host': host,
+        'tested_ports': results,
+        'timestamp': datetime.utcnow().isoformat()
+    })
+
 @app.route('/api/debug/network-info', methods=['GET'])
 def network_info():
     """Get detailed network information for debugging."""
@@ -1333,18 +1437,143 @@ def generate_qrcode():
 @socketio.on('connect')
 def handle_connect():
     """Handle client connection."""
-    print(f"🔌 Client connected: {request.sid}")
+    session_id = request.sid
+    print(f"🔌 Client connected: {session_id}")
+    try:
+        print(f"   Namespace: {request.namespace}")
+    except AttributeError:
+        pass
+    # Note: Flask-SocketIO should automatically handle Socket.IO protocol ping/pong (packets "2" and "3")
     emit('connected', {'status': 'connected', 'message': 'Successfully connected to CacheRaiders WebSocket'})
+    
+    # Track connection (device_uuid will be set when client identifies itself)
+    # For now, just track the session
+    connected_clients[session_id] = None  # Will be updated when client sends device_uuid
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handle client disconnection."""
-    print(f"🔌 Client disconnected: {request.sid}")
+    session_id = request.sid
+    print(f"🔌 Client disconnected: {session_id}")
+    
+    # Remove from tracking
+    device_uuid = connected_clients.pop(session_id, None)
+    if device_uuid and device_uuid in client_sessions:
+        client_sessions[device_uuid].discard(session_id)
+        if not client_sessions[device_uuid]:
+            del client_sessions[device_uuid]
 
 @socketio.on('ping')
 def handle_ping():
-    """Handle ping for keepalive."""
+    """Handle ping for keepalive (named event, not Socket.IO protocol ping)."""
+    # Note: Socket.IO protocol ping/pong (packets "2" and "3") is handled automatically by Flask-SocketIO
+    # This handler is for custom named 'ping' events, not protocol-level ping
     emit('pong', {'timestamp': datetime.utcnow().isoformat()})
+
+@socketio.on('register_device')
+def handle_register_device(data):
+    """Register a device UUID for this WebSocket session."""
+    session_id = request.sid
+    device_uuid = data.get('device_uuid')
+    
+    if device_uuid:
+        # Update tracking
+        old_uuid = connected_clients.get(session_id)
+        connected_clients[session_id] = device_uuid
+        
+        # Update reverse mapping
+        if old_uuid and old_uuid in client_sessions:
+            client_sessions[old_uuid].discard(session_id)
+            if not client_sessions[old_uuid]:
+                del client_sessions[old_uuid]
+        
+        if device_uuid not in client_sessions:
+            client_sessions[device_uuid] = set()
+        client_sessions[device_uuid].add(session_id)
+        
+        print(f"📱 Device registered: {device_uuid[:8]}... (session: {session_id[:8]}...)")
+        emit('device_registered', {'device_uuid': device_uuid, 'status': 'registered'})
+
+@socketio.on('diagnostic_ping')
+def handle_diagnostic_ping(data):
+    """Handle diagnostic ping request from admin panel."""
+    session_id = request.sid
+    ping_id = data.get('ping_id')
+    timestamp = data.get('timestamp')
+    
+    # Respond immediately with pong
+    emit('diagnostic_pong', {
+        'ping_id': ping_id,
+        'timestamp': timestamp,
+        'server_timestamp': datetime.utcnow().isoformat(),
+        'session_id': session_id
+    })
+
+@socketio.on('admin_ping_client')
+def handle_admin_ping_client(data):
+    """Admin panel requests to ping a specific client device."""
+    target_device_uuid = data.get('device_uuid')
+    ping_id = data.get('ping_id', str(datetime.utcnow().timestamp()))
+    admin_session_id = request.sid
+    
+    if not target_device_uuid:
+        emit('admin_ping_error', {'error': 'device_uuid required', 'ping_id': ping_id})
+        return
+    
+    # Find sessions for this device
+    target_sessions = client_sessions.get(target_device_uuid, set())
+    
+    if not target_sessions:
+        emit('admin_ping_error', {
+            'error': f'Device {target_device_uuid[:8]}... not connected',
+            'ping_id': ping_id,
+            'device_uuid': target_device_uuid
+        })
+        return
+    
+    # Send ping to all sessions for this device
+    ping_timestamp = datetime.utcnow().isoformat()
+    for target_session in target_sessions:
+        socketio.emit('admin_diagnostic_ping', {
+            'ping_id': ping_id,
+            'timestamp': ping_timestamp,
+            'admin_session_id': admin_session_id
+        }, room=target_session)
+    
+    print(f"📡 Admin ping sent to device {target_device_uuid[:8]}... (ping_id: {ping_id})")
+
+@socketio.on('client_diagnostic_pong')
+def handle_client_diagnostic_pong(data):
+    """Client responds to admin diagnostic ping."""
+    ping_id = data.get('ping_id')
+    client_timestamp = data.get('client_timestamp')
+    admin_session_id = data.get('admin_session_id')
+    device_uuid = connected_clients.get(request.sid)
+    
+    # Forward pong to admin session
+    if admin_session_id:
+        socketio.emit('admin_ping_response', {
+            'ping_id': ping_id,
+            'device_uuid': device_uuid,
+            'client_timestamp': client_timestamp,
+            'server_timestamp': datetime.utcnow().isoformat(),
+            'latency_ms': None  # Will be calculated by admin panel
+        }, room=admin_session_id)
+        
+        print(f"📡 Client pong received from {device_uuid[:8] if device_uuid else 'unknown'}... (ping_id: {ping_id})")
+
+@socketio.on('get_connected_clients')
+def handle_get_connected_clients():
+    """Get list of all connected clients for admin panel."""
+    clients_info = []
+    for device_uuid, sessions in client_sessions.items():
+        clients_info.append({
+            'device_uuid': device_uuid,
+            'session_count': len(sessions),
+            'session_ids': list(sessions)
+        })
+    
+    emit('connected_clients_list', {'clients': clients_info})
 
 if __name__ == '__main__':
     init_db()

@@ -879,6 +879,10 @@ struct SphereFactory: LootBoxFactory {
         // CRITICAL: Ensure sphere is enabled and visible
         sphere.isEnabled = true
 
+        // Add collision shape for better grounding and surface detection
+        // This helps ARKit understand the object's physical boundaries
+        sphere.collision = CollisionComponent(shapes: [.generateSphere(radius: sphereRadius)])
+
         let light = PointLightComponent(color: location.type.glowColor, intensity: 200)
         sphere.components.set(light)
 
@@ -996,19 +1000,20 @@ struct CubeFactory: LootBoxFactory {
     func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
         let cubeSize = Float.random(in: 0.15...0.3)
         let cubeMesh = MeshResource.generateBox(width: cubeSize, height: cubeSize, depth: cubeSize, cornerRadius: 0.01)
-        
-        // Use UnlitMaterial for translucent glow effect (ignores external lighting, glows from within)
-        var cubeMaterial = UnlitMaterial()
+
+        // Use PhysicallyBasedMaterial for proper lighting and shading
+        var cubeMaterial = PhysicallyBasedMaterial()
         let sourceColor = location.type.color
-        
+
         // Extract RGB components from UIColor
         var red: CGFloat = 0
         var green: CGFloat = 0
         var blue: CGFloat = 0
         var alpha: CGFloat = 0
         sourceColor.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
-        
-        cubeMaterial.color = .init(
+
+        // Set base color with slight transparency for translucent glow effect
+        cubeMaterial.baseColor = PhysicallyBasedMaterial.BaseColor(
             tint: UIColor(
                 red: red,
                 green: green,
@@ -1016,13 +1021,29 @@ struct CubeFactory: LootBoxFactory {
                 alpha: 0.8 // Semi-transparent for translucency effect
             )
         )
-        
+
+        // Configure for glowing, slightly metallic appearance
+        cubeMaterial.roughness = PhysicallyBasedMaterial.Roughness(floatLiteral: 0.3) // Smooth surface
+        cubeMaterial.metallic = PhysicallyBasedMaterial.Metallic(floatLiteral: 0.5) // Somewhat metallic
+
+        // Add emissive glow from within
+        cubeMaterial.emissiveColor = PhysicallyBasedMaterial.EmissiveColor(color: UIColor(
+            red: red * 0.5,
+            green: green * 0.5,
+            blue: blue * 0.5,
+            alpha: 1.0
+        ))
+        cubeMaterial.emissiveIntensity = 2.0 // Strong internal glow
+
         let cube = ModelEntity(mesh: cubeMesh, materials: [cubeMaterial])
         cube.name = location.id
         cube.position = SIMD3<Float>(0, cubeSize / 2, 0)
 
         // CRITICAL: Ensure cube is enabled and visible
         cube.isEnabled = true
+
+        // Add collision shape for better grounding and surface detection
+        cube.collision = CollisionComponent(shapes: [.generateBox(size: [cubeSize, cubeSize, cubeSize])])
 
         // Add point light INSIDE the cube for internal glow effect
         let lightEntity = ModelEntity()

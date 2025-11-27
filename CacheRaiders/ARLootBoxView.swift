@@ -20,6 +20,16 @@ struct ARLootBoxView: UIViewRepresentable {
         // Detect both horizontal (ground) and vertical (walls) planes
         // Vertical planes are used for occlusion (hiding loot boxes behind walls)
         config.planeDetection = [.horizontal, .vertical]
+
+        // Enable scene reconstruction for better surface detection and grounding
+        // This provides mesh-based surface data for more accurate object placement
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            config.sceneReconstruction = .mesh
+            print("✅ Scene reconstruction (mesh) enabled for better object grounding")
+        } else {
+            print("⚠️ Scene reconstruction not supported on this device")
+        }
+
         // Note: environmentTexturing may produce harmless warnings about internal RealityKit materials
         // These warnings (e.g., 'arInPlacePostProcessCombinedPermute14.rematerial') can be safely ignored
         // They are internal framework materials used for AR post-processing effects
@@ -40,7 +50,11 @@ struct ARLootBoxView: UIViewRepresentable {
         
         // Run the session
         arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
-        
+
+        // IMPORTANT: Automatic environment lighting is controlled through the AR session configuration
+        // The config.environmentTexturing = .automatic above ensures virtual objects are lit by real-world lighting
+        // Note: Lighting is controlled through the AR session configuration, not a property on ARView
+
         // Tap gesture for placing and collecting loot boxes
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleTap(_:)))
         arView.addGestureRecognizer(tapGesture)

@@ -660,8 +660,16 @@ class LootBoxLocationManager: ObservableObject {
     }
     
     // Load disable occlusion preference
+    // Default: occlusion is ON (disableOcclusion = false)
+    // This ensures users don't see through walls to loot boxes by default
     private func loadDisableOcclusion() {
-        disableOcclusion = UserDefaults.standard.bool(forKey: disableOcclusionKey)
+        // Only load from UserDefaults if the key exists, otherwise default to false (occlusion ON)
+        if UserDefaults.standard.object(forKey: disableOcclusionKey) != nil {
+            disableOcclusion = UserDefaults.standard.bool(forKey: disableOcclusionKey)
+        } else {
+            // Default: occlusion ON (disableOcclusion = false)
+            disableOcclusion = false
+        }
     }
     
     // Save disable ambient light preference

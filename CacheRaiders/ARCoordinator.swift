@@ -304,6 +304,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         precisionPositioningService = ARPrecisionPositioningService(arView: arView) // Legacy
         geospatialService = ARGeospatialService() // New ENU-based service
 
+        // Configure environment lighting for proper shading and colors
+        // Increase intensity to ensure objects are well-lit and colors are visible
+        arView.environment.lighting.intensityExponent = 1.5
+
         // Start periodic grounding checks to ensure objects stay on surfaces
         // This continuously monitors for better surface data and re-grounds objects when found
         startPeriodicGrounding()
@@ -1433,6 +1437,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
             
             arView.session.run(config, options: [.resetTracking])
+
+            // Configure environment lighting for proper shading and colors
+            arView.environment.lighting.intensityExponent = 1.5
+
             // Clear raycast cache when session resets (surfaces may have changed)
             groundingService?.clearCache()
             Swift.print("✅ [AR Session] AR session restart initiated")

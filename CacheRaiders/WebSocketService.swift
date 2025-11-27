@@ -32,7 +32,7 @@ class WebSocketService: ObservableObject {
     }
     
     // Socket.IO handshake state
-    private enum HandshakeState {
+    private enum HandshakeState: Equatable {
         case notStarted
         case waitingForSessionInfo  // Waiting for "0" packet with session info
         case waitingForNamespaceConfirmation  // Sent "40", waiting for "40" response
@@ -84,8 +84,15 @@ class WebSocketService: ObservableObject {
         let httpURL = baseURL.replacingOccurrences(of: "http://", with: "ws://")
             .replacingOccurrences(of: "https://", with: "wss://")
         
-        guard let wsURL = URL(string: "\(httpURL)/socket.io/?EIO=4&transport=websocket") else {
+        let wsURLString = "\(httpURL)/socket.io/?EIO=4&transport=websocket"
+        print("🔍 [WebSocket Connect] Base URL: \(baseURL)")
+        print("🔍 [WebSocket Connect] HTTP URL: \(httpURL)")
+        print("🔍 [WebSocket Connect] WebSocket URL: \(wsURLString)")
+        
+        guard let wsURL = URL(string: wsURLString) else {
             let errorMsg = "Invalid WebSocket URL: \(httpURL)"
+            print("❌ [WebSocket Connect] Failed to create URL from: \(wsURLString)")
+            print("   Base URL was: \(baseURL)")
             connectionStatus = .error(errorMsg)
             DispatchQueue.main.async {
                 self.onConnectionError?(errorMsg)
@@ -107,7 +114,7 @@ class WebSocketService: ObservableObject {
         
         receiveMessage()
         
-        print("🔌 Attempting WebSocket connection to \(wsURL)")
+        print("🔌 [WebSocket Connect] Attempting connection to \(wsURL)")
     }
     
     func disconnect() {
@@ -184,7 +191,8 @@ class WebSocketService: ObservableObject {
                 self.receiveMessage()
                 
             case .failure(let error):
-                print("❌ WebSocket receive error: \(error)")
+                print("❌ [WebSocket Receive] Error: \(error)")
+                print("   Error type: \(type(of: error))")
                 self.handleError(error)
             }
         }
@@ -207,16 +215,36 @@ class WebSocketService: ObservableObject {
             return
         }
         
-        if text == "40" {
+        // Handle namespace confirmation: "40" or "40{...}" (with optional session data)
+        if text == "40" || text.hasPrefix("40{") {
             // Received namespace confirmation - handshake complete!
-            print("✅ Socket.IO handshake complete!")
+            // Extract session ID if present
+            if text.hasPrefix("40{") {
+                // Parse session data: 40{"sid":"..."}
+                let jsonPart = String(text.dropFirst(2)) // Remove "40" prefix
+                if let jsonData = jsonPart.data(using: .utf8),
+                   let sessionData = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                   let sid = sessionData["sid"] as? String {
+                    print("✅ Socket.IO handshake complete! Session ID: \(sid)")
+                } else {
+                    print("✅ Socket.IO handshake complete! (with session data)")
+                }
+            } else {
+                print("✅ Socket.IO handshake complete!")
+            }
             handshakeState = .completed
             DispatchQueue.main.async {
                 self.isConnected = true
                 self.connectionStatus = .connected
                 self.stopConnectionTimeoutTimer()
                 self.stopReconnectTimer()
-                self.startPingTimer()
+                // Register device with server
+                self.registerDevice()
+                // Wait a moment before starting ping to ensure connection is fully established
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.startPingTimer()
+                    print("📡 [Ping] Started ping timer (will ping every \(Int(self.pingInterval))s)")
+                }
             }
             return
         }
@@ -235,7 +263,13 @@ class WebSocketService: ObservableObject {
                         self.connectionStatus = .connected
                         self.stopConnectionTimeoutTimer()
                         self.stopReconnectTimer()
-                        self.startPingTimer()
+                        // Register device with server
+                        self.registerDevice()
+                        // Wait a moment before starting ping to ensure connection is fully established
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            self.startPingTimer()
+                            print("📡 [Ping] Started ping timer (will ping every \(Int(self.pingInterval))s)")
+                        }
                     }
                 }
             }
@@ -244,9 +278,23 @@ class WebSocketService: ObservableObject {
         }
         
         // Handle other Socket.IO packet types
+        if text == "2" {
+            // Server sent ping - respond with pong "3"
+            print("📥 [Ping] Received ping from server, sending pong")
+            sendSocketIOPacket("3")
+            return
+        }
+        
         if text == "3" {
             // Pong response (we sent ping "2", server responds with "3")
-            print("📡 Received pong")
+            lastPongTime = Date()
+            if let pingTime = lastPingTime {
+                let latency = lastPongTime!.timeIntervalSince(pingTime) * 1000 // Convert to ms
+                print("📡 [Pong] Received Socket.IO pong response (latency: \(String(format: "%.0f", latency))ms)")
+            } else {
+                print("📡 [Pong] Received Socket.IO pong response")
+            }
+            pingPongFailures = 0 // Reset failure count on successful pong
             return
         }
         
@@ -259,12 +307,39 @@ class WebSocketService: ObservableObject {
                 self.connectionStatus = .connected
                 self.stopConnectionTimeoutTimer()
                 self.stopReconnectTimer()
+                // Register device with server
+                self.registerDevice()
                 self.startPingTimer()
             }
             return
         }
         
-        print("⚠️ Unhandled Socket.IO message: \(text)")
+        // Log unhandled messages for debugging, but don't treat as errors
+        // Some Socket.IO servers send additional packets that we can safely ignore
+        if text.count < 100 { // Only log short messages to avoid spam
+            print("ℹ️ [Socket.IO] Unhandled message (may be normal): \(text.prefix(50))")
+        }
+    }
+    
+    /// Register device UUID with server
+    private func registerDevice() {
+        let deviceUUID = APIService.shared.currentUserID
+        print("📱 [Device Registration] Registering device UUID: \(deviceUUID)")
+        
+        // Send register_device event: 42["register_device", {"device_uuid": "..."}]
+        let registerEvent: [String: Any] = [
+            "device_uuid": deviceUUID
+        ]
+        let jsonData: [Any] = ["register_device", registerEvent]
+        
+        if let json = try? JSONSerialization.data(withJSONObject: jsonData),
+           let jsonString = String(data: json, encoding: .utf8) {
+            let packet = "42\(jsonString)"
+            sendSocketIOPacket(packet)
+            print("📤 [Device Registration] Sent register_device event")
+        } else {
+            print("❌ [Device Registration] Failed to serialize register_device event")
+        }
     }
     
     /// Send a Socket.IO packet
@@ -275,15 +350,23 @@ class WebSocketService: ObservableObject {
         }
         
         let message = URLSessionWebSocketTask.Message.string(packet)
-        webSocketTask.send(message) { error in
+        webSocketTask.send(message) { [weak self] error in
             if let error = error {
                 print("❌ Failed to send Socket.IO packet '\(packet)': \(error)")
-                self.handleError(error)
+                self?.handleError(error)
             } else {
-                print("📤 Sent Socket.IO packet: \(packet)")
+                // Only log non-ping packets to reduce noise (ping is every 30s)
+                if packet != "2" {
+                    print("📤 Sent Socket.IO packet: \(packet)")
+                }
             }
         }
     }
+    
+    // Track ping/pong for diagnostics
+    private var lastPingTime: Date?
+    private var lastPongTime: Date?
+    private var pingPongFailures: Int = 0
     
     /// Parse Socket.IO event message format: 42["event_name", {...}]
     private func parseSocketIOEvent(_ text: String) {
@@ -316,6 +399,9 @@ class WebSocketService: ObservableObject {
             
         case "all_finds_reset":
             handleAllFindsResetEvent()
+            
+        case "admin_diagnostic_ping":
+            handleAdminDiagnosticPing(eventData)
             
         default:
             print("📨 Received unhandled Socket.IO event: \(eventName)")
@@ -362,10 +448,68 @@ class WebSocketService: ObservableObject {
         }
     }
     
+    /// Handle admin diagnostic ping event
+    private func handleAdminDiagnosticPing(_ data: [String: Any]) {
+        guard let pingId = data["ping_id"] as? String,
+              let adminSessionId = data["admin_session_id"] as? String else {
+            print("⚠️ admin_diagnostic_ping event missing required fields")
+            return
+        }
+        
+        print("📡 Received admin diagnostic ping (ping_id: \(pingId))")
+        
+        // Respond with pong
+        let clientTimestamp = ISO8601DateFormatter().string(from: Date())
+        let pongEvent = [
+            "ping_id": pingId,
+            "client_timestamp": clientTimestamp,
+            "admin_session_id": adminSessionId
+        ]
+        
+        // Send as Socket.IO event: 42["client_diagnostic_pong", {...}]
+        let jsonData: [Any] = ["client_diagnostic_pong", pongEvent]
+        if let json = try? JSONSerialization.data(withJSONObject: jsonData),
+           let jsonString = String(data: json, encoding: .utf8) {
+            let packet = "42\(jsonString)"
+            sendSocketIOPacket(packet)
+            print("📤 Sent client diagnostic pong (ping_id: \(pingId))")
+        }
+    }
+    
     func sendPing() {
-        guard isConnected, handshakeState == .completed else { return }
+        guard isConnected, handshakeState == .completed else {
+            print("⚠️ [Ping] Skipping ping - not fully connected (isConnected: \(isConnected), handshakeState: \(handshakeState))")
+            return
+        }
         // Socket.IO ping is packet type "2"
+        lastPingTime = Date()
+        print("📤 [Ping] Sending Socket.IO ping packet (attempt \(pingPongFailures + 1))")
         sendSocketIOPacket("2")
+        
+        // Check if we received pong within 5 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            guard let self = self else { return }
+            if let pingTime = self.lastPingTime, self.lastPongTime == nil || self.lastPongTime! < pingTime {
+                self.pingPongFailures += 1
+                print("⚠️ [Ping/Pong] No pong received after ping (failures: \(self.pingPongFailures))")
+                if self.pingPongFailures >= 3 {
+                    print("❌ [Ping/Pong] Multiple ping/pong failures detected")
+                    print("   This may indicate:")
+                    print("   • Server not responding to Socket.IO protocol ping/pong")
+                    print("   • Connection not fully established despite handshake")
+                    print("   • Network issues or firewall blocking")
+                    print("   • Flask-SocketIO version compatibility issue")
+                    // Don't disconnect automatically - connection might still work for events
+                    // But log the issue for debugging
+                }
+            } else {
+                // Reset failure count on success
+                if self.pingPongFailures > 0 {
+                    print("✅ [Ping/Pong] Pong received - connection is healthy again")
+                }
+                self.pingPongFailures = 0
+            }
+        }
     }
     
     // MARK: - Timers
@@ -420,17 +564,166 @@ class WebSocketService: ObservableObject {
     
     func handleError(_ error: Error) {
         stopConnectionTimeoutTimer()
-        let errorMsg = error.localizedDescription
+        
+        // Build WebSocket URL for logging
+        let httpURL = baseURL.replacingOccurrences(of: "http://", with: "ws://")
+            .replacingOccurrences(of: "https://", with: "wss://")
+        let wsURLString = "\(httpURL)/socket.io/?EIO=4&transport=websocket"
+        
+        // Enhanced error logging for root cause analysis
+        var errorMsg = error.localizedDescription
+        
+        // Log detailed error information
+        if let urlError = error as? URLError {
+            let errorCode = urlError.code
+            print("❌ WebSocket error: \(errorMsg)")
+            print("   Error type: \(type(of: error))")
+            print("   URLError code: \(urlError.code.rawValue) (\(errorCode))")
+            print("   Failed URL (from error): \(urlError.failureURLString ?? "unknown")")
+            
+            // Provide more helpful error messages based on error code
+            switch errorCode {
+            case .cannotConnectToHost:
+                // Test HTTP connectivity first to provide better diagnostics
+                Task {
+                    await testHTTPConnectivity()
+                }
+                errorMsg = "Cannot connect to server at \(baseURL).\n\nTroubleshooting:\n1. Check if server is running (try opening \(baseURL)/health in a browser)\n2. Verify IP address is correct (current: \(baseURL))\n3. Ensure device and server are on the same Wi-Fi network\n4. Check firewall allows connections on port 5001\n5. Try 'Test Multiple Ports' button in Settings"
+            case .timedOut:
+                errorMsg = "Connection timed out to \(baseURL).\n\nPossible causes:\n• Server is slow to respond\n• Network congestion\n• Firewall blocking connection\n• Server not running"
+            case .networkConnectionLost:
+                errorMsg = "Network connection lost. Check your Wi-Fi connection."
+            case .notConnectedToInternet:
+                errorMsg = "No internet connection. Please check your network settings."
+            default:
+                break
+            }
+            
+            let nsError = error as NSError
+            if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+                print("   Underlying error: \(underlyingError)")
+            }
+        } else if let nsError = error as NSError? {
+            print("❌ WebSocket error: \(errorMsg)")
+            print("   Error type: \(type(of: error))")
+            print("   NSError domain: \(nsError.domain)")
+            print("   NSError code: \(nsError.code)")
+            print("   User info: \(nsError.userInfo)")
+        } else {
+            print("❌ WebSocket error: \(errorMsg)")
+            print("   Error type: \(type(of: error))")
+        }
+        
+        print("   Base URL: \(baseURL)")
+        print("   WebSocket URL (attempted): \(wsURLString)")
+        print("   Handshake state: \(handshakeState)")
+        print("   Connection status: \(connectionStatus)")
+        
         DispatchQueue.main.async {
             self.isConnected = false
             self.connectionStatus = .error(errorMsg)
             self.handshakeState = .notStarted
             self.onConnectionError?(errorMsg)
         }
-        print("❌ WebSocket error: \(errorMsg)")
         
         // Attempt to reconnect
         startReconnectTimer()
+    }
+    
+    /// Test HTTP connectivity to help diagnose connection issues
+    private func testHTTPConnectivity() async {
+        print("🔍 [Diagnostics] Testing HTTP connectivity to \(baseURL)")
+        
+        // Test health endpoint first
+        do {
+            let isHealthy = try await APIService.shared.checkHealth()
+            if isHealthy {
+                print("✅ [Diagnostics] HTTP connection works! Server is reachable via HTTP.")
+                print("   ⚠️ WebSocket connection failed even though HTTP works.")
+                print("   This suggests:")
+                print("   • Server may not support WebSocket/Socket.IO")
+                print("   • WebSocket endpoint may be misconfigured")
+                print("   • Firewall may be blocking WebSocket upgrade")
+                print("   • Server might need Socket.IO client library configuration")
+            } else {
+                print("❌ [Diagnostics] HTTP health check failed - server may not be running")
+            }
+        } catch {
+            print("❌ [Diagnostics] HTTP connection test failed: \(error.localizedDescription)")
+            if let urlError = error as? URLError {
+                switch urlError.code {
+                case .cannotConnectToHost:
+                    print("   → Server is not reachable at \(baseURL)")
+                    print("   → Troubleshooting steps:")
+                    print("     1. Check if server is running: python app.py (in server/ directory)")
+                    print("     2. Verify IP address: Should match your computer's local IP")
+                    print("     3. Check network: Device and server must be on same Wi-Fi")
+                    print("     4. Test in browser: Open \(baseURL)/health")
+                    print("     5. Check firewall: macOS may block incoming connections")
+                case .timedOut:
+                    print("   → Connection timed out - server may be slow or firewall blocking")
+                default:
+                    print("   → Error code: \(urlError.code)")
+                }
+            }
+        }
+    }
+    
+    /// Comprehensive connection diagnostic
+    func runDiagnostics(completion: @escaping (String) -> Void) {
+        var diagnostics: [String] = []
+        diagnostics.append("🔍 Connection Diagnostics for \(baseURL)\n")
+        
+        // Test 1: HTTP connectivity
+        Task {
+            diagnostics.append("Test 1: HTTP Health Check...")
+            do {
+                let isHealthy = try await APIService.shared.checkHealth()
+                if isHealthy {
+                    diagnostics.append("✅ HTTP connection works!")
+                } else {
+                    diagnostics.append("❌ HTTP health check failed")
+                }
+            } catch {
+                diagnostics.append("❌ HTTP test failed: \(error.localizedDescription)")
+            }
+            
+            // Test 2: WebSocket connectivity
+            diagnostics.append("\nTest 2: WebSocket Connection...")
+            testConnection { result in
+                if result.connected {
+                    diagnostics.append("✅ WebSocket connection works!")
+                } else {
+                    diagnostics.append("❌ WebSocket failed: \(result.error ?? "Unknown error")")
+                }
+                
+                // Test 3: Multiple ports
+                diagnostics.append("\nTest 3: Testing Multiple Ports...")
+                let baseURL = APIService.shared.baseURL
+                let host: String
+                if let url = URL(string: baseURL), let hostComponent = url.host {
+                    host = hostComponent
+                } else {
+                    let components = baseURL.replacingOccurrences(of: "http://", with: "")
+                        .replacingOccurrences(of: "https://", with: "")
+                        .split(separator: ":")
+                    host = String(components.first ?? "localhost")
+                }
+                
+                self.testMultiplePorts(baseHost: host) { multiResult in
+                    if let workingPort = multiResult.workingPort {
+                        diagnostics.append("✅ Found working port: \(workingPort)")
+                        diagnostics.append("   Working URL: \(multiResult.workingURL ?? "unknown")")
+                    } else {
+                        diagnostics.append("❌ No working ports found")
+                        diagnostics.append("   Failed ports: \(multiResult.failedPorts.map { "\($0.port)" }.joined(separator: ", "))")
+                    }
+                    
+                    let report = diagnostics.joined(separator: "\n")
+                    completion(report)
+                }
+            }
+        }
     }
     
     // MARK: - Connection Timeout
@@ -440,7 +733,16 @@ class WebSocketService: ObservableObject {
         connectionTimeoutTimer = Timer.scheduledTimer(withTimeInterval: connectionTimeoutInterval, repeats: false) { [weak self] _ in
             guard let self = self else { return }
             // Check if we're still in connecting state and handshake hasn't completed
-            if case .connecting = self.connectionStatus, !self.isConnected, self.handshakeState != .completed {
+            let currentHandshakeState = self.handshakeState
+            let isHandshakeCompleted: Bool = {
+                switch currentHandshakeState {
+                case .completed:
+                    return true
+                default:
+                    return false
+                }
+            }()
+            if case .connecting = self.connectionStatus, !self.isConnected, !isHandshakeCompleted {
                 let errorMsg = "Connection timeout: Unable to complete Socket.IO handshake to \(self.baseURL) after \(Int(self.connectionTimeoutInterval)) seconds. Please check:\n• Server is running\n• URL is correct\n• Device is on the same network\n• Firewall allows connections"
                 DispatchQueue.main.async {
                     self.isConnected = false
@@ -460,6 +762,345 @@ class WebSocketService: ObservableObject {
     private func stopConnectionTimeoutTimer() {
         connectionTimeoutTimer?.invalidate()
         connectionTimeoutTimer = nil
+    }
+    
+    // MARK: - Connection Test
+    
+    /// Test WebSocket connection and return results
+    func testConnection(completion: @escaping (TestResult) -> Void) {
+        // Use a class wrapper to allow mutation in closures
+        class TestResultWrapper {
+            var result = TestResult()
+        }
+        let resultWrapper = TestResultWrapper()
+        
+        // Check if already connected
+        let currentHandshakeState = handshakeState
+        if isConnected && currentHandshakeState == .completed {
+            resultWrapper.result.connected = true
+            resultWrapper.result.connectionTime = 0
+            resultWrapper.result.eventsReceived.append("connected")
+            resultWrapper.result.pingReceived = true // Assume working if connected
+            completion(resultWrapper.result)
+            return
+        }
+        
+        // Create a temporary test connection (separate from main connection)
+        let startTime = Date()
+        let httpURL = baseURL.replacingOccurrences(of: "http://", with: "ws://")
+            .replacingOccurrences(of: "https://", with: "wss://")
+        
+        let wsURLString = "\(httpURL)/socket.io/?EIO=4&transport=websocket"
+        print("🔍 [WebSocket Test] Base URL: \(baseURL)")
+        print("🔍 [WebSocket Test] WebSocket URL: \(wsURLString)")
+        
+        guard let wsURL = URL(string: wsURLString) else {
+            let errorMsg = "Invalid WebSocket URL: \(httpURL)"
+            print("❌ [WebSocket Test] Failed to create URL: \(errorMsg)")
+            resultWrapper.result.error = errorMsg
+            completion(resultWrapper.result)
+            return
+        }
+        
+        // Create a minimal test session without delegate to avoid interference
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 5.0
+        let testSession = URLSession(configuration: config)
+        let testTask = testSession.webSocketTask(with: wsURL)
+        
+        print("🔍 [WebSocket Test] Starting test connection to \(wsURL)")
+
+        var pingReceived = false
+        var connectedReceived = false
+        var testCompleted = false
+        
+        // Set up message receiver
+        func receiveTestMessage() {
+            guard !testCompleted else { return }
+            testTask.receive { result in
+                guard !testCompleted else { return }
+                switch result {
+                case .success(let message):
+                    let text: String
+                    switch message {
+                    case .string(let str):
+                        text = str
+                    case .data(let data):
+                        text = String(data: data, encoding: .utf8) ?? ""
+                    @unknown default:
+                        text = ""
+                    }
+                    
+                    // Handle Socket.IO handshake
+                    if text.hasPrefix("0{") {
+                        let message = URLSessionWebSocketTask.Message.string("40")
+                        testTask.send(message) { _ in }
+                        receiveTestMessage()
+                        return
+                    }
+                    
+                    if text == "40" {
+                        resultWrapper.result.connected = true
+                        resultWrapper.result.connectionTime = Date().timeIntervalSince(startTime)
+                        connectedReceived = true
+                        
+                        // Send ping
+                        let pingMessage = URLSessionWebSocketTask.Message.string("2")
+                        testTask.send(pingMessage) { _ in }
+                        receiveTestMessage()
+                        return
+                    }
+                    
+                    if text == "3" {
+                        pingReceived = true
+                        resultWrapper.result.pingReceived = true
+                    }
+                    
+                    if text.hasPrefix("42[") && (text.contains("\"connected\"") || text.contains("'connected'")) {
+                        if !connectedReceived {
+                            resultWrapper.result.connected = true
+                            resultWrapper.result.connectionTime = Date().timeIntervalSince(startTime)
+                            resultWrapper.result.eventsReceived.append("connected")
+                        }
+                    }
+                    
+                    // Continue receiving
+                    receiveTestMessage()
+                    
+                case .failure(let error):
+                    // Connection failed or closed
+                    print("❌ [WebSocket Test] Connection failed: \(error.localizedDescription)")
+                    print("   Error type: \(type(of: error))")
+                    
+                    if let urlError = error as? URLError {
+                        print("   URLError code: \(urlError.code.rawValue) (\(urlError.code))")
+                        print("   Failed URL: \(urlError.failureURLString ?? "unknown")")
+                        let nsError = error as NSError
+                        if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+                            print("   Underlying error: \(underlyingError)")
+                        }
+                        resultWrapper.result.error = "URLError: \(urlError.code) - \(urlError.localizedDescription)"
+                    } else if let nsError = error as NSError? {
+                        print("   NSError domain: \(nsError.domain)")
+                        print("   NSError code: \(nsError.code)")
+                        resultWrapper.result.error = "NSError [\(nsError.domain):\(nsError.code)]: \(error.localizedDescription)"
+                    } else {
+                        resultWrapper.result.error = error.localizedDescription
+                    }
+                    
+                    if !resultWrapper.result.connected && resultWrapper.result.error == nil {
+                        resultWrapper.result.error = "Connection failed: \(error.localizedDescription)"
+                    }
+                    testCompleted = true
+                    testTask.cancel(with: .goingAway, reason: nil)
+                    
+                    // Finalize results
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        if resultWrapper.result.connected {
+                            resultWrapper.result.pingReceived = pingReceived
+                        }
+                        completion(resultWrapper.result)
+                    }
+                }
+            }
+        }
+        
+        // Start connection
+        testTask.resume()
+        receiveTestMessage()
+        
+        // Timeout after 5 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            guard !testCompleted else { return }
+            testCompleted = true
+            print("⏱️ [WebSocket Test] Connection test timed out after 5 seconds")
+            print("   Connected: \(resultWrapper.result.connected)")
+            print("   Ping received: \(pingReceived)")
+            testTask.cancel(with: .goingAway, reason: nil)
+            if !resultWrapper.result.connected {
+                resultWrapper.result.error = "Connection timeout after 5 seconds. Check:\n• Server is running at \(self.baseURL)\n• Device is on the same network\n• Firewall allows connections\n• URL is correct"
+            } else {
+                resultWrapper.result.pingReceived = pingReceived
+            }
+            completion(resultWrapper.result)
+        }
+    }
+    
+    struct TestResult {
+        var connected: Bool = false
+        var pingReceived: Bool = false
+        var connectionTime: TimeInterval = 0
+        var eventsReceived: [String] = []
+        var error: String?
+        var testedURL: String?
+        var port: Int?
+        
+        var summary: String {
+            var parts: [String] = []
+            parts.append("Connection: \(connected ? "✅" : "❌")")
+            if connected {
+                parts.append("Ping/Pong: \(pingReceived ? "✅" : "❌")")
+                parts.append("Connection Time: \(String(format: "%.2f", connectionTime))s")
+                parts.append("Events: \(eventsReceived.count)")
+                if let url = testedURL {
+                    parts.append("URL: \(url)")
+                }
+            }
+            if let error = error {
+                parts.append("Error: \(error)")
+            }
+            return parts.joined(separator: "\n")
+        }
+    }
+    
+    // MARK: - Multi-Port Connection Test
+    
+    /// Test connection on multiple ports and return the first successful one
+    func testMultiplePorts(
+        baseHost: String,
+        ports: [Int] = [5001, 5000, 8080, 3000, 8000, 5002],
+        completion: @escaping (MultiPortTestResult) -> Void
+    ) {
+        // Use a class wrapper to allow mutation in closures
+        class ResultWrapper {
+            var result = MultiPortTestResult()
+        }
+        let resultWrapper = ResultWrapper()
+        let testGroup = DispatchGroup()
+        
+        print("🔍 [Multi-Port Test] Testing \(ports.count) ports: \(ports.map { String($0) }.joined(separator: ", "))")
+        
+        for port in ports {
+            testGroup.enter()
+            let testURL = "http://\(baseHost):\(port)"
+            
+            // Create a temporary WebSocketService-like test
+            let httpURL = testURL.replacingOccurrences(of: "http://", with: "ws://")
+                .replacingOccurrences(of: "https://", with: "wss://")
+            let wsURLString = "\(httpURL)/socket.io/?EIO=4&transport=websocket"
+            
+            guard let wsURL = URL(string: wsURLString) else {
+                resultWrapper.result.failedPorts.append((port: port, error: "Invalid URL"))
+                testGroup.leave()
+                continue
+            }
+            
+            let config = URLSessionConfiguration.default
+            config.timeoutIntervalForRequest = 3.0
+            let testSession = URLSession(configuration: config)
+            let testTask = testSession.webSocketTask(with: wsURL)
+            
+            var testCompleted = false
+            var connected = false
+            
+            // Set up message receiver - capture resultWrapper explicitly
+            func receiveTestMessage() {
+                guard !testCompleted else { return }
+                testTask.receive { receiveResult in
+                    guard !testCompleted else { return }
+                    switch receiveResult {
+                    case .success(let message):
+                        let text: String
+                        switch message {
+                        case .string(let str):
+                            text = str
+                        case .data(let data):
+                            text = String(data: data, encoding: .utf8) ?? ""
+                        @unknown default:
+                            text = ""
+                        }
+                        
+                        // Handle Socket.IO handshake
+                        if text.hasPrefix("0{") {
+                            let message = URLSessionWebSocketTask.Message.string("40")
+                            testTask.send(message) { _ in }
+                            receiveTestMessage()
+                            return
+                        }
+                        
+                        if text == "40" || text.hasPrefix("42[") {
+                            if !connected {
+                                connected = true
+                                testCompleted = true
+                                resultWrapper.result.workingPort = port
+                                resultWrapper.result.workingURL = testURL
+                                resultWrapper.result.workingWebSocketURL = wsURLString
+                                print("✅ [Multi-Port Test] Port \(port) is working! URL: \(testURL)")
+                                testTask.cancel(with: .goingAway, reason: nil)
+                                testGroup.leave()
+                            }
+                            return
+                        }
+                        
+                        receiveTestMessage()
+                        
+                    case .failure(let error):
+                        if !testCompleted {
+                            testCompleted = true
+                            let errorMsg = error.localizedDescription
+                            resultWrapper.result.failedPorts.append((port: port, error: errorMsg))
+                            print("❌ [Multi-Port Test] Port \(port) failed: \(errorMsg)")
+                            testTask.cancel(with: .goingAway, reason: nil)
+                            testGroup.leave()
+                        }
+                    }
+                }
+            }
+            
+            // Start connection
+            testTask.resume()
+            receiveTestMessage()
+            
+            // Timeout after 3 seconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                if !testCompleted {
+                    testCompleted = true
+                    resultWrapper.result.failedPorts.append((port: port, error: "Timeout"))
+                    print("⏱️ [Multi-Port Test] Port \(port) timed out")
+                    testTask.cancel(with: .goingAway, reason: nil)
+                    testGroup.leave()
+                }
+            }
+        }
+        
+        // Wait for all tests to complete or find a working port
+        testGroup.notify(queue: .main) {
+            if resultWrapper.result.workingPort != nil {
+                print("✅ [Multi-Port Test] Found working port: \(resultWrapper.result.workingPort!)")
+            } else {
+                print("❌ [Multi-Port Test] No working ports found")
+                resultWrapper.result.error = "Could not connect to any port. Tried: \(ports.map { String($0) }.joined(separator: ", "))"
+            }
+            completion(resultWrapper.result)
+        }
+    }
+    
+    struct MultiPortTestResult {
+        var workingPort: Int?
+        var workingURL: String?
+        var workingWebSocketURL: String?
+        var failedPorts: [(port: Int, error: String)] = []
+        var error: String?
+        
+        var summary: String {
+            var parts: [String] = []
+            if let port = workingPort, let url = workingURL {
+                parts.append("✅ Working Port: \(port)")
+                parts.append("✅ Working URL: \(url)")
+            } else {
+                parts.append("❌ No working port found")
+            }
+            if !failedPorts.isEmpty {
+                parts.append("\nFailed ports:")
+                for (port, error) in failedPorts {
+                    parts.append("  Port \(port): \(error)")
+                }
+            }
+            if let error = error {
+                parts.append("\nError: \(error)")
+            }
+            return parts.joined(separator: "\n")
+        }
     }
 }
 
@@ -514,6 +1155,8 @@ private class WebSocketDelegate: NSObject, URLSessionWebSocketDelegate, URLSessi
             return "Mandatory extension missing"
         case .internalServerError:
             return "Internal server error"
+        case .tlsHandshakeFailure:
+            return "TLS handshake failure"
         @unknown default:
             return "Unknown code (\(code.rawValue))"
         }

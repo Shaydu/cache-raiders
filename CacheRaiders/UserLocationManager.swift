@@ -231,8 +231,25 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
             case .rangingFailure:
                 errorDescription = "Ranging failure"
                 logLevel = "⚠️"
-            @unknown default:
-                errorDescription = "Unknown CoreLocation error code: \(errorCode)"
+            case .deferredFailed:
+                errorDescription = "Deferred location update failed"
+                logLevel = "⚠️"
+            case .deferredNotUpdatingLocation:
+                errorDescription = "Deferred location update not updating"
+                logLevel = "⚠️"
+            case .deferredAccuracyTooLow:
+                errorDescription = "Deferred location update accuracy too low"
+                logLevel = "⚠️"
+            case .deferredDistanceFiltered:
+                errorDescription = "Deferred location update distance filtered"
+                logLevel = "⚠️"
+            case .deferredCanceled:
+                errorDescription = "Deferred location update canceled"
+                logLevel = "⚠️"
+            default:
+                // Handle any other known or unknown cases
+                errorDescription = "CoreLocation error code: \(errorCode)"
+                logLevel = "⚠️"
             }
             
             if shouldLog {

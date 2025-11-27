@@ -91,21 +91,18 @@ class BoxLootContainer {
     /// Helper function to load a chest model from a URL
     private static func loadChestModelFromURL(_ modelURL: URL, size: Float, type: LootBoxType, modelName: String, id: String) -> (box: ModelEntity, lid: ModelEntity?, animation: AnimationResource?) {
         do {
-            // Load the model entity - this might return a scene with multiple entities
+            // Load the model entity - Entity.loadModel returns a ModelEntity
             let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
             
-            // Entity.loadModel returns an Entity, but for model files it should be a ModelEntity
-            // Try to cast it directly, and if that fails, search for ModelEntity in children
+            // Entity.loadModel returns a ModelEntity, so we can use it directly
+            // ModelEntity is the base class, so loadedEntity is always a ModelEntity
             let modelEntity: ModelEntity
-            // Check if loadedEntity is already a ModelEntity (most common case)
-            if loadedEntity is ModelEntity {
-                modelEntity = loadedEntity as! ModelEntity
-            } else if let chest = findFirstModelEntity(in: loadedEntity) {
-                modelEntity = chest
+            if let model = findFirstModelEntity(in: loadedEntity) {
+                // Use the first found ModelEntity with a mesh (the actual 3D model)
+                modelEntity = model
             } else {
-                // Create a wrapper and add the loaded entity as child
-                modelEntity = ModelEntity()
-                modelEntity.addChild(loadedEntity)
+                // If no child ModelEntity found, use the loaded entity directly (it's already a ModelEntity)
+                modelEntity = loadedEntity
             }
             
             // Scale the model to match desired size
@@ -206,21 +203,30 @@ class BoxLootContainer {
     /// Applies materials to the model entities
     private static func applyMaterials(to entity: Entity, color: UIColor, glowColor: UIColor) {
         if let modelEntity = entity as? ModelEntity, var model = modelEntity.model {
-            // Update materials with glow effect
+            // Update materials with proper lighting properties
             var materials: [Material] = []
             for material in model.materials {
                 if var simpleMaterial = material as? SimpleMaterial {
-                    // Enhance the material with glow
+                    // Enhance the material with better lighting response
                     simpleMaterial.color = .init(tint: color)
+                    simpleMaterial.roughness = 0.4 // Moderate roughness for realistic shading
+                    simpleMaterial.metallic = 0.3 // Slight metallic sheen
                     materials.append(simpleMaterial)
+                } else if var pbr = material as? PhysicallyBasedMaterial {
+                    // If it's already PBR, enhance it
+                    pbr.baseColor = .init(tint: color)
+                    pbr.roughness = .init(floatLiteral: 0.4)
+                    pbr.metallic = .init(floatLiteral: 0.3)
+                    materials.append(pbr)
                 } else {
+                    // For other materials, try to preserve them but apply basic properties
                     materials.append(material)
                 }
             }
             model.materials = materials
             modelEntity.model = model
         }
-        
+
         // Recursively apply to children
         for child in entity.children {
             applyMaterials(to: child, color: color, glowColor: glowColor)

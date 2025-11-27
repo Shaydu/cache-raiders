@@ -7,6 +7,11 @@ const PlayersManager = {
      */
     async loadPlayers() {
         try {
+            // Request connected clients list from server to sync connection status
+            if (WebSocketManager.socket && WebSocketManager.socket.connected) {
+                WebSocketManager.socket.emit('get_connected_clients');
+            }
+            
             const players = await ApiService.players.getAll();
             this.updatePlayersList(players);
         } catch (error) {

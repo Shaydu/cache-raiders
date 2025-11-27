@@ -43,6 +43,44 @@ const WebSocketManager = {
                 // Refresh player list to update connection indicators
                 PlayersManager.refreshPlayerListConnectionStatus();
             });
+
+            // Listen for connected clients list from server (for accurate connection status)
+            this.socket.on('connected_clients_list', (data) => {
+                console.log('📡 Received connected clients list from server:', data.clients);
+                
+                // Sync server's connected clients with our local tracking
+                const serverConnectedUuids = new Set(
+                    data.clients.map(client => client.device_uuid)
+                );
+                
+                // Add all server-connected clients to our tracking
+                serverConnectedUuids.forEach(deviceUuid => {
+                    this.connectedPlayers.add(deviceUuid);
+                    // Update last seen if not already set (or if it's been a while)
+                    if (!this.playerLastSeen[deviceUuid] || 
+                        (Date.now() - this.playerLastSeen[deviceUuid]) > 60000) {
+                        this.playerLastSeen[deviceUuid] = Date.now();
+                    }
+                });
+                
+                // Remove clients that are no longer connected (but keep those that sent location updates recently)
+                const now = Date.now();
+                const disconnectedThreshold = Config.DISCONNECTED_THRESHOLD || 60000;
+                
+                this.connectedPlayers.forEach(deviceUuid => {
+                    if (!serverConnectedUuids.has(deviceUuid)) {
+                        // Only remove if we haven't seen a location update recently
+                        const lastSeen = this.playerLastSeen[deviceUuid];
+                        if (!lastSeen || (now - lastSeen) > disconnectedThreshold) {
+                            this.connectedPlayers.delete(deviceUuid);
+                            delete this.playerLastSeen[deviceUuid];
+                        }
+                    }
+                });
+                
+                // Refresh player list to update connection indicators
+                PlayersManager.refreshPlayerListConnectionStatus();
+            });
         } catch (error) {
             console.warn('⚠️ Failed to initialize WebSocket:', error);
         }
@@ -99,6 +137,114 @@ const WebSocketManager = {
                 PlayersManager.refreshPlayerListConnectionStatus();
             }
         }, Config.CONNECTION_CHECK_INTERVAL);
+    },
+
+    /**
+     * Test WebSocket connection
+     */
+    async testConnection() {
+        const testBtn = document.getElementById('wsTestBtn');
+        const testResult = document.getElementById('wsTestResult');
+        
+        if (!testBtn || !testResult) {
+            console.error('Test button or result element not found');
+            return;
+        }
+
+        // Disable button and show testing state
+        testBtn.disabled = true;
+        testBtn.textContent = '🔄 Testing...';
+        testResult.style.display = 'block';
+        testResult.style.background = '#2a2a2a';
+        testResult.style.color = '#ccc';
+        testResult.style.border = '1px solid #444';
+        testResult.innerHTML = '<div>🔌 Connecting to WebSocket server...</div>';
+
+        const testSocket = io(Config.API_BASE, {
+            transports: ['websocket', 'polling']
+        });
+
+        const testResults = {
+            connected: false,
+            pingReceived: false,
+            eventsReceived: []
+        };
+
+        let testTimeout;
+
+        // Set up event handlers
+        testSocket.on('connect', () => {
+            testResults.connected = true;
+            testResult.innerHTML += '<div style="color: #4caf50; margin-top: 8px;">✅ Connected to WebSocket server</div>';
+            
+            // Test ping/pong
+            testResult.innerHTML += '<div style="margin-top: 8px;">🏓 Testing ping/pong...</div>';
+            testSocket.emit('ping');
+            
+            // Set timeout for ping response
+            testTimeout = setTimeout(() => {
+                if (!testResults.pingReceived) {
+                    testResult.innerHTML += '<div style="color: #ff6b6b; margin-top: 4px;">⚠️ Ping timeout (no pong received)</div>';
+                    finishTest();
+                }
+            }, 3000);
+        });
+
+        testSocket.on('connect_error', (error) => {
+            testResult.innerHTML += `<div style="color: #ff6b6b; margin-top: 8px;">❌ Connection error: ${error.message || error}</div>`;
+            finishTest();
+        });
+
+        testSocket.on('pong', (data) => {
+            testResults.pingReceived = true;
+            testResult.innerHTML += '<div style="color: #4caf50; margin-top: 4px;">✅ Ping/pong working</div>';
+            if (testTimeout) clearTimeout(testTimeout);
+            finishTest();
+        });
+
+        testSocket.on('connected', (data) => {
+            testResults.eventsReceived.push('connected');
+            testResult.innerHTML += `<div style="color: #4caf50; margin-top: 4px;">📨 Received 'connected' event</div>`;
+        });
+
+        // Overall timeout
+        setTimeout(() => {
+            if (!testResults.connected) {
+                testResult.innerHTML += '<div style="color: #ff6b6b; margin-top: 8px;">❌ Connection timeout</div>';
+                finishTest();
+            }
+        }, 5000);
+
+        function finishTest() {
+            testSocket.disconnect();
+            
+            // Summary
+            testResult.innerHTML += '<div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #444;">';
+            testResult.innerHTML += '<strong>📊 Test Summary:</strong><br>';
+            testResult.innerHTML += `Connection: ${testResults.connected ? '✅' : '❌'}<br>`;
+            testResult.innerHTML += `Ping/Pong: ${testResults.pingReceived ? '✅' : '❌'}<br>`;
+            testResult.innerHTML += `Events: ${testResults.eventsReceived.length}`;
+            testResult.innerHTML += '</div>';
+
+            // Update button
+            testBtn.disabled = false;
+            testBtn.textContent = '🧪 Test WebSocket Connection';
+            
+            // Update result styling based on success
+            if (testResults.connected && testResults.pingReceived) {
+                testResult.style.border = '1px solid #4caf50';
+            } else {
+                testResult.style.border = '1px solid #ff6b6b';
+            }
+        }
+
+        // Try to connect
+        try {
+            testSocket.connect();
+        } catch (error) {
+            testResult.innerHTML += `<div style="color: #ff6b6b; margin-top: 8px;">❌ Error: ${error.message}</div>`;
+            finishTest();
+        }
     }
 };
 

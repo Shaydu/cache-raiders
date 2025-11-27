@@ -26,9 +26,14 @@ class AREnvironmentManager {
         let config = ARWorldTrackingConfiguration()
         config.planeDetection = [.horizontal, .vertical]
         config.environmentTexturing = disableAmbient ? .none : .automatic
-        
+
         arView.session.run(config, options: [])
-        
+
+        // IMPORTANT: Control automatic lighting based on ambient light setting
+        // When ambient is enabled, let ARKit automatically configure lighting (via environmentTexturing = .automatic)
+        // When disabled, we'll use emissive materials instead (via environmentTexturing = .none)
+        // Note: Lighting is controlled through the AR session configuration above, not a property on ARView
+
         if disableAmbient {
             // When ambient light is disabled, set uniform luminance on all objects
             applyUniformLuminanceToScene()

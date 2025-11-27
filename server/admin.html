@@ -153,11 +153,57 @@
                 <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #ccc;">Server URL:</label>
                 <input type="text" id="serverURL" readonly style="width: 100%; padding: 8px; background: #1a1a1a; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px; font-family: monospace;" value="Loading...">
             </div>
+            <div style="margin: 15px 0;">
+                <button onclick="WebSocketManager.testConnection()" style="width: 100%; padding: 10px; background: #444; color: #fff; border: 1px solid #666; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background 0.2s;" onmouseover="this.style.background='#555'" onmouseout="this.style.background='#444'" id="wsTestBtn">
+                    🧪 Test WebSocket Connection
+                </button>
+                <div id="wsTestResult" style="margin-top: 10px; padding: 10px; border-radius: 4px; display: none; font-size: 12px;"></div>
+            </div>
             <p style="color: #999; font-size: 11px; margin-top: 10px; font-style: italic;">
                 Note: Use the network IP address shown above (not localhost) when connecting from iOS devices on the same network.
             </p>
         </div>
         
+        <div class="section">
+            <div class="section-header">
+                <h2>🔍 Connection Diagnostics</h2>
+                <button class="btn-refresh" onclick="DiagnosticsManager.runFullDiagnostic()" title="Run Full Diagnostic">🔄</button>
+            </div>
+            <div style="margin-bottom: 15px;">
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button onclick="DiagnosticsManager.pingServer()" 
+                            style="flex: 1; min-width: 120px; padding: 10px; background: #4caf50; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                        🖥️ Ping Server
+                    </button>
+                    <button onclick="DiagnosticsManager.pingAllClients()" 
+                            style="flex: 1; min-width: 120px; padding: 10px; background: #2196f3; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                        📱 Ping All Clients
+                    </button>
+                    <button onclick="DiagnosticsManager.testMultiplePorts(window.location.hostname, [5001, 5000, 8080, 3000, 8000])" 
+                            style="flex: 1; min-width: 120px; padding: 10px; background: #9c27b0; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                        🔌 Test Ports
+                    </button>
+                    <button onclick="DiagnosticsManager.clearResults()" 
+                            style="flex: 1; min-width: 120px; padding: 10px; background: #666; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; font-weight: bold;">
+                        🗑️ Clear Results
+                    </button>
+                </div>
+            </div>
+            <div id="diagnosticResult" style="display: none; padding: 10px; border-radius: 4px; margin-bottom: 10px; font-size: 12px;"></div>
+            <div style="margin-bottom: 15px;">
+                <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #ccc;">Connected Clients</h3>
+                <div id="diagnosticConnectedClients" style="max-height: 200px; overflow-y: auto;">
+                    <div class="loading">Loading connected clients...</div>
+                </div>
+            </div>
+            <div>
+                <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #ccc;">Ping Results</h3>
+                <div id="diagnosticResults" style="max-height: 300px; overflow-y: auto; background: #1a1a1a; border-radius: 4px; padding: 10px;">
+                    <div class="loading">No ping results yet</div>
+                </div>
+            </div>
+        </div>
+
         <div class="section">
             <h2>⚙️ Map Settings</h2>
             <div class="form-group">
@@ -222,6 +268,7 @@
     <script src="/static/js/qrCode.js"></script>
     <script src="/static/js/modal.js"></script>
     <script src="/static/js/objects.js"></script>
+    <script src="/static/js/diagnostics.js"></script>
     <script src="/static/js/main.js"></script>
 </body>
 </html>

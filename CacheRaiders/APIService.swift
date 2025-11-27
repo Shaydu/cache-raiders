@@ -57,6 +57,12 @@ struct ResetFindsResponse: Codable {
     let finds_removed: Int
 }
 
+struct HealthResponse: Codable {
+    let status: String
+    let timestamp: String
+    let server_ip: String
+}
+
 // MARK: - API Service
 class APIService {
     static let shared = APIService()
@@ -191,6 +197,8 @@ class APIService {
         method: String = "GET",
         body: Data? = nil
     ) async throws -> T {
+        print("🔍 [API Request] \(method) \(url.absoluteString)")
+        
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -199,39 +207,189 @@ class APIService {
             request.httpBody = body
         }
         
-        let (data, response) = try await URLSession.shared.data(for: request)
-        
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
-        }
-        
-        guard (200...299).contains(httpResponse.statusCode) else {
-            if let errorData = try? JSONDecoder().decode([String: String].self, from: data),
-               let errorMessage = errorData["error"] {
-                throw APIError.serverError(errorMessage)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("❌ [API Request] Invalid response type: \(type(of: response))")
+                throw APIError.invalidResponse
             }
-            throw APIError.httpError(httpResponse.statusCode)
+            
+            print("📡 [API Request] Response status: \(httpResponse.statusCode)")
+            
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let errorBody = String(data: data, encoding: .utf8) ?? "Unable to decode error body"
+                print("❌ [API Request] HTTP error \(httpResponse.statusCode)")
+                print("   Response body: \(errorBody)")
+                
+                if let errorData = try? JSONDecoder().decode([String: String].self, from: data),
+                   let errorMessage = errorData["error"] {
+                    throw APIError.serverError(errorMessage)
+                }
+                throw APIError.httpError(httpResponse.statusCode)
+            }
+            
+            let decoder = JSONDecoder()
+            return try decoder.decode(T.self, from: data)
+        } catch {
+            // Enhanced error logging
+            print("❌ [API Request] Request failed: \(error.localizedDescription)")
+            print("   Error type: \(type(of: error))")
+            print("   URL: \(url.absoluteString)")
+            print("   Method: \(method)")
+            
+            if let urlError = error as? URLError {
+                print("   URLError code: \(urlError.code.rawValue) (\(urlError.code))")
+                print("   Failed URL: \(urlError.failureURLString ?? "unknown")")
+                let nsError = error as NSError
+                if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+                    print("   Underlying error: \(underlyingError)")
+                }
+            } else if let nsError = error as NSError? {
+                print("   NSError domain: \(nsError.domain)")
+                print("   NSError code: \(nsError.code)")
+                print("   User info: \(nsError.userInfo)")
+            }
+            
+            throw error
         }
-        
-        let decoder = JSONDecoder()
-        return try decoder.decode(T.self, from: data)
     }
     
     // MARK: - API Methods
     
-    /// Check if API is available
+    /// Check if API is available, with automatic server discovery on failure
     func checkHealth() async throws -> Bool {
-        guard let url = URL(string: "\(baseURL)/health") else {
+        return try await checkHealthWithDiscovery()
+    }
+    
+    /// Check health with automatic server discovery as fallback
+    private func checkHealthWithDiscovery(attemptDiscovery: Bool = true) async throws -> Bool {
+        let healthURL = "\(baseURL)/health"
+        print("🔍 [API Health Check] Attempting to connect to: \(healthURL)")
+        
+        guard let url = URL(string: healthURL) else {
+            print("❌ [API Health Check] Invalid URL: \(healthURL)")
+            print("   Base URL: \(baseURL)")
+            
+            // Try discovery if URL is invalid
+            if attemptDiscovery {
+                return try await discoverAndConnect()
+            }
             throw APIError.invalidURL
         }
         
         do {
-            let _: [String: String] = try await makeRequest(url: url)
-            return true
+            // Use proper HealthResponse struct for better type safety
+            let healthResponse: HealthResponse = try await makeRequest(url: url)
+            print("✅ [API Health Check] Successfully connected to \(healthURL)")
+            print("   Server status: \(healthResponse.status)")
+            print("   Server IP: \(healthResponse.server_ip)")
+            
+            // Save the working URL
+            UserDefaults.standard.set(baseURL, forKey: "apiBaseURL")
+            return healthResponse.status.lowercased() == "healthy"
         } catch {
-            // Suppress detailed error logging - just return false
-            // The calling code will handle the fallback
+            // Enhanced error logging for root cause analysis
+            print("❌ [API Health Check] Failed to connect to \(healthURL)")
+            print("   Error: \(error.localizedDescription)")
+            print("   Error type: \(type(of: error))")
+            
+            if let apiError = error as? APIError {
+                print("   API Error: \(apiError)")
+            } else if let urlError = error as? URLError {
+                print("   URLError code: \(urlError.code.rawValue) (\(urlError.code))")
+                print("   Failed URL: \(urlError.failureURLString ?? "unknown")")
+                
+                // Provide specific guidance based on error code
+                switch urlError.code {
+                case .cannotConnectToHost:
+                    print("   → Cannot connect to host - check:")
+                    print("      • Server is running")
+                    print("      • IP address is correct: \(baseURL)")
+                    print("      • Device and server are on same network")
+                    print("      • Firewall allows connections")
+                case .timedOut:
+                    print("   → Connection timed out - server may be slow or unreachable")
+                case .networkConnectionLost:
+                    print("   → Network connection lost - check Wi-Fi")
+                case .notConnectedToInternet:
+                    print("   → No internet connection")
+                default:
+                    break
+                }
+                
+                let nsError = error as NSError
+                if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+                    print("   Underlying error: \(underlyingError)")
+                }
+            } else if let decodingError = error as? DecodingError {
+                print("   Decoding Error: \(decodingError)")
+                // If decoding fails, the server responded but with wrong format
+                // This might still indicate the server is reachable
+                print("   → Server responded but with unexpected format")
+                print("   → This might indicate server version mismatch")
+            } else if let nsError = error as NSError? {
+                print("   NSError domain: \(nsError.domain)")
+                print("   NSError code: \(nsError.code)")
+                print("   User info: \(nsError.userInfo)")
+            }
+            
+            print("   Base URL: \(baseURL)")
+            print("   Full health URL: \(healthURL)")
+            
+            // Try automatic server discovery if this was the first attempt
+            if attemptDiscovery {
+                print("🔍 [API Health Check] Attempting automatic server discovery...")
+                do {
+                    return try await discoverAndConnect()
+                } catch {
+                    print("❌ [API Health Check] Server discovery also failed: \(error.localizedDescription)")
+                    // Return false to allow graceful fallback
+                    return false
+                }
+            }
+            
+            // Return false instead of throwing to allow graceful fallback
             return false
+        }
+    }
+    
+    /// Discover server automatically and update baseURL
+    private func discoverAndConnect() async throws -> Bool {
+        print("🔍 [Server Discovery] Starting automatic server discovery...")
+        
+        if let discoveredURL = await ServerDiscoveryService.shared.discoverServerAsync() {
+            print("✅ [Server Discovery] Found server at: \(discoveredURL)")
+            
+            // Update the stored URL
+            UserDefaults.standard.set(discoveredURL, forKey: "apiBaseURL")
+            
+            // Force refresh by synchronizing
+            UserDefaults.standard.synchronize()
+            
+            // Try health check with discovered URL
+            let healthURL = "\(discoveredURL)/health"
+            guard let url = URL(string: healthURL) else {
+                print("❌ [Server Discovery] Invalid discovered URL: \(discoveredURL)")
+                throw APIError.invalidURL
+            }
+            
+            do {
+                let healthResponse: HealthResponse = try await makeRequest(url: url)
+                print("✅ [Server Discovery] Successfully connected to discovered server")
+                print("   Server status: \(healthResponse.status)")
+                print("   Server IP: \(healthResponse.server_ip)")
+                return healthResponse.status.lowercased() == "healthy"
+            } catch {
+                print("❌ [Server Discovery] Failed to connect to discovered server: \(error.localizedDescription)")
+                throw error
+            }
+        } else {
+            print("❌ [Server Discovery] Could not find server on local network")
+            print("   → Make sure the server is running")
+            print("   → Check that device and server are on the same network")
+            print("   → Try manually setting the server URL in Settings")
+            throw APIError.serverUnreachable
         }
     }
     
@@ -579,6 +737,7 @@ enum APIError: LocalizedError {
     case httpError(Int)
     case serverError(String)
     case decodingError
+    case serverUnreachable
     
     var errorDescription: String? {
         switch self {
@@ -592,6 +751,8 @@ enum APIError: LocalizedError {
             return "Server error: \(message)"
         case .decodingError:
             return "Failed to decode response"
+        case .serverUnreachable:
+            return "Server is unreachable. Make sure the server is running and on the same network."
         }
     }
 }
