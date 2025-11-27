@@ -11,10 +11,6 @@ struct ARLootBoxView: UIViewRepresentable {
     @Binding var temperatureStatus: String?
     @Binding var collectionNotification: String?
     @Binding var nearestObjectDirection: Double?
-    @State private var arView: ARView?
-    @State private var lastLocationsCount: Int = 0 // Track location count to detect new additions
-    @State private var lastUpdateTime: Date = Date() // Throttle updateUIView to prevent excessive calls
-    private let updateThrottleInterval: TimeInterval = 0.1 // Update at most every 100ms (10 FPS for UI updates)
     
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
@@ -58,14 +54,16 @@ struct ARLootBoxView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: ARView, context: Context) {
+        let coordinator = context.coordinator
+        
         // Throttle updateUIView to prevent excessive calls and freezing
         let now = Date()
-        let timeSinceLastUpdate = now.timeIntervalSince(lastUpdateTime)
-        let shouldUpdate = timeSinceLastUpdate >= updateThrottleInterval
+        let timeSinceLastUpdate = now.timeIntervalSince(coordinator.lastViewUpdateTime)
+        let shouldUpdate = timeSinceLastUpdate >= coordinator.viewUpdateThrottleInterval
         
         // Always handle critical updates (lens changes, location changes)
         let currentLocationsCount = locationManager.locations.count
-        let locationsChanged = currentLocationsCount != lastLocationsCount
+        let locationsChanged = currentLocationsCount != coordinator.lastLocationsCount
         let currentLensId = locationManager.selectedARLens
         // Only update lens if the ID actually changed (not just video format object comparison)
         // Use coordinator's persistent property instead of @State which wasn't working
@@ -77,7 +75,7 @@ struct ARLootBoxView: UIViewRepresentable {
             return // Skip this update to prevent excessive calls
         }
         
-        lastUpdateTime = now
+        coordinator.lastViewUpdateTime = now
         
         // Check if lens has changed and update AR configuration if needed
         // Ensure AR session is running or update if lens changed
@@ -119,38 +117,38 @@ struct ARLootBoxView: UIViewRepresentable {
         
         // Check if locations have changed (new object added)
         if locationsChanged {
-            lastLocationsCount = currentLocationsCount
+            coordinator.lastLocationsCount = currentLocationsCount
             // PERFORMANCE: Logging disabled - runs frequently
         }
 
         // Update nearby locations when user location changes OR when locations change
         // Move expensive operations to background thread to prevent freezing
         if let userLocation = userLocationManager.currentLocation {
-            // Update location manager with current location for API refresh timer (lightweight)
-            locationManager.updateUserLocation(userLocation)
-
             // Defer state updates to avoid "Modifying state during view update" warning
             let coordinator = context.coordinator
             let shouldCheckPlacement = locationsChanged
 
-            // Use DispatchQueue to properly defer state updates outside of view update cycle
+            // Use Task to properly defer ALL state updates outside of view update cycle
             // This prevents "Modifying state during view update" warnings
-            DispatchQueue.main.async {
-                Task.detached(priority: .userInitiated) {
-                    let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
+            Task { @MainActor in
+                // Update location manager with current location for API refresh timer (lightweight)
+                // This is now deferred to avoid state modification during view update
+                locationManager.updateUserLocation(userLocation)
+                
+                // Get nearby locations on background thread
+                let nearby = await Task.detached(priority: .userInitiated) {
+                    locationManager.getNearbyLocations(userLocation: userLocation)
+                }.value
 
-                    // Update UI on main thread - deferred outside view update cycle
-                    await MainActor.run {
-                        nearbyLocations = nearby
-                    }
+                // Update UI on main thread - deferred outside view update cycle
+                nearbyLocations = nearby
 
-                    // CRITICAL FIX: Only call checkAndPlaceBoxes when locations actually changed
-                    // This prevents re-placement of already-placed objects on every frame
-                    // Objects should be placed ONCE and stay fixed at their AR coordinates
-                    if shouldCheckPlacement {
-                        // PERFORMANCE: Logging disabled
-                        coordinator.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
-                    }
+                // CRITICAL FIX: Only call checkAndPlaceBoxes when locations actually changed
+                // This prevents re-placement of already-placed objects on every frame
+                // Objects should be placed ONCE and stay fixed at their AR coordinates
+                if shouldCheckPlacement {
+                    // PERFORMANCE: Logging disabled
+                    coordinator.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
                 }
             }
         }

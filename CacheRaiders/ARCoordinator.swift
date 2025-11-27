@@ -6,6 +6,7 @@ import AVFoundation
 import AudioToolbox
 import Vision
 import Combine
+import UIKit
 
 // Findable protocol and base class are now in FindableObject.swift
 
@@ -69,6 +70,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var lastCheckAndPlaceBoxesCall: Date = Date() // Throttle checkAndPlaceBoxes calls
     private let minPlacementCheckInterval: TimeInterval = 0.5 // Max 2 calls per second
     
+    // Throttling for ARLootBoxView's updateUIView (moved off @State to avoid SwiftUI warnings)
+    var lastViewUpdateTime: Date = Date()
+    var lastLocationsCount: Int = 0
+    let viewUpdateThrottleInterval: TimeInterval = 0.1 // 100ms (10 FPS for UI updates)
+    
     override init() {
         super.init()
     }
@@ -95,6 +101,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // This is different from the treasure found sound (level-up-01.mp3)
         AudioServicesPlaySystemSound(1103) // Soft notification sound for viewport entry
         Swift.print("🔔 SOUND: Viewport chime (system sound 1103)")
+
+        // Single haptic "bump" when a findable object enters the viewport
+        DispatchQueue.main.async {
+            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+            impactFeedback.prepare()
+            impactFeedback.impactOccurred()
+        }
+
         Swift.print("   Trigger: Object entered viewport")
         Swift.print("   Object: \(objectName) (\(objectType))")
         Swift.print("   Location ID: \(locationId)")
@@ -456,12 +470,26 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         guard arOriginLocation == nil else { return } // Already set
         
         isDegradedMode = true
-        
-        // Set AR origin to current camera position (0,0,0 in AR space)
-        // This is the AR session origin, not a GPS location
-        arOriginLocation = nil // No GPS in degraded mode
+
+        // CRITICAL FIX: Use best available GPS location even in degraded mode
+        // This allows GPS-based objects to be placed with reduced accuracy instead of not at all
+        if let userLocation = userLocationManager?.currentLocation {
+            // Use current GPS location even if accuracy is poor
+            arOriginLocation = userLocation
+
+            // Set up geospatial service with this GPS location
+            if geospatialService?.setENUOrigin(from: userLocation) == true {
+                Swift.print("📍 Degraded mode: Using GPS with reduced accuracy")
+                Swift.print("   GPS accuracy: \(String(format: "%.2f", userLocation.horizontalAccuracy))m")
+                Swift.print("   Location: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+            }
+        } else {
+            // No GPS available - cannot place GPS-based objects
+            arOriginLocation = nil
+            Swift.print("📍 Degraded mode: No GPS available - AR-only objects only")
+        }
         arOriginSetTime = Date()
-        
+
         // Set fixed ground level using surface detection or camera estimate
         let groundLevel: Float
         if let surfaceY = groundingService?.findHighestBlockingSurface(x: 0, z: 0, cameraPos: cameraPos) {
@@ -471,15 +499,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             groundLevel = cameraPos.y - 1.5
             Swift.print("📍 Degraded mode: Ground level estimated: \(String(format: "%.2f", groundLevel))m")
         }
-        
+
         arOriginGroundLevel = groundLevel
-        geospatialService?.enterDegradedMode(groundLevel: groundLevel)
+        geospatialService?.setARSessionOrigin(arPosition: SIMD3<Float>(0, 0, 0), groundLevel: groundLevel)
         precisionPositioningService?.setAROriginGroundLevel(groundLevel) // Legacy compatibility
-        
-        Swift.print("⚠️ ENTERED DEGRADED MODE (AR-only, no GPS)")
-        Swift.print("   Objects will be placed relative to AR origin (0,0,0)")
+
+        Swift.print("⚠️ ENTERED DEGRADED MODE (reduced GPS accuracy)")
+        Swift.print("   Objects will be placed relative to AR origin")
         Swift.print("   Ground level: \(String(format: "%.2f", groundLevel))m (FIXED - never changes)")
-        Swift.print("   GPS-based objects will not be placed in this mode")
+        Swift.print("   GPS-based objects will be placed with reduced accuracy")
         Swift.print("   AR-only objects (tap-to-place, randomize) will work normally")
     }
     
@@ -491,8 +519,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
 
-        var regroundedCount = 0
-
         for (locationId, anchor) in placedBoxes {
             // Get anchor's current position
             let anchorTransform = anchor.transformMatrix(relativeTo: nil)
@@ -501,23 +527,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             let currentY = anchorTransform.columns.3.y
 
             // Try to find a surface at this X/Z position
-            if let surfaceY = groundingService?.findHighestBlockingSurface(x: currentX, z: currentZ, cameraPos: cameraPos) {
-                // Check if object is significantly above the detected surface (floating)
-                let heightDifference = currentY - surfaceY
-
+            if let _ = groundingService?.findHighestBlockingSurface(x: currentX, z: currentZ, cameraPos: cameraPos) {
                 // DISABLED: Never re-ground objects - they should stay exactly where they were placed
                 // Objects should NEVER move after being placed, especially for the user who placed them
-                // if heightDifference > 0.05 { // More than 5cm above surface = floating
-                //     Swift.print("🔧 Immediate re-ground '\(locationId)': Y=\(String(format: "%.2f", currentY)) → Y=\(String(format: "%.2f", surfaceY)) (dropped \(String(format: "%.2f", heightDifference))m)")
-                //     anchor.transform.translation = SIMD3<Float>(currentX, surfaceY, currentZ)
-                //     regroundedCount += 1
-                //     lastGroundingCheck[locationId] = Date()
-                // }
+                // Kept surface lookup for potential future diagnostics, but no mutation occurs here.
             }
-        }
-
-        if regroundedCount > 0 {
-            Swift.print("✅ Immediate re-ground: Fixed \(regroundedCount) floating object(s)")
         }
     }
     
@@ -1399,7 +1413,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 errorDescription = "GeoTracking not available at this location"
             case .geoTrackingFailed:
                 errorDescription = "GeoTracking failed"
-            @unknown default:
+            default:
                 errorDescription = "Unknown AR error code: \(errorCode.rawValue)"
             }
             
@@ -1423,6 +1437,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             if errorString.contains("FigCaptureSourceRemote") || errorString.contains("err=-12784") {
                 Swift.print("   ⚠️ Camera capture error detected - this may be a temporary camera issue")
                 Swift.print("   This error (err=-12784) is often related to camera resource conflicts")
+                Swift.print("   This is typically harmless and can occur during AR session transitions")
+                // Don't restart session immediately for camera errors - let ARKit handle it
+                // Restarting too aggressively can cause more conflicts
+                return
             }
         }
         
@@ -1555,7 +1573,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 // AR coordinates are only valid within the same AR session
                 useARCoordinates = originDistance < 1.0 && distanceFromOrigin < 12.0
                 
-                if useARCoordinates {
+        if useARCoordinates {
                     Swift.print("✅ INDOOR placement (< 12m): Using AR coordinates for mm/cm-precision")
                     Swift.print("   AR origin match: distance=\(String(format: "%.3f", originDistance))m (same session)")
                     Swift.print("   Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m")
@@ -1999,11 +2017,28 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 
                 environmentManager?.applyUniformLuminanceToNewEntity(anchor)
                 
+                // If enabled, attach a hidden real object that will be revealed from the generic icon
+                let useGenericIcons = locationManager?.useGenericDoubloonIcons ?? false
+                let isContainerType = location.type != .sphere && location.type != .cube
+                let containerForReveal: LootBoxContainer?
+                if useGenericIcons && isContainerType {
+                    let factory = location.type.factory
+                    if let container = factory.createContainer(location: location, sizeMultiplier: 1.0) {
+                        container.container.isEnabled = false
+                        anchor.addChild(container.container)
+                        containerForReveal = container
+                    } else {
+                        containerForReveal = nil
+                    }
+                } else {
+                    containerForReveal = nil
+                }
+                
                 findableObjects[location.id] = FindableObject(
                     locationId: location.id,
                     anchor: anchor,
                     sphereEntity: sphere,
-                    container: nil,
+                    container: containerForReveal,
                     location: location
                 )
                 
@@ -2074,11 +2109,29 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             arView.scene.addAnchor(anchor)
             placedBoxes[location.id] = anchor
             environmentManager?.applyUniformLuminanceToNewEntity(anchor)
+            
+            // If enabled, attach a hidden real object that will be revealed from the generic icon
+            let useGenericIcons = locationManager?.useGenericDoubloonIcons ?? false
+            let isContainerType = location.type != .sphere && location.type != .cube
+            let containerForReveal: LootBoxContainer?
+            if useGenericIcons && isContainerType {
+                let factory = location.type.factory
+                if let container = factory.createContainer(location: location, sizeMultiplier: 1.0) {
+                    container.container.isEnabled = false
+                    anchor.addChild(container.container)
+                    containerForReveal = container
+                } else {
+                    containerForReveal = nil
+                }
+            } else {
+                containerForReveal = nil
+            }
+
             findableObjects[location.id] = FindableObject(
                 locationId: location.id,
                 anchor: anchor,
                 sphereEntity: sphere,
-                container: nil,
+                container: containerForReveal,
                 location: location
             )
             findableObjects[location.id]?.onFoundCallback = { [weak self] id in
@@ -2156,12 +2209,29 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Apply uniform luminance if ambient light is disabled
         environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
+        // If enabled, attach a hidden real object that will be revealed from the generic icon
+        let useGenericIcons = locationManager?.useGenericDoubloonIcons ?? false
+        let isContainerType = location.type != .sphere && location.type != .cube
+        let containerForReveal: LootBoxContainer?
+        if useGenericIcons && isContainerType {
+            let factory = location.type.factory
+            if let container = factory.createContainer(location: location, sizeMultiplier: 1.0) {
+                container.container.isEnabled = false
+                anchor.addChild(container.container)
+                containerForReveal = container
+            } else {
+                containerForReveal = nil
+            }
+        } else {
+            containerForReveal = nil
+        }
+
         // Set callback to increment found count
         findableObjects[location.id] = FindableObject(
             locationId: location.id,
             anchor: anchor,
             sphereEntity: sphere,
-            container: nil,
+            container: containerForReveal,
             location: location
         )
 
@@ -2321,10 +2391,24 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         let placedEntity = entity
         let findableObject = findable
-
+        
         // Add the placed entity to the anchor
         anchor.addChild(placedEntity)
-
+        
+        // FINAL GROUND SNAP: ensure the visual mesh sits exactly on the detected ground plane
+        // Even if the model's pivot isn't at its base, this will align the lowest point of the
+        // rendered geometry with the groundedPosition.y height so objects never appear to float.
+        let bounds = placedEntity.visualBounds(relativeTo: nil)
+        let currentMinY = bounds.min.y
+        let desiredMinY = groundedPosition.y
+        let deltaY = desiredMinY - currentMinY
+        
+        // Move the whole anchor so that the object's base touches the ground
+        anchor.position.y += deltaY
+        
+        let formattedDeltaY = String(format: "%.3f", deltaY)
+        Swift.print("✅ [GroundSnap] Adjusted '\(location.name)' to sit on ground: ΔY=\(formattedDeltaY)m")
+        
         // Store the anchor and findable object
         arView.scene.addAnchor(anchor)
         placedBoxes[location.id] = anchor

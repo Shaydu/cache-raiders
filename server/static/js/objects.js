@@ -34,16 +34,16 @@ const ObjectsManager = {
      * Add object marker to map
      */
     addObjectMarker(obj) {
-        const markerColor = obj.collected ? '#ff6b6b' : '#4caf50';
+        const markerColor = obj.collected ? '#ff6b6b' : '#ffd700'; // Red for found, gold for unfound
         const markerSize = obj.collected ? 14 : 18;
-        const borderColor = obj.collected ? '#cc0000' : '#2d7a2d';
+        const borderColor = obj.collected ? '#cc0000' : '#b8860b'; // Dark red for found, dark gold for unfound
 
         // Use the stored name from the database (what admin typed when creating)
         const displayName = obj.name || obj.type;
 
         const icon = L.divIcon({
             className: 'object-marker',
-            html: `<div style="background: ${markerColor}; width: ${markerSize}px; height: ${markerSize}px; border-radius: 50%; border: 3px solid ${borderColor}; box-shadow: 0 0 10px ${obj.collected ? 'rgba(255, 107, 107, 0.6)' : 'rgba(76, 175, 80, 0.6)'};"></div>`,
+            html: `<div style="background: ${markerColor}; width: ${markerSize}px; height: ${markerSize}px; border-radius: 50%; border: 3px solid ${borderColor}; box-shadow: 0 0 10px ${obj.collected ? 'rgba(255, 107, 107, 0.6)' : 'rgba(255, 215, 0, 0.6)'};"></div>`,
             iconSize: [markerSize, markerSize]
         });
 
@@ -53,7 +53,7 @@ const ObjectsManager = {
                 <strong>${displayName}</strong><br>
                 Type: ${obj.type}<br>
                 Radius: ${obj.radius}m<br>
-                ${obj.collected ? `<span style="color: #ff6b6b; font-weight: bold;">✓ Collected</span><br>Found by: ${obj.found_by || 'Unknown'}` : '<span style="color: #4caf50; font-weight: bold;">● Available</span>'}
+                ${obj.collected ? `<span style="color: #ff6b6b; font-weight: bold;">✓ Collected</span><br>Found by: ${obj.found_by || 'Unknown'}` : '<span style="color: #ffd700; font-weight: bold;">● Available</span>'}
             `);
 
         // Add click handler to open modal
@@ -90,7 +90,10 @@ const ObjectsManager = {
                         Radius: ${obj.radius}m<br>
                         ${obj.collected ? `Found by: ${obj.found_by || 'Unknown'}<br>Found at: ${new Date(obj.found_at).toLocaleString()}` : 'Status: Available'}
                     </div>
-                    <button onclick="ObjectsManager.deleteObject('${obj.id}')" style="background: #d32f2f; margin-top: 8px;">Delete</button>
+                    <div style="display: flex; gap: 8px; margin-top: 8px;">
+                        ${obj.collected ? `<button onclick="ObjectsManager.markUnfound('${obj.id}')" style="background: #ff9800; flex: 1;">Mark Unfound</button>` : ''}
+                        <button onclick="ObjectsManager.deleteObject('${obj.id}')" style="background: #d32f2f; flex: 1;">Delete</button>
+                    </div>
                 </div>
             `;
             }).join('');
@@ -156,6 +159,24 @@ const ObjectsManager = {
             await StatsManager.refreshStats();
         } catch (error) {
             UI.showStatus('Error deleting object: ' + error.message, 'error');
+        }
+    },
+
+    /**
+     * Mark object as unfound
+     */
+    async markUnfound(objectId) {
+        if (!confirm('Are you sure you want to mark this object as unfound? This will reset its collected status.')) {
+            return;
+        }
+
+        try {
+            await ApiService.objects.markUnfound(objectId);
+            UI.showStatus('Object marked as unfound successfully', 'success');
+            await this.loadObjects();
+            await StatsManager.refreshStats();
+        } catch (error) {
+            UI.showStatus('Error marking object as unfound: ' + error.message, 'error');
         }
     }
 };

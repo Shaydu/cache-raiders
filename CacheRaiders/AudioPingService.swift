@@ -123,7 +123,7 @@ class AudioPingService {
             setupAudioEngine()
         }
         
-        guard let engine = audioEngine, let player = playerNode else {
+        guard let engine = audioEngine else {
             Swift.print("❌ Cannot play location ping: audio engine not available")
             return
         }

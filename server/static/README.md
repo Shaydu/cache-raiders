@@ -127,3 +127,4 @@ All managers are exposed as global objects for HTML onclick handlers:
 - `ModalManager` - Modal operations
 - `App` - Main application
 
+

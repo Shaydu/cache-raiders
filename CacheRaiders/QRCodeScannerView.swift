@@ -122,6 +122,8 @@ class QRCodeScannerViewController: UIViewController {
     weak var delegate: QRCodeScannerDelegate?
     private var captureSession: AVCaptureSession?
     private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var metadataOutput: AVCaptureMetadataOutput?
+    private var scanningFrameView: UIView?
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -165,7 +167,7 @@ class QRCodeScannerViewController: UIViewController {
         
         // Add instruction label
         let instructionLabel = UILabel()
-        instructionLabel.text = "Point camera at server QR code"
+        instructionLabel.text = "Align QR code inside the green square"
         instructionLabel.textColor = .white
         instructionLabel.textAlignment = .center
         instructionLabel.font = .systemFont(ofSize: 16, weight: .medium)
@@ -185,6 +187,7 @@ class QRCodeScannerViewController: UIViewController {
     
     private func setupCamera() {
         let session = AVCaptureSession()
+        session.sessionPreset = .high
         self.captureSession = session
         
         guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else {
@@ -215,6 +218,7 @@ class QRCodeScannerViewController: UIViewController {
             
             metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
             metadataOutput.metadataObjectTypes = [.qr]
+            self.metadataOutput = metadataOutput
         } else {
             showError("Cannot add metadata output")
             return
@@ -242,6 +246,7 @@ class QRCodeScannerViewController: UIViewController {
         scanningFrame.backgroundColor = .clear
         scanningFrame.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(scanningFrame)
+        self.scanningFrameView = scanningFrame
         
         NSLayoutConstraint.activate([
             scanningFrame.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -249,6 +254,21 @@ class QRCodeScannerViewController: UIViewController {
             scanningFrame.widthAnchor.constraint(equalToConstant: 250),
             scanningFrame.heightAnchor.constraint(equalToConstant: 250)
         ])
+    }
+    
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        
+        // Keep preview layer and metadata rect in sync with layout
+        previewLayer?.frame = view.layer.bounds
+        
+        if let previewLayer = previewLayer,
+           let metadataOutput = metadataOutput,
+           let scanningFrame = scanningFrameView {
+            let frameInViewCoords = scanningFrame.convert(scanningFrame.bounds, to: view)
+            let rectOfInterest = previewLayer.metadataOutputRectConverted(fromLayerRect: frameInViewCoords)
+            metadataOutput.rectOfInterest = rectOfInterest
+        }
     }
     
     private func showPermissionDenied() {

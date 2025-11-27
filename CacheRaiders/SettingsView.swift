@@ -47,6 +47,11 @@ struct SettingsView: View {
             .sorted { $0.types.first?.displayName ?? "" < $1.types.first?.displayName ?? "" }
     }
     
+    // Count visible items by type
+    private func countForType(_ type: LootBoxType) -> Int {
+        return locationManager.locations.filter { $0.type == type }.count
+    }
+    
     var body: some View {
         NavigationView {
             List {
@@ -188,6 +193,13 @@ struct SettingsView: View {
                                 Text("\(type.displayName) (\(group.models.joined(separator: ", ")))")
                                     .font(.body)
                             }
+                            
+                            Spacer()
+                            
+                            Text("\(countForType(type))")
+                                .font(.body)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.secondary)
                         }
                         .padding(.vertical, 2)
                     }
@@ -208,6 +220,15 @@ struct SettingsView: View {
                             Text("\(typeNames) (\(group.models.joined(separator: ", ")))")
                                 .font(.body)
                         }
+                        
+                        Spacer()
+                        
+                        // Sum up counts for all types in this group
+                        let totalCount = group.types.reduce(0) { $0 + countForType($1) }
+                        Text("\(totalCount)")
+                            .font(.body)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.secondary)
                     }
                     .padding(.vertical, 2)
                 }
@@ -336,6 +357,19 @@ struct SettingsView: View {
             .padding(.vertical, 4)
             
             Text("When enabled, plays a ping sound once per second. The pitch increases as you get closer to objects, reaching maximum pitch when you're on top of them.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+
+            Toggle("Use Generic Doubloon Icons", isOn: Binding(
+                get: { locationManager.useGenericDoubloonIcons },
+                set: { newValue in
+                    locationManager.useGenericDoubloonIcons = newValue
+                    locationManager.saveUseGenericDoubloonIcons()
+                }
+            ))
+            .padding(.vertical, 4)
+
+            Text("When enabled, objects appear as generic doubloon icons in AR and reveal their true form with a special animation when found.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }

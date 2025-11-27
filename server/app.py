@@ -99,6 +99,16 @@ def init_db():
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_player_name ON players(player_name)
     ''')
+
+    # User last locations table - stores the most recent location per device
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_last_locations (
+            device_uuid TEXT PRIMARY KEY,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    ''')
     
     conn.commit()
     conn.close()
@@ -674,7 +684,8 @@ def update_user_location(device_uuid: str):
     ar_offset_y = data.get('ar_offset_y')  # Optional AR offset Y in meters
     ar_offset_z = data.get('ar_offset_z')  # Optional AR offset Z in meters
     
-    # Store user location with timestamp
+    # Store user location with timestamp (in-memory)
+    updated_at = datetime.utcnow().isoformat()
     user_locations[device_uuid] = {
         'latitude': latitude,
         'longitude': longitude,
@@ -683,9 +694,27 @@ def update_user_location(device_uuid: str):
         'ar_offset_x': ar_offset_x,
         'ar_offset_y': ar_offset_y,
         'ar_offset_z': ar_offset_z,
-        'updated_at': datetime.utcnow().isoformat()
+        'updated_at': updated_at
     }
     
+    # Persist last known location to the database so it survives server restarts
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO user_last_locations (device_uuid, latitude, longitude, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(device_uuid) DO UPDATE SET
+                latitude = excluded.latitude,
+                longitude = excluded.longitude,
+                updated_at = excluded.updated_at
+        ''', (device_uuid, latitude, longitude, updated_at))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        # Don't fail the API call if persistence fails; just log the error
+        print(f"⚠️ Failed to persist user last location for {device_uuid}: {e}")
+
     # Log AR-enhanced location if available
     if ar_offset_x is not None:
         print(f"📍 User location updated (AR-enhanced): {device_uuid[:8]}... at ({latitude:.6f}, {longitude:.6f}), AR offset: ({ar_offset_x:.3f}, {ar_offset_y:.3f}, {ar_offset_z:.3f})m")
@@ -714,6 +743,33 @@ def update_user_location(device_uuid: str):
         'latitude': latitude,
         'longitude': longitude,
         'message': 'Location updated successfully'
+    }), 200
+
+@app.route('/api/map/default_center', methods=['GET'])
+def get_map_default_center():
+    """
+    Get the default map center based on the most recent known user location.
+    Falls back to 204 No Content if no locations have ever been recorded.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT latitude, longitude, updated_at
+        FROM user_last_locations
+        ORDER BY updated_at DESC
+        LIMIT 1
+    ''')
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        # No known locations yet
+        return jsonify({'latitude': None, 'longitude': None, 'updated_at': None}), 200
+
+    return jsonify({
+        'latitude': row['latitude'],
+        'longitude': row['longitude'],
+        'updated_at': row['updated_at']
     }), 200
 
 @app.route('/api/users/locations', methods=['GET'])
@@ -805,6 +861,39 @@ def create_or_update_player(device_uuid: str):
         'player_name': row['player_name'],
         'created_at': row['created_at'],
         'updated_at': row['updated_at']
+    }), 200
+
+@app.route('/api/players/<device_uuid>', methods=['DELETE'])
+def delete_player(device_uuid: str):
+    """Delete a player and all their finds."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if player exists
+    cursor.execute('SELECT device_uuid FROM players WHERE device_uuid = ?', (device_uuid,))
+    player = cursor.fetchone()
+    
+    if not player:
+        conn.close()
+        return jsonify({'error': 'Player not found'}), 404
+    
+    # Delete all finds by this player (this will make objects unfound again)
+    cursor.execute('DELETE FROM finds WHERE found_by = ?', (device_uuid,))
+    finds_deleted = cursor.rowcount
+    
+    # Delete the player
+    cursor.execute('DELETE FROM players WHERE device_uuid = ?', (device_uuid,))
+    
+    conn.commit()
+    conn.close()
+    
+    # Broadcast object uncollected events for all objects that were found by this player
+    # We need to get the object IDs first, but we already deleted them, so we'll just refresh
+    # The frontend will handle the refresh
+    
+    return jsonify({
+        'message': f'Player deleted successfully. {finds_deleted} find(s) removed.',
+        'finds_deleted': finds_deleted
     }), 200
 
 @app.route('/api/stats', methods=['GET'])

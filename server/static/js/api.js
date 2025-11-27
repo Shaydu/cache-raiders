@@ -52,6 +52,12 @@ const ApiService = {
             return ApiService.fetch(`/api/objects/${id}`, {
                 method: 'DELETE'
             });
+        },
+
+        async markUnfound(id) {
+            return ApiService.fetch(`/api/objects/${id}/found`, {
+                method: 'DELETE'
+            });
         }
     },
 
@@ -73,6 +79,12 @@ const ApiService = {
                 method: 'POST',
                 body: JSON.stringify({ player_name: playerName })
             });
+        },
+
+        async delete(deviceUuid) {
+            return ApiService.fetch(`/api/players/${deviceUuid}`, {
+                method: 'DELETE'
+            });
         }
     },
 
@@ -92,6 +104,15 @@ const ApiService = {
     userLocations: {
         async getAll() {
             return ApiService.fetch('/api/users/locations');
+        }
+    },
+
+    /**
+     * Map API
+     */
+    map: {
+        async getDefaultCenter() {
+            return ApiService.fetch('/api/map/default_center');
         }
     },
 

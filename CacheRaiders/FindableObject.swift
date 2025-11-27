@@ -76,15 +76,6 @@ class FindableObject: Findable {
             anchorTransform.columns.3.z
         )
         
-        // Try to get ARView from anchor's scene
-        // The anchor's scene should have a reference to the ARView
-        var arView: ARView? = nil
-        if let scene = anchor.scene {
-            // Try to find ARView by checking if scene has a way to access it
-            // RealityKit doesn't directly expose ARView from Scene, so we'll use a workaround
-            // Create a temporary anchor instead
-        }
-        
         // Create confetti at world position using temporary anchor approach
         // This will persist even after the object anchor is removed
         if let scene = anchor.scene {
@@ -177,8 +168,42 @@ class FindableObject: Findable {
                 onComplete()
             }
         }
+
+        // If generic doubloon icons are enabled and we have both a generic icon and a real container,
+        // first reveal the real object from the generic icon, then run the normal factory animation.
+        let useGenericIcons = UserDefaults.standard.bool(forKey: "useGenericDoubloonIcons")
+        if useGenericIcons,
+           let container = container,
+           let genericIcon = orb {
+            GenericIconRevealAnimator.reveal(
+                realEntity: container.container,
+                from: genericIcon,
+                in: anchor,
+                heightOffset: 0.4,
+                duration: 1.0
+            ) { [weak self] in
+                // Remove the generic icon once the real object has been revealed
+                genericIcon.removeFromParent()
+
+                // After reveal, run the normal factory animation on the real container
+                factory.animateFind(
+                    entity: container.container,
+                    container: container,
+                    tapWorldPosition: anchorWorldPos
+                ) {
+                    safeCompletion()
+                }
+            }
+
+            // Safety timeout: ensure cleanup even if animations fail
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.5) {
+                safeCompletion()
+            }
+
+            return
+        }
         
-        // Use factory to animate find behavior (includes confetti, sound, and animation)
+        // Default behavior: use factory to animate find behavior (includes confetti, sound, and animation)
         factory.animateFind(
             entity: entityToAnimate,
             container: container,

@@ -198,6 +198,7 @@ class LootBoxLocationManager: ObservableObject {
     @Published var selectedDatabaseObjectId: String? = nil // Selected database object to find (only one at a time)
     @Published var databaseStats: DatabaseStats? = nil // Database stats for loot box counter
     @Published var showOnlyNextItem: Bool = false // Show only the next unfound item in the list
+    @Published var useGenericDoubloonIcons: Bool = false // When enabled, show generic doubloon icons and reveal real objects with animation
     var onSizeChanged: (() -> Void)? // Callback when size settings change
     var onObjectCollectedByOtherUser: ((String) -> Void)? // Callback when object is collected by another user (to remove from AR)
     private let locationsFileName = "lootBoxLocations.json"
@@ -215,6 +216,7 @@ class LootBoxLocationManager: ObservableObject {
     private let arZoomLevelKey = "arZoomLevel"
     private let selectedARLensKey = "selectedARLens"
     private let showOnlyNextItemKey = "showOnlyNextItem"
+    private let useGenericDoubloonIconsKey = "useGenericDoubloonIcons"
     
     // API refresh timer - refreshes from API periodically when enabled
     private var apiRefreshTimer: Timer?
@@ -238,6 +240,7 @@ class LootBoxLocationManager: ObservableObject {
         loadARZoomLevel()
         loadSelectedARLens()
         loadShowOnlyNextItem()
+        loadUseGenericDoubloonIcons()
         
         // API sync is always enabled - start refresh timer
         startAPIRefreshTimer()
@@ -787,6 +790,16 @@ class LootBoxLocationManager: ObservableObject {
             }
         }
     }
+
+    // Save generic doubloon icon preference
+    func saveUseGenericDoubloonIcons() {
+        UserDefaults.standard.set(useGenericDoubloonIcons, forKey: useGenericDoubloonIconsKey)
+    }
+
+    // Load generic doubloon icon preference
+    private func loadUseGenericDoubloonIcons() {
+        useGenericDoubloonIcons = UserDefaults.standard.bool(forKey: useGenericDoubloonIconsKey)
+    }
     
     // Save selected AR lens preference
     func saveSelectedARLens() {
@@ -1119,25 +1132,20 @@ class LootBoxLocationManager: ObservableObject {
                 continue
             }
             
-            do {
-                // Check if object already exists in API
-                let existingObject = try? await APIService.shared.getObject(id: location.id)
-                
-                if existingObject == nil {
-                    // Object doesn't exist, create it
-                    await saveLocationToAPI(location)
-                    syncedCount += 1
-                } else {
-                    print("ℹ️ Object '\(location.name)' already exists in API, skipping")
-                }
-                
-                // Sync collected status if needed
-                if location.collected {
-                    await markCollectedInAPI(location.id)
-                }
-            } catch let error {
-                errorCount += 1
-                print("❌ Failed to sync '\(location.name)': \(error.localizedDescription)")
+            // Check if object already exists in API
+            let existingObject = try? await APIService.shared.getObject(id: location.id)
+            
+            if existingObject == nil {
+                // Object doesn't exist, create it
+                await saveLocationToAPI(location)
+                syncedCount += 1
+            } else {
+                print("ℹ️ Object '\(location.name)' already exists in API, skipping")
+            }
+            
+            // Sync collected status if needed
+            if location.collected {
+                await markCollectedInAPI(location.id)
             }
         }
         

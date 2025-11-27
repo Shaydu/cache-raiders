@@ -183,15 +183,15 @@ struct LootBoxMapView: View {
                                         (location.type == .cube ? "cube.fill" : "mappin.circle.fill")))
                                     
                                     // Determine color based on collected status
-                                    // Unfound objects: green, Found objects: red
+                                    // Unfound objects: gold, Found objects: red
                                     let iconColor: Color = if isPreview {
                                         .blue
                                     } else if location.collected {
                                         // Red for found items
                                         .red
                                     } else {
-                                        // Green for unfound items
-                                        .green
+                                        // Gold for unfound items
+                                        Color(red: 1.0, green: 0.843, blue: 0.0) // Gold color (#FFD700)
                                     }
                                     
                                     Image(systemName: iconName)

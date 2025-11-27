@@ -77,7 +77,7 @@ class SettingsViewModel: ObservableObject {
             WebSocketService.shared.disconnect()
 
             // Reconnect after a short delay to ensure disconnect completes
-            Task.detached(priority: .userInitiated) { [weak self] in
+            Task(priority: .userInitiated) { [weak self] in
                 // Wait 500ms for disconnect to complete
                 try? await Task.sleep(nanoseconds: 500_000_000)
 
@@ -87,8 +87,10 @@ class SettingsViewModel: ObservableObject {
                     WebSocketService.shared.connect()
                 }
 
-                // Load database objects on background thread
-                await self?.loadDatabaseObjects()
+                // Load database objects after reconnecting (on main actor)
+                await MainActor.run {
+                    self?.loadDatabaseObjects()
+                }
             }
             
             displayAlert(title: "URL Saved", message: "API URL updated to: \(urlString)\n\nReconnecting WebSocket to new server...")
@@ -112,7 +114,7 @@ class SettingsViewModel: ObservableObject {
             WebSocketService.shared.disconnect()
 
             // Reconnect on background thread with proper async/await
-            Task.detached(priority: .userInitiated) {
+            Task(priority: .userInitiated) {
                 // Wait 500ms for disconnect to complete
                 try? await Task.sleep(nanoseconds: 500_000_000)
 
@@ -198,8 +200,8 @@ class SettingsViewModel: ObservableObject {
 
         isLoadingDatabase = true
 
-        // Run on background thread to avoid blocking UI
-        Task.detached(priority: .userInitiated) { [weak self] in
+        // Run asynchronously; heavy work will hop off the main actor as needed
+        Task(priority: .userInitiated) { [weak self] in
             guard let self = self else { return }
             do {
                 let isHealthy = try await APIService.shared.checkHealth()

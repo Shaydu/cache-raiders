@@ -105,3 +105,4 @@ const WebSocketManager = {
 // Make WebSocketManager available globally
 window.WebSocketManager = WebSocketManager;
 
+

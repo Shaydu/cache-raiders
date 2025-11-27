@@ -129,3 +129,4 @@ Once manual testing works, test with the iOS app:
 3. Watch admin interface for blue dot to appear
 4. Move device and verify blue dot updates
 
+

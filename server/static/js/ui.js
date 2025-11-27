@@ -53,48 +53,47 @@ const UI = {
     },
 
     /**
-     * Center map on connected user's location (from iOS app)
+     * Center map on top user from leaderboard
      */
     async centerOnUserLocation() {
-        // First, try to refresh user locations in case they haven't loaded yet
         try {
+            // Get stats to find the top user from leaderboard
+            const stats = await ApiService.stats.get();
+            const topFinders = stats.top_finders || [];
+            
+            if (topFinders.length === 0) {
+                UI.showStatus('No players found on leaderboard.', 'error');
+                return;
+            }
+
+            // Get the top user (first in leaderboard)
+            const topUser = topFinders[0];
+            const topUserDeviceUuid = topUser.device_uuid;
+            const topUserName = topUser.user || `User ${topUserDeviceUuid.substring(0, 8)}`;
+
+            // Refresh user locations to make sure we have the latest
             await UserLocationsManager.loadUserLocations();
+
+            // Find the top user's location marker
+            const userMarkers = UserLocationsManager.userLocationMarkers;
+            const topUserMarker = userMarkers[topUserDeviceUuid];
+
+            if (!topUserMarker) {
+                UI.showStatus(`${topUserName} is not currently connected or has not sent their location.`, 'error');
+                return;
+            }
+
+            // Get the location from the marker
+            const latlng = topUserMarker.getLatLng();
+            const lat = latlng.lat;
+            const lng = latlng.lng;
+
+            // Center map on top user's location with appropriate zoom level
+            MapManager.setView([lat, lng], 17);
+            UI.showStatus(`Centered map on top player ${topUserName}'s location: ${lat.toFixed(5)}, ${lng.toFixed(5)}`, 'success');
         } catch (error) {
-            console.warn('Failed to refresh user locations:', error);
-        }
-
-        const userMarkers = UserLocationsManager.userLocationMarkers;
-        const userCount = Object.keys(userMarkers).length;
-
-        if (userCount === 0) {
-            UI.showStatus('No connected users found. Make sure the iOS app is connected and has sent its location.', 'error');
-            return;
-        }
-
-        // If multiple users, center on the first one (most recently updated)
-        // Get all user locations sorted by most recent
-        const userLocations = Object.entries(userMarkers).map(([deviceUuid, marker]) => {
-            const latlng = marker.getLatLng();
-            return {
-                deviceUuid: deviceUuid,
-                lat: latlng.lat,
-                lng: latlng.lng,
-                playerName: UserLocationsManager.playerMap[deviceUuid] || `User ${deviceUuid.substring(0, 8)}`
-            };
-        });
-
-        // Use the first user's location (or could sort by updated_at if available)
-        const firstUser = userLocations[0];
-        const lat = firstUser.lat;
-        const lng = firstUser.lng;
-
-        // Center map on user location with appropriate zoom level
-        MapManager.setView([lat, lng], 17);
-        
-        if (userCount === 1) {
-            UI.showStatus(`Centered map on ${firstUser.playerName}'s location: ${lat.toFixed(5)}, ${lng.toFixed(5)}`, 'success');
-        } else {
-            UI.showStatus(`Centered map on ${firstUser.playerName}'s location (${userCount} users connected): ${lat.toFixed(5)}, ${lng.toFixed(5)}`, 'success');
+            console.error('Error centering on top user:', error);
+            UI.showStatus('Error centering on top user: ' + error.message, 'error');
         }
     },
 

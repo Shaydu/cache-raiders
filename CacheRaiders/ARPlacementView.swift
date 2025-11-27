@@ -191,7 +191,7 @@ struct ARPlacementView: View {
 
     private func createNewObject(type: LootBoxType, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async {
         let objectId = UUID().uuidString
-        var newLocation = LootBoxLocation(
+        let newLocation = LootBoxLocation(
             id: objectId,
             name: "New \(type.displayName)",
             type: type,
@@ -811,6 +811,19 @@ struct ARPlacementARView: UIViewRepresentable {
             
             // Add entity to anchor
             anchor.addChild(entity)
+            
+            // FINAL GROUND SNAP (placement preview): ensure the visual mesh sits exactly on the ground
+            // We align the lowest point of the rendered geometry with the placement position's Y so that
+            // the object never appears to float during placement.
+            let bounds = entity.visualBounds(relativeTo: nil)
+            let currentMinY = bounds.min.y
+            let desiredMinY = position.y
+            let deltaY = desiredMinY - currentMinY
+            
+            anchor.position.y += deltaY
+            
+            let formattedDeltaY = String(format: "%.3f", deltaY)
+            print("✅ [Placement GroundSnap] Adjusted preview '\(location.name)' to sit on ground: ΔY=\(formattedDeltaY)m")
             
             // Add anchor to scene
             arView.scene.addAnchor(anchor)

@@ -75,6 +75,10 @@ const PlayersManager = {
                                 Update
                             </button>
                         </div>
+                        <button onclick="PlayersManager.deletePlayer('${player.device_uuid}')" 
+                                style="background: #d32f2f; margin-top: 8px; width: 100%;">
+                            Delete
+                        </button>
                     </div>
                 `;
             }).join('');
@@ -146,6 +150,26 @@ const PlayersManager = {
             await StatsManager.refreshStats();
         } catch (error) {
             UI.showStatus('Error updating player name: ' + error.message, 'error');
+        }
+    },
+
+    /**
+     * Delete player
+     */
+    async deletePlayer(deviceUuid) {
+        if (!confirm('Are you sure you want to delete this player? This will also delete all their finds and make those objects available again. This action cannot be undone.')) {
+            return;
+        }
+
+        try {
+            const result = await ApiService.players.delete(deviceUuid);
+            UI.showStatus(result.message || 'Player deleted successfully', 'success');
+            // Reload players, objects, and stats to reflect changes
+            await this.loadPlayers();
+            await ObjectsManager.loadObjects();
+            await StatsManager.refreshStats();
+        } catch (error) {
+            UI.showStatus('Error deleting player: ' + error.message, 'error');
         }
     }
 };

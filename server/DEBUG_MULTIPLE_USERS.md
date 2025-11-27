@@ -121,3 +121,4 @@ The admin panel now logs:
 - Each user being processed
 - When markers are created/updated
 
+

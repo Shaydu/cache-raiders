@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CacheRaiders - Object Admin</title>
+    <title>Cache Raiders - Object Admin</title>
     
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -14,11 +14,11 @@
 <body>
     <div id="sidebar">
         <div>
-            <h1>🗺️ CacheRaiders Admin</h1>
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
+                <img src="/static/cache-raiders-logo-v5.png" alt="Cache Raiders Logo" style="width: 120px; height: 120px; border-radius: 10px;" onerror="this.style.display='none'">
+                <h1 style="margin: 0;">Cache Raiders</h1>
+            </div>
             <p style="color: #999; font-size: 12px;">Click on the map to place new objects</p>
-            <button class="btn-secondary" style="margin-top: 10px;" onclick="UI.centerOnUserLocation()">
-                Center on user location
-            </button>
         </div>
         
         <div class="section">
@@ -110,6 +110,19 @@
             <div class="objects-list" id="objectsList">
                 <div class="loading">Loading objects...</div>
             </div>
+        </div>
+
+        <div class="section">
+            <h2>AR Display Settings</h2>
+            <div class="filter-controls">
+                <label>
+                    <input type="checkbox" id="useGenericIconsCheckbox">
+                    <span>Use generic cache icons (doubloons)</span>
+                </label>
+            </div>
+            <p style="color: #999; font-size: 11px; margin-top: 6px;">
+                This toggle is currently a visual/admin hint only. The actual AR behavior is controlled per-device in the iOS app Settings screen.
+            </p>
         </div>
         
         <div class="section">

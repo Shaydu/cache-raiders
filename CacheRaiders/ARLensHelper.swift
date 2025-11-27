@@ -189,9 +189,7 @@ struct ARLensHelper {
                             name = cameraType.displayName
                         } else {
                             // Multiple formats, include resolution and fps in name
-                            let pixelStr = totalPixels >= 1_000_000 
-                                ? String(format: "%.1fM", Double(totalPixels) / 1_000_000)
-                                : "\(Int(totalPixels / 1_000))K"
+                            _ = totalPixels // Retained for potential future logging
                             name = "\(cameraType.displayName) - \(Int(resolution.width))x\(Int(resolution.height)) @ \(fps)fps"
                         }
                         
@@ -253,7 +251,7 @@ struct ARLensHelper {
                 // Calculate pixel counts and find key formats
                 let formatsWithInfo = formats.map { format -> (format: ARConfiguration.VideoFormat, pixels: Int, fps: Int) in
                     let resolution = format.imageResolution
-                    let pixels = resolution.width * resolution.height
+                    let pixels = Int(resolution.width * resolution.height)
                     return (format: format, pixels: pixels, fps: format.framesPerSecond)
                 }
                 

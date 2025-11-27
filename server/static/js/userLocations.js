@@ -296,3 +296,4 @@ const UserLocationsManager = {
 // Make UserLocationsManager available globally
 window.UserLocationsManager = UserLocationsManager;
 
+

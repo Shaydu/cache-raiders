@@ -138,3 +138,4 @@ if __name__ == "__main__":
     success = test_admin_blue_dot()
     exit(0 if success else 1)
 
+

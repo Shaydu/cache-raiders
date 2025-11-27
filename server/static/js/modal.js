@@ -94,7 +94,9 @@ const ModalManager = {
                 
                 <div class="modal-actions">
                     <button class="btn-danger" onclick="ModalManager.deleteObjectFromModal('${obj.id}')">Delete Object</button>
-                    <button onclick="ModalManager.closeModal()">Close</button>
+                    ${obj.collected
+                        ? `<button class="btn-warning" onclick="ModalManager.markUnfoundFromModal('${obj.id}')">Set Unfound</button>`
+                        : `<button onclick="ModalManager.closeModal()">Close</button>`}
                 </div>
             `;
         } catch (error) {
@@ -107,6 +109,26 @@ const ModalManager = {
                     <button onclick="ModalManager.closeModal()">Close</button>
                 </div>
             `;
+        }
+    },
+
+    /**
+     * Mark object as unfound from modal
+     */
+    async markUnfoundFromModal(objectId) {
+        // Reuse existing confirmation and logic from ObjectsManager
+        if (!confirm('Are you sure you want to mark this object as unfound? This will reset its collected status.')) {
+            return;
+        }
+
+        try {
+            await ApiService.objects.markUnfound(objectId);
+            UI.showStatus('Object marked as unfound successfully', 'success');
+            this.closeModal();
+            await ObjectsManager.loadObjects();
+            await StatsManager.refreshStats();
+        } catch (error) {
+            UI.showStatus('Error marking object as unfound: ' + error.message, 'error');
         }
     },
 

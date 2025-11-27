@@ -146,9 +146,8 @@ class ARDistanceTracker: ObservableObject {
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
 
-        // Get forward and up vectors for orientation
+        // Get forward vector for orientation
         let forward = SIMD3<Float>(-cameraTransform.columns.2.x, -cameraTransform.columns.2.y, -cameraTransform.columns.2.z)
-        let _ = SIMD3<Float>(cameraTransform.columns.1.x, cameraTransform.columns.1.y, cameraTransform.columns.1.z) // Up vector (unused)
 
         // Check for selected object first, otherwise find nearest
         var targetPosition: SIMD3<Float>? = nil
@@ -231,7 +230,6 @@ class ARDistanceTracker: ObservableObject {
                 guard let location = locationManager.locations.first(where: { $0.id == locationId && !$0.collected }) else {
                     continue
                 }
-                let _ = location // Location checked but unused in this loop
                 
                 let anchorTransform = anchor.transformMatrix(relativeTo: nil)
                 var objectPos = SIMD3<Float>(
