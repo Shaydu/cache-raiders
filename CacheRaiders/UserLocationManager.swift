@@ -231,7 +231,8 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
             
             if shouldLog {
                 print("\(logLevel) [Location Error] \(errorDescription) (kCLErrorDomain error \(errorCode))")
-                if let userInfo = (error as NSError).userInfo as? [String: Any], !userInfo.isEmpty {
+                let userInfo = (error as NSError).userInfo
+                if !userInfo.isEmpty {
                     print("   Error details: \(userInfo)")
                 }
             }

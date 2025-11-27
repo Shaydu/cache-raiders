@@ -181,7 +181,7 @@ class FindableObject: Findable {
                 in: anchor,
                 heightOffset: 0.4,
                 duration: 1.0
-            ) { [weak self] in
+            ) {
                 // Remove the generic icon once the real object has been revealed
                 genericIcon.removeFromParent()
 

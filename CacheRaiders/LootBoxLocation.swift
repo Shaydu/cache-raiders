@@ -1123,7 +1123,7 @@ class LootBoxLocationManager: ObservableObject {
         print("🔄 Syncing \(locations.count) local locations to shared API database...")
         
         var syncedCount = 0
-        var errorCount = 0
+        let errorCount = 0
         
         for location in locations {
             // Skip temporary AR-only items

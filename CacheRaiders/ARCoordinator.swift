@@ -519,12 +519,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
 
-        for (locationId, anchor) in placedBoxes {
+        for (_, anchor) in placedBoxes {
             // Get anchor's current position
             let anchorTransform = anchor.transformMatrix(relativeTo: nil)
             let currentX = anchorTransform.columns.3.x
             let currentZ = anchorTransform.columns.3.z
-            let currentY = anchorTransform.columns.3.y
+            let _ = anchorTransform.columns.3.y
 
             // Try to find a surface at this X/Z position
             if let _ = groundingService?.findHighestBlockingSurface(x: currentX, z: currentZ, cameraPos: cameraPos) {
@@ -551,13 +551,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // PERFORMANCE: Logging disabled - print statements are EXTREMELY expensive (blocks main thread)
         // 677 print statements in codebase causing major freezing
         // Only log critical errors and performance metrics
-        let debugLogging = false // Disable verbose logging
-
-        if debugLogging {
-            Swift.print("🔍 checkAndPlaceBoxes called:")
-            Swift.print("   Nearby: \(nearbyLocations.count), Placed: \(placedBoxes.count)")
-            Swift.print("   Max objects: \(locationManager?.maxObjectLimit ?? 6)")
-        }
+        // let debugLogging = false // Disable verbose logging - removed dead code to fix warnings
 
         // CRITICAL: Only remove objects that are no longer in the nearbyLocations list AND are not manually placed
         // Manually placed objects (with AR coordinates) should NEVER be removed or moved
@@ -612,15 +606,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
 
         for location in nearbyLocations {
-            if debugLogging {
-                Swift.print("📦 Processing location: \(location.name) (ID: \(location.id))")
-            }
-
             // Stop if we've reached the limit
             guard placedBoxes.count < maxObjects else {
-                if debugLogging {
-                    Swift.print("   ⚠️ Skipping - max objects limit reached (\(maxObjects))")
-                }
                 break
             }
 
@@ -628,31 +615,18 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // CRITICAL: Never re-place objects that are already placed - they should stay fixed
             // This is especially important for manually placed objects with AR coordinates
             if placedBoxes[location.id] != nil {
-                if debugLogging {
-                    Swift.print("   ⚠️ Skipping - already placed")
-                }
                 continue
             }
 
             // Skip tap-created locations (lat: 0, lon: 0) - they're placed manually via tap
             // These should not be placed again by checkAndPlaceBoxes
             if location.latitude == 0 && location.longitude == 0 {
-                if debugLogging {
-                    Swift.print("   ⚠️ Skipping - tap-created (lat/lon = 0)")
-                }
                 continue
             }
 
             // Skip if already collected (critical check to prevent re-placement after finding)
             if location.collected {
-                if debugLogging {
-                    Swift.print("   ⚠️ Skipping - already collected")
-                }
                 continue
-            }
-
-            if debugLogging {
-                Swift.print("   ✅ Passed all skip checks, proceeding to placement")
             }
             
             // CRITICAL: Check for GPS collision - if another object with same/similar GPS coordinates is already placed OR in the current batch
@@ -1224,7 +1198,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     
                     // Apply correction to all placed objects (smooth, not teleport)
                     // Note: In practice, you might want to animate this over time
-                    for (locationId, anchor) in placedBoxes {
+                    for (_, anchor) in placedBoxes {
                         let currentTransform = anchor.transformMatrix(relativeTo: nil)
                         let currentPos = SIMD3<Float>(
                             currentTransform.columns.3.x,

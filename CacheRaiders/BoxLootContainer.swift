@@ -97,8 +97,8 @@ class BoxLootContainer {
             // Entity.loadModel returns an Entity, but for model files it should be a ModelEntity
             // Try to cast it directly, and if that fails, search for ModelEntity in children
             let modelEntity: ModelEntity
-            if let chest = loadedEntity as? ModelEntity {
-                modelEntity = chest
+            if loadedEntity is ModelEntity {
+                modelEntity = loadedEntity as! ModelEntity
             } else if let chest = findFirstModelEntity(in: loadedEntity) {
                 modelEntity = chest
             } else {

@@ -156,7 +156,7 @@ class ARDistanceTracker: ObservableObject {
         if let selectedId = locationManager.selectedDatabaseObjectId {
             // First try to find the selected object in placedBoxes (AR coordinates)
             if let anchor = placedBoxes[selectedId],
-               let location = locationManager.locations.first(where: { $0.id == selectedId && !$0.collected }) {
+               let _ = locationManager.locations.first(where: { $0.id == selectedId && !$0.collected }) {
                 let anchorTransform = anchor.transformMatrix(relativeTo: nil)
                 var objectPos = SIMD3<Float>(
                     anchorTransform.columns.3.x,
@@ -201,7 +201,7 @@ class ARDistanceTracker: ObservableObject {
                 // For now, use a simplified approach: place target at estimated distance in front
                 // This is a fallback when the object isn't placed yet
                 let estimatedDistance = min(Float(distance), 50.0) // Cap at 50m for AR space
-                let cameraForward = normalize(SIMD3<Float>(forward.x, 0, forward.z))
+                let _ = normalize(SIMD3<Float>(forward.x, 0, forward.z))
                 
                 // Calculate direction based on GPS bearing
                 // Convert bearing (0° = north) to AR space direction
@@ -227,7 +227,7 @@ class ARDistanceTracker: ObservableObject {
             
             for (locationId, anchor) in placedBoxes {
                 // Skip if already collected
-                guard let location = locationManager.locations.first(where: { $0.id == locationId && !$0.collected }) else {
+                guard locationManager.locations.first(where: { $0.id == locationId && !$0.collected }) != nil else {
                     continue
                 }
                 
