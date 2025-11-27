@@ -1001,6 +1001,15 @@ def get_stats():
     # Limit to top 50 (or all if less than 50)
     top_finders = all_finders[:50]
     
+    # Count objects by type
+    cursor.execute('''
+        SELECT type, COUNT(*) as count
+        FROM objects
+        GROUP BY type
+        ORDER BY type
+    ''')
+    type_counts = {row['type']: row['count'] for row in cursor.fetchall()}
+    
     conn.close()
     
     response = jsonify({
@@ -1008,7 +1017,8 @@ def get_stats():
         'found_objects': found_objects,
         'unfound_objects': total_objects - found_objects,
         'total_finds': total_finds,
-        'top_finders': top_finders
+        'top_finders': top_finders,
+        'counts_by_type': type_counts
     })
     
     # Prevent caching of stats endpoint

@@ -23,12 +23,28 @@ const QRCodeManager = {
                 urlInput.value = this.serverURL;
                 console.log('✅ Updated URL field to:', this.serverURL);
             }
+            
+            // Update the small address display below QR code (show IP:port only)
+            const addressDisplay = document.getElementById('serverAddressText');
+            if (addressDisplay) {
+                // Extract IP:port from URL (remove http:// prefix)
+                const ipPort = this.serverURL.replace(/^https?:\/\//, '');
+                addressDisplay.textContent = ipPort;
+            }
         } catch (error) {
             console.warn('⚠️ Failed to fetch server info, using default');
             this.serverURL = Config.API_BASE;
             const urlInput = document.getElementById('serverURL');
             if (urlInput) {
                 urlInput.value = this.serverURL;
+            }
+            
+            // Update the small address display below QR code (show IP:port only)
+            const addressDisplay = document.getElementById('serverAddressText');
+            if (addressDisplay) {
+                // Extract IP:port from URL (remove http:// prefix)
+                const ipPort = this.serverURL.replace(/^https?:\/\//, '');
+                addressDisplay.textContent = ipPort;
             }
         }
         return this.serverURL;
@@ -75,11 +91,24 @@ const QRCodeManager = {
         // Update the input field with the network IP URL
         urlInput.value = currentServerURL;
         
+        // Update the small address display below QR code (show IP:port only)
+        const addressDisplay = document.getElementById('serverAddressText');
+        if (addressDisplay) {
+            // Extract IP:port from URL (remove http:// prefix)
+            const ipPort = currentServerURL.replace(/^https?:\/\//, '');
+            addressDisplay.textContent = ipPort;
+        }
+        
         // Update QR code image with cache busting
         if (qrImg) {
-            qrImg.src = `/api/qrcode?t=${Date.now()}`;
-            qrImg.onerror = () => this.handleQRCodeError();
-            console.log('✅ QR code image URL updated');
+            // Force reload by clearing src first, then setting new URL
+            qrImg.src = '';
+            // Use setTimeout to ensure the browser processes the empty src before setting new one
+            setTimeout(() => {
+                qrImg.src = `/api/qrcode?t=${Date.now()}`;
+                qrImg.onerror = () => this.handleQRCodeError();
+                console.log('✅ QR code image regenerated');
+            }, 10);
         } else {
             // Create img element if it doesn't exist
             const img = document.createElement('img');

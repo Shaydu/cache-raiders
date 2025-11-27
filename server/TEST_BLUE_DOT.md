@@ -130,3 +130,4 @@ Once manual testing works, test with the iOS app:
 4. Move device and verify blue dot updates
 
 
+

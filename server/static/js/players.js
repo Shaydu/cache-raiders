@@ -65,20 +65,24 @@ const PlayersManager = {
                             Status: <span style="color: ${isConnected ? '#4caf50' : '#999'}; font-weight: bold;">${isConnected ? '🟢 Connected' : '⚫ Disconnected'}</span><br>
                             Last Updated: ${updatedDate}
                         </div>
-                        <div style="margin-top: 8px;">
+                        <div style="margin-top: 8px; display: flex; gap: 8px; align-items: center; flex-wrap: nowrap;">
                             <input type="text" id="player-name-${player.device_uuid}" 
                                    value="${player.player_name || ''}" 
                                    placeholder="Enter player name"
-                                   style="width: calc(100% - 80px); margin-right: 8px; padding: 6px; border: 1px solid #444; border-radius: 4px; background: #1a1a1a; color: #fff; font-size: 12px;">
-                            <button onclick="PlayersManager.updatePlayerName('${player.device_uuid}')" 
-                                    style="background: #4caf50; padding: 6px 12px; font-size: 12px; width: 70px;">
-                                Update
-                            </button>
+                                   style="flex: 1; padding: 6px; border: 1px solid #444; border-radius: 4px; background: #1a1a1a; color: #fff; font-size: 12px; min-width: 0;">
+                            <div style="display: flex; gap: 6px; flex-shrink: 0;">
+                                <button onclick="PlayersManager.updatePlayerName('${player.device_uuid}')" 
+                                        style="background: #4caf50; color: #fff; border: none; border-radius: 4px; padding: 6px 12px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap;">
+                                    Update
+                                </button>
+                                <button onclick="PlayersManager.deletePlayer('${player.device_uuid}')" 
+                                        style="background: #d32f2f; color: #fff; border: none; border-radius: 4px; padding: 6px 12px; font-size: 12px; font-weight: bold; cursor: pointer; transition: background 0.2s; white-space: nowrap;"
+                                        onmouseover="this.style.background='#b71c1c'"
+                                        onmouseout="this.style.background='#d32f2f'">
+                                    Delete
+                                </button>
+                            </div>
                         </div>
-                        <button onclick="PlayersManager.deletePlayer('${player.device_uuid}')" 
-                                style="background: #d32f2f; margin-top: 8px; width: 100%;">
-                            Delete
-                        </button>
                     </div>
                 `;
             }).join('');

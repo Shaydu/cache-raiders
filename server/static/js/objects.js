@@ -3,6 +3,7 @@
  */
 const ObjectsManager = {
     markers: {},
+    markerData: {}, // Store marker data for resizing
 
     /**
      * Load all objects and display on map
@@ -16,10 +17,14 @@ const ObjectsManager = {
                 MapManager.getMap().removeLayer(marker);
             });
             this.markers = {};
+            this.markerData = {};
+
+            // Get current zoom level
+            const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
 
             // Add markers for each object
             objects.forEach(obj => {
-                this.addObjectMarker(obj);
+                this.addObjectMarker(obj, currentZoom);
             });
 
             // Update objects list in sidebar
@@ -33,19 +38,22 @@ const ObjectsManager = {
     /**
      * Add object marker to map
      */
-    addObjectMarker(obj) {
-        const markerColor = obj.collected ? '#ff6b6b' : '#ffd700'; // Red for found, gold for unfound
-        const markerSize = obj.collected ? 14 : 18;
-        const borderColor = obj.collected ? '#cc0000' : '#b8860b'; // Dark red for found, dark gold for unfound
-
+    addObjectMarker(obj, zoom = 15) {
         // Use the stored name from the database (what admin typed when creating)
         const displayName = obj.name || obj.type;
 
-        const icon = L.divIcon({
-            className: 'object-marker',
-            html: `<div style="background: ${markerColor}; width: ${markerSize}px; height: ${markerSize}px; border-radius: 50%; border: 3px solid ${borderColor}; box-shadow: 0 0 10px ${obj.collected ? 'rgba(255, 107, 107, 0.6)' : 'rgba(255, 215, 0, 0.6)'};"></div>`,
-            iconSize: [markerSize, markerSize]
-        });
+        // Calculate marker size based on zoom
+        const markerSize = MapManager.calculateMarkerSize(zoom, obj.collected);
+        
+        // Store marker data for resizing
+        this.markerData[obj.id] = {
+            collected: obj.collected,
+            displayName: displayName,
+            obj: obj
+        };
+
+        // Create icon based on calculated size
+        const icon = this.createMarkerIcon(obj.collected, markerSize);
 
         const marker = L.marker([obj.latitude, obj.longitude], { icon })
             .addTo(MapManager.getMap())
@@ -62,6 +70,72 @@ const ObjectsManager = {
         });
 
         this.markers[obj.id] = marker;
+    },
+
+    /**
+     * Create marker icon with specified size
+     */
+    createMarkerIcon(isCollected, size) {
+        let iconHtml;
+        const anchorOffset = size / 2;
+        
+        if (isCollected) {
+            // Stylized red X for found treasure
+            // Adjust stroke width based on size to keep proportions
+            const strokeWidth = Math.max(2, Math.min(5, size / 6));
+            iconHtml = `
+                <div style="
+                    width: ${size}px; 
+                    height: ${size}px; 
+                    position: relative;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                ">
+                    <svg width="${size}" height="${size}" viewBox="0 0 24 24" style="filter: drop-shadow(0 0 ${size/6}px rgba(255, 0, 0, 0.8));">
+                        <path d="M2 2 L22 22 M22 2 L2 22" 
+                              stroke="#ff0000" 
+                              stroke-width="${strokeWidth}" 
+                              stroke-linecap="round"
+                              stroke-linejoin="round"/>
+                    </svg>
+                </div>
+            `;
+        } else {
+            // Gold circle for unfound treasure
+            const markerColor = '#ffd700';
+            const borderColor = '#b8860b';
+            const borderWidth = Math.max(2, Math.min(4, size / 6));
+            iconHtml = `<div style="background: ${markerColor}; width: ${size}px; height: ${size}px; border-radius: 50%; border: ${borderWidth}px solid ${borderColor}; box-shadow: 0 0 ${size/2}px rgba(255, 215, 0, 0.6);"></div>`;
+        }
+
+        return L.divIcon({
+            className: 'object-marker',
+            html: iconHtml,
+            iconSize: [size, size],
+            iconAnchor: [anchorOffset, anchorOffset]
+        });
+    },
+
+    /**
+     * Update all marker sizes based on current zoom level
+     */
+    updateMarkerSizes(zoom) {
+        Object.keys(this.markers).forEach(markerId => {
+            const marker = this.markers[markerId];
+            const markerInfo = this.markerData[markerId];
+            
+            if (!marker || !markerInfo) return;
+
+            // Calculate new size
+            const newSize = MapManager.calculateMarkerSize(zoom, markerInfo.collected);
+            
+            // Create new icon with updated size
+            const newIcon = this.createMarkerIcon(markerInfo.collected, newSize);
+            
+            // Update marker icon
+            marker.setIcon(newIcon);
+        });
     },
 
     /**
@@ -91,7 +165,10 @@ const ObjectsManager = {
                         ${obj.collected ? `Found by: ${obj.found_by || 'Unknown'}<br>Found at: ${new Date(obj.found_at).toLocaleString()}` : 'Status: Available'}
                     </div>
                     <div style="display: flex; gap: 8px; margin-top: 8px;">
-                        ${obj.collected ? `<button onclick="ObjectsManager.markUnfound('${obj.id}')" style="background: #ff9800; flex: 1;">Mark Unfound</button>` : ''}
+                        ${obj.collected 
+                            ? `<button onclick="ObjectsManager.markUnfound('${obj.id}')" style="background: #ff9800; flex: 1;">Mark Unfound</button>`
+                            : `<button onclick="ObjectsManager.markFound('${obj.id}')" style="background: #4caf50; flex: 1;">Mark Found</button>`
+                        }
                         <button onclick="ObjectsManager.deleteObject('${obj.id}')" style="background: #d32f2f; flex: 1;">Delete</button>
                     </div>
                 </div>
@@ -159,6 +236,24 @@ const ObjectsManager = {
             await StatsManager.refreshStats();
         } catch (error) {
             UI.showStatus('Error deleting object: ' + error.message, 'error');
+        }
+    },
+
+    /**
+     * Mark object as found
+     */
+    async markFound(objectId) {
+        if (!confirm('Are you sure you want to mark this object as found?')) {
+            return;
+        }
+
+        try {
+            await ApiService.objects.markFound(objectId);
+            UI.showStatus('Object marked as found successfully', 'success');
+            await this.loadObjects();
+            await StatsManager.refreshStats();
+        } catch (error) {
+            UI.showStatus('Error marking object as found: ' + error.message, 'error');
         }
     },
 

@@ -60,7 +60,10 @@
         </div>
         
         <div class="section">
-            <h2>Statistics</h2>
+            <div class="section-header">
+                <h2>Statistics</h2>
+                <button class="btn-refresh" onclick="StatsManager.refreshStats()" title="Refresh Stats">🔄</button>
+            </div>
             <div class="stats" id="stats">
                 <div class="stat-item">
                     <div class="stat-value" id="totalObjects">-</div>
@@ -79,20 +82,30 @@
                     <div class="stat-label">Total Finds</div>
                 </div>
             </div>
-            <button class="btn-secondary" onclick="StatsManager.refreshStats()">Refresh Stats</button>
+            
+            <div id="typeCounts" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #444;">
+                <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #ccc;">Counts by Type</h3>
+                <div id="typeCountsList" style="display: flex; flex-direction: column; gap: 6px;">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
         </div>
         
         <div class="section">
-            <h2>🏆 Leaderboard</h2>
-            <button class="btn-secondary" onclick="StatsManager.refreshStats()">Refresh Leaderboard</button>
+            <div class="section-header">
+                <h2>🏆 Leaderboard</h2>
+                <button class="btn-refresh" onclick="StatsManager.refreshStats()" title="Refresh Leaderboard">🔄</button>
+            </div>
             <div class="leaderboard" id="leaderboard">
                 <div class="loading">Loading leaderboard...</div>
             </div>
         </div>
         
         <div class="section">
-            <h2>👥 Player Management</h2>
-            <button class="btn-secondary" onclick="PlayersManager.loadPlayers()">Refresh Players</button>
+            <div class="section-header">
+                <h2>👥 Player Management</h2>
+                <button class="btn-refresh" onclick="PlayersManager.loadPlayers()" title="Refresh Players">🔄</button>
+            </div>
             <div class="filter-controls">
                 <label>
                     <input type="checkbox" id="showDisconnectedPlayers" checked onchange="PlayersManager.loadPlayers()">
@@ -105,45 +118,65 @@
         </div>
         
         <div class="section">
-            <h2>Existing Objects</h2>
-            <button class="btn-secondary" onclick="ObjectsManager.loadObjects()">Refresh List</button>
+            <div class="section-header">
+                <h2>Existing Objects</h2>
+                <button class="btn-refresh" onclick="ObjectsManager.loadObjects()" title="Refresh List">🔄</button>
+            </div>
             <div class="objects-list" id="objectsList">
                 <div class="loading">Loading objects...</div>
             </div>
         </div>
 
         <div class="section">
-            <h2>AR Display Settings</h2>
-            <div class="filter-controls">
-                <label>
-                    <input type="checkbox" id="useGenericIconsCheckbox">
-                    <span>Use generic cache icons (doubloons)</span>
-                </label>
+            <div class="section-header">
+                <h2>📱 Server Connection</h2>
+                <button class="btn-refresh" onclick="QRCodeManager.initQRCode()" title="Refresh QR Code">🔄</button>
             </div>
-            <p style="color: #999; font-size: 11px; margin-top: 6px;">
-                This toggle is currently a visual/admin hint only. The actual AR behavior is controlled per-device in the iOS app Settings screen.
+            <p style="color: #ccc; font-size: 12px; margin-bottom: 10px;">Scan this QR code with your iOS app to connect:</p>
+            <div id="qrcodeContainer" style="text-align: center; margin: 15px 0; min-height: 220px; display: flex; align-items: center; justify-content: center; position: relative;">
+                <div style="position: relative; display: inline-block;">
+                    <img id="qrcode" src="/api/qrcode" alt="Server QR Code" style="background: white; padding: 10px; border-radius: 8px; display: inline-block; max-width: 100%;" onerror="QRCodeManager.handleQRCodeError()">
+                    <button onclick="QRCodeManager.initQRCode()" style="position: absolute; bottom: 8px; right: 8px; background: rgba(0, 0, 0, 0.7); border: 1px solid #666; color: #fff; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 10px; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; backdrop-filter: blur(4px);" title="Regenerate QR Code">
+                        <span style="font-size: 12px;">🔄</span>
+                    </button>
+                </div>
+            </div>
+            <div id="serverAddressDisplay" style="text-align: center; margin: -10px 0 10px 0; padding: 4px 8px;">
+                <div style="display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%;">
+                    <span id="serverAddressText" style="color: #999; font-size: 11px; margin: 0; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; text-align: right;">Loading...</span>
+                    <button onclick="QRCodeManager.copyServerURL()" style="background: transparent; border: none; color: #999; padding: 2px 4px; cursor: pointer; font-size: 12px; display: flex; align-items: center; flex-shrink: 0;" title="Copy URL">
+                        <span>📋</span>
+                    </button>
+                </div>
+            </div>
+            <div style="margin: 10px 0; display: none;">
+                <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #ccc;">Server URL:</label>
+                <input type="text" id="serverURL" readonly style="width: 100%; padding: 8px; background: #1a1a1a; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px; font-family: monospace;" value="Loading...">
+            </div>
+            <p style="color: #999; font-size: 11px; margin-top: 10px; font-style: italic;">
+                Note: Use the network IP address shown above (not localhost) when connecting from iOS devices on the same network.
             </p>
         </div>
         
         <div class="section">
-            <h2>📱 Server Connection</h2>
-            <p style="color: #ccc; font-size: 12px; margin-bottom: 10px;">Scan this QR code with your iOS app to connect:</p>
-            <div id="qrcodeContainer" style="text-align: center; margin: 15px 0; min-height: 220px; display: flex; align-items: center; justify-content: center;">
-                <img id="qrcode" src="/api/qrcode" alt="Server QR Code" style="background: white; padding: 10px; border-radius: 8px; display: inline-block; max-width: 100%;" onerror="QRCodeManager.handleQRCodeError()">
+            <h2>⚙️ Map Settings</h2>
+            <div class="form-group">
+                <label style="display: block; margin-bottom: 8px; color: #ccc; font-size: 14px;">Map Style</label>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; background: #1a1a1a; border-radius: 4px; transition: background 0.2s;" 
+                           onmouseover="this.style.background='#2a2a2a'" 
+                           onmouseout="this.style.background='#1a1a1a'">
+                        <input type="radio" name="mapStyle" value="standard" id="mapStyleStandard" checked onchange="MapManager.setMapStyle('standard')">
+                        <span>🗺️ Standard (Google Maps style)</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; background: #1a1a1a; border-radius: 4px; transition: background 0.2s;" 
+                           onmouseover="this.style.background='#2a2a2a'" 
+                           onmouseout="this.style.background='#1a1a1a'">
+                        <input type="radio" name="mapStyle" value="pirate" id="mapStylePirate" onchange="MapManager.setMapStyle('pirate')">
+                        <span>🏴‍☠️ Pirate Map (Treasure Map style)</span>
+                    </label>
+                </div>
             </div>
-            <div style="margin: 10px 0;">
-                <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #ccc;">Server URL:</label>
-                <input type="text" id="serverURL" readonly style="width: 100%; padding: 8px; background: #1a1a1a; border: 1px solid #444; border-radius: 4px; color: #fff; font-size: 12px; font-family: monospace;" value="Loading...">
-            </div>
-            <button class="btn-secondary" onclick="QRCodeManager.copyServerURL()" style="margin-top: 5px;">
-                📋 Copy URL
-            </button>
-            <button class="btn-secondary" onclick="QRCodeManager.initQRCode()" style="margin-top: 5px;">
-                🔄 Regenerate QR Code
-            </button>
-            <p style="color: #999; font-size: 11px; margin-top: 10px; font-style: italic;">
-                Note: Use the network IP address shown above (not localhost) when connecting from iOS devices on the same network.
-            </p>
         </div>
     </div>
     
@@ -164,6 +197,12 @@
     
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Google Maps JavaScript API -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBFw0Qbyq9zTFTd-tUY6d-s6U4ZUwwQZb8"></script>
+    
+    <!-- Leaflet Google Mutant Plugin (for Google Maps integration with Leaflet) -->
+    <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@latest/dist/Leaflet.GoogleMutant.js"></script>
     
     <!-- Socket.IO Client -->
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>

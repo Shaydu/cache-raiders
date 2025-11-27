@@ -34,10 +34,54 @@ h1 {
     border-radius: 8px;
 }
 
+.section-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.section-header h2 {
+    font-size: 18px;
+    margin: 0;
+    margin-bottom: 0;
+    color: #ffd700;
+    flex: 1;
+    text-align: left;
+}
+
 .section h2 {
     font-size: 18px;
     margin-bottom: 15px;
     color: #ffd700;
+}
+
+.btn-refresh {
+    width: auto !important;
+    min-width: 32px;
+    height: 32px;
+    padding: 6px !important;
+    background: transparent !important;
+    color: #fff !important;
+    border: none !important;
+    border-radius: 4px;
+    font-size: 16px;
+    font-weight: normal !important;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.btn-refresh:hover {
+    opacity: 0.7;
+}
+
+.btn-refresh:active {
+    opacity: 0.5;
 }
 
 .form-group {
@@ -59,6 +103,13 @@ input, select {
     background: #1a1a1a;
     color: #fff;
     font-size: 14px;
+}
+
+input[type="radio"] {
+    width: auto;
+    margin: 0;
+    cursor: pointer;
+    accent-color: #ffd700;
 }
 
 input:focus, select:focus {
@@ -101,6 +152,63 @@ button:disabled {
 #map {
     flex: 1;
     height: 100vh;
+    position: relative;
+    background: #fff; /* Default white background for standard style */
+}
+
+/* Standard map style - no special styling */
+#map .leaflet-container {
+    background: #fff !important;
+    position: relative;
+    z-index: 1; /* Ensure container is above any overlays */
+}
+
+#map .leaflet-tile-container img {
+    /* No filter for standard style */
+}
+
+/* Pirate map style - sepia/aged paper effect */
+#map.pirate-map-style {
+    background: rgba(212, 165, 116, 0.2); /* Parchment base color at 20% opacity */
+}
+
+#map.pirate-map-style .leaflet-container {
+    background: rgba(212, 165, 116, 0.2) !important;
+    position: relative;
+    z-index: 1; /* Ensure container is above the texture overlay */
+}
+
+#map.pirate-map-style .leaflet-tile-container img {
+    filter: sepia(20%) contrast(1.05) brightness(0.98);
+    opacity: 0.8; /* 80% transparent - allows map features to show through */
+}
+
+/* Add paper texture overlay effect for pirate map */
+#map.pirate-map-style::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: 
+        repeating-linear-gradient(
+            0deg,
+            rgba(139, 90, 43, 0.02) 0px,
+            transparent 1px,
+            transparent 2px,
+            rgba(139, 90, 43, 0.02) 3px
+        ),
+        repeating-linear-gradient(
+            90deg,
+            rgba(139, 90, 43, 0.02) 0px,
+            transparent 1px,
+            transparent 2px,
+            rgba(139, 90, 43, 0.02) 3px
+        );
+    pointer-events: none;
+    z-index: 0; /* Behind map tiles but above map background */
+    opacity: 0.2; /* Reduced opacity so map features are more visible */
 }
 
 .info-box {
@@ -376,7 +484,7 @@ button:disabled {
 }
 
 .modal-field-value.status-available {
-    color: #4caf50;
+    color: #ffd700; /* Gold for available/unfound items */
 }
 
 .modal-field-value.status-collected {
@@ -445,6 +553,60 @@ button:disabled {
 
 .player-item.disconnected {
     opacity: 0.6;
+}
+
+/* Swipeable player item styles */
+.swipeable-player-item {
+    position: relative;
+    overflow: hidden;
+    margin-bottom: 8px;
+    border-radius: 4px;
+}
+
+.swipeable-content {
+    position: relative;
+    width: 100%;
+    transition: transform 0.3s ease;
+    background: #1a1a1a;
+    border-radius: 4px;
+    border-left: 3px solid #ffd700;
+}
+
+.swipeable-actions {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 0;
+    width: 80px;
+}
+
+.swipeable-delete-btn {
+    width: 100%;
+    height: 100%;
+    background: #d32f2f;
+    color: #fff;
+    border: none;
+    border-radius: 0 4px 4px 0;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+    padding: 0 12px;
+}
+
+.swipeable-delete-btn:hover {
+    background: #b71c1c;
+}
+
+.swipeable-delete-btn:active {
+    background: #8b0000;
 }
 
 .filter-controls {

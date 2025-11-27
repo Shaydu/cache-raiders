@@ -18,6 +18,9 @@ const StatsManager = {
             // Update leaderboard
             this.updateLeaderboard(stats.top_finders || []);
 
+            // Update type counts
+            this.updateTypeCounts(stats.counts_by_type || {});
+
             console.log('Stats refreshed:', stats);
         } catch (error) {
             console.error('Error loading stats:', error);
@@ -76,6 +79,37 @@ const StatsManager = {
                     console.log('Leaderboard updated with', topFinders.length, 'players');
                 });
             }, 100);
+        });
+    },
+
+    /**
+     * Update type counts display
+     */
+    updateTypeCounts(countsByType) {
+        const typeCountsEl = document.getElementById('typeCountsList');
+        if (!typeCountsEl) return;
+
+        // Defer DOM update to avoid render warnings
+        requestAnimationFrame(() => {
+            if (!countsByType || Object.keys(countsByType).length === 0) {
+                typeCountsEl.innerHTML = '<div class="loading">No objects found</div>';
+                return;
+            }
+
+            // Sort types alphabetically
+            const sortedTypes = Object.keys(countsByType).sort();
+            
+            typeCountsEl.innerHTML = sortedTypes.map(type => {
+                const count = countsByType[type];
+                return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; background: #1a1a1a; border-radius: 4px;">
+                        <span style="color: #ccc; font-size: 13px;">${type}</span>
+                        <span style="color: #ffd700; font-weight: 600; font-size: 13px;">${count}</span>
+                    </div>
+                `;
+            }).join('');
+
+            console.log('Type counts updated:', countsByType);
         });
     }
 };

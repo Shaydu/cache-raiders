@@ -58,6 +58,13 @@ const ApiService = {
             return ApiService.fetch(`/api/objects/${id}/found`, {
                 method: 'DELETE'
             });
+        },
+
+        async markFound(id, foundBy = 'admin-web-ui') {
+            return ApiService.fetch(`/api/objects/${id}/found`, {
+                method: 'POST',
+                body: JSON.stringify({ found_by: foundBy })
+            });
         }
     },
 
