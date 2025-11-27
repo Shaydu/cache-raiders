@@ -225,7 +225,13 @@ const ObjectsManager = {
      * Delete object
      */
     async deleteObject(objectId) {
+        // First confirmation
         if (!confirm('Are you sure you want to delete this object? This action cannot be undone.')) {
+            return;
+        }
+
+        // Second confirmation
+        if (!confirm('This is your final warning. Are you absolutely sure you want to delete this object?')) {
             return;
         }
 
@@ -243,10 +249,6 @@ const ObjectsManager = {
      * Mark object as found
      */
     async markFound(objectId) {
-        if (!confirm('Are you sure you want to mark this object as found?')) {
-            return;
-        }
-
         try {
             await ApiService.objects.markFound(objectId);
             UI.showStatus('Object marked as found successfully', 'success');
@@ -261,10 +263,6 @@ const ObjectsManager = {
      * Mark object as unfound
      */
     async markUnfound(objectId) {
-        if (!confirm('Are you sure you want to mark this object as unfound? This will reset its collected status.')) {
-            return;
-        }
-
         try {
             await ApiService.objects.markUnfound(objectId);
             UI.showStatus('Object marked as unfound successfully', 'success');

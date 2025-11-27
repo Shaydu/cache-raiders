@@ -81,6 +81,14 @@ struct SettingsView: View {
                 viewModel.loadAPIURL()
                 viewModel.loadUserName()
                 viewModel.selectedObjectId = locationManager.selectedDatabaseObjectId
+                
+                // Set up error callback to display connection errors to user
+                WebSocketService.shared.onConnectionError = { errorMessage in
+                    Task { @MainActor in
+                        viewModel.displayAlert(title: "WebSocket Connection Failed", message: errorMessage)
+                    }
+                }
+                
                 if locationManager.useAPISync {
                     viewModel.loadDatabaseObjects()
                     viewModel.loadLeaderboard()
@@ -518,22 +526,42 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(.blue)
-                
-                Spacer()
-                
-                Button("Use Default") {
-                    viewModel.resetAPIURL()
-                }
-                .buttonStyle(.bordered)
             }
             
             Text("Enter your computer's local IP address (e.g., 192.168.1.100:5001). Find it with: ifconfig (Mac) or ipconfig (Windows). Or scan the QR code from the server admin page.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
             
-            Text("Current: \(APIService.shared.baseURL)")
-                .font(.caption)
-                .foregroundColor(.blue)
+            // WebSocket connection status
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(webSocketService.isConnected ? Color.green : Color.red)
+                    .frame(width: 12, height: 12)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    if locationManager.useAPISync {
+                        Text("WebSocket: \(webSocketService.connectionStatus.displayName)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        
+                        if case .error(let errorMessage) = webSocketService.connectionStatus {
+                            Text(errorMessage)
+                                .font(.caption2)
+                                .foregroundColor(.red)
+                                .lineLimit(3)
+                        }
+                    } else {
+                        Text("API Sync disabled - Enable to connect")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Text("Server: \(APIService.shared.baseURL)")
+                        .font(.caption2)
+                        .foregroundColor(.blue)
+                }
+            }
+            .padding(.vertical, 4)
         }
         .padding(.vertical, 4)
         .sheet(isPresented: $showQRScanner) {
@@ -568,6 +596,13 @@ struct SettingsView: View {
                 set: { newValue in
                     locationManager.useAPISync = newValue
                     if newValue {
+                        // Set up error callback to display connection errors to user
+                        WebSocketService.shared.onConnectionError = { errorMessage in
+                            Task { @MainActor in
+                                viewModel.displayAlert(title: "WebSocket Connection Failed", message: errorMessage)
+                            }
+                        }
+                        
                         if let userLocation = userLocationManager.currentLocation {
                             Task {
                                 await locationManager.loadLocationsFromAPI(userLocation: userLocation)
@@ -576,6 +611,7 @@ struct SettingsView: View {
                         WebSocketService.shared.connect()
                     } else {
                         WebSocketService.shared.disconnect()
+                        WebSocketService.shared.onConnectionError = nil
                     }
                 }
             ))

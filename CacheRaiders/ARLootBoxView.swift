@@ -135,10 +135,8 @@ struct ARLootBoxView: UIViewRepresentable {
                 // This is now deferred to avoid state modification during view update
                 locationManager.updateUserLocation(userLocation)
                 
-                // Get nearby locations on background thread
-                let nearby = await Task.detached(priority: .userInitiated) {
-                    locationManager.getNearbyLocations(userLocation: userLocation)
-                }.value
+                // Get nearby locations (synchronous call, no need for Task.detached)
+                let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
 
                 // Update UI on main thread - deferred outside view update cycle
                 nearbyLocations = nearby

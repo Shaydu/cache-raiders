@@ -6,6 +6,25 @@ const QRCodeManager = {
     isRefreshing: false, // Flag to prevent race conditions during refresh
 
     /**
+     * Update the server address display element
+     */
+    updateAddressDisplay() {
+        // Wait for DOM to be ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => this.updateAddressDisplay());
+            return;
+        }
+        
+        const addressDisplay = document.getElementById('serverAddressText');
+        if (addressDisplay && this.serverURL) {
+            // Extract IP:port from URL (remove http:// prefix)
+            const ipPort = this.serverURL.replace(/^https?:\/\//, '');
+            addressDisplay.textContent = ipPort;
+            console.log('✅ Updated server address display:', ipPort);
+        }
+    },
+
+    /**
      * Fetch server network IP and update URL
      */
     async fetchServerInfo() {
@@ -25,17 +44,8 @@ const QRCodeManager = {
                 console.log('✅ Updated URL field to:', this.serverURL);
             }
             
-            // Update the small address display below QR code (show IP:port only)
-            const addressDisplay = document.getElementById('serverAddressText');
-            if (addressDisplay) {
-                // Extract IP:port from URL (remove http:// prefix)
-                const ipPort = this.serverURL.replace(/^https?:\/\//, '');
-                addressDisplay.textContent = ipPort;
-                addressDisplay.style.display = 'inline-block'; // Ensure it's visible
-                console.log('✅ Updated server address display:', ipPort);
-            } else {
-                console.warn('⚠️ serverAddressText element not found');
-            }
+            // Update the address display (with callback to ensure DOM is ready)
+            this.updateAddressDisplay();
         } catch (error) {
             console.warn('⚠️ Failed to fetch server info, using default');
             this.serverURL = Config.API_BASE;
@@ -44,16 +54,8 @@ const QRCodeManager = {
                 urlInput.value = this.serverURL;
             }
             
-            // Update the small address display below QR code (show IP:port only)
-            const addressDisplay = document.getElementById('serverAddressText');
-            if (addressDisplay) {
-                // Extract IP:port from URL (remove http:// prefix)
-                const ipPort = this.serverURL.replace(/^https?:\/\//, '');
-                addressDisplay.textContent = ipPort;
-                addressDisplay.style.display = 'inline-block'; // Ensure it's visible
-            } else {
-                console.warn('⚠️ serverAddressText element not found');
-            }
+            // Update the address display even on error
+            this.updateAddressDisplay();
         }
         return this.serverURL;
     },
@@ -108,17 +110,8 @@ const QRCodeManager = {
             // Update the input field with the network IP URL
             urlInput.value = currentServerURL;
             
-            // Update the small address display below QR code (show IP:port only)
-            const addressDisplay = document.getElementById('serverAddressText');
-            if (addressDisplay) {
-                // Extract IP:port from URL (remove http:// prefix)
-                const ipPort = currentServerURL.replace(/^https?:\/\//, '');
-                addressDisplay.textContent = ipPort;
-                addressDisplay.style.display = 'inline-block'; // Ensure it's visible
-                console.log('✅ Updated server address display:', ipPort);
-            } else {
-                console.warn('⚠️ serverAddressText element not found');
-            }
+            // Update the address display (uses callback to ensure DOM is ready)
+            this.updateAddressDisplay();
             
             // Check if container was replaced by error handler - restore structure if needed
             const qrImg = document.getElementById('qrcode');

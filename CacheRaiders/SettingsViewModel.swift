@@ -66,6 +66,8 @@ class SettingsViewModel: ObservableObject {
         }
         
         UserDefaults.standard.set(urlString, forKey: "apiBaseURL")
+        // Force UserDefaults to synchronize to ensure the value is saved immediately
+        UserDefaults.standard.synchronize()
         
         // Force APIService to reload the baseURL by accessing it
         let updatedURL = APIService.shared.baseURL
@@ -73,18 +75,40 @@ class SettingsViewModel: ObservableObject {
         
         // Always try to reconnect WebSocket if API sync is enabled
         if locationManager.useAPISync {
+            // Set up error callback to display connection errors to user
+            WebSocketService.shared.onConnectionError = { [weak self] errorMessage in
+                Task { @MainActor in
+                    self?.displayAlert(title: "WebSocket Connection Failed", message: errorMessage)
+                }
+            }
+            
             // Disconnect immediately
             WebSocketService.shared.disconnect()
 
-            // Reconnect after a short delay to ensure disconnect completes
+            // Reconnect after a short delay to ensure disconnect completes and URL is saved
             Task(priority: .userInitiated) { [weak self] in
-                // Wait 500ms for disconnect to complete
+                // Wait 500ms for disconnect to complete and UserDefaults to sync
                 try? await Task.sleep(nanoseconds: 500_000_000)
 
                 await MainActor.run {
+                    // Verify the URL was actually updated
                     let currentURL = APIService.shared.baseURL
                     print("🔌 Reconnecting WebSocket after URL update to: \(currentURL)")
-                    WebSocketService.shared.connect()
+                    
+                    // Ensure we're disconnected before connecting
+                    if WebSocketService.shared.isConnected {
+                        print("⚠️ WebSocket still connected, forcing disconnect")
+                        WebSocketService.shared.disconnect()
+                        // Wait a bit more if still connected
+                        Task {
+                            try? await Task.sleep(nanoseconds: 200_000_000)
+                            await MainActor.run {
+                                WebSocketService.shared.connect()
+                            }
+                        }
+                    } else {
+                        WebSocketService.shared.connect()
+                    }
                 }
 
                 // Load database objects after reconnecting (on main actor)

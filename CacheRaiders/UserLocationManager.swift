@@ -225,6 +225,12 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
             case .geocodeCanceled:
                 // Geocode cancellation is usually intentional - don't log as error
                 shouldLog = false
+            case .rangingUnavailable:
+                errorDescription = "Ranging unavailable"
+                logLevel = "⚠️"
+            case .rangingFailure:
+                errorDescription = "Ranging failure"
+                logLevel = "⚠️"
             @unknown default:
                 errorDescription = "Unknown CoreLocation error code: \(errorCode)"
             }

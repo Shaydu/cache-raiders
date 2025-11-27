@@ -30,8 +30,8 @@
                 </div>
                 
                 <div class="form-group">
-                    <label for="objectType">Type</label>
-                    <select id="objectType" required>
+                    <label for="objectType">Loot Type</label>
+                    <select id="objectType" class="loot-type-select" required>
                         <option value="">Select type...</option>
                         <option value="Chalice">Chalice</option>
                         <option value="Temple Relic">Temple Relic</option>
@@ -53,7 +53,7 @@
                     <span id="locationInfo">Click on map to set location</span>
                 </div>
                 
-                <button type="submit" id="createBtn">Create Object</button>
+                <button type="submit" id="createBtn">Place Loot</button>
             </form>
             
             <div id="statusMessage"></div>
@@ -141,12 +141,12 @@
                     </button>
                 </div>
             </div>
-            <div id="serverAddressDisplay" style="text-align: center; margin: -10px 0 10px 0; padding: 6px 8px;">
-                <div style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; flex-wrap: wrap;">
-                    <span id="serverAddressText" style="color: #fff; font-size: 13px; margin: 0; font-family: monospace; white-space: nowrap; font-weight: 500; letter-spacing: 0.5px;">Loading...</span>
-                    <button onclick="QRCodeManager.copyServerURL()" style="background: transparent; border: none; color: #999; padding: 2px 4px; cursor: pointer; font-size: 14px; display: flex; align-items: center; flex-shrink: 0;" title="Copy URL">
+            <div id="serverAddressDisplay" style="margin: -10px 0 10px 0; padding: 6px 0; width: 100%; max-width: 100%; overflow: hidden;">
+                <div style="display: flex; align-items: center; gap: 6px; width: 100%; max-width: 100%;">
+                    <button onclick="QRCodeManager.copyServerURL()" style="width: auto !important; background: transparent; border: none; color: #999; padding: 0; margin: 0; cursor: pointer; font-size: 14px; display: flex; align-items: center; flex-shrink: 0; line-height: 1;" title="Copy URL">
                         <span>📋</span>
                     </button>
+                    <span id="serverAddressText" style="color: #fff; font-size: 13px; font-family: monospace; white-space: nowrap; font-weight: 500; letter-spacing: 0.5px; flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;">Loading...</span>
                 </div>
             </div>
             <div style="margin: 10px 0; display: none;">

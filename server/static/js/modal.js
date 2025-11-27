@@ -116,11 +116,6 @@ const ModalManager = {
      * Mark object as unfound from modal
      */
     async markUnfoundFromModal(objectId) {
-        // Reuse existing confirmation and logic from ObjectsManager
-        if (!confirm('Are you sure you want to mark this object as unfound? This will reset its collected status.')) {
-            return;
-        }
-
         try {
             await ApiService.objects.markUnfound(objectId);
             UI.showStatus('Object marked as unfound successfully', 'success');
@@ -146,7 +141,13 @@ const ModalManager = {
      * Delete object from modal
      */
     async deleteObjectFromModal(objectId) {
+        // First confirmation
         if (!confirm('Are you sure you want to delete this object? This action cannot be undone.')) {
+            return;
+        }
+
+        // Second confirmation
+        if (!confirm('This is your final warning. Are you absolutely sure you want to delete this object?')) {
             return;
         }
 

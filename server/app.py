@@ -25,6 +25,30 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'cache_raiders.db')
 # This allows the web map to show where users are currently located
 user_locations: Dict[str, Dict] = {}
 
+def get_local_ip():
+    """Get the local network IP address."""
+    # First, check if HOST_IP environment variable is set (useful for Docker)
+    host_ip = os.environ.get('HOST_IP')
+    if host_ip:
+        return host_ip
+    
+    try:
+        # Connect to a remote address to determine local IP
+        # This doesn't actually send data, just determines the route
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # Connect to a public DNS server (doesn't actually connect)
+            s.connect(('8.8.8.8', 80))
+            ip = s.getsockname()[0]
+            return ip
+        except Exception:
+            ip = '127.0.0.1'
+        finally:
+            s.close()
+        return ip
+    except Exception:
+        return '127.0.0.1'
+
 def get_db_connection():
     """Get a database connection."""
     conn = sqlite3.connect(DB_PATH)
@@ -117,7 +141,17 @@ def init_db():
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint."""
-    return jsonify({'status': 'healthy', 'timestamp': datetime.utcnow().isoformat()})
+    # Log connection attempts for debugging
+    print(f"🏥 Health check from {request.remote_addr} (Host: {request.host})")
+    try:
+        server_ip = get_local_ip()
+    except:
+        server_ip = 'unknown'
+    return jsonify({
+        'status': 'healthy', 
+        'timestamp': datetime.utcnow().isoformat(),
+        'server_ip': server_ip
+    })
 
 @app.route('/api/objects', methods=['GET'])
 def get_objects():
@@ -1102,39 +1136,8 @@ def admin_ui():
 @app.route('/api/server-info', methods=['GET'])
 def get_server_info():
     """Get server network information including IP address."""
-    def get_local_ip():
-        """Get the local network IP address."""
-        # First, check if HOST_IP environment variable is set (useful for Docker)
-        host_ip = os.environ.get('HOST_IP')
-        if host_ip:
-            return host_ip
-        
-        try:
-            # Connect to a remote address to determine local IP
-            # This doesn't actually send data, just determines the route
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            try:
-                # Connect to a public DNS server (doesn't actually connect)
-                s.connect(('8.8.8.8', 80))
-                ip = s.getsockname()[0]
-                
-                # If we're in Docker and got a container IP (172.x.x.x or 10.x.x.x), 
-                # try to get the host IP from the request's remote address
-                if ip.startswith('172.') or ip.startswith('10.') or ip.startswith('192.168.0.') or ip.startswith('192.168.1.'):
-                    # Check if we can get the client's IP (which might be the host)
-                    client_ip = request.remote_addr
-                    if client_ip and not client_ip.startswith('127.'):
-                        # If client is on the same network, we can infer the host IP
-                        # For now, we'll use the detected IP but log a warning
-                        print(f"⚠️ Detected container IP: {ip}, client IP: {client_ip}")
-                return ip
-            except Exception:
-                ip = '127.0.0.1'
-            finally:
-                s.close()
-            return ip
-        except Exception:
-            return '127.0.0.1'
+    # Log access for debugging
+    print(f"📡 Server info requested from {request.remote_addr} (Host: {request.host})")
     
     port = int(os.environ.get('PORT', 5001))
     local_ip = get_local_ip()
@@ -1165,29 +1168,142 @@ def get_server_info():
         'remote_addr': request.remote_addr
     })
 
+@app.route('/api/debug/connection-test', methods=['GET'])
+def connection_test():
+    """Debug endpoint to test connectivity from client."""
+    import platform
+    
+    def get_all_network_interfaces():
+        """Get all network interfaces and their IPs."""
+        interfaces = []
+        try:
+            import netifaces
+            for interface in netifaces.interfaces():
+                addrs = netifaces.ifaddresses(interface)
+                if netifaces.AF_INET in addrs:
+                    for addr_info in addrs[netifaces.AF_INET]:
+                        ip = addr_info.get('addr')
+                        if ip and not ip.startswith('127.'):
+                            interfaces.append({
+                                'interface': interface,
+                                'ip': ip,
+                                'netmask': addr_info.get('netmask')
+                            })
+        except ImportError:
+            # Fallback if netifaces not available
+            try:
+                import subprocess
+                result = subprocess.run(['ifconfig'], capture_output=True, text=True)
+                # Simple parsing (basic fallback)
+                for line in result.stdout.split('\n'):
+                    if 'inet ' in line and '127.0.0.1' not in line:
+                        parts = line.strip().split()
+                        if len(parts) >= 2:
+                            ip = parts[1]
+                            if not ip.startswith('127.'):
+                                interfaces.append({
+                                    'interface': 'unknown',
+                                    'ip': ip,
+                                    'netmask': None
+                                })
+            except:
+                pass
+        
+        return interfaces
+    
+    port = int(os.environ.get('PORT', 5001))
+    local_ip = get_local_ip()
+    
+    return jsonify({
+        'status': 'success',
+        'message': 'Connection test successful!',
+        'server_info': {
+            'detected_ip': local_ip,
+            'port': port,
+            'host': request.host,
+            'remote_addr': request.remote_addr,
+            'user_agent': request.headers.get('User-Agent', 'Unknown'),
+            'server_url': f'http://{local_ip}:{port}',
+            'platform': platform.system(),
+            'python_version': platform.python_version()
+        },
+        'network_interfaces': get_all_network_interfaces(),
+        'timestamp': datetime.utcnow().isoformat()
+    })
+
+@app.route('/api/debug/network-info', methods=['GET'])
+def network_info():
+    """Get detailed network information for debugging."""
+    def get_all_ips():
+        """Get all IP addresses on all interfaces."""
+        ips = []
+        try:
+            import netifaces
+            for interface in netifaces.interfaces():
+                addrs = netifaces.ifaddresses(interface)
+                if netifaces.AF_INET in addrs:
+                    for addr_info in addrs[netifaces.AF_INET]:
+                        ip = addr_info.get('addr')
+                        if ip:
+                            ips.append({
+                                'interface': interface,
+                                'ip': ip,
+                                'netmask': addr_info.get('netmask'),
+                                'broadcast': addr_info.get('broadcast')
+                            })
+        except ImportError:
+            # Fallback method
+            try:
+                import subprocess
+                result = subprocess.run(['ifconfig'], capture_output=True, text=True, timeout=5)
+                current_interface = None
+                for line in result.stdout.split('\n'):
+                    if ':' in line and not line.startswith(' '):
+                        current_interface = line.split(':')[0]
+                    elif 'inet ' in line:
+                        parts = line.strip().split()
+                        if len(parts) >= 2:
+                            ip = parts[1]
+                            ips.append({
+                                'interface': current_interface or 'unknown',
+                                'ip': ip,
+                                'netmask': None,
+                                'broadcast': None
+                            })
+            except Exception as e:
+                ips.append({'error': str(e)})
+        
+        return ips
+    
+    port = int(os.environ.get('PORT', 5001))
+    
+    return jsonify({
+        'server_binding': {
+            'host': '0.0.0.0',
+            'port': port,
+            'accessible_on': 'All network interfaces'
+        },
+        'detected_ips': get_all_ips(),
+        'recommended_urls': [
+            f'http://{ip["ip"]}:{port}' 
+            for ip in get_all_ips() 
+            if ip.get('ip') and not ip['ip'].startswith('127.')
+        ],
+        'current_request': {
+            'host': request.host,
+            'remote_addr': request.remote_addr,
+            'url': request.url,
+            'scheme': request.scheme
+        },
+        'environment': {
+            'HOST_IP': os.environ.get('HOST_IP'),
+            'PORT': os.environ.get('PORT', '5001')
+        }
+    })
+
 @app.route('/api/qrcode', methods=['GET'])
 def generate_qrcode():
     """Generate a QR code for the server URL."""
-    def get_local_ip():
-        """Get the local network IP address."""
-        # First, check if HOST_IP is set (useful for Docker containers)
-        host_ip = os.environ.get('HOST_IP')
-        if host_ip:
-            return host_ip
-        
-        # Otherwise, detect the IP address
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            try:
-                s.connect(('8.8.8.8', 80))
-                ip = s.getsockname()[0]
-            except Exception:
-                ip = '127.0.0.1'
-            finally:
-                s.close()
-            return ip
-        except Exception:
-            return '127.0.0.1'
     
     port = int(os.environ.get('PORT', 5001))
     local_ip = get_local_ip()
@@ -1233,9 +1349,24 @@ def handle_ping():
 if __name__ == '__main__':
     init_db()
     port = int(os.environ.get('PORT', 5001))  # Use 5001 as default to avoid conflicts
+    local_ip = get_local_ip()
+    
     print("🚀 Starting CacheRaiders API server...")
     print(f"📁 Database: {DB_PATH}")
-    print(f"🌐 Server running on http://localhost:{port}")
+    print(f"🌐 Server running on:")
+    print(f"   - Local: http://localhost:{port}")
+    print(f"   - Network: http://{local_ip}:{port}")
     print(f"🔌 WebSocket server enabled")
+    print(f"📊 Debug endpoints:")
+    print(f"   - Health: http://{local_ip}:{port}/health")
+    print(f"   - Connection test: http://{local_ip}:{port}/api/debug/connection-test")
+    print(f"   - Network info: http://{local_ip}:{port}/api/debug/network-info")
+    print(f"   - Server info: http://{local_ip}:{port}/api/server-info")
+    print(f"")
+    print(f"💡 To connect from iOS:")
+    print(f"   1. Make sure your device is on the same WiFi network")
+    print(f"   2. Use the network IP: http://{local_ip}:{port}")
+    print(f"   3. Check firewall settings if connection fails")
+    
     socketio.run(app, host='0.0.0.0', port=port, debug=True, allow_unsafe_werkzeug=True)
 

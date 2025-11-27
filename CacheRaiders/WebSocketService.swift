@@ -31,19 +31,31 @@ class WebSocketService: ObservableObject {
         }
     }
     
+    // Socket.IO handshake state
+    private enum HandshakeState {
+        case notStarted
+        case waitingForSessionInfo  // Waiting for "0" packet with session info
+        case waitingForNamespaceConfirmation  // Sent "40", waiting for "40" response
+        case completed
+    }
+    private var handshakeState: HandshakeState = .notStarted
+    
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
     private var reconnectTimer: Timer?
     private var pingTimer: Timer?
     private var healthCheckTimer: Timer?
+    private var connectionTimeoutTimer: Timer?
     private let reconnectInterval: TimeInterval = 5.0
     private let pingInterval: TimeInterval = 30.0
     private let healthCheckInterval: TimeInterval = 10.0
+    private let connectionTimeoutInterval: TimeInterval = 10.0 // Timeout after 10 seconds
     
     // Callbacks for WebSocket events
     var onObjectCollected: ((String, String, String) -> Void)? // (object_id, found_by, found_at)
     var onObjectUncollected: ((String) -> Void)? // (object_id)
     var onAllFindsReset: (() -> Void)?
+    var onConnectionError: ((String) -> Void)? // (error_message)
     
     var baseURL: String {
         // Use the same validated baseURL as APIService to ensure consistency
@@ -73,11 +85,19 @@ class WebSocketService: ObservableObject {
             .replacingOccurrences(of: "https://", with: "wss://")
         
         guard let wsURL = URL(string: "\(httpURL)/socket.io/?EIO=4&transport=websocket") else {
-            connectionStatus = .error("Invalid URL")
+            let errorMsg = "Invalid WebSocket URL: \(httpURL)"
+            connectionStatus = .error(errorMsg)
+            DispatchQueue.main.async {
+                self.onConnectionError?(errorMsg)
+            }
             return
         }
         
         connectionStatus = .connecting
+        handshakeState = .waitingForSessionInfo
+        
+        // Start connection timeout timer
+        startConnectionTimeoutTimer()
         
         let config = URLSessionConfiguration.default
         urlSession = URLSession(configuration: config, delegate: WebSocketDelegate(service: self), delegateQueue: nil)
@@ -86,7 +106,6 @@ class WebSocketService: ObservableObject {
         webSocketTask?.resume()
         
         receiveMessage()
-        startPingTimer()
         
         print("🔌 Attempting WebSocket connection to \(wsURL)")
     }
@@ -94,11 +113,13 @@ class WebSocketService: ObservableObject {
     func disconnect() {
         stopPingTimer()
         stopReconnectTimer()
+        stopConnectionTimeoutTimer()
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         urlSession = nil
         isConnected = false
         connectionStatus = .disconnected
+        handshakeState = .notStarted
         print("🔌 WebSocket disconnected")
     }
     
@@ -164,27 +185,103 @@ class WebSocketService: ObservableObject {
                 
             case .failure(let error):
                 print("❌ WebSocket receive error: \(error)")
-                self.handleDisconnection()
+                self.handleError(error)
             }
         }
     }
     
     private func handleMessage(_ text: String) {
-        // Socket.IO messages are typically in format: "42["event", data]"
-        // Check for connection confirmation
-        if text.contains("connected") || text.contains("0{\"sid\"") || text.contains("40") {
+        print("📨 WebSocket received raw: \(text)")
+        
+        // Socket.IO handshake protocol:
+        // 1. Server sends "0" packet with session info: 0{"sid":"...","upgrades":[],"pingInterval":25000,"pingTimeout":5000}
+        // 2. Client sends "40" to connect to default namespace
+        // 3. Server responds with "40" to confirm namespace connection
+        
+        // Handle Socket.IO handshake
+        if text.hasPrefix("0{") {
+            // Received session info packet - now send "40" to connect to namespace
+            print("✅ Received Socket.IO session info, connecting to namespace...")
+            handshakeState = .waitingForNamespaceConfirmation
+            sendSocketIOPacket("40")
+            return
+        }
+        
+        if text == "40" {
+            // Received namespace confirmation - handshake complete!
+            print("✅ Socket.IO handshake complete!")
+            handshakeState = .completed
             DispatchQueue.main.async {
                 self.isConnected = true
                 self.connectionStatus = .connected
+                self.stopConnectionTimeoutTimer()
                 self.stopReconnectTimer()
+                self.startPingTimer()
             }
             return
         }
         
-        // Parse Socket.IO event messages: format is "42["event_name", {...}]"
+        // Handle Socket.IO event messages: format is "42["event_name", {...}]"
         // Example: 42["object_collected",{"object_id":"abc","found_by":"user123","found_at":"2024-..."}]
         if text.hasPrefix("42[") {
+            // Check if this is the 'connected' event from the server
+            if text.contains("\"connected\"") || text.contains("'connected'") {
+                // Server sent connected event - handshake is complete
+                print("✅ Received Socket.IO 'connected' event from server")
+                if handshakeState != .completed {
+                    handshakeState = .completed
+                    DispatchQueue.main.async {
+                        self.isConnected = true
+                        self.connectionStatus = .connected
+                        self.stopConnectionTimeoutTimer()
+                        self.stopReconnectTimer()
+                        self.startPingTimer()
+                    }
+                }
+            }
             parseSocketIOEvent(text)
+            return
+        }
+        
+        // Handle other Socket.IO packet types
+        if text == "3" {
+            // Pong response (we sent ping "2", server responds with "3")
+            print("📡 Received pong")
+            return
+        }
+        
+        // Legacy check for backward compatibility (in case server sends different format)
+        if text.contains("connected") && handshakeState == .waitingForNamespaceConfirmation {
+            print("✅ Received connection confirmation (legacy format)")
+            handshakeState = .completed
+            DispatchQueue.main.async {
+                self.isConnected = true
+                self.connectionStatus = .connected
+                self.stopConnectionTimeoutTimer()
+                self.stopReconnectTimer()
+                self.startPingTimer()
+            }
+            return
+        }
+        
+        print("⚠️ Unhandled Socket.IO message: \(text)")
+    }
+    
+    /// Send a Socket.IO packet
+    private func sendSocketIOPacket(_ packet: String) {
+        guard let webSocketTask = webSocketTask else {
+            print("❌ Cannot send packet: WebSocket not connected")
+            return
+        }
+        
+        let message = URLSessionWebSocketTask.Message.string(packet)
+        webSocketTask.send(message) { error in
+            if let error = error {
+                print("❌ Failed to send Socket.IO packet '\(packet)': \(error)")
+                self.handleError(error)
+            } else {
+                print("📤 Sent Socket.IO packet: \(packet)")
+            }
         }
     }
     
@@ -266,14 +363,9 @@ class WebSocketService: ObservableObject {
     }
     
     func sendPing() {
-        guard isConnected else { return }
-        let message = URLSessionWebSocketTask.Message.string("2")
-        webSocketTask?.send(message) { error in
-            if let error = error {
-                print("❌ WebSocket ping error: \(error)")
-                self.handleDisconnection()
-            }
-        }
+        guard isConnected, handshakeState == .completed else { return }
+        // Socket.IO ping is packet type "2"
+        sendSocketIOPacket("2")
     }
     
     // MARK: - Timers
@@ -305,12 +397,10 @@ class WebSocketService: ObservableObject {
     // MARK: - Connection Handlers
     
     func handleConnection() {
-        DispatchQueue.main.async {
-            self.isConnected = true
-            self.connectionStatus = .connected
-            self.stopReconnectTimer()
-        }
-        print("✅ WebSocket connected")
+        // WebSocket is open, but Socket.IO handshake hasn't completed yet
+        // We'll wait for the "0" session info packet before proceeding
+        print("✅ WebSocket opened, waiting for Socket.IO handshake...")
+        // Don't set isConnected = true yet - wait for Socket.IO handshake to complete
     }
     
     func handleDisconnection() {
@@ -318,6 +408,7 @@ class WebSocketService: ObservableObject {
         DispatchQueue.main.async {
             self.isConnected = false
             self.connectionStatus = .disconnected
+            self.handshakeState = .notStarted
         }
         print("⚠️ WebSocket disconnected")
         
@@ -328,19 +419,52 @@ class WebSocketService: ObservableObject {
     }
     
     func handleError(_ error: Error) {
+        stopConnectionTimeoutTimer()
+        let errorMsg = error.localizedDescription
         DispatchQueue.main.async {
             self.isConnected = false
-            self.connectionStatus = .error(error.localizedDescription)
+            self.connectionStatus = .error(errorMsg)
+            self.handshakeState = .notStarted
+            self.onConnectionError?(errorMsg)
         }
-        print("❌ WebSocket error: \(error.localizedDescription)")
+        print("❌ WebSocket error: \(errorMsg)")
         
         // Attempt to reconnect
         startReconnectTimer()
     }
+    
+    // MARK: - Connection Timeout
+    
+    private func startConnectionTimeoutTimer() {
+        stopConnectionTimeoutTimer()
+        connectionTimeoutTimer = Timer.scheduledTimer(withTimeInterval: connectionTimeoutInterval, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            // Check if we're still in connecting state and handshake hasn't completed
+            if case .connecting = self.connectionStatus, !self.isConnected, self.handshakeState != .completed {
+                let errorMsg = "Connection timeout: Unable to complete Socket.IO handshake to \(self.baseURL) after \(Int(self.connectionTimeoutInterval)) seconds. Please check:\n• Server is running\n• URL is correct\n• Device is on the same network\n• Firewall allows connections"
+                DispatchQueue.main.async {
+                    self.isConnected = false
+                    self.connectionStatus = .error(errorMsg)
+                    self.handshakeState = .notStarted
+                    self.onConnectionError?(errorMsg)
+                }
+                print("⏱️ WebSocket connection timeout (handshake state: \(self.handshakeState))")
+                // Cancel the connection attempt
+                self.webSocketTask?.cancel(with: .goingAway, reason: nil)
+                self.webSocketTask = nil
+                self.urlSession = nil
+            }
+        }
+    }
+    
+    private func stopConnectionTimeoutTimer() {
+        connectionTimeoutTimer?.invalidate()
+        connectionTimeoutTimer = nil
+    }
 }
 
 // MARK: - URLSessionWebSocketDelegate
-private class WebSocketDelegate: NSObject, URLSessionWebSocketDelegate {
+private class WebSocketDelegate: NSObject, URLSessionWebSocketDelegate, URLSessionTaskDelegate {
     weak var service: WebSocketService?
     
     init(service: WebSocketService) {
@@ -352,7 +476,47 @@ private class WebSocketDelegate: NSObject, URLSessionWebSocketDelegate {
     }
     
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didCloseWith closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
+        let reasonString = reason.flatMap { String(data: $0, encoding: .utf8) } ?? "Unknown reason"
+        let closeCodeString = closeCodeDescription(closeCode)
+        print("🔌 WebSocket closed: \(closeCodeString), reason: \(reasonString)")
         service?.handleDisconnection()
+    }
+    
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if let error = error {
+            service?.handleError(error)
+        }
+    }
+    
+    private func closeCodeDescription(_ code: URLSessionWebSocketTask.CloseCode) -> String {
+        switch code {
+        case .invalid:
+            return "Invalid"
+        case .normalClosure:
+            return "Normal closure"
+        case .goingAway:
+            return "Going away"
+        case .protocolError:
+            return "Protocol error"
+        case .unsupportedData:
+            return "Unsupported data"
+        case .noStatusReceived:
+            return "No status received"
+        case .abnormalClosure:
+            return "Abnormal closure"
+        case .invalidFramePayloadData:
+            return "Invalid frame payload data"
+        case .policyViolation:
+            return "Policy violation"
+        case .messageTooBig:
+            return "Message too big"
+        case .mandatoryExtensionMissing:
+            return "Mandatory extension missing"
+        case .internalServerError:
+            return "Internal server error"
+        @unknown default:
+            return "Unknown code (\(code.rawValue))"
+        }
     }
 }
 
