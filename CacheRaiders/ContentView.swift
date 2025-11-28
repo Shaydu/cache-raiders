@@ -17,10 +17,9 @@ struct ContentView: View {
     // Grid treasure map modal state (separate from sheets)
     @State private var showGridTreasureMap = false
     
-    // QR Scanner state for automatic connection failure handling
+    // QR Scanner state (manually triggered from Settings)
     @State private var showQRScanner = false
     @State private var scannedURL: String?
-    @State private var hasCheckedHealth = false
     
     // Use enum-based sheet state to prevent multiple sheets being presented simultaneously
     enum SheetType: Identifiable {
@@ -484,26 +483,8 @@ struct ContentView: View {
             // This ensures the name persists between sessions
             APIService.shared.syncSavedUserNameToServer()
             
-            // Check API health on startup and show QR scanner if connection fails
-            if !hasCheckedHealth {
-                hasCheckedHealth = true
-                Task {
-                    do {
-                        let isHealthy = try await APIService.shared.checkHealth()
-                        if !isHealthy {
-                            // Connection failed - show QR scanner automatically
-                            await MainActor.run {
-                                showQRScanner = true
-                            }
-                        }
-                    } catch {
-                        // Connection error - show QR scanner automatically
-                        await MainActor.run {
-                            showQRScanner = true
-                        }
-                    }
-                }
-            }
+            // Note: QR scanner is now only available manually from Settings
+            // Offline mode is supported, so we don't automatically show QR scanner on connection failures
         }
         .sheet(isPresented: $showQRScanner) {
             QRCodeScannerView(scannedURL: $scannedURL)
@@ -540,12 +521,8 @@ struct ContentView: View {
                 }
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("APIConnectionFailed"))) { _ in
-            // Show QR scanner when API connection fails
-            if !showQRScanner {
-                showQRScanner = true
-            }
-        }
+        // Note: Removed automatic QR scanner trigger on API connection failure
+        // Offline mode is supported, so QR scanner is only available manually from Settings
         .onChange(of: userLocationManager.currentLocation) { _, newLocation in
             // PERFORMANCE: Debounce location updates to prevent excessive API calls
             // Cancel previous task if still pending

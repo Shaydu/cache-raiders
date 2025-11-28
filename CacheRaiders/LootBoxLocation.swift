@@ -262,6 +262,8 @@ class LootBoxLocationManager: ObservableObject {
     var onObjectUncollected: ((String) -> Void)? // Callback when object is uncollected (to re-place in AR)
     private let locationsFileName = "lootBoxLocations.json"
     private let maxDistanceKey = "maxSearchDistance"
+    private let dataService = GameItemDataService.shared
+    private let hasMigratedToCoreDataKey = "hasMigratedToCoreData"
     private let maxObjectLimitKey = "maxObjectLimit"
     private let debugVisualsKey = "showARDebugVisuals"
     private let showFoundOnMapKey = "showFoundOnMap"
@@ -302,6 +304,9 @@ class LootBoxLocationManager: ObservableObject {
         loadShowOnlyNextItem()
         loadUseGenericDoubloonIcons()
         loadGameMode()
+        
+        // Migrate from JSON to Core Data if needed (one-time migration)
+        migrateFromJSONIfNeeded()
         
         // API sync is always enabled - start refresh timer
         startAPIRefreshTimer()
@@ -395,18 +400,58 @@ class LootBoxLocationManager: ObservableObject {
         stopAPIRefreshTimer()
     }
     
-    // Load locations from JSON file
-    // PERFORMANCE: Run on background thread to prevent UI blocking
-    func loadLocations(userLocation: CLLocation? = nil) {
-        guard let url = getLocationsFileURL() else { return }
+    // MARK: - Migration from JSON to Core Data
+    
+    /// Migrate locations from JSON file to Core Data (one-time migration)
+    private func migrateFromJSONIfNeeded() {
+        // Check if migration has already been done
+        if UserDefaults.standard.bool(forKey: hasMigratedToCoreDataKey) {
+            return
+        }
         
-        // Perform file I/O on background thread
-        Task.detached(priority: .userInitiated) { [weak self] in
+        // Check if JSON file exists
+        guard let url = getLocationsFileURL(),
+              FileManager.default.fileExists(atPath: url.path) else {
+            // No JSON file to migrate - mark as migrated
+            UserDefaults.standard.set(true, forKey: hasMigratedToCoreDataKey)
+            return
+        }
+        
+        // Perform migration on background thread
+        Task.detached(priority: .utility) { [weak self] in
             guard let self = self else { return }
             
             do {
                 let data = try Data(contentsOf: url)
-                let loadedLocations = try JSONDecoder().decode([LootBoxLocation].self, from: data)
+                let jsonLocations = try JSONDecoder().decode([LootBoxLocation].self, from: data)
+                
+                // Save to Core Data
+                try await self.dataService.saveLocations(jsonLocations)
+                
+                // Mark migration as complete
+                UserDefaults.standard.set(true, forKey: self.hasMigratedToCoreDataKey)
+                
+                print("✅ Migrated \(jsonLocations.count) locations from JSON to Core Data")
+                
+                // Optionally: Delete JSON file after successful migration (keep as backup for now)
+                // try? FileManager.default.removeItem(at: url)
+                
+            } catch {
+                print("⚠️ Error migrating from JSON to Core Data: \(error.localizedDescription)")
+                // Don't mark as migrated if there was an error - will retry next time
+            }
+        }
+    }
+    
+    // Load locations from Core Data (SQLite)
+    // PERFORMANCE: Run on background thread to prevent UI blocking
+    func loadLocations(userLocation: CLLocation? = nil) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
+            
+            do {
+                // Load from Core Data
+                let loadedLocations = try await self.dataService.loadAllLocationsAsync()
                 
                 // Check if we have a user location and if loaded locations are too far away
                 if let userLocation = userLocation {
@@ -430,15 +475,10 @@ class LootBoxLocationManager: ObservableObject {
                 await MainActor.run {
                     self.locations = loadedLocations
                     let collectedCount = self.locations.filter { $0.collected }.count
-                    print("✅ Loaded \(self.locations.count) loot box locations (\(collectedCount) collected)")
+                    print("✅ Loaded \(self.locations.count) loot box locations from Core Data (\(collectedCount) collected)")
                 }
             } catch {
-                // This is expected on first run - no saved locations file exists yet
-                if (error as NSError).code == 260 { // File not found
-                    print("ℹ️ No saved locations found (first run) - will create default locations when GPS is available")
-                } else {
-                    print("⚠️ Could not load locations: \(error.localizedDescription)")
-                }
+                print("⚠️ Could not load locations from Core Data: \(error.localizedDescription)")
                 // Only create defaults if we have a user location
                 if let userLocation = userLocation {
                     await MainActor.run {
@@ -464,30 +504,41 @@ class LootBoxLocationManager: ObservableObject {
     // Reset all locations to not collected (for testing/debugging)
     func resetAllLocations() {
         for i in 0..<locations.count {
-            locations[i].collected = false
+            var location = locations[i]
+            location.collected = false
+            locations[i] = location
+            
+            // Update in Core Data if should persist
+            if location.shouldPersist {
+                do {
+                    try dataService.markUncollected(location.id)
+                } catch {
+                    print("⚠️ Error resetting location in Core Data: \(error)")
+                }
+            }
         }
-        saveLocations()
         print("🔄 Reset all \(locations.count) loot boxes to not collected")
         
         // Trigger AR object removal so they can be re-placed at proper GPS locations
         shouldResetARObjects = true
     }
     
-    // Save locations to JSON file
+    // Save locations to Core Data (SQLite)
     // PERFORMANCE: Run on background thread to prevent UI blocking
     func saveLocations() {
         // Capture current locations on main thread (since @Published property)
-        let locationsToSave = locations
-        guard let url = getLocationsFileURL() else { return }
+        // Only save items that should be persisted (exclude temporary AR-only items)
+        let locationsToSave = locations.filter { $0.shouldPersist }
         
-        // Perform file I/O on background thread
-        Task.detached(priority: .utility) {
+        // Perform save on background thread
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self = self else { return }
+            
             do {
-                let data = try JSONEncoder().encode(locationsToSave)
-                try data.write(to: url)
-                print("✅ Saved \(locationsToSave.count) loot box locations")
+                try await self.dataService.saveLocations(locationsToSave)
+                print("✅ Saved \(locationsToSave.count) loot box locations to Core Data")
             } catch {
-                print("❌ Error saving locations: \(error)")
+                print("❌ Error saving locations to Core Data: \(error)")
             }
         }
     }
@@ -537,17 +588,27 @@ class LootBoxLocationManager: ObservableObject {
             // Pick random type and name
             let randomIndex = Int.random(in: 0..<lootBoxTypes.count)
             
-            locations.append(LootBoxLocation(
+            let newLocation = LootBoxLocation(
                 id: UUID().uuidString,
                 name: lootBoxNames[randomIndex],
                 type: lootBoxTypes[randomIndex],
                 latitude: newLat,
                 longitude: newLon,
-                radius: 5.0 // 5 meter radius
-            ))
+                radius: 5.0, // 5 meter radius
+                collected: false,
+                grounding_height: nil,
+                source: .arRandomized // These are auto-generated, not synced to API
+            )
+            locations.append(newLocation)
+            
+            // Save each location to Core Data
+            do {
+                try dataService.saveLocation(newLocation)
+            } catch {
+                print("⚠️ Error saving default location to Core Data: \(error)")
+            }
         }
         
-        saveLocations()
         print("✅ Created 3 random loot boxes within \(maxSearchDistance)m of your location")
     }
     
@@ -560,10 +621,20 @@ class LootBoxLocationManager: ObservableObject {
             return
         }
         locations.append(location)
-        saveLocations()
+        
+        // Save to Core Data if should persist
+        if location.shouldPersist {
+            do {
+                try dataService.saveLocation(location)
+                print("💾 Saved location '\(location.name)' to Core Data")
+            } catch {
+                print("❌ Error saving location to Core Data: \(error)")
+            }
+        }
         
         // Sync to shared API database if enabled (manual additions are shared)
-        if useAPISync {
+        // Will queue for sync if offline
+        if useAPISync && location.shouldSyncToAPI {
             Task {
                 await saveLocationToAPI(location)
                 print("✅ Synced manually added object '\(location.name)' to shared API database")
@@ -583,7 +654,16 @@ class LootBoxLocationManager: ObservableObject {
     func updateLocation(_ location: LootBoxLocation) {
         if let index = locations.firstIndex(where: { $0.id == location.id }) {
             locations[index] = location
-            saveLocations()
+            
+            // Save to Core Data if should persist
+            if location.shouldPersist {
+                do {
+                    try dataService.saveLocation(location)
+                    print("💾 Updated location '\(location.name)' in Core Data")
+                } catch {
+                    print("❌ Error updating location in Core Data: \(error)")
+                }
+            }
         }
     }
     
@@ -596,12 +676,16 @@ class LootBoxLocationManager: ObservableObject {
             updatedLocation.collected = true
             locations[index] = updatedLocation
 
-            // Save all locations except temporary AR-only items
+            // Save to Core Data if should persist
             if updatedLocation.shouldPersist {
-                saveLocations()
-                print("💾 Saved locations (including collected status for \(locationId))")
+                do {
+                    try dataService.markCollected(locationId)
+                    print("💾 Saved collected status to Core Data for \(locationId)")
+                } catch {
+                    print("❌ Error saving collected status to Core Data: \(error)")
+                }
                 
-                // Also sync to API if enabled
+                // Also sync to API if enabled (will queue if offline)
                 if useAPISync {
                     Task {
                         await markCollectedInAPI(locationId)
@@ -627,12 +711,16 @@ class LootBoxLocationManager: ObservableObject {
             updatedLocation.collected = false
             locations[index] = updatedLocation
 
-            // Save all locations except temporary AR-only items
+            // Save to Core Data if should persist
             if updatedLocation.shouldPersist {
-                saveLocations()
-                print("💾 Saved locations (including uncollected status for \(locationId))")
+                do {
+                    try dataService.markUncollected(locationId)
+                    print("💾 Saved uncollected status to Core Data for \(locationId)")
+                } catch {
+                    print("❌ Error saving uncollected status to Core Data: \(error)")
+                }
                 
-                // Also sync to API if enabled
+                // Also sync to API if enabled (will queue if offline)
                 if useAPISync {
                     Task {
                         await unmarkCollectedInAPI(locationId)
@@ -666,8 +754,13 @@ class LootBoxLocationManager: ObservableObject {
         do {
             try await APIService.shared.unmarkFound(objectId: locationId)
             print("✅ Successfully unmarked \(locationId) as not collected in API")
+            
+            // Mark as synced in Core Data
+            try? dataService.markAsSynced(locationId)
         } catch {
             print("❌ Failed to unmark \(locationId) as not collected in API: \(error.localizedDescription)")
+            print("   Will sync when connection is restored")
+            // Item is already marked as needing sync in Core Data (from unmarkCollected)
         }
     }
     
@@ -1183,6 +1276,19 @@ class LootBoxLocationManager: ObservableObject {
                 // This ensures locationManager.locations contains all objects for accurate counting
                 self.locations = allLocationsForStats + localOnlyItems
                 
+                // Save all API-loaded locations to Core Data for offline access
+                // Only save items that should be persisted (exclude temporary AR-only items)
+                let locationsToSave = allLocationsForStats.filter { $0.shouldPersist }
+                Task.detached(priority: .utility) { [weak self] in
+                    guard let self = self else { return }
+                    do {
+                        try await self.dataService.saveLocations(locationsToSave)
+                        print("💾 Saved \(locationsToSave.count) API locations to Core Data for offline access")
+                    } catch {
+                        print("⚠️ Error saving API locations to Core Data: \(error)")
+                    }
+                }
+                
                 let collectedCount = loadedLocations.filter { $0.collected }.count
                 let unfoundCount = loadedLocations.count - collectedCount
                 print("✅ Loaded \(loadedLocations.count) loot box locations from API for AR (\(collectedCount) collected, \(unfoundCount) unfound)")
@@ -1224,9 +1330,69 @@ class LootBoxLocationManager: ObservableObject {
             // Suppress detailed connection errors - they're noisy
             // Just show a simple message and fall back to local storage
             print("⚠️ Cannot connect to API server at \(APIService.shared.baseURL)")
-            print("   Falling back to local storage")
-            // Fallback to local storage
+            print("   Falling back to Core Data (offline mode)")
+            // Fallback to Core Data - load from local SQLite database
             loadLocations(userLocation: userLocation)
+        }
+    }
+    
+    /// Sync pending changes to API when connection is restored
+    /// This method should be called when the app detects it's back online
+    func syncPendingChangesToAPI() async {
+        guard useAPISync else { return }
+        
+        do {
+            // Get items that need syncing
+            let itemsNeedingSync = try dataService.getItemsNeedingSync()
+            
+            if itemsNeedingSync.isEmpty {
+                print("ℹ️ No pending changes to sync")
+                return
+            }
+            
+            print("🔄 Syncing \(itemsNeedingSync.count) pending changes to API...")
+            
+            // Check API health first
+            let isHealthy = try await APIService.shared.checkHealth()
+            guard isHealthy else {
+                print("⚠️ API server not available - will retry later")
+                return
+            }
+            
+            var syncedCount = 0
+            var errorCount = 0
+            
+            for location in itemsNeedingSync {
+                do {
+                    // Check if item exists in API
+                    let existingObject = try? await APIService.shared.getObject(id: location.id)
+                    
+                    if existingObject == nil {
+                        // Item doesn't exist - create it
+                        await saveLocationToAPI(location)
+                    } else {
+                        // Item exists - update collected status if changed
+                        if location.collected {
+                            await markCollectedInAPI(location.id)
+                        } else {
+                            await unmarkCollectedInAPI(location.id)
+                        }
+                    }
+                    
+                    // Mark as synced in Core Data
+                    try dataService.markAsSynced(location.id)
+                    syncedCount += 1
+                    
+                } catch {
+                    print("⚠️ Error syncing item \(location.id): \(error.localizedDescription)")
+                    errorCount += 1
+                }
+            }
+            
+            print("✅ Synced \(syncedCount) items, \(errorCount) errors")
+            
+        } catch {
+            print("❌ Error getting items needing sync: \(error.localizedDescription)")
         }
     }
     
@@ -1250,9 +1416,21 @@ class LootBoxLocationManager: ObservableObject {
             let createdObject = try await APIService.shared.createObject(location)
             print("✅ Successfully synced location '\(location.name)' (ID: \(location.id)) to shared API database")
             print("   API returned object ID: \(createdObject.id)")
+            
+            // Mark as synced in Core Data
+            try? dataService.markAsSynced(location.id)
         } catch {
             print("❌ Error saving location '\(location.name)' (ID: \(location.id)) to API: \(error.localizedDescription)")
-            print("   Location saved locally but NOT in shared database")
+            print("   Location saved to Core Data - will sync when online")
+            
+            // Mark as needing sync in Core Data (if not already marked)
+            do {
+                // Re-save to ensure needs_sync flag is set
+                try dataService.saveLocation(location)
+            } catch {
+                print("⚠️ Error marking location for sync: \(error)")
+            }
+            
             if let apiError = error as? APIError {
                 print("   API Error details: \(apiError)")
             }
@@ -1280,15 +1458,21 @@ class LootBoxLocationManager: ObservableObject {
         do {
             try await APIService.shared.markFound(objectId: locationId)
             print("✅ Successfully marked location '\(locationName)' (ID: \(locationId)) as found in API")
+            
+            // Mark as synced in Core Data
+            try? dataService.markAsSynced(locationId)
         } catch {
             // Check if the error is "Object already found" - this is actually a success case
             let errorDescription = error.localizedDescription
             if errorDescription.contains("Object already found") || errorDescription.contains("already found") {
                 print("ℹ️ Object '\(locationName)' (ID: \(locationId)) was already marked as found in API - treating as success")
-                // This is fine - the object is in the desired state (found)
+                // Mark as synced since it's already in the correct state
+                try? dataService.markAsSynced(locationId)
             } else {
-                // This is a real error
+                // This is a real error - mark as needing sync
                 print("❌ Error marking location '\(locationName)' (ID: \(locationId)) as found in API: \(errorDescription)")
+                print("   Will sync when connection is restored")
+                // Item is already marked as needing sync in Core Data (from markCollected)
                 if let apiError = error as? APIError {
                     print("   API Error details: \(apiError)")
                 }

@@ -3,7 +3,34 @@
     <entity name="Item" representedClassName="Item" syncable="YES" codeGenerationType="class">
         <attribute name="timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
     </entity>
+    <entity name="GameItem" representedClassName="GameItem" syncable="YES" codeGenerationType="class">
+        <attribute name="id" attributeType="String" defaultValueString="" usesScalarValueType="NO"/>
+        <attribute name="name" attributeType="String" defaultValueString="" usesScalarValueType="NO"/>
+        <attribute name="type" attributeType="String" defaultValueString="" usesScalarValueType="NO"/>
+        <attribute name="latitude" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="longitude" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="radius" attributeType="Double" defaultValueString="5.0" usesScalarValueType="YES"/>
+        <attribute name="collected" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="grounding_height" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="source" attributeType="String" defaultValueString="api" usesScalarValueType="NO"/>
+        <attribute name="ar_origin_latitude" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="ar_origin_longitude" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="ar_offset_x" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="ar_offset_y" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="ar_offset_z" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
+        <attribute name="ar_placement_timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="last_synced_at" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="needs_sync" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="created_at" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="updated_at" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
     <elements>
         <element name="Item" positionX="-63" positionY="-18" width="128" height="44"/>
+        <element name="GameItem" positionX="-63" positionY="9" width="128" height="359"/>
     </elements>
 </model>
