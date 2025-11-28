@@ -1950,18 +1950,41 @@ def interact_with_npc(npc_id: str):
     is_skeleton = data.get('is_skeleton', True)  # Default to skeleton for testing
     
     try:
-        response = llm_service.generate_npc_response(
+        # Get user location if provided (for OSM-based clues)
+        user_location = data.get('user_location')
+        include_placement = data.get('include_placement', False)
+        
+        result = llm_service.generate_npc_response(
             npc_name=npc_name,
             npc_type=npc_type,
             user_message=message,
-            is_skeleton=is_skeleton
+            is_skeleton=is_skeleton,
+            include_placement=include_placement,
+            user_location=user_location
         )
         
-        return jsonify({
-            'npc_id': npc_id,
-            'response': response,
-            'npc_name': npc_name
-        }), 200
+        # Handle both old string return and new dict return for backward compatibility
+        if isinstance(result, dict):
+            response_text = result.get('response', '')
+            placement = result.get('placement')
+            
+            response_data = {
+                'npc_id': npc_id,
+                'response': response_text,
+                'npc_name': npc_name
+            }
+            
+            if placement:
+                response_data['placement'] = placement
+            
+            return jsonify(response_data), 200
+        else:
+            # Backward compatibility: if it returns a string
+            return jsonify({
+                'npc_id': npc_id,
+                'response': result,
+                'npc_name': npc_name
+            }), 200
     except Exception as e:
         return jsonify({'error': f'LLM error: {str(e)}'}), 500
 

@@ -243,7 +243,8 @@ class LLMService:
         npc_type: str,
         user_message: str,
         is_skeleton: bool = False,
-        include_placement: bool = False
+        include_placement: bool = False,
+        user_location: Optional[Dict] = None
     ) -> Dict:
         """Generate a conversational response from an NPC (skeleton, corgi, etc.).
         
@@ -254,13 +255,34 @@ class LLMService:
             Dict with 'response' (text) and optionally 'placement' (structured instructions)
         """
         
+        # Fetch real OSM features from user location if provided (for findable clues)
+        map_features = []
+        if user_location and user_location.get('latitude') and user_location.get('longitude'):
+            try:
+                map_features = self.map_feature_service.get_features_near_location(
+                    user_location['latitude'],
+                    user_location['longitude'],
+                    radius=100.0  # 100 meters - ensure treasure is winnable
+                )
+            except Exception as e:
+                print(f"⚠️ Could not fetch OSM features: {e}")
+        
+        # Build system prompt with real map features if available
         if is_skeleton:
-            system_prompt = f"""Ye be {npc_name}, a SKELETON pirate from 200 years ago. Ye be dead, so ye can speak. Help players find the 200-year-old treasure. Speak ONLY in pirate speak (arr, ye, matey). Keep responses SHORT - 1-2 sentences max."""
+            base_prompt = f"""Ye be {npc_name}, a SKELETON pirate from 200 years ago. Ye be dead, so ye can speak. Help players find the 200-year-old treasure. Speak ONLY in pirate speak (arr, ye, matey). Keep responses SHORT - 1-2 sentences max."""
+            if map_features:
+                base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:5])}. Use these actual features in your clues so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
         elif npc_type.lower() == "traveller" or "corgi" in npc_name.lower():
             # Corgi Traveller - friendly, helpful, gives hints
-            system_prompt = f"""You are {npc_name}, a friendly Corgi Traveller who loves exploring and helping adventurers. You're cheerful, helpful, and give hints about where to find treasures. Speak in a friendly, enthusiastic way (woof, tail wags, etc.). Keep responses SHORT - 1-2 sentences max."""
+            base_prompt = f"""You are {npc_name}, a friendly Corgi Traveller who loves exploring and helping adventurers. You're cheerful, helpful, and give hints about where to find treasures. Speak in a friendly, enthusiastic way (woof, tail wags, etc.). Keep responses SHORT - 1-2 sentences max."""
+            if map_features:
+                base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:5])}. Use these actual features in your hints so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
         else:
-            system_prompt = f"""Ye be {npc_name}, a {npc_type} pirate. Help players find treasures. Speak ONLY in pirate speak. Keep responses SHORT - 1-2 sentences max."""
+            base_prompt = f"""Ye be {npc_name}, a {npc_type} pirate. Help players find treasures. Speak ONLY in pirate speak. Keep responses SHORT - 1-2 sentences max."""
+            if map_features:
+                base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:5])}. Use these actual features in your clues so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
+        
+        system_prompt = base_prompt
         
         messages = [
             {"role": "system", "content": system_prompt},
