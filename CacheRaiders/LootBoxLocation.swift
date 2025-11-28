@@ -201,6 +201,7 @@ class LootBoxLocationManager: ObservableObject {
     @Published var useGenericDoubloonIcons: Bool = false // When enabled, show generic doubloon icons and reveal real objects with animation
     var onSizeChanged: (() -> Void)? // Callback when size settings change
     var onObjectCollectedByOtherUser: ((String) -> Void)? // Callback when object is collected by another user (to remove from AR)
+    var onObjectUncollected: ((String) -> Void)? // Callback when object is uncollected (to re-place in AR)
     private let locationsFileName = "lootBoxLocations.json"
     private let maxDistanceKey = "maxSearchDistance"
     private let maxObjectLimitKey = "maxObjectLimit"
@@ -310,6 +311,9 @@ class LootBoxLocationManager: ObservableObject {
                 self.objectWillChange.send()
                 
                 print("✅ Updated location '\(updatedLocation.name)' to uncollected status")
+                
+                // Notify ARCoordinator to clear found sets and re-place the object
+                self.onObjectUncollected?(objectId)
             }
         }
         
@@ -587,12 +591,18 @@ class LootBoxLocationManager: ObservableObject {
     
     // Get nearby locations within radius
     func getNearbyLocations(userLocation: CLLocation) -> [LootBoxLocation] {
-        return locations.filter { location in
-            // Only include uncollected locations
-            guard !location.collected else { return false }
+        // CRITICAL: Only return UNFOUND (uncollected) objects for "nearby" display
+        // Collected objects should not appear in the nearby count
+        let result = locations.filter { location in
+            // FIRST CHECK: Exclude collected/found objects - only show unfound ones
+            // This applies to ALL objects, including AR-placed ones
+            guard !location.collected else {
+                // This object has been found - exclude it from nearby count
+                return false
+            }
 
-            // Exclude AR-only locations - these are AR-only and shouldn't be counted as "nearby" for GPS
-            // They're placed in AR space, not GPS space, so they don't have meaningful GPS coordinates
+            // Exclude AR-only locations (no GPS coordinates) - they're placed in AR space, not GPS space
+            // AR-placed objects with GPS coordinates should be treated the same as admin-placed objects
             if location.isAROnly {
                 return false
             }
@@ -604,9 +614,18 @@ class LootBoxLocationManager: ObservableObject {
                 return true
             }
 
-            // Check if within search distance
+            // Apply distance check to ALL objects with GPS coordinates (including AR-placed ones)
+            // AR-placed objects are now treated the same as admin-placed objects
             return userLocation.distance(from: location.location) <= maxSearchDistance
         }
+
+        // DEBUG: Log the filtering results to help diagnose count discrepancies
+        Swift.print("📊 getNearbyLocations: Total locations: \(locations.count), Nearby: \(result.count)")
+        Swift.print("   Breakdown: Collected: \(locations.filter { $0.collected }.count), " +
+                   "AR-placed: \(locations.filter { $0.source == .arManual || $0.source == .arRandomized }.count), " +
+                   "GPS-based: \(locations.filter { !$0.isAROnly && !$0.collected }.count)")
+
+        return result
     }
     
     // Save max distance preference
@@ -911,7 +930,8 @@ class LootBoxLocationManager: ObservableObject {
     }
     
     /// Load locations from API instead of local file
-    func loadLocationsFromAPI(userLocation: CLLocation? = nil, includeFound: Bool = false) async {
+    /// Note: includeFound defaults to true to ensure all objects (including found ones) are loaded for accurate counting
+    func loadLocationsFromAPI(userLocation: CLLocation? = nil, includeFound: Bool = true) async {
         guard useAPISync else {
             print("ℹ️ API sync is disabled, using local storage")
             return
@@ -996,6 +1016,7 @@ class LootBoxLocationManager: ObservableObject {
             }
             
             // Convert ALL objects for stats calculation (matching Settings view)
+            // CRITICAL: Use allApiObjectsForStats to populate locations so counter shows all objects
             let allLocationsForStats = allApiObjectsForStats.compactMap { apiObject in
                 APIService.shared.convertToLootBoxLocation(apiObject)
             }
@@ -1003,7 +1024,9 @@ class LootBoxLocationManager: ObservableObject {
             await MainActor.run {
                 // Merge API-loaded locations with local items that haven't been synced yet
                 // This preserves locally created items (spheres, cubes) that aren't in the API yet
-                let apiLocationIds = Set(loadedLocations.map { $0.id })
+                // CRITICAL: Use allLocationsForStats (all objects) instead of loadedLocations (nearby only)
+                // This ensures the counter shows all objects from the database, not just nearby ones
+                let apiLocationIds = Set(allLocationsForStats.map { $0.id })
                 let localOnlyItems = self.locations.filter { location in
                     // Keep local items that:
                     // 1. Are temporary AR-only items (not persisted, not synced)
@@ -1013,8 +1036,9 @@ class LootBoxLocationManager: ObservableObject {
                     return isTemporaryAR || isMapCreatedNotSynced
                 }
                 
-                // Combine API locations with local-only items
-                self.locations = loadedLocations + localOnlyItems
+                // Combine ALL API locations (not just nearby) with local-only items
+                // This ensures locationManager.locations contains all objects for accurate counting
+                self.locations = allLocationsForStats + localOnlyItems
                 
                 let collectedCount = loadedLocations.filter { $0.collected }.count
                 let unfoundCount = loadedLocations.count - collectedCount
@@ -1109,14 +1133,22 @@ class LootBoxLocationManager: ObservableObject {
         }
         
         print("🔄 Attempting to mark location '\(locationName)' (ID: \(locationId)) as found in API...")
-        
+
         do {
             try await APIService.shared.markFound(objectId: locationId)
             print("✅ Successfully marked location '\(locationName)' (ID: \(locationId)) as found in API")
         } catch {
-            print("❌ Error marking location '\(locationName)' (ID: \(locationId)) as found in API: \(error.localizedDescription)")
-            if let apiError = error as? APIError {
-                print("   API Error details: \(apiError)")
+            // Check if the error is "Object already found" - this is actually a success case
+            let errorDescription = error.localizedDescription
+            if errorDescription.contains("Object already found") || errorDescription.contains("already found") {
+                print("ℹ️ Object '\(locationName)' (ID: \(locationId)) was already marked as found in API - treating as success")
+                // This is fine - the object is in the desired state (found)
+            } else {
+                // This is a real error
+                print("❌ Error marking location '\(locationName)' (ID: \(locationId)) as found in API: \(errorDescription)")
+                if let apiError = error as? APIError {
+                    print("   API Error details: \(apiError)")
+                }
             }
         }
     }

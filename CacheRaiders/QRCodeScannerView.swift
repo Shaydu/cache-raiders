@@ -97,9 +97,9 @@ struct QRCodeScannerView: UIViewControllerRepresentable {
                     successView.alpha = 1
                     successView.transform = .identity
                 } completion: { _ in
-                    // Wait a moment, then dismiss
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                        UIView.animate(withDuration: 0.2) {
+                    // Reduced delay for faster dismissal - still shows success feedback
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        UIView.animate(withDuration: 0.15) {
                             successView.alpha = 0
                         } completion: { _ in
                             successView.removeFromSuperview()
@@ -124,6 +124,8 @@ class QRCodeScannerViewController: UIViewController {
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var metadataOutput: AVCaptureMetadataOutput?
     private var scanningFrameView: UIView?
+    private var lastScanTime: Date = Date.distantPast
+    private let scanDebounceInterval: TimeInterval = 0.3 // Prevent duplicate scans within 300ms
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -187,7 +189,9 @@ class QRCodeScannerViewController: UIViewController {
     
     private func setupCamera() {
         let session = AVCaptureSession()
-        session.sessionPreset = .high
+        // Use medium preset for faster processing - still high quality enough for QR codes
+        // This significantly improves scan speed while maintaining accuracy
+        session.sessionPreset = .medium
         self.captureSession = session
         
         guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else {
@@ -216,7 +220,9 @@ class QRCodeScannerViewController: UIViewController {
         if session.canAddOutput(metadataOutput) {
             session.addOutput(metadataOutput)
             
-            metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
+            // Process metadata on background queue for faster performance
+            // Delegate callback will dispatch to main queue when needed
+            metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.global(qos: .userInitiated))
             metadataOutput.metadataObjectTypes = [.qr]
             self.metadataOutput = metadataOutput
         } else {
@@ -323,21 +329,36 @@ class QRCodeScannerViewController: UIViewController {
 // MARK: - AVCaptureMetadataOutputObjectsDelegate
 extension QRCodeScannerViewController: AVCaptureMetadataOutputObjectsDelegate {
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
-        if let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
-           let stringValue = metadataObject.stringValue {
+        // Debounce: prevent duplicate scans within the debounce interval
+        let now = Date()
+        guard now.timeIntervalSince(lastScanTime) >= scanDebounceInterval else {
+            return // Too soon since last scan, ignore
+        }
+        
+        guard let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+              let stringValue = metadataObject.stringValue else {
+            return
+        }
+        
+        // Validate that it looks like a URL
+        guard stringValue.hasPrefix("http://") || stringValue.hasPrefix("https://") else {
+            return
+        }
+        
+        // Mark this scan time to prevent duplicates
+        lastScanTime = now
+        
+        // Stop scanning immediately to prevent further processing
+        captureSession?.stopRunning()
+        
+        // Dispatch UI updates to main queue
+        DispatchQueue.main.async { [weak self] in
+            // Play haptic feedback
+            let generator = UINotificationFeedbackGenerator()
+            generator.notificationOccurred(.success)
             
-            // Validate that it looks like a URL
-            if stringValue.hasPrefix("http://") || stringValue.hasPrefix("https://") {
-                // Stop scanning
-                captureSession?.stopRunning()
-                
-                // Play haptic feedback
-                let generator = UINotificationFeedbackGenerator()
-                generator.notificationOccurred(.success)
-                
-                // Notify delegate
-                delegate?.didScanQRCode(stringValue)
-            }
+            // Notify delegate
+            self?.delegate?.didScanQRCode(stringValue)
         }
     }
 }

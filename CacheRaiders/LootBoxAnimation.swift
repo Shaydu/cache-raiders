@@ -404,7 +404,7 @@ class LootBoxAnimation {
     }
     
     /// Animates prize reveal (rising up and rotating)
-    private static func animatePrizeReveal(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+    static func animatePrizeReveal(container: LootBoxContainer, onComplete: @escaping () -> Void) {
         let prizeStartPos = container.prize.position
         let prizeEndPos = SIMD3<Float>(prizeStartPos.x, prizeStartPos.y + 0.5, prizeStartPos.z)
         

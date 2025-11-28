@@ -94,56 +94,18 @@ class APIService {
                 UserDefaults.standard.removeObject(forKey: "apiBaseURL")
             }
         }
-        // Try to get a suggested local network IP (default port is 5001)
-        if let suggestedIP = getSuggestedLocalIP() {
-            return "http://\(suggestedIP):5001"
-        }
-        return "http://localhost:5001"
+        // No QR code URL set - user needs to scan QR code or enter URL manually
+        // Don't guess IPs - only use what's explicitly set
+        print("⚠️ No API URL configured. Please scan the QR code from the server admin panel or enter the URL manually in Settings.")
+        return "http://localhost:5001" // Fallback, but won't work - user must configure URL
     }
     
     /// Get a suggested local network IP address based on the device's network
+    /// Returns nil to force server discovery instead of guessing (which often picks the router IP)
     private func getSuggestedLocalIP() -> String? {
-        // Try to get the device's local IP to suggest a server IP in the same range
-        var address: String?
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        
-        guard getifaddrs(&ifaddr) == 0 else { return nil }
-        guard let firstAddr = ifaddr else { return nil }
-        
-        for ifptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
-            let interface = ifptr.pointee
-            let addrFamily = interface.ifa_addr.pointee.sa_family
-            
-            // Check for IPv4
-            if addrFamily == UInt8(AF_INET) {
-                let name = String(cString: interface.ifa_name)
-                // Prefer en0 (WiFi) or en1 (Ethernet)
-                if name == "en0" || name == "en1" {
-                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                    getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
-                               &hostname, socklen_t(hostname.count),
-                               nil, socklen_t(0), NI_NUMERICHOST)
-                    address = String(cString: hostname)
-                    // If we found en0 (WiFi), use it; otherwise continue looking
-                    if name == "en0" {
-                        break
-                    }
-                }
-            }
-        }
-        
-        freeifaddrs(ifaddr)
-        
-        // If we found the device IP, suggest a server IP in the same subnet
-        // Try .1 first (often the router/server), then .100
-        if let deviceIP = address {
-            let components = deviceIP.split(separator: ".")
-            if components.count == 4 {
-                // Try .1 first (common for router/server)
-                return "\(components[0]).\(components[1]).\(components[2]).1"
-            }
-        }
-        
+        // Don't suggest an IP - let server discovery handle it
+        // The old logic always suggested .1 (router IP) which is usually wrong
+        // Server discovery will try multiple IPs and find the correct server
         return nil
     }
     
@@ -191,6 +153,24 @@ class APIService {
             }
         } else {
             print("ℹ️ Player name is empty - not syncing to server (server requires non-empty name)")
+        }
+    }
+    
+    /// Sync saved user name to server on app startup
+    /// This ensures the name persists between sessions and is synced to the server
+    func syncSavedUserNameToServer() {
+        // Get saved name from UserDefaults
+        if let savedName = UserDefaults.standard.string(forKey: "userName"), !savedName.isEmpty {
+            // Sync to server in background (don't block app startup)
+            Task {
+                do {
+                    try await updatePlayerNameOnServer(savedName)
+                    print("✅ Synced saved player name to server on startup: \(savedName)")
+                } catch {
+                    // Log error but don't fail - this is a background sync
+                    print("⚠️ Failed to sync saved player name to server on startup: \(error.localizedDescription)")
+                }
+            }
         }
     }
     
@@ -263,13 +243,13 @@ class APIService {
     
     // MARK: - API Methods
     
-    /// Check if API is available, with automatic server discovery on failure
+    /// Check if API is available using the configured URL (from QR code or manual entry)
     func checkHealth() async throws -> Bool {
         return try await checkHealthWithDiscovery()
     }
     
-    /// Check health with automatic server discovery as fallback
-    private func checkHealthWithDiscovery(attemptDiscovery: Bool = true) async throws -> Bool {
+    /// Check health - only uses the URL set via QR code or manual entry, no automatic discovery
+    private func checkHealthWithDiscovery(attemptDiscovery: Bool = false) async throws -> Bool {
         let healthURL = "\(baseURL)/health"
         print("🔍 [API Health Check] Attempting to connect to: \(healthURL)")
         
@@ -343,17 +323,12 @@ class APIService {
             print("   Base URL: \(baseURL)")
             print("   Full health URL: \(healthURL)")
             
-            // Try automatic server discovery if this was the first attempt
-            if attemptDiscovery {
-                print("🔍 [API Health Check] Attempting automatic server discovery...")
-                do {
-                    return try await discoverAndConnect()
-                } catch {
-                    print("❌ [API Health Check] Server discovery also failed: \(error.localizedDescription)")
-                    // Return false to allow graceful fallback
-                    return false
-                }
-            }
+            // Don't try automatic discovery - only use the URL set via QR code or manual entry
+            // If connection fails, user should scan QR code again or check the server URL in Settings
+            print("💡 [API Health Check] Connection failed. Please:")
+            print("   • Scan the QR code from the server admin panel")
+            print("   • Or manually enter the server URL in Settings")
+            print("   • Make sure the server is running and accessible")
             
             // Return false instead of throwing to allow graceful fallback
             return false

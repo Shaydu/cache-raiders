@@ -5,28 +5,45 @@ import CoreLocation
 struct ContentView: View {
     @StateObject private var locationManager = LootBoxLocationManager()
     @StateObject private var userLocationManager = UserLocationManager()
-    @State private var showLocationConfig = false
-    @State private var showARPlacement = false
-    @State private var showSettings = false
-    @State private var showLeaderboard = false
+    
+    // Use enum-based sheet state to prevent multiple sheets being presented simultaneously
+    enum SheetType: Identifiable {
+        case locationConfig
+        case arPlacement
+        case settings
+        case leaderboard
+        
+        var id: String {
+            switch self {
+            case .locationConfig: return "locationConfig"
+            case .arPlacement: return "arPlacement"
+            case .settings: return "settings"
+            case .leaderboard: return "leaderboard"
+            }
+        }
+    }
+    
+    @State private var presentedSheet: SheetType? = nil
     @State private var nearbyLocations: [LootBoxLocation] = []
     @State private var distanceToNearest: Double?
     @State private var temperatureStatus: String?
     @State private var collectionNotification: String?
     @State private var nearestObjectDirection: Double?
     
-    // Computed property for loot box counter - no state modification needed
+    // Computed property for loot box counter - counts ALL locations from database (not just nearby)
+    // This matches the admin panel which shows all objects, not just nearby ones
     private var lootBoxCounter: (found: Int, total: Int) {
-        // Use database stats if available (from API sync)
-        if let stats = locationManager.databaseStats {
-            return (found: stats.foundByYou, total: stats.totalVisible)
-        } else {
-            // Fallback to local data if API stats not available
-            let findableLocations = locationManager.findableLocations
-            let foundCount = findableLocations.filter { $0.collected }.count
-            let totalCount = findableLocations.count
-            return (found: foundCount, total: totalCount)
+        // Use locationManager.locations to get ALL objects from the database
+        // Filter out temporary AR-only items (they're not in the database)
+        let allLocations = locationManager.locations.filter { location in
+            // Include all API/map objects (they're in the database)
+            // Exclude temporary AR-only items (they're not persisted)
+            return location.shouldPersist || location.shouldSyncToAPI
         }
+        
+        let foundCount = allLocations.filter { $0.collected }.count
+        let totalCount = allLocations.count
+        return (found: foundCount, total: totalCount)
     }
 
     // Helper function to convert meters to feet and inches
@@ -81,14 +98,24 @@ struct ContentView: View {
     
     private var leftButtonsView: some View {
         HStack(spacing: 8) {
-            Button(action: { showLocationConfig = true }) {
+            Button(action: {
+                // Use async to avoid modifying state during view update
+                Task { @MainActor in
+                    presentedSheet = .locationConfig
+                }
+            }) {
                 Image(systemName: "map")
                     .padding()
                     .background(.ultraThinMaterial)
                     .cornerRadius(10)
             }
             
-            Button(action: { showARPlacement = true }) {
+            Button(action: {
+                // Use async to avoid modifying state during view update
+                Task { @MainActor in
+                    presentedSheet = .arPlacement
+                }
+            }) {
                 Image(systemName: "plus")
                     .padding()
                     .background(.ultraThinMaterial)
@@ -168,7 +195,12 @@ struct ContentView: View {
     
     private var rightButtonsView: some View {
         HStack(spacing: 8) {
-            Button(action: { showLeaderboard = true }) {
+            Button(action: {
+                // Use async to avoid modifying state during view update
+                Task { @MainActor in
+                    presentedSheet = .leaderboard
+                }
+            }) {
                 Image(systemName: "trophy.fill")
                     .foregroundColor(.yellow)
                     .padding()
@@ -176,7 +208,12 @@ struct ContentView: View {
                     .cornerRadius(10)
             }
             
-            Button(action: { showSettings = true }) {
+            Button(action: {
+                // Use async to avoid modifying state during view update
+                Task { @MainActor in
+                    presentedSheet = .settings
+                }
+            }) {
                 Image(systemName: "gearshape")
                     .foregroundColor(.white)
                     .padding()
@@ -267,27 +304,27 @@ struct ContentView: View {
             
             bottomCounterView
         }
-        .sheet(isPresented: $showLocationConfig) {
-            LocationConfigView(locationManager: locationManager)
-        }
-        .sheet(isPresented: $showARPlacement) {
-            ARPlacementView(locationManager: locationManager, userLocationManager: userLocationManager)
-        }
-        .sheet(isPresented: $showSettings) {
-            SettingsView(locationManager: locationManager, userLocationManager: userLocationManager)
-        }
-        .sheet(isPresented: $showLeaderboard) {
-            NavigationView {
-                LeaderboardView()
-                    .navigationTitle("Leaderboard")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button("Done") {
-                                showLeaderboard = false
+        .sheet(item: $presentedSheet) { sheetType in
+            switch sheetType {
+            case .locationConfig:
+                LocationConfigView(locationManager: locationManager)
+            case .arPlacement:
+                ARPlacementView(locationManager: locationManager, userLocationManager: userLocationManager)
+            case .settings:
+                SettingsView(locationManager: locationManager, userLocationManager: userLocationManager)
+            case .leaderboard:
+                NavigationView {
+                    LeaderboardView()
+                        .navigationTitle("Leaderboard")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .navigationBarTrailing) {
+                                Button("Done") {
+                                    presentedSheet = nil
+                                }
                             }
                         }
-                    }
+                }
             }
         }
         .onAppear {
@@ -295,6 +332,10 @@ struct ContentView: View {
 
             // Auto-connect WebSocket on app start
             WebSocketService.shared.connect()
+            
+            // Sync saved user name to server on app startup
+            // This ensures the name persists between sessions
+            APIService.shared.syncSavedUserNameToServer()
         }
         .onChange(of: userLocationManager.currentLocation) { _, newLocation in
             // When we get a GPS fix, automatically load shared objects from API

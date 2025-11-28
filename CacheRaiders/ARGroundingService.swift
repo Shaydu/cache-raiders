@@ -303,7 +303,7 @@ class ARGroundingService {
         case .sphere, .cube:
             // Small objects: place slightly below camera (as if on a low table/surface)
             return cameraPos.y - 0.8
-        case .chalice:
+        case .chalice, .turkey:
             // Medium height objects
             return cameraPos.y - 1.0
         case .treasureChest, .lootChest, .templeRelic, .lootCart:

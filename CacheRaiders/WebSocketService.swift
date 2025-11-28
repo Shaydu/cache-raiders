@@ -588,7 +588,22 @@ class WebSocketService: ObservableObject {
                 Task {
                     await testHTTPConnectivity()
                 }
-                errorMsg = "Cannot connect to server at \(baseURL).\n\nTroubleshooting:\n1. Check if server is running (try opening \(baseURL)/health in a browser)\n2. Verify IP address is correct (current: \(baseURL))\n3. Ensure device and server are on the same Wi-Fi network\n4. Check firewall allows connections on port 5001\n5. Try 'Test Multiple Ports' button in Settings"
+                
+                // Build detailed troubleshooting message
+                var troubleshooting = "Cannot connect to server at \(baseURL).\n\nThis usually means:\n• Server is not running (check: python app.py in server/ directory)\n• Wrong IP address (current: \(baseURL))"
+                
+                // Check if IP looks like a router/gateway (ends in .1)
+                if baseURL.contains(".1:") || baseURL.contains(".1/") {
+                    troubleshooting += "\n⚠️ IP ends in .1 - this is usually the router, not your computer!"
+                    troubleshooting += "\n   Your computer's IP is likely 192.168.68.XX (not .1)"
+                    troubleshooting += "\n   Find your computer's IP:"
+                    troubleshooting += "\n   • Mac: System Settings → Network → Wi-Fi → Details → IP Address"
+                    troubleshooting += "\n   • Windows: ipconfig (look for IPv4 Address)"
+                }
+                
+                troubleshooting += "\n• Device and server are on different Wi-Fi networks\n• Firewall is blocking port 5001\n\nTroubleshooting:\n1. Verify server IP: Check your computer's IP with 'ifconfig' (Mac) or 'ipconfig' (Windows)\n2. Test in browser: Open \(baseURL)/health\n3. Check Wi-Fi: Ensure device and server are on the same network\n4. Check firewall: macOS may block incoming connections (System Settings → Network → Firewall)\n5. Try 'Test Multiple Ports' in Settings to find the correct server"
+                
+                errorMsg = troubleshooting
             case .timedOut:
                 errorMsg = "Connection timed out to \(baseURL).\n\nPossible causes:\n• Server is slow to respond\n• Network congestion\n• Firewall blocking connection\n• Server not running"
             case .networkConnectionLost:

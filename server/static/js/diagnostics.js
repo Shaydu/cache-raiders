@@ -421,6 +421,25 @@ const DiagnosticsManager = {
     },
 
     /**
+     * Refresh connected clients list
+     */
+    refreshConnectedClients() {
+        if (!this.socket || !this.socket.connected) {
+            this.showResult('error', 'Not connected to WebSocket server');
+            return;
+        }
+        
+        this.showResult('info', 'Refreshing connected clients list...');
+        this.socket.emit('get_connected_clients');
+        
+        // Update UI after a short delay to show loading state
+        const clientsEl = document.getElementById('diagnosticConnectedClients');
+        if (clientsEl) {
+            clientsEl.innerHTML = '<div class="loading">Refreshing...</div>';
+        }
+    },
+
+    /**
      * Clear results
      */
     clearResults() {

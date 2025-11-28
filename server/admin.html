@@ -40,6 +40,7 @@
                         <option value="Loot Cart">Loot Cart</option>
                         <option value="Mysterious Sphere">Mysterious Sphere</option>
                         <option value="Mysterious Cube">Mysterious Cube</option>
+                        <option value="Turkey">Turkey</option>
                     </select>
                 </div>
                 
@@ -221,7 +222,13 @@
             </div>
             <div id="diagnosticResult" style="display: none; padding: 10px; border-radius: 4px; margin-bottom: 10px; font-size: 12px;"></div>
             <div style="margin-bottom: 15px;">
-                <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #ccc;">Connected Clients</h3>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h3 style="margin: 0; font-size: 14px; color: #ccc;">Connected Clients</h3>
+                    <button onclick="DiagnosticsManager.refreshConnectedClients()" 
+                            style="background: #2196f3; color: #fff; border: none; border-radius: 4px; padding: 4px 8px; font-size: 11px; cursor: pointer; white-space: nowrap;">
+                        🔄 Refresh
+                    </button>
+                </div>
                 <div id="diagnosticConnectedClients" style="max-height: 200px; overflow-y: auto;">
                     <div class="loading">Loading connected clients...</div>
                 </div>

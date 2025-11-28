@@ -29,7 +29,6 @@ struct LootBoxMapView: View {
     // Map stability controls
     @State private var shouldAutoCenter = false // Start with manual control
     @State private var lastUpdateTime = Date()
-    @State private var lastAnnotationCount: Int = 0 // Track annotation count to reduce logging
 
     // Feedback state
     @State private var showSuccessMessage = false
@@ -130,14 +129,7 @@ struct LootBoxMapView: View {
             })
         
         // Removed excessive debug logging to improve performance
-        // Only log when count changes significantly or in debug builds
-        #if DEBUG
-        if annotations.count != lastAnnotationCount {
-            let selectionInfo = selectedId != nil ? " (showing selected: \(selectedId!))" : " (showing ALL items)"
-            Swift.print("🗺️ Map annotations: \(annotations.count) total\(selectionInfo)")
-            lastAnnotationCount = annotations.count
-        }
-        #endif
+        // State modification moved to onChange modifier to avoid modifying state during view update
         
         return annotations
     }
@@ -434,6 +426,8 @@ struct LootBoxMapView: View {
                 hasInitialized = true
             }
         }
+        // Debug logging removed to avoid state modification during view update
+        // Annotation count tracking was causing "Modifying state during view update" warning
         .onChange(of: userLocationManager.currentLocation) {
             // On first location update, center the map if not already initialized
             if !hasInitialized, userLocationManager.currentLocation != nil {

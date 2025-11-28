@@ -30,6 +30,14 @@ class BoxLootContainer {
         }
         container.addChild(prize)
         
+        // CRITICAL: Ensure all child entities have the ID name for tap detection
+        // This ensures tap detection works even if tapping on a child entity
+        box.name = id
+        prize.name = id
+        if let lid = lid {
+            lid.name = id
+        }
+        
         // Create a dummy lid if model doesn't have one
         let doorLid = lid ?? ModelEntity()
         
@@ -94,32 +102,41 @@ class BoxLootContainer {
             // Load the model entity - Entity.loadModel returns a ModelEntity
             let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
             
-            // Entity.loadModel returns a ModelEntity, so we can use it directly
-            // ModelEntity is the base class, so loadedEntity is always a ModelEntity
+            // CRITICAL FIX: Always wrap the loaded entity to preserve its coordinate system
+            // USDZ files often have their own scene hierarchy and positioning
+            // This ensures scaling works correctly and the model doesn't appear enormous
+            let wrapperEntity = ModelEntity()
+            wrapperEntity.name = id // Set name on wrapper for tap detection
+            
+            // Add the loaded entity as a child to preserve its relative positioning
+            wrapperEntity.addChild(loadedEntity)
+            
+            // Scale the wrapper to match desired size
+            // For treasure chests, the USDZ model is typically much larger than expected
+            // Apply appropriate scale to achieve 2-3 feet (0.61-0.91m) final size
+            let baseScale: Float = 1.0  // Base scale for other object types
+            
+            // Treasure chests and loot chests need scale reduction to achieve proper size
+            // The 0.4x multiplier compensates for USDZ models being larger than expected
+            let chestScale: Float = (type == .treasureChest || type == .lootChest) ? 0.4 : baseScale
+            
+            // Scale the wrapper (not the child) so all children scale uniformly
+            wrapperEntity.scale = SIMD3<Float>(repeating: size * chestScale)
+            
+            Swift.print("📦 Scaled \(type.displayName) model to size: \(String(format: "%.3f", size))m (scale factor: \(String(format: "%.6f", size * chestScale)))")
+            
+            // Ensure wrapper is right-side up (not upside down)
+            wrapperEntity.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
+            
+            // Find the actual model entity within the loaded hierarchy for lid extraction
             let modelEntity: ModelEntity
             if let model = findFirstModelEntity(in: loadedEntity) {
                 // Use the first found ModelEntity with a mesh (the actual 3D model)
                 modelEntity = model
             } else {
-                // If no child ModelEntity found, use the loaded entity directly (it's already a ModelEntity)
-                modelEntity = loadedEntity
+                // If no child ModelEntity found, use the loaded entity directly
+                modelEntity = loadedEntity as ModelEntity
             }
-            
-            // Scale the model to match desired size
-            // USDZ models are typically 1 unit = 1 meter, so scale directly by size
-            // The 'size' parameter is already the desired final size (baseSize = type.size * sizeMultiplier)
-            // ALL boxes (treasure chest, ancient artifact, puzzle box, etc.) use the same uniform scale
-            // Scale by size * 0.03 (40% reduction from 0.05) to make boxes smaller
-            // This gives us final sizes of approximately 0.0045-0.009m (4.5-9mm) which is small but visible
-            // Treasure chests are scaled down by 50% (0.5 multiplier)
-            let baseScale: Float = 0.03
-            let chestScale = (type == .treasureChest || type == .lootChest) ? baseScale * 0.5 : baseScale
-            modelEntity.scale = SIMD3<Float>(repeating: size * chestScale)
-            
-            // Ensure model is right-side up (not upside down)
-            // Some models may load with incorrect orientation
-            // Reset rotation to ensure proper orientation
-            modelEntity.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
             
             // Try to find the lid in the model hierarchy
             // Common names for lids: "lid", "Lid", "top", "Top", "door", "Door", "chest_lid", etc.
@@ -150,19 +167,17 @@ class BoxLootContainer {
                 print("ℹ️ No lid found in model \(modelName) - chest may open differently or lid is part of main mesh")
             }
             
-            // Apply materials/colors if needed
-            applyMaterials(to: modelEntity, color: type.color, glowColor: type.glowColor)
+            // Apply materials while preserving original textures and colors
+            applyMaterials(to: wrapperEntity, color: type.color, glowColor: type.glowColor)
             
-            // Set name on the box entity for tap detection (same as container ID)
-            // This ensures taps on the box itself (not just the container) are detected
-            // The tap handler walks up the hierarchy, so it will find the container with matching ID
-            modelEntity.name = id
+            // CRITICAL: Name is already set on wrapperEntity above for tap detection
+            // The tap handler walks up the hierarchy, so it will find the wrapper with matching ID
             
             // Store animation in a custom component or return it separately
             // For now, we'll need to modify the return type to include the animation
             // But since we can't change the return type easily, let's store it in the model entity
             // We'll access it later through the container
-            return (modelEntity, lidEntity, builtInAnimation)
+            return (wrapperEntity, lidEntity, builtInAnimation)
         } catch {
             print("❌ Error loading treasure chest model \(modelName): \(error)")
             print("   Using fallback procedural box")
@@ -200,27 +215,45 @@ class BoxLootContainer {
         return nil
     }
     
-    /// Applies materials to the model entities
+    /// Applies materials to the model entities while preserving original textures and colors
+    /// This preserves the original appearance of USDZ models while enhancing lighting properties
     private static func applyMaterials(to entity: Entity, color: UIColor, glowColor: UIColor) {
         if let modelEntity = entity as? ModelEntity, var model = modelEntity.model {
-            // Update materials with proper lighting properties
+            // Preserve original materials but enhance lighting properties
             var materials: [Material] = []
             for material in model.materials {
-                if var simpleMaterial = material as? SimpleMaterial {
-                    // Enhance the material with better lighting response
-                    simpleMaterial.color = .init(tint: color)
-                    simpleMaterial.roughness = 0.4 // Moderate roughness for realistic shading
-                    simpleMaterial.metallic = 0.3 // Slight metallic sheen
-                    materials.append(simpleMaterial)
-                } else if var pbr = material as? PhysicallyBasedMaterial {
-                    // If it's already PBR, enhance it
-                    pbr.baseColor = .init(tint: color)
-                    pbr.roughness = .init(floatLiteral: 0.4)
-                    pbr.metallic = .init(floatLiteral: 0.3)
-                    materials.append(pbr)
-                } else {
-                    // For other materials, try to preserve them but apply basic properties
+                // Check if material has textures - if so, preserve completely
+                var hasTexture = false
+                
+                if let simpleMaterial = material as? SimpleMaterial {
+                    hasTexture = simpleMaterial.color.texture != nil
+                } else if let pbr = material as? PhysicallyBasedMaterial {
+                    hasTexture = pbr.baseColor.texture != nil || 
+                                pbr.normal.texture != nil || 
+                                pbr.roughness.texture != nil ||
+                                pbr.metallic.texture != nil
+                }
+                
+                if hasTexture {
+                    // Material has textures - preserve it completely to maintain original appearance
                     materials.append(material)
+                } else {
+                    // No textures - can enhance with lighting properties
+                    // Only apply subtle enhancements, don't override colors completely
+                    if var simpleMaterial = material as? SimpleMaterial {
+                        // Enhance lighting properties without overriding original color
+                        simpleMaterial.roughness = 0.4 // Moderate roughness for realistic shading
+                        simpleMaterial.metallic = 0.3 // Slight metallic sheen
+                        materials.append(simpleMaterial)
+                    } else if var pbr = material as? PhysicallyBasedMaterial {
+                        // Enhance PBR lighting properties
+                        pbr.roughness = .init(floatLiteral: 0.4)
+                        pbr.metallic = .init(floatLiteral: 0.3)
+                        materials.append(pbr)
+                    } else {
+                        // For other materials, preserve them completely
+                        materials.append(material)
+                    }
                 }
             }
             model.materials = materials

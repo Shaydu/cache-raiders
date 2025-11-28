@@ -91,7 +91,7 @@ class ChaliceLootContainer {
             // Ensure wrapper is right-side up (not upside down)
             wrapperEntity.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
 
-            // Apply materials/colors to the wrapper and its children
+            // Apply materials while preserving original textures and colors
             applyMaterials(to: wrapperEntity, color: type.color, glowColor: type.glowColor)
 
             print("✅ Loaded chalice model: \(modelName) (wrapped to preserve coordinates)")
@@ -118,18 +118,37 @@ class ChaliceLootContainer {
         return nil
     }
     
-    /// Applies materials to the model entities
+    /// Applies materials to the model entities while preserving original textures and colors
+    /// This preserves the original appearance of USDZ models while enhancing lighting properties
     private static func applyMaterials(to entity: Entity, color: UIColor, glowColor: UIColor) {
         if let modelEntity = entity as? ModelEntity, var model = modelEntity.model {
-            // Update materials with glow effect
+            // Preserve original materials but enhance lighting properties
             var materials: [Material] = []
             for material in model.materials {
-                if var simpleMaterial = material as? SimpleMaterial {
-                    // Enhance the material with glow
-                    simpleMaterial.color = .init(tint: color)
-                    materials.append(simpleMaterial)
-                } else {
+                // Check if material has textures - if so, preserve completely
+                var hasTexture = false
+                
+                if let simpleMaterial = material as? SimpleMaterial {
+                    hasTexture = simpleMaterial.color.texture != nil
+                } else if let pbr = material as? PhysicallyBasedMaterial {
+                    hasTexture = pbr.baseColor.texture != nil || 
+                                pbr.normal.texture != nil || 
+                                pbr.roughness.texture != nil ||
+                                pbr.metallic.texture != nil
+                }
+                
+                if hasTexture {
+                    // Material has textures - preserve it completely to maintain original appearance
                     materials.append(material)
+                } else {
+                    // No textures - can enhance with lighting properties
+                    if var simpleMaterial = material as? SimpleMaterial {
+                        // Enhance lighting properties without overriding original color
+                        materials.append(simpleMaterial)
+                    } else {
+                        // For other materials, preserve them completely
+                        materials.append(material)
+                    }
                 }
             }
             model.materials = materials

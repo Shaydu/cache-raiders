@@ -1130,6 +1130,227 @@ struct CubeFactory: LootBoxFactory {
     }
 }
 
+struct TurkeyFactory: LootBoxFactory {
+    var iconName: String { "cup.and.saucer.fill" }
+    var modelNames: [String] { ["Dancing_Turkey", "Turkey_Rigged"] } // Try Dancing_Turkey first (has animation)
+    var color: UIColor { UIColor(red: 0.7, green: 0.5, blue: 0.3, alpha: 1.0) } // Brown/tan turkey
+    var glowColor: UIColor { UIColor(red: 1.0, green: 0.7, blue: 0.4, alpha: 1.0) } // Warm orange glow
+    var size: Float { 0.4 }
+    var itemNames: [String] { ["Animated Turkey", "Rigged Turkey", "Thanksgiving Turkey"] }
+    
+    func itemDescription() -> String {
+        return itemNames.randomElement() ?? "Animated Turkey"
+    }
+    
+    func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
+        // Create container with custom open behavior
+        let container = createContainer(location: location, sizeMultiplier: sizeMultiplier)!
+        let entity = container.container
+        entity.name = location.id
+        
+        // Position turkey so its base sits on the ground
+        let baseSize = size * sizeMultiplier
+        let yOffset = baseSize * 0.2 // Offset to place base on ground
+        entity.position = SIMD3<Float>(0, yOffset, 0)
+        
+        // Ensure entity is enabled and visible
+        entity.isEnabled = true
+        
+        let findableObject = FindableObject(
+            locationId: location.id,
+            anchor: anchor,
+            sphereEntity: nil,
+            container: container,
+            location: location
+        )
+        
+        return (entity, findableObject)
+    }
+    
+    func createContainer(location: LootBoxLocation, sizeMultiplier: Float) -> LootBoxContainer? {
+        let baseContainer = TurkeyLootContainer.create(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
+        return LootBoxContainer(
+            container: baseContainer.container,
+            box: baseContainer.box,
+            lid: baseContainer.lid,
+            prize: baseContainer.prize,
+            builtInAnimation: baseContainer.builtInAnimation,
+            open: { container, onComplete in
+                self.openTurkey(container: container, onComplete: onComplete)
+            }
+        )
+    }
+    
+    func animateFind(entity: ModelEntity, container: LootBoxContainer?, tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
+        let parentEntity = container?.container.parent ?? entity.parent ?? entity
+        let confettiPosition: SIMD3<Float>
+        if let tapPos = tapWorldPosition {
+            let parentTransform = parentEntity.transformMatrix(relativeTo: nil)
+            let parentWorldPos = SIMD3<Float>(
+                parentTransform.columns.3.x,
+                parentTransform.columns.3.y,
+                parentTransform.columns.3.z
+            )
+            confettiPosition = tapPos - parentWorldPos
+        } else {
+            confettiPosition = entity.position
+        }
+        LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
+        
+        // Play sound
+        playFindSound()
+        
+        // Open the turkey
+        if let container = container {
+            openTurkey(container: container, onComplete: onComplete)
+        } else {
+            onComplete()
+        }
+    }
+    
+    func animateLoop(entity: ModelEntity) {
+        // For turkey, we need to find the box entity (turkey model) and play its animation
+        // The entity passed in is the container, and the box (turkey) is a child
+        // The box should be the first ModelEntity child (based on TurkeyLootContainer.create structure)
+        var turkeyEntity: ModelEntity? = nil
+        
+        // First, try to find the box by looking for the first ModelEntity child
+        // In TurkeyLootContainer, the box (turkey) is added as the first child
+        for child in entity.children {
+            if let modelChild = child as? ModelEntity {
+                // This is likely the turkey box entity
+                turkeyEntity = modelChild
+                Swift.print("🎬 Found turkey box entity: \(modelChild.name), has \(modelChild.availableAnimations.count) animations")
+                break
+            }
+        }
+        
+        // If not found, search deeper in hierarchy
+        if turkeyEntity == nil {
+            for child in entity.children {
+                if let modelChild = child as? ModelEntity {
+                    // Check grandchildren
+                    for grandchild in modelChild.children {
+                        if let modelGrandchild = grandchild as? ModelEntity {
+                            if !modelGrandchild.availableAnimations.isEmpty {
+                                turkeyEntity = modelGrandchild
+                                Swift.print("🎬 Found turkey entity in grandchildren: \(modelGrandchild.name)")
+                                break
+                            }
+                        }
+                    }
+                    if turkeyEntity != nil { break }
+                }
+            }
+        }
+        
+        // If we found the turkey entity, try to play animations
+        if let turkey = turkeyEntity {
+            // Check for available animations on the turkey entity
+            let availableAnimations = turkey.availableAnimations
+            if !availableAnimations.isEmpty, let animation = availableAnimations.first {
+                Swift.print("🎬 Starting continuous loop animation for turkey (found \(availableAnimations.count) animation(s))")
+                
+                // Play animation with looping
+                let _ = turkey.playAnimation(
+                    animation,
+                    transitionDuration: 0.2,
+                    startsPaused: false
+                )
+                
+                // Set up continuous looping
+                let estimatedDuration: TimeInterval = 2.0
+                var isLooping = true
+                
+                func loopAnimation() {
+                    guard isLooping, turkey.parent != nil else {
+                        Swift.print("🛑 Stopping turkey animation loop (entity removed)")
+                        return
+                    }
+                    
+                    // Restart the animation
+                    let _ = turkey.playAnimation(
+                        animation,
+                        transitionDuration: 0.1,
+                        startsPaused: false
+                    )
+                    
+                    // Schedule next loop
+                    DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration) {
+                        loopAnimation()
+                    }
+                }
+                
+                // Start looping after first play completes
+                DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration) {
+                    loopAnimation()
+                }
+            } else {
+                Swift.print("⚠️ Turkey entity found but has no available animations")
+            }
+        } else {
+            Swift.print("⚠️ Could not find turkey box entity in container hierarchy")
+            Swift.print("   Container has \(entity.children.count) children")
+            for (index, child) in entity.children.enumerated() {
+                Swift.print("   Child \(index): \(Swift.type(of: child)), name: \(child.name)")
+            }
+        }
+    }
+    
+    func playFindSound() {
+        LootBoxAnimation.playOpeningSound()
+    }
+    
+    private func openTurkey(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+        // If there's a built-in animation, play it continuously
+        if let animation = container.builtInAnimation {
+            Swift.print("🎬 Playing built-in turkey animation (will loop continuously)")
+            
+            // Play the built-in animation on the turkey entity
+            let _ = container.box.playAnimation(
+                animation,
+                transitionDuration: 0.2,
+                startsPaused: false
+            )
+            
+            // Loop the animation continuously
+            let estimatedDuration: TimeInterval = 2.0
+            var isLooping = true
+            
+            func loopAnimation() {
+                guard isLooping else { return }
+                
+                // Restart the animation
+                let _ = container.box.playAnimation(
+                    animation,
+                    transitionDuration: 0.1,
+                    startsPaused: false
+                )
+                
+                // Schedule next loop
+                DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration) {
+                    loopAnimation()
+                }
+            }
+            
+            // Start looping after first play completes
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration) {
+                loopAnimation()
+            }
+            
+            // After animation plays for a bit, show prize and then disappear
+            DispatchQueue.main.asyncAfter(deadline: .now() + estimatedDuration * 2.5) {
+                isLooping = false // Stop looping
+                container.prize.isEnabled = true
+                LootBoxAnimation.animatePrizeReveal(container: container, onComplete: onComplete)
+            }
+        } else {
+            // No built-in animation - use chalice-style reveal
+            LootBoxAnimation.openChalice(container: container, onComplete: onComplete)
+        }
+    }
+}
+
 // MARK: - Factory Registry (replaces switch statement for better decoupling)
 /// Centralized registry for all loot box factories
 /// This eliminates the need for switch statements when accessing factories
@@ -1141,7 +1362,8 @@ struct LootBoxFactoryRegistry {
         .lootCart: LootCartFactory(),
         .templeRelic: TempleRelicFactory(),
         .sphere: SphereFactory(),
-        .cube: CubeFactory()
+        .cube: CubeFactory(),
+        .turkey: TurkeyFactory()
     ]
     
     static func factory(for type: LootBoxType) -> LootBoxFactory {

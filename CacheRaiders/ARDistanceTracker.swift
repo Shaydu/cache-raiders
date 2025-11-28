@@ -322,10 +322,10 @@ class ARDistanceTracker: ObservableObject {
         if angle < 0 {
             angle += 360
         }
-        
-        // Snap to 45-degree intervals for easier reading
-        // Round to nearest 45° (0°, 45°, 90°, 135°, 180°, 225°, 270°, 315°)
-        let interval: Float = 45.0
+
+        // Snap to 15-degree intervals for better accuracy while still being smooth
+        // Round to nearest 15° (0°, 15°, 30°, 45°, 60°, 75°, 90°, etc.)
+        let interval: Float = 15.0
         angle = round(angle / interval) * interval
 
         nearestObjectDirection = Double(angle)

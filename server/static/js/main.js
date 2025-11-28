@@ -38,10 +38,14 @@ const App = {
             setTimeout(async () => {
                 await ObjectsManager.loadObjects();
                 await StatsManager.refreshStats();
-                await PlayersManager.loadPlayers();
-
-                // Load and update user locations
+                
+                // Load user locations FIRST so connection status is accurate when players list loads
                 await UserLocationsManager.loadUserLocations();
+                
+                // Then load players list (which will check connection status based on locations)
+                await PlayersManager.loadPlayers();
+                
+                // Set up periodic location updates
                 setInterval(() => {
                     UserLocationsManager.loadUserLocations();
                 }, Config.USER_LOCATION_UPDATE_INTERVAL);

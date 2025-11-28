@@ -222,26 +222,46 @@ const ObjectsManager = {
     },
 
     /**
+     * Remove object marker from map immediately
+     */
+    removeObjectMarker(objectId) {
+        if (this.markers[objectId]) {
+            MapManager.getMap().removeLayer(this.markers[objectId]);
+            delete this.markers[objectId];
+            delete this.markerData[objectId];
+            console.log(`🗑️ Removed marker for object: ${objectId}`);
+        }
+        
+        // Reload objects list to update sidebar
+        this.loadObjects().catch(err => {
+            console.error('Error reloading objects after marker removal:', err);
+        });
+        
+        // Refresh stats
+        if (StatsManager && typeof StatsManager.refreshStats === 'function') {
+            StatsManager.refreshStats();
+        }
+    },
+
+    /**
      * Delete object
      */
     async deleteObject(objectId) {
-        // First confirmation
         if (!confirm('Are you sure you want to delete this object? This action cannot be undone.')) {
             return;
         }
 
-        // Second confirmation
-        if (!confirm('This is your final warning. Are you absolutely sure you want to delete this object?')) {
-            return;
-        }
-
         try {
+            // Remove marker immediately for instant feedback
+            this.removeObjectMarker(objectId);
+            
             await ApiService.objects.delete(objectId);
             UI.showStatus('Object deleted successfully', 'success');
-            await this.loadObjects();
             await StatsManager.refreshStats();
         } catch (error) {
             UI.showStatus('Error deleting object: ' + error.message, 'error');
+            // Reload objects to restore marker if deletion failed
+            await this.loadObjects();
         }
     },
 

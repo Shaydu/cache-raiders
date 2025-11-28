@@ -44,15 +44,19 @@ class ARTapHandler {
         
         Swift.print("👆 Tap detected at screen: (\(tapLocation.x), \(tapLocation.y))")
         Swift.print("   Placed boxes count: \(placedBoxes.count), keys: \(placedBoxes.keys.sorted())")
-        
-        // Get tap world position using raycast
+
+        // Get screen center for crosshair placement
+        let screenCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+
+        // Get tap world position using raycast from SCREEN CENTER (crosshairs)
         var tapWorldPosition: SIMD3<Float>? = nil
-        if let raycastResult = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .horizontal).first {
+        if let raycastResult = arView.raycast(from: screenCenter, allowing: .estimatedPlane, alignment: .horizontal).first {
             tapWorldPosition = SIMD3<Float>(
                 raycastResult.worldTransform.columns.3.x,
                 raycastResult.worldTransform.columns.3.y,
                 raycastResult.worldTransform.columns.3.z
             )
+            Swift.print("   📍 Crosshair world position: (\(String(format: "%.2f", tapWorldPosition!.x)), \(String(format: "%.2f", tapWorldPosition!.y)), \(String(format: "%.2f", tapWorldPosition!.z)))")
         }
         
         // Check if tapped on existing loot box
@@ -63,12 +67,23 @@ class ARTapHandler {
         Swift.print("🎯 Tap entity hit test result: \(tappedEntity != nil ? "hit entity" : "no entity hit")")
 
         // Walk up the entity hierarchy to find the location ID
+        // Check the tapped entity and all its parents
         var entityToCheck = tappedEntity
+        var checkedEntities = Set<String>() // Track checked entity names to prevent loops
+        
         while let currentEntity = entityToCheck {
             let entityName = currentEntity.name
-            Swift.print("🎯 Checking entity: '\(entityName)'")
+            Swift.print("🎯 Checking entity: '\(entityName)' (type: \(type(of: currentEntity)))")
+            
             // Entity.name is a String, not String?, so check if it's not empty
             if !entityName.isEmpty {
+                // Use entity name as unique identifier for loop prevention
+                let entityKey = "\(ObjectIdentifier(currentEntity))"
+                guard !checkedEntities.contains(entityKey) else {
+                    break // Already checked this entity
+                }
+                checkedEntities.insert(entityKey)
+                
                 let idString = entityName
                 // Check if this ID matches a placed box
                 if placedBoxes[idString] != nil {
@@ -77,6 +92,23 @@ class ARTapHandler {
                     break
                 }
             }
+            
+            // Also check parent's name (in case name is on parent)
+            if let parent = currentEntity.parent {
+                let parentName = parent.name
+                if !parentName.isEmpty {
+                    let parentKey = "\(ObjectIdentifier(parent))"
+                    if !checkedEntities.contains(parentKey) {
+                        checkedEntities.insert(parentKey)
+                        if placedBoxes[parentName] != nil {
+                            locationId = parentName
+                            Swift.print("🎯 Found matching placed box ID via parent: \(parentName)")
+                            break
+                        }
+                    }
+                }
+            }
+            
             entityToCheck = currentEntity.parent
         }
         
@@ -196,24 +228,19 @@ class ARTapHandler {
         if let idString = locationId {
             Swift.print("🎯 Processing tap on: \(idString)")
             
-            // Check if already found - but also check if location was reset
-            // If location is not collected, allow tapping again (reset functionality)
+            // CRITICAL: Check if object is already collected - this is the primary check
+            // If collected, don't allow tapping (object should have been removed from AR)
             let isLocationCollected = locationManager.locations.first(where: { $0.id == idString })?.collected ?? false
             
-            if foundLootBoxes.contains(idString) && isLocationCollected {
-                Swift.print("⚠️ Object \(idString) has already been found and is still marked as collected")
+            if isLocationCollected {
+                Swift.print("⚠️ \(idString) has already been collected - ignoring tap")
                 return
-            } else if foundLootBoxes.contains(idString) && !isLocationCollected {
-                // Location was reset - clear from found set to allow tapping again
-                foundLootBoxes.remove(idString)
-                Swift.print("🔄 Object \(idString) was reset - clearing from found set, allowing tap again")
             }
             
-            // Check if in location manager and already collected
-            if let location = locationManager.locations.first(where: { $0.id == idString }),
-               location.collected {
-                Swift.print("⚠️ \(location.name) has already been collected")
-                return
+            // Clear from foundLootBoxes if location was reset (allows re-tapping after reset)
+            if foundLootBoxes.contains(idString) && !isLocationCollected {
+                foundLootBoxes.remove(idString)
+                Swift.print("🔄 Object \(idString) was reset - clearing from found set, allowing tap again")
             }
             
             // Get the anchor for this object
@@ -267,7 +294,11 @@ class ARTapHandler {
 
         Swift.print("🎯 Attempting manual placement via tap...")
 
-        if let result = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .horizontal).first,
+        // Use screen CENTER (crosshairs) instead of tap location for precise placement
+        // screenCenter is already declared above at line 49
+        Swift.print("🎯 Placing at crosshairs (screen center): (\(screenCenter.x), \(screenCenter.y))")
+
+        if let result = arView.raycast(from: screenCenter, allowing: .estimatedPlane, alignment: .horizontal).first,
            let frame = arView.session.currentFrame {
             let cameraY = frame.camera.transform.columns.3.y
             let hitY = result.worldTransform.columns.3.y
@@ -282,7 +313,8 @@ class ARTapHandler {
                     type: .templeRelic,
                     latitude: 0,
                     longitude: 0,
-                    radius: 100
+                    radius: 100,
+                    source: .arManual  // CRITICAL: Mark as AR-manually placed so it persists
                 )
                 // For manual tap placement, allow closer placement (1-2m instead of 3-5m)
                 // Add to locationManager FIRST so it's tracked, then place it

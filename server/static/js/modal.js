@@ -96,7 +96,7 @@ const ModalManager = {
                     <button class="btn-danger" onclick="ModalManager.deleteObjectFromModal('${obj.id}')">Delete Object</button>
                     ${obj.collected
                         ? `<button class="btn-warning" onclick="ModalManager.markUnfoundFromModal('${obj.id}')">Set Unfound</button>`
-                        : `<button onclick="ModalManager.closeModal()">Close</button>`}
+                        : `<button class="btn-success" onclick="ModalManager.markFoundFromModal('${obj.id}')">Mark Found</button>`}
                 </div>
             `;
         } catch (error) {
@@ -113,13 +113,30 @@ const ModalManager = {
     },
 
     /**
+     * Mark object as found from modal
+     */
+    async markFoundFromModal(objectId) {
+        try {
+            await ApiService.objects.markFound(objectId);
+            UI.showStatus('Object marked as found successfully', 'success');
+            // Refresh the modal content to show updated status instead of closing
+            await this.openObjectModal(objectId);
+            await ObjectsManager.loadObjects();
+            await StatsManager.refreshStats();
+        } catch (error) {
+            UI.showStatus('Error marking object as found: ' + error.message, 'error');
+        }
+    },
+
+    /**
      * Mark object as unfound from modal
      */
     async markUnfoundFromModal(objectId) {
         try {
             await ApiService.objects.markUnfound(objectId);
             UI.showStatus('Object marked as unfound successfully', 'success');
-            this.closeModal();
+            // Refresh the modal content to show updated status instead of closing
+            await this.openObjectModal(objectId);
             await ObjectsManager.loadObjects();
             await StatsManager.refreshStats();
         } catch (error) {
@@ -141,24 +158,26 @@ const ModalManager = {
      * Delete object from modal
      */
     async deleteObjectFromModal(objectId) {
-        // First confirmation
         if (!confirm('Are you sure you want to delete this object? This action cannot be undone.')) {
             return;
         }
 
-        // Second confirmation
-        if (!confirm('This is your final warning. Are you absolutely sure you want to delete this object?')) {
-            return;
-        }
-
         try {
+            // Remove marker immediately for instant feedback
+            if (ObjectsManager && typeof ObjectsManager.removeObjectMarker === 'function') {
+                ObjectsManager.removeObjectMarker(objectId);
+            }
+            
             await ApiService.objects.delete(objectId);
             UI.showStatus('Object deleted successfully', 'success');
             this.closeModal();
-            await ObjectsManager.loadObjects();
             await StatsManager.refreshStats();
         } catch (error) {
             UI.showStatus('Error deleting object: ' + error.message, 'error');
+            // Reload objects to restore marker if deletion failed
+            if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
+                await ObjectsManager.loadObjects();
+            }
         }
     }
 };

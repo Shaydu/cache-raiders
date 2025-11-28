@@ -12,6 +12,7 @@ enum LootBoxType: String, CaseIterable, Codable {
     case lootCart = "Loot Cart"
     case sphere = "Mysterious Sphere"
     case cube = "Mysterious Cube"
+    case turkey = "Turkey"
 
     var displayName: String {
         return self.rawValue

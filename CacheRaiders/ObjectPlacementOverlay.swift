@@ -162,7 +162,7 @@ struct ObjectPlacementOverlay: View {
             return "circle.fill"
         case .cube:
             return "cube.fill"
-        case .chalice:
+        case .chalice, .turkey:
             return "cup.and.saucer.fill"
         case .treasureChest, .lootChest:
             return "shippingbox.fill"

@@ -19,7 +19,8 @@ const Config = {
         'Loot Chest',
         'Loot Cart',
         'Mysterious Sphere',
-        'Mysterious Cube'
+        'Mysterious Cube',
+        'Turkey'
     ],
     
     /**
@@ -32,7 +33,8 @@ const Config = {
         'Loot Cart': ['Loot Cart', 'Golden Cart', 'Treasure Cart'],
         'Temple Relic': ['Temple Relic', 'Sacred Relic', 'Temple Treasure'],
         'Mysterious Sphere': ['Mysterious Sphere', 'Ancient Orb', 'Glowing Sphere'],
-        'Mysterious Cube': ['Mysterious Cube']
+        'Mysterious Cube': ['Mysterious Cube'],
+        'Turkey': ['Animated Turkey', 'Rigged Turkey', 'Thanksgiving Turkey']
     },
     
     /**

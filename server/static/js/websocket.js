@@ -5,6 +5,7 @@ const WebSocketManager = {
     socket: null,
     connectedPlayers: new Set(),
     playerLastSeen: {},
+    connectedClientsInterval: null,
 
     /**
      * Connect to WebSocket for real-time updates
@@ -17,10 +18,30 @@ const WebSocketManager = {
 
             this.socket.on('connect', () => {
                 console.log('✅ Connected to WebSocket for real-time updates');
+                
+                // Request connected clients list immediately upon connection
+                this.socket.emit('get_connected_clients');
+                
+                // Set up periodic requests for connected clients list (every 10 seconds)
+                // This ensures we detect new connections even if registration events are missed
+                if (this.connectedClientsInterval) {
+                    clearInterval(this.connectedClientsInterval);
+                }
+                this.connectedClientsInterval = setInterval(() => {
+                    if (this.socket && this.socket.connected) {
+                        this.socket.emit('get_connected_clients');
+                    }
+                }, 10000); // Request every 10 seconds
             });
 
             this.socket.on('disconnect', () => {
                 console.log('❌ Disconnected from WebSocket');
+                
+                // Clear the interval when disconnected
+                if (this.connectedClientsInterval) {
+                    clearInterval(this.connectedClientsInterval);
+                    this.connectedClientsInterval = null;
+                }
             });
 
             this.socket.on('connect_error', (error) => {
@@ -80,6 +101,14 @@ const WebSocketManager = {
                 
                 // Refresh player list to update connection indicators
                 PlayersManager.refreshPlayerListConnectionStatus();
+            });
+
+            // Listen for object deleted events
+            this.socket.on('object_deleted', (data) => {
+                console.log('🗑️ Received object_deleted event:', data.object_id);
+                if (ObjectsManager && typeof ObjectsManager.removeObjectMarker === 'function') {
+                    ObjectsManager.removeObjectMarker(data.object_id);
+                }
             });
         } catch (error) {
             console.warn('⚠️ Failed to initialize WebSocket:', error);

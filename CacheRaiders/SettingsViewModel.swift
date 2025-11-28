@@ -163,12 +163,19 @@ class SettingsViewModel: ObservableObject {
     // MARK: - User Name Management
     
     func loadUserName() {
+        // Load from local storage first (UserDefaults) - this persists between sessions
         userName = APIService.shared.currentUserName
         if userName == APIService.shared.currentUserID {
             userName = ""
         }
         
-        if locationManager.useAPISync {
+        // If we have a local name, sync it to server (don't overwrite with server name)
+        // This ensures the locally saved name is the source of truth
+        if !userName.isEmpty && locationManager.useAPISync {
+            // Sync local name to server in background (setUserName handles the sync)
+            APIService.shared.setUserName(userName)
+        } else if userName.isEmpty && locationManager.useAPISync {
+            // Only fetch from server if we don't have a local name
             Task {
                 do {
                     if let serverName = try await APIService.shared.getPlayerNameFromServer() {

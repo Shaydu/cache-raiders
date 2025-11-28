@@ -74,9 +74,11 @@ def get_local_ip():
     return '127.0.0.1'
 
 def get_db_connection():
-    """Get a database connection."""
-    conn = sqlite3.connect(DB_PATH)
+    """Get a database connection with timeout for handling concurrent access."""
+    conn = sqlite3.connect(DB_PATH, timeout=10.0)  # 10 second timeout for locked database
     conn.row_factory = sqlite3.Row
+    # Enable WAL mode for better concurrency (allows reads while writes are happening)
+    conn.execute('PRAGMA journal_mode=WAL')
     return conn
 
 def init_db():
@@ -350,6 +352,8 @@ def get_object(object_id: str):
 @app.route('/api/objects', methods=['POST'])
 def create_object():
     """Create a new object."""
+    import time
+    
     data = request.json
     
     required_fields = ['id', 'name', 'type', 'latitude', 'longitude', 'radius']
@@ -357,26 +361,77 @@ def create_object():
         if field not in data:
             return jsonify({'error': f'Missing required field: {field}'}), 400
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    # Retry logic for database locking issues
+    max_retries = 3
+    retry_delay = 0.1  # 100ms between retries
     
+    for attempt in range(max_retries):
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            try:
+                cursor.execute('''
+                    INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    data['id'],
+                    data['name'],
+                    data['type'],
+                    data['latitude'],
+                    data['longitude'],
+                    data['radius'],
+                    datetime.utcnow().isoformat(),
+                    data.get('created_by', 'unknown'),
+                    data.get('grounding_height')  # Optional - can be None
+                ))
+                
+                conn.commit()
+                conn.close()
+                break  # Success - exit retry loop
+                
+            except sqlite3.OperationalError as e:
+                conn.rollback()
+                conn.close()
+                if 'locked' in str(e).lower() and attempt < max_retries - 1:
+                    # Database is locked - retry after a short delay
+                    print(f"⚠️ Database locked during create_object (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                else:
+                    # Re-raise if it's not a locking issue or we've exhausted retries
+                    raise
+                    
+        except sqlite3.Error as e:
+            if 'conn' in locals():
+                try:
+                    conn.rollback()
+                    conn.close()
+                except:
+                    pass
+            if 'locked' in str(e).lower() and attempt < max_retries - 1:
+                print(f"⚠️ Database locked during create_object (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            print(f"❌ Database error in create_object: {e}")
+            return jsonify({'error': f'Database error: {str(e)}'}), 500
+        except Exception as e:
+            if 'conn' in locals():
+                try:
+                    conn.close()
+                except:
+                    pass
+            print(f"❌ Unexpected error in create_object: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+    
+    # Re-open connection to fetch the created object
     try:
-        cursor.execute('''
-            INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            data['id'],
-            data['name'],
-            data['type'],
-            data['latitude'],
-            data['longitude'],
-            data['radius'],
-            datetime.utcnow().isoformat(),
-            data.get('created_by', 'unknown'),
-            data.get('grounding_height')  # Optional - can be None
-        ))
-        
-        conn.commit()
+        conn = get_db_connection()
+        cursor = conn.cursor()
         
         # Get the created object to broadcast
         cursor.execute('''
@@ -407,8 +462,19 @@ def create_object():
         row = cursor.fetchone()
         conn.close()
         
+        if not row:
+            return jsonify({'error': 'Failed to retrieve created object'}), 500
+        
         # Broadcast new object to all connected clients
         if row:
+            # Safely access row data, handling missing keys
+            # sqlite3.Row objects support 'in' operator for key checking
+            row_keys = list(row.keys()) if hasattr(row, 'keys') else []
+            
+            # Helper function to safely get row values
+            def safe_get(key, default=None):
+                return row[key] if key in row_keys else default
+            
             socketio.emit('object_created', {
                 'id': row['id'],
                 'name': row['name'],
@@ -418,16 +484,16 @@ def create_object():
                 'radius': row['radius'],
                 'created_at': row['created_at'],
                 'created_by': row['created_by'],
-                'grounding_height': row['grounding_height'],
-                'ar_origin_latitude': row['ar_origin_latitude'] if 'ar_origin_latitude' in row.keys() else None,
-                'ar_origin_longitude': row['ar_origin_longitude'] if 'ar_origin_longitude' in row.keys() else None,
-                'ar_offset_x': row['ar_offset_x'] if 'ar_offset_x' in row.keys() else None,
-                'ar_offset_y': row['ar_offset_y'] if 'ar_offset_y' in row.keys() else None,
-                'ar_offset_z': row['ar_offset_z'] if 'ar_offset_z' in row.keys() else None,
-                'ar_placement_timestamp': row['ar_placement_timestamp'] if 'ar_placement_timestamp' in row.keys() else None,
-                'collected': bool(row['collected']),
-                'found_by': row['found_by'],
-                'found_at': row['found_at']
+                'grounding_height': safe_get('grounding_height'),
+                'ar_origin_latitude': safe_get('ar_origin_latitude'),
+                'ar_origin_longitude': safe_get('ar_origin_longitude'),
+                'ar_offset_x': safe_get('ar_offset_x'),
+                'ar_offset_y': safe_get('ar_offset_y'),
+                'ar_offset_z': safe_get('ar_offset_z'),
+                'ar_placement_timestamp': safe_get('ar_placement_timestamp'),
+                'collected': bool(safe_get('collected', 0)),
+                'found_by': safe_get('found_by'),
+                'found_at': safe_get('found_at')
             })
         
         return jsonify({
@@ -435,53 +501,123 @@ def create_object():
             'message': 'Object created successfully'
         }), 201
         
-    except sqlite3.IntegrityError:
+    except sqlite3.IntegrityError as e:
         conn.close()
         return jsonify({'error': 'Object with this ID already exists'}), 409
+    except Exception as e:
+        conn.close()
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"❌ Error creating object: {str(e)}")
+        print(f"Traceback: {error_trace}")
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 @app.route('/api/objects/<object_id>/found', methods=['POST'])
 def mark_found(object_id: str):
     """Mark an object as found by a user."""
-    data = request.json
-    found_by = data.get('found_by', 'unknown')
-    
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Check if object exists
-    cursor.execute('SELECT id FROM objects WHERE id = ?', (object_id,))
-    if not cursor.fetchone():
-        conn.close()
-        return jsonify({'error': 'Object not found'}), 404
-    
-    # Check if already found
-    cursor.execute('SELECT id FROM finds WHERE object_id = ?', (object_id,))
-    if cursor.fetchone():
-        conn.close()
-        return jsonify({'error': 'Object already found'}), 409
-    
-    # Record the find
-    found_at = datetime.utcnow().isoformat()
-    cursor.execute('''
-        INSERT INTO finds (object_id, found_by, found_at)
-        VALUES (?, ?, ?)
-    ''', (object_id, found_by, found_at))
-    
-    conn.commit()
-    conn.close()
-    
-    # Broadcast object collected event to all connected clients
-    socketio.emit('object_collected', {
-        'object_id': object_id,
-        'found_by': found_by,
-        'found_at': found_at
-    })
-    
-    return jsonify({
-        'object_id': object_id,
-        'found_by': found_by,
-        'message': 'Object marked as found'
-    }), 200
+    try:
+        data = request.json
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        found_by = data.get('found_by', 'unknown')
+        if not found_by or found_by == 'unknown':
+            return jsonify({'error': 'found_by field is required'}), 400
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Check if object exists
+            cursor.execute('SELECT id FROM objects WHERE id = ?', (object_id,))
+            if not cursor.fetchone():
+                return jsonify({'error': 'Object not found'}), 404
+            
+            # Check if already found
+            cursor.execute('SELECT id, found_by FROM finds WHERE object_id = ?', (object_id,))
+            existing_find = cursor.fetchone()
+            
+            if existing_find:
+                # Object is already found - update the found_by field if different
+                existing_found_by = existing_find[1] if len(existing_find) > 1 else None
+                if existing_found_by != found_by:
+                    # Update the found_by field
+                    found_at = datetime.utcnow().isoformat()
+                    cursor.execute('''
+                        UPDATE finds 
+                        SET found_by = ?, found_at = ?
+                        WHERE object_id = ?
+                    ''', (found_by, found_at, object_id))
+                    conn.commit()
+                    print(f"✅ Updated found_by for object {object_id}: {existing_found_by} -> {found_by}")
+                    
+                    # Broadcast update event
+                    try:
+                        socketio.emit('object_collected', {
+                            'object_id': object_id,
+                            'found_by': found_by,
+                            'found_at': found_at
+                        })
+                    except Exception as emit_error:
+                        print(f"⚠️ Warning: Failed to emit object_collected event: {emit_error}")
+                    
+                    return jsonify({
+                        'object_id': object_id,
+                        'found_by': found_by,
+                        'message': 'Object found_by updated (object was already found)'
+                    }), 200
+                else:
+                    # Already found by the same user - return success
+                    return jsonify({
+                        'object_id': object_id,
+                        'found_by': found_by,
+                        'message': 'Object already found by this user'
+                    }), 200
+            
+            # Record new find
+            found_at = datetime.utcnow().isoformat()
+            cursor.execute('''
+                INSERT INTO finds (object_id, found_by, found_at)
+                VALUES (?, ?, ?)
+            ''', (object_id, found_by, found_at))
+            
+            conn.commit()
+            
+            # Broadcast object collected event to all connected clients
+            try:
+                socketio.emit('object_collected', {
+                    'object_id': object_id,
+                    'found_by': found_by,
+                    'found_at': found_at
+                })
+            except Exception as emit_error:
+                # Log but don't fail if WebSocket emit fails
+                print(f"⚠️ Warning: Failed to emit object_collected event: {emit_error}")
+            
+            return jsonify({
+                'object_id': object_id,
+                'found_by': found_by,
+                'message': 'Object marked as found'
+            }), 200
+            
+        except sqlite3.IntegrityError as e:
+            conn.rollback()
+            error_msg = str(e)
+            if 'UNIQUE' in error_msg or 'constraint' in error_msg.lower():
+                return jsonify({'error': 'Object already found (constraint violation)'}), 409
+            return jsonify({'error': f'Database constraint error: {error_msg}'}), 400
+        except sqlite3.Error as e:
+            conn.rollback()
+            print(f"❌ Database error in mark_found: {e}")
+            return jsonify({'error': f'Database error: {str(e)}'}), 500
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        print(f"❌ Unexpected error in mark_found: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 @app.route('/api/objects/<object_id>', methods=['PUT', 'PATCH'])
 def update_object(object_id: str):
@@ -612,27 +748,93 @@ def update_ar_offset(object_id: str):
 @app.route('/api/objects/<object_id>/found', methods=['DELETE'])
 def unmark_found(object_id: str):
     """Unmark an object as found (for testing/reset)."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    import time
     
-    cursor.execute('DELETE FROM finds WHERE object_id = ?', (object_id,))
-    deleted = cursor.rowcount
+    # Retry logic for database locking issues
+    max_retries = 3
+    retry_delay = 0.1  # 100ms between retries
     
-    conn.commit()
-    conn.close()
+    for attempt in range(max_retries):
+        try:
+            # Check if object exists
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            try:
+                cursor.execute('SELECT id FROM objects WHERE id = ?', (object_id,))
+                if not cursor.fetchone():
+                    conn.close()
+                    return jsonify({'error': 'Object not found'}), 404
+                
+                # Delete find record if it exists
+                cursor.execute('DELETE FROM finds WHERE object_id = ?', (object_id,))
+                deleted = cursor.rowcount
+                
+                conn.commit()
+                conn.close()
+                
+                # Broadcast object uncollected event to all connected clients
+                # Do this even if no record was deleted (object was already unfound)
+                try:
+                    socketio.emit('object_uncollected', {
+                        'object_id': object_id
+                    })
+                except Exception as emit_error:
+                    # Log but don't fail if WebSocket emit fails
+                    print(f"⚠️ Warning: Failed to emit object_uncollected event: {emit_error}")
+                
+                if deleted == 0:
+                    # Object was already unfound - return success anyway (idempotent operation)
+                    return jsonify({
+                        'object_id': object_id,
+                        'message': 'Object was already unfound'
+                    }), 200
+                
+                return jsonify({
+                    'object_id': object_id,
+                    'message': 'Object unmarked as found'
+                }), 200
+                
+            except sqlite3.OperationalError as e:
+                conn.rollback()
+                conn.close()
+                if 'locked' in str(e).lower() and attempt < max_retries - 1:
+                    # Database is locked - retry after a short delay
+                    print(f"⚠️ Database locked (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                else:
+                    # Re-raise if it's not a locking issue or we've exhausted retries
+                    raise
+                    
+        except sqlite3.Error as e:
+            if 'conn' in locals():
+                try:
+                    conn.rollback()
+                    conn.close()
+                except:
+                    pass
+            if 'locked' in str(e).lower() and attempt < max_retries - 1:
+                print(f"⚠️ Database locked (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                retry_delay *= 2
+                continue
+            print(f"❌ Database error in unmark_found: {e}")
+            return jsonify({'error': f'Database error: {str(e)}'}), 500
+        except Exception as e:
+            if 'conn' in locals():
+                try:
+                    conn.close()
+                except:
+                    pass
+            print(f"❌ Unexpected error in unmark_found: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'Internal server error: {str(e)}'}), 500
     
-    if deleted == 0:
-        return jsonify({'error': 'No find record found for this object'}), 404
-    
-    # Broadcast object uncollected event to all connected clients
-    socketio.emit('object_uncollected', {
-        'object_id': object_id
-    })
-    
-    return jsonify({
-        'object_id': object_id,
-        'message': 'Find record removed'
-    }), 200
+    # If we get here, all retries failed
+    return jsonify({'error': 'Database operation failed after retries'}), 500
 
 @app.route('/api/users/<user_id>/finds', methods=['GET'])
 def get_user_finds(user_id: str):
@@ -1476,23 +1678,32 @@ def handle_register_device(data):
     session_id = request.sid
     device_uuid = data.get('device_uuid')
     
-    if device_uuid:
-        # Update tracking
-        old_uuid = connected_clients.get(session_id)
-        connected_clients[session_id] = device_uuid
-        
-        # Update reverse mapping
-        if old_uuid and old_uuid in client_sessions:
-            client_sessions[old_uuid].discard(session_id)
-            if not client_sessions[old_uuid]:
-                del client_sessions[old_uuid]
-        
-        if device_uuid not in client_sessions:
-            client_sessions[device_uuid] = set()
-        client_sessions[device_uuid].add(session_id)
-        
-        print(f"📱 Device registered: {device_uuid[:8]}... (session: {session_id[:8]}...)")
-        emit('device_registered', {'device_uuid': device_uuid, 'status': 'registered'})
+    print(f"📱 [register_device] Received registration request from session {session_id[:8]}...")
+    print(f"   Device UUID: {device_uuid[:8] if device_uuid else 'MISSING'}...")
+    
+    if not device_uuid:
+        print("   ❌ No device_uuid provided in registration data")
+        emit('device_registered', {'error': 'device_uuid required', 'status': 'error'})
+        return
+    
+    # Update tracking
+    old_uuid = connected_clients.get(session_id)
+    connected_clients[session_id] = device_uuid
+    
+    # Update reverse mapping
+    if old_uuid and old_uuid in client_sessions:
+        client_sessions[old_uuid].discard(session_id)
+        if not client_sessions[old_uuid]:
+            del client_sessions[old_uuid]
+        print(f"   🔄 Removed old UUID mapping: {old_uuid[:8]}...")
+    
+    if device_uuid not in client_sessions:
+        client_sessions[device_uuid] = set()
+    client_sessions[device_uuid].add(session_id)
+    
+    print(f"✅ Device registered: {device_uuid[:8]}... (session: {session_id[:8]}...)")
+    print(f"   Total registered clients: {len(client_sessions)}")
+    emit('device_registered', {'device_uuid': device_uuid, 'status': 'registered'})
 
 @socketio.on('diagnostic_ping')
 def handle_diagnostic_ping(data):
@@ -1572,6 +1783,12 @@ def handle_get_connected_clients():
             'session_count': len(sessions),
             'session_ids': list(sessions)
         })
+    
+    print(f"📡 [get_connected_clients] Returning {len(clients_info)} connected client(s)")
+    if len(clients_info) == 0:
+        print("   ⚠️ No clients registered - check if iOS app is connected and registered device UUID")
+        print(f"   Total WebSocket sessions: {len(connected_clients)}")
+        print(f"   Sessions without device UUID: {sum(1 for uuid in connected_clients.values() if uuid is None)}")
     
     emit('connected_clients_list', {'clients': clients_info})
 
