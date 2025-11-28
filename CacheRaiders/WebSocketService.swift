@@ -156,6 +156,8 @@ class WebSocketService: ObservableObject {
                         isConnected = false
                         connectionStatus = .disconnected
                     }
+                    // Notify that connection failed - trigger QR scanner
+                    NotificationCenter.default.post(name: NSNotification.Name("APIConnectionFailed"), object: nil)
                 }
             } catch {
                 // Server unavailable
@@ -163,6 +165,8 @@ class WebSocketService: ObservableObject {
                     isConnected = false
                     connectionStatus = .disconnected
                 }
+                // Notify that connection failed - trigger QR scanner
+                NotificationCenter.default.post(name: NSNotification.Name("APIConnectionFailed"), object: nil)
             }
         }
     }
@@ -594,11 +598,30 @@ class WebSocketService: ObservableObject {
                 
                 // Check if IP looks like a router/gateway (ends in .1)
                 if baseURL.contains(".1:") || baseURL.contains(".1/") {
-                    troubleshooting += "\n⚠️ IP ends in .1 - this is usually the router, not your computer!"
-                    troubleshooting += "\n   Your computer's IP is likely 192.168.68.XX (not .1)"
-                    troubleshooting += "\n   Find your computer's IP:"
-                    troubleshooting += "\n   • Mac: System Settings → Network → Wi-Fi → Details → IP Address"
-                    troubleshooting += "\n   • Windows: ipconfig (look for IPv4 Address)"
+                    troubleshooting += "\n\n⚠️ WARNING: IP ends in .1 - this is usually the ROUTER, not your computer!"
+                    
+                    // Auto-detect device IP and suggest it
+                    if let deviceIP = NetworkHelper.getDeviceIP() {
+                        let suggestedURL = "http://\(deviceIP):5001"
+                        troubleshooting += "\n\n   💡 Your computer's IP appears to be: \(deviceIP)"
+                        troubleshooting += "\n   💡 Try updating Settings → API Server URL to: \(suggestedURL)"
+                        
+                        // Store suggested URL for potential auto-correction
+                        print("💡 Auto-detected device IP: \(deviceIP)")
+                        print("💡 Suggested URL: \(suggestedURL)")
+                    } else {
+                        troubleshooting += "\n   💡 Your computer's IP is likely 192.168.68.XX (NOT .1)"
+                    }
+                    
+                    troubleshooting += "\n\n   To fix:"
+                    troubleshooting += "\n   1. Open Settings → API Server URL"
+                    if let deviceIP = NetworkHelper.getDeviceIP() {
+                        troubleshooting += "\n   2. Change to: http://\(deviceIP):5001"
+                    } else {
+                        troubleshooting += "\n   2. Change to your computer's actual IP (see below)"
+                    }
+                    troubleshooting += "\n   3. Tap 'Save URL'"
+                    troubleshooting += "\n\n   Or use 'Test Multiple Ports' in Settings to auto-discover the server!"
                 }
                 
                 troubleshooting += "\n• Device and server are on different Wi-Fi networks\n• Firewall is blocking port 5001\n\nTroubleshooting:\n1. Verify server IP: Check your computer's IP with 'ifconfig' (Mac) or 'ipconfig' (Windows)\n2. Test in browser: Open \(baseURL)/health\n3. Check Wi-Fi: Ensure device and server are on the same network\n4. Check firewall: macOS may block incoming connections (System Settings → Network → Firewall)\n5. Try 'Test Multiple Ports' in Settings to find the correct server"
@@ -614,8 +637,29 @@ class WebSocketService: ObservableObject {
                 
                 // Check if IP looks like a router/gateway (ends in .1)
                 if baseURL.contains(".1:") || baseURL.contains(".1/") {
-                    troubleshooting += "\n⚠️ IP ends in .1 - this is usually the router, not your computer!"
-                    troubleshooting += "\n   Your computer's IP is likely 192.168.68.XX (not .1)"
+                    troubleshooting += "\n\n⚠️ WARNING: IP ends in .1 - this is usually the ROUTER, not your computer!"
+                    
+                    // Auto-detect device IP and suggest it
+                    if let deviceIP = NetworkHelper.getDeviceIP() {
+                        let suggestedURL = "http://\(deviceIP):5001"
+                        troubleshooting += "\n\n   💡 Your computer's IP appears to be: \(deviceIP)"
+                        troubleshooting += "\n   💡 Try updating Settings → API Server URL to: \(suggestedURL)"
+                        
+                        print("💡 Auto-detected device IP: \(deviceIP)")
+                        print("💡 Suggested URL: \(suggestedURL)")
+                    } else {
+                        troubleshooting += "\n   💡 Your computer's IP is likely 192.168.68.XX (NOT .1)"
+                    }
+                    
+                    troubleshooting += "\n\n   To fix:"
+                    troubleshooting += "\n   1. Open Settings → API Server URL"
+                    if let deviceIP = NetworkHelper.getDeviceIP() {
+                        troubleshooting += "\n   2. Change to: http://\(deviceIP):5001"
+                    } else {
+                        troubleshooting += "\n   2. Change to your computer's actual IP"
+                    }
+                    troubleshooting += "\n   3. Tap 'Save URL'"
+                    troubleshooting += "\n\n   Or use 'Test Multiple Ports' to auto-discover!"
                 }
                 
                 troubleshooting += "\n• Device and server are on different Wi-Fi networks\n• Firewall is blocking port 5001\n\nTroubleshooting:\n1. Verify server IP: Check your computer's IP with 'ifconfig' (Mac) or 'ipconfig' (Windows)\n2. Test in browser: Open \(baseURL)/health\n3. Check Wi-Fi: Ensure device and server are on the same network\n4. Try 'Test Multiple Ports' in Settings to find the correct server"

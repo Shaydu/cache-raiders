@@ -244,6 +244,16 @@ class LootBoxLocationManager: ObservableObject {
                     Swift.print("🗑️ Story mode activated: Removed \(objectsToRemove.count) API/map objects (only NPCs will be shown)")
                     saveLocations() // Persist the change
                 }
+                
+                // Stop API refresh timer in story mode (no API objects needed)
+                stopAPIRefreshTimer()
+                Swift.print("⏹️ Stopped API refresh timer (story mode - no API objects needed)")
+            }
+            
+            // OPEN MODE: Restart API refresh timer when switching back to open mode
+            if gameMode == .open && (oldValue == .deadMensSecrets || oldValue == .splitLegacy) {
+                startAPIRefreshTimer()
+                Swift.print("▶️ Restarted API refresh timer (open mode - API objects enabled)")
             }
         }
     }
@@ -386,44 +396,60 @@ class LootBoxLocationManager: ObservableObject {
     }
     
     // Load locations from JSON file
+    // PERFORMANCE: Run on background thread to prevent UI blocking
     func loadLocations(userLocation: CLLocation? = nil) {
         guard let url = getLocationsFileURL() else { return }
         
-        do {
-            let data = try Data(contentsOf: url)
-            let loadedLocations = try JSONDecoder().decode([LootBoxLocation].self, from: data)
+        // Perform file I/O on background thread
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
             
-            // Check if we have a user location and if loaded locations are too far away
-            if let userLocation = userLocation {
-                // Check if any location is within a reasonable distance (10km)
-                let hasNearbyLocation = loadedLocations.contains { location in
-                    userLocation.distance(from: location.location) <= 10000
+            do {
+                let data = try Data(contentsOf: url)
+                let loadedLocations = try JSONDecoder().decode([LootBoxLocation].self, from: data)
+                
+                // Check if we have a user location and if loaded locations are too far away
+                if let userLocation = userLocation {
+                    // Check if any location is within a reasonable distance (10km)
+                    let hasNearbyLocation = loadedLocations.contains { location in
+                        let locationCLLocation = CLLocation(latitude: location.latitude, longitude: location.longitude)
+                        return userLocation.distance(from: locationCLLocation) <= 10000
+                    }
+                    
+                    if !hasNearbyLocation && !loadedLocations.isEmpty {
+                        // All locations are too far away - regenerate random ones nearby
+                        print("⚠️ Loaded locations are too far away (>10km), regenerating random locations nearby")
+                        await MainActor.run {
+                            self.createDefaultLocations(near: userLocation)
+                        }
+                        return
+                    }
                 }
                 
-                if !hasNearbyLocation && !loadedLocations.isEmpty {
-                    // All locations are too far away - regenerate random ones nearby
-                    print("⚠️ Loaded locations are too far away (>10km), regenerating random locations nearby")
-                    createDefaultLocations(near: userLocation)
-                    return
+                // Update UI on main thread
+                await MainActor.run {
+                    self.locations = loadedLocations
+                    let collectedCount = self.locations.filter { $0.collected }.count
+                    print("✅ Loaded \(self.locations.count) loot box locations (\(collectedCount) collected)")
                 }
-            }
-            
-        locations = loadedLocations
-        let collectedCount = locations.filter { $0.collected }.count
-        print("✅ Loaded \(locations.count) loot box locations (\(collectedCount) collected)")
-        } catch {
-            // This is expected on first run - no saved locations file exists yet
-            if (error as NSError).code == 260 { // File not found
-                print("ℹ️ No saved locations found (first run) - will create default locations when GPS is available")
-            } else {
-                print("⚠️ Could not load locations: \(error.localizedDescription)")
-            }
-            // Only create defaults if we have a user location
-            if let userLocation = userLocation {
-                createDefaultLocations(near: userLocation)
-            } else {
-                // If no user location yet, create empty array (will be populated when location is available)
-                locations = []
+            } catch {
+                // This is expected on first run - no saved locations file exists yet
+                if (error as NSError).code == 260 { // File not found
+                    print("ℹ️ No saved locations found (first run) - will create default locations when GPS is available")
+                } else {
+                    print("⚠️ Could not load locations: \(error.localizedDescription)")
+                }
+                // Only create defaults if we have a user location
+                if let userLocation = userLocation {
+                    await MainActor.run {
+                        self.createDefaultLocations(near: userLocation)
+                    }
+                } else {
+                    // If no user location yet, create empty array (will be populated when location is available)
+                    await MainActor.run {
+                        self.locations = []
+                    }
+                }
             }
         }
     }
@@ -448,15 +474,21 @@ class LootBoxLocationManager: ObservableObject {
     }
     
     // Save locations to JSON file
+    // PERFORMANCE: Run on background thread to prevent UI blocking
     func saveLocations() {
+        // Capture current locations on main thread (since @Published property)
+        let locationsToSave = locations
         guard let url = getLocationsFileURL() else { return }
         
-        do {
-            let data = try JSONEncoder().encode(locations)
-            try data.write(to: url)
-            print("✅ Saved \(locations.count) loot box locations")
-        } catch {
-            print("❌ Error saving locations: \(error)")
+        // Perform file I/O on background thread
+        Task.detached(priority: .utility) {
+            do {
+                let data = try JSONEncoder().encode(locationsToSave)
+                try data.write(to: url)
+                print("✅ Saved \(locationsToSave.count) loot box locations")
+            } catch {
+                print("❌ Error saving locations: \(error)")
+            }
         }
     }
     
@@ -640,51 +672,64 @@ class LootBoxLocationManager: ObservableObject {
     }
     
     // Get nearby locations within radius
+    // PERFORMANCE: Run filtering on background thread to prevent UI blocking
+    // This maintains backward compatibility while improving performance
     func getNearbyLocations(userLocation: CLLocation) -> [LootBoxLocation] {
-        // CRITICAL: Only return UNFOUND (uncollected) objects for "nearby" display
-        // Collected objects should not appear in the nearby count
-        let result = locations.filter { location in
-            // FIRST CHECK: Exclude collected/found objects - only show unfound ones
-            // This applies to ALL objects, including AR-placed ones
-            guard !location.collected else {
-                // This object has been found - exclude it from nearby count
-                return false
-            }
+        // Capture current state on main thread
+        let currentLocations = locations
+        let currentGameMode = gameMode
+        let currentSelectedId = selectedDatabaseObjectId
+        let currentMaxDistance = maxSearchDistance
+        
+        // Use a background queue for filtering to prevent UI blocking
+        // For small datasets, this will be very fast, but for large datasets it prevents freezes
+        var result: [LootBoxLocation] = []
+        let semaphore = DispatchSemaphore(value: 0)
+        
+        DispatchQueue.global(qos: .userInitiated).async {
+            // CRITICAL: Only return UNFOUND (uncollected) objects for "nearby" display
+            // Collected objects should not appear in the nearby count
+            result = currentLocations.filter { location in
+                // FIRST CHECK: Exclude collected/found objects - only show unfound ones
+                // This applies to ALL objects, including AR-placed ones
+                guard !location.collected else {
+                    // This object has been found - exclude it from nearby count
+                    return false
+                }
 
-            // Story Mode: Only show story-relevant treasures (treasure map, clues, final treasure)
-            // In story modes, filter out regular loot boxes - only NPCs and story items
-            if gameMode == .deadMensSecrets || gameMode == .splitLegacy {
-                // In story modes, we don't show regular loot boxes from the API
-                // Only NPCs (skeleton, corgi) are shown, and they're placed by ARCoordinator
-                // So we filter out ALL API objects in story modes
-                Swift.print("   📖 Story mode: Skipping API object '\(location.name)' (only NPCs shown in story mode)")
-                return false
-            }
+                // Story Mode: Only show story-relevant treasures (treasure map, clues, final treasure)
+                // In story modes, filter out regular loot boxes - only NPCs and story items
+                if currentGameMode == .deadMensSecrets || currentGameMode == .splitLegacy {
+                    // In story modes, we don't show regular loot boxes from the API
+                    // Only NPCs (skeleton, corgi) are shown, and they're placed by ARCoordinator
+                    // So we filter out ALL API objects in story modes
+                    Swift.print("   📖 Story mode: Skipping API object '\(location.name)' (only NPCs shown in story mode)")
+                    return false
+                }
 
-            // Exclude AR-only locations (no GPS coordinates) - they're placed in AR space, not GPS space
-            // AR-placed objects with GPS coordinates should be treated the same as admin-placed objects
-            if location.isAROnly {
-                return false
-            }
+                // Exclude AR-only locations (no GPS coordinates) - they're placed in AR space, not GPS space
+                // AR-placed objects with GPS coordinates should be treated the same as admin-placed objects
+                if location.isAROnly {
+                    return false
+                }
 
-            // CRITICAL: If a specific object is selected, ALWAYS include it regardless of distance
-            // This ensures the selected object appears in AR even if it's far away
-            if let selectedId = selectedDatabaseObjectId, location.id == selectedId {
-                // PERFORMANCE: Logging disabled - this runs in filter loop, causes massive spam
-                return true
-            }
+                // CRITICAL: If a specific object is selected, ALWAYS include it regardless of distance
+                // This ensures the selected object appears in AR even if it's far away
+                if let selectedId = currentSelectedId, location.id == selectedId {
+                    // PERFORMANCE: Logging disabled - this runs in filter loop, causes massive spam
+                    return true
+                }
 
-            // Apply distance check to ALL objects with GPS coordinates (including AR-placed ones)
-            // AR-placed objects are now treated the same as admin-placed objects
-            return userLocation.distance(from: location.location) <= maxSearchDistance
+                // Apply distance check to ALL objects with GPS coordinates (including AR-placed ones)
+                // AR-placed objects are now treated the same as admin-placed objects
+                return userLocation.distance(from: location.location) <= currentMaxDistance
+            }
+            
+            semaphore.signal()
         }
-
-        // DEBUG: Log the filtering results to help diagnose count discrepancies
-        Swift.print("📊 getNearbyLocations: Total locations: \(locations.count), Nearby: \(result.count)")
-        Swift.print("   Breakdown: Collected: \(locations.filter { $0.collected }.count), " +
-                   "AR-placed: \(locations.filter { $0.source == .arManual || $0.source == .arRandomized }.count), " +
-                   "GPS-based: \(locations.filter { !$0.isAROnly && !$0.collected }.count)")
-
+        
+        // Wait for result (should be very fast - just filtering)
+        _ = semaphore.wait(timeout: .now() + 0.5)
         return result
     }
     
@@ -952,11 +997,23 @@ class LootBoxLocationManager: ObservableObject {
     /// Start the API refresh timer to periodically sync from API
     private func startAPIRefreshTimer() {
         stopAPIRefreshTimer() // Stop any existing timer first
+        
+        // Don't start timer in story mode (no API objects needed)
+        if gameMode == .deadMensSecrets || gameMode == .splitLegacy {
+            print("⏭️ Skipping API refresh timer start (story mode - no API objects needed)")
+            return
+        }
 
         apiRefreshTimer = Timer.scheduledTimer(withTimeInterval: apiRefreshInterval, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             guard self.useAPISync else {
                 self.stopAPIRefreshTimer()
+                return
+            }
+            
+            // Check game mode in timer callback (in case mode changed while timer was running)
+            if self.gameMode == .deadMensSecrets || self.gameMode == .splitLegacy {
+                print("⏭️ Skipping API refresh (story mode active)")
                 return
             }
 
@@ -1012,6 +1069,13 @@ class LootBoxLocationManager: ObservableObject {
             return
         }
         
+        // STORY MODE: Skip API calls entirely in story modes (deadMensSecrets, splitLegacy)
+        // Story modes only show NPCs, not API objects, so fetching them wastes bandwidth and performance
+        if gameMode == .deadMensSecrets || gameMode == .splitLegacy {
+            print("📖 Story mode active (\(gameMode.displayName)) - skipping API fetch (only NPCs shown, no API objects needed)")
+            return
+        }
+        
         do {
             // Check API health first
             let isHealthy = try await APIService.shared.checkHealth()
@@ -1019,6 +1083,10 @@ class LootBoxLocationManager: ObservableObject {
                 print("⚠️ API server at \(APIService.shared.baseURL) is not available")
                 print("   Make sure the server is running: cd server && python app.py")
                 print("   Falling back to local storage")
+                
+                // Notify that connection failed - trigger QR scanner
+                NotificationCenter.default.post(name: NSNotification.Name("APIConnectionFailed"), object: nil)
+                
                 loadLocations(userLocation: userLocation)
                 return
             }

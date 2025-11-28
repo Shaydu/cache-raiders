@@ -12,6 +12,7 @@ class ARDistanceTracker: ObservableObject {
     weak var arView: ARView?
     weak var locationManager: LootBoxLocationManager?
     weak var userLocationManager: UserLocationManager?
+    weak var treasureHuntService: TreasureHuntService?
     
     var placedBoxes: [String: AnchorEntity] = [:]
     var distanceTextEntities: [String: ModelEntity] = [:]
@@ -33,10 +34,11 @@ class ARDistanceTracker: ObservableObject {
     private var previousDistance: Double?
     private var audioPingService: AudioPingService?
     
-    init(arView: ARView?, locationManager: LootBoxLocationManager?, userLocationManager: UserLocationManager?) {
+    init(arView: ARView?, locationManager: LootBoxLocationManager?, userLocationManager: UserLocationManager?, treasureHuntService: TreasureHuntService? = nil) {
         self.arView = arView
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
+        self.treasureHuntService = treasureHuntService
         self.audioPingService = AudioPingService.shared
     }
     
@@ -343,6 +345,16 @@ class ARDistanceTracker: ObservableObject {
     // MARK: - Private Methods
     
     private func logDistanceToNearestLootBox() {
+        // DEAD MEN'S SECRETS MODE: If we have a map and treasure location, always use GPS (treasure location)
+        if let locationManager = locationManager,
+           locationManager.gameMode == .deadMensSecrets,
+           let treasureHuntService = treasureHuntService,
+           treasureHuntService.shouldShowNavigation,
+           let userLocation = userLocationManager?.currentLocation {
+            calculateDistanceUsingGPS(userLocation: userLocation)
+            return
+        }
+        
         // Try to use AR world coordinates first (more accurate for AR), fallback to GPS
         guard let arView = arView,
               let frame = arView.session.currentFrame,
@@ -504,6 +516,35 @@ class ARDistanceTracker: ObservableObject {
                 self?.distanceToNearestBinding?.wrappedValue = nil
                 self?.temperatureStatusBinding?.wrappedValue = nil
                 self?.nearestObjectDirectionBinding?.wrappedValue = nil
+            }
+            return
+        }
+        
+        // DEAD MEN'S SECRETS MODE: If we have a map and treasure location, use that instead
+        if locationManager.gameMode == .deadMensSecrets,
+           let treasureHuntService = treasureHuntService,
+           treasureHuntService.shouldShowNavigation,
+           let treasureLocation = treasureHuntService.treasureLocation {
+            // Use treasure location for navigation
+            let distance = treasureHuntService.getDistanceToTreasure(from: userLocation) ?? 0
+            let direction = treasureHuntService.getDirectionToTreasure(from: userLocation)
+            
+            // Create a temporary LootBoxLocation for temperature calculation
+            let tempLocation = LootBoxLocation(
+                id: "treasure-clue",
+                name: "Treasure Clue",
+                type: .treasureChest,
+                latitude: treasureLocation.coordinate.latitude,
+                longitude: treasureLocation.coordinate.longitude,
+                radius: 100
+            )
+            
+            // Update with treasure location
+            updateTemperatureStatus(currentDistance: distance, location: tempLocation)
+            
+            // Update direction binding
+            DispatchQueue.main.async { [weak self] in
+                self?.nearestObjectDirectionBinding?.wrappedValue = direction
             }
             return
         }

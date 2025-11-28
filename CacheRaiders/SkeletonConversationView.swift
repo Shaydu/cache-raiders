@@ -18,113 +18,133 @@ struct ConversationMessage: Identifiable {
 struct SkeletonConversationView: View {
     let npcName: String
     let npcId: String
+    var onMapMentioned: (() -> Void)? = nil // Callback when user mentions the map
+    @ObservedObject var treasureHuntService: TreasureHuntService
+    @ObservedObject var userLocationManager: UserLocationManager
     @Environment(\.dismiss) var dismiss
     @State private var messages: [ConversationMessage] = []
     @State private var inputText: String = ""
     @State private var isSending: Bool = false
     @State private var errorMessage: String?
+    @FocusState private var isTextFieldFocused: Bool
     
     // Initial greeting from skeleton
     private let initialGreeting = "Arr, ye've found me, matey! I be Captain Bones, a skeleton from 200 years ago. I know where the treasure be buried! Ask me anything, and I'll help ye find it!"
     
     var body: some View {
-        NavigationView {
-            VStack(spacing: 0) {
-                // Messages list
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 12) {
-                            // Initial greeting
-                            if messages.isEmpty {
-                                ShadowgateMessageBox(
-                                    text: initialGreeting,
-                                    isFromUser: false,
-                                    npcName: npcName
-                                )
-                                .id("greeting")
-                            }
-                            
-                            // Conversation messages
-                            ForEach(messages) { message in
-                                ShadowgateMessageBox(
-                                    text: message.text,
-                                    isFromUser: message.isFromUser,
-                                    npcName: npcName
-                                )
-                                .id(message.id)
-                            }
-                            
-                            // Loading indicator
-                            if isSending {
-                                HStack {
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                    Text("Captain Bones is thinking...")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 8)
-                            }
-                        }
-                        .padding()
-                    }
-                    .onChange(of: messages.count) { _, _ in
-                        // Scroll to bottom when new message arrives
-                        if let lastMessage = messages.last {
-                            withAnimation {
-                                proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                            }
-                        } else if messages.isEmpty {
-                            withAnimation {
-                                proxy.scrollTo("greeting", anchor: .top)
-                            }
-                        }
-                    }
+        VStack(spacing: 0) {
+            // Compact header with drag indicator
+            HStack {
+                Text("💀 \(npcName)")
+                    .font(.headline)
+                    .foregroundColor(.yellow.opacity(0.9))
+                Spacer()
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.secondary)
                 }
-                
-                // Error message
-                if let error = errorMessage {
-                    Text(error)
-                        .font(.caption)
-                        .foregroundColor(.red)
-                        .padding(.horizontal)
-                        .padding(.vertical, 4)
-                }
-                
-                // Input area
-                HStack(spacing: 12) {
-                    TextField("Ask Captain Bones...", text: $inputText)
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(isSending)
-                        .onSubmit {
-                            sendMessage()
-                        }
-                    
-                    Button(action: sendMessage) {
-                        if isSending {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        } else {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.title2)
-                                .foregroundColor(inputText.isEmpty ? .gray : .blue)
-                        }
-                    }
-                    .disabled(inputText.isEmpty || isSending)
-                }
-                .padding()
-                .background(.ultraThinMaterial)
             }
-            .navigationTitle("💀 \(npcName)")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+            
+            // Messages list (scrollable)
+            ScrollViewReader { proxy in
+                ScrollView(.vertical, showsIndicators: true) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        // Initial greeting (compact)
+                        if messages.isEmpty {
+                            ShadowgateMessageBox(
+                                text: initialGreeting,
+                                isFromUser: false,
+                                npcName: npcName
+                            )
+                            .id("greeting")
+                        }
+                        
+                        // Conversation messages
+                        ForEach(messages) { message in
+                            ShadowgateMessageBox(
+                                text: message.text,
+                                isFromUser: message.isFromUser,
+                                npcName: npcName
+                            )
+                            .id(message.id)
+                        }
+                        
+                        // Loading indicator
+                        if isSending {
+                            HStack {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                                Text("Thinking...")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                            }
+                            .padding(.horizontal)
+                            .padding(.vertical, 4)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                }
+                .frame(maxHeight: .infinity)
+                .onChange(of: messages.count) { _, _ in
+                    // Scroll to bottom when new message arrives
+                    if let lastMessage = messages.last {
+                        withAnimation {
+                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                        }
+                    } else if messages.isEmpty {
+                        withAnimation {
+                            proxy.scrollTo("greeting", anchor: .top)
+                        }
                     }
                 }
+            }
+            
+            // Error message
+            if let error = errorMessage {
+                Text(error)
+                    .font(.caption2)
+                    .foregroundColor(.red)
+                    .padding(.horizontal)
+                    .padding(.vertical, 2)
+            }
+            
+            // Input area (compact)
+            HStack(spacing: 8) {
+                TextField("Ask...", text: $inputText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption)
+                    .disabled(isSending)
+                    .focused($isTextFieldFocused)
+                    .onSubmit {
+                        sendMessage()
+                    }
+                
+                Button(action: sendMessage) {
+                    if isSending {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                    } else {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title3)
+                            .foregroundColor(inputText.isEmpty ? .gray : .blue)
+                    }
+                }
+                .disabled(inputText.isEmpty || isSending)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(.ultraThinMaterial)
+        }
+        .background(Color.black.opacity(0.95))
+        .onAppear {
+            // Auto-focus the text field when the view appears
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isTextFieldFocused = true
             }
         }
     }
@@ -135,11 +155,74 @@ struct SkeletonConversationView: View {
         let userMessage = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         inputText = ""
         
+        // Check if user is asking for map/treasure/directions using TreasureHuntService detection
+        if treasureHuntService.isMapRequest(userMessage) {
+            // Play happy jig sound
+            LootBoxAnimation.playOpeningSound()
+            
+            // Add user message to conversation
+            let userMsg = ConversationMessage(text: userMessage, isFromUser: true)
+            messages.append(userMsg)
+            
+            // Fetch treasure map from NPC if we have the required services
+            if let userLocation = userLocationManager.currentLocation {
+                isSending = true
+                Task {
+                    do {
+                        // Fetch the treasure map (this will NOT call the LLM API)
+                        try await treasureHuntService.handleMapRequest(
+                            npcId: npcId,
+                            npcName: npcName,
+                            userLocation: userLocation
+                        )
+                        
+                        await MainActor.run {
+                            // Add NPC response about the map (local response, not from LLM)
+                            let npcMsg = ConversationMessage(
+                                text: "Arr! Here be the treasure map, matey! Follow it to find the booty! The X marks the spot where the treasure be buried!",
+                                isFromUser: false
+                            )
+                            messages.append(npcMsg)
+                            
+                            isSending = false
+                            
+                            // Open the treasure map view after a brief delay
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                onMapMentioned?()
+                            }
+                        }
+                    } catch {
+                        await MainActor.run {
+                            // Show error message
+                            if let apiError = error as? APIError {
+                                switch apiError {
+                                case .serverError(let message):
+                                    errorMessage = "Failed to get map: \(message)"
+                                case .serverUnreachable:
+                                    errorMessage = "Cannot reach server. Make sure it's running."
+                                default:
+                                    errorMessage = "Failed to get treasure map: \(apiError.localizedDescription)"
+                                }
+                            } else {
+                                errorMessage = "Failed to get treasure map: \(error.localizedDescription)"
+                            }
+                            isSending = false
+                        }
+                    }
+                }
+                return // Don't send to LLM API - we intercepted and handled it
+            } else {
+                // Fallback: just open the map view if services aren't available
+                onMapMentioned?()
+                return // Don't send to LLM API
+            }
+        }
+        
         // Add user message to conversation
         let userMsg = ConversationMessage(text: userMessage, isFromUser: true)
         messages.append(userMsg)
         
-        // Send to API
+        // Send to LLM API (only if not a map request)
         isSending = true
         errorMessage = nil
         
@@ -179,7 +262,7 @@ struct SkeletonConversationView: View {
                                 errorMessage = "Server error (HTTP \(code))"
                             }
                         default:
-                            errorMessage = apiError.localizedDescription ?? "Unknown error"
+                            errorMessage = apiError.localizedDescription
                         }
                     } else {
                         let errorDesc = error.localizedDescription
@@ -210,10 +293,10 @@ struct ShadowgateMessageBox: View {
                 Spacer()
             }
             
-            VStack(alignment: isFromUser ? .trailing : .leading, spacing: 4) {
+            VStack(alignment: isFromUser ? .trailing : .leading, spacing: 2) {
                 if !isFromUser {
                     Text(npcName)
-                        .font(.caption)
+                        .font(.caption2)
                         .foregroundColor(.yellow.opacity(0.8))
                         .fontWeight(.bold)
                 }
@@ -245,17 +328,17 @@ struct ShadowgateMessageBox: View {
                         if isFromUser {
                             // User messages: show immediately, no typewriter
                             Text(text)
-                                .font(.system(.body, design: .monospaced))
+                                .font(.system(.caption, design: .monospaced))
                                 .foregroundColor(.white)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 12)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
                         } else {
                             // NPC messages: typewriter effect with audio
                             Text(typewriterService.displayedText)
-                                .font(.system(.body, design: .monospaced))
+                                .font(.system(.caption, design: .monospaced))
                                 .foregroundColor(.yellow.opacity(0.95))
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 12)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
                                 .onAppear {
                                     // Configure typewriter service
                                     typewriterService.charactersPerSecond = 30.0

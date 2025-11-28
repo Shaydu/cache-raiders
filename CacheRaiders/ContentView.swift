@@ -11,6 +11,16 @@ struct ConversationNPC: Equatable {
 struct ContentView: View {
     @StateObject private var locationManager = LootBoxLocationManager()
     @StateObject private var userLocationManager = UserLocationManager()
+    @StateObject private var treasureHuntService = TreasureHuntService()
+    @StateObject private var gridTreasureMapService = GridTreasureMapService()
+    
+    // Grid treasure map modal state (separate from sheets)
+    @State private var showGridTreasureMap = false
+    
+    // QR Scanner state for automatic connection failure handling
+    @State private var showQRScanner = false
+    @State private var scannedURL: String?
+    @State private var hasCheckedHealth = false
     
     // Use enum-based sheet state to prevent multiple sheets being presented simultaneously
     enum SheetType: Identifiable {
@@ -19,6 +29,7 @@ struct ContentView: View {
         case settings
         case leaderboard
         case skeletonConversation(npcId: String, npcName: String)
+        case treasureMap
         
         var id: String {
             switch self {
@@ -27,6 +38,7 @@ struct ContentView: View {
             case .settings: return "settings"
             case .leaderboard: return "leaderboard"
             case .skeletonConversation(let npcId, _): return "skeletonConversation_\(npcId)"
+            case .treasureMap: return "treasureMap"
             }
         }
     }
@@ -139,10 +151,53 @@ struct ContentView: View {
     
     private var directionIndicatorView: some View {
         Group {
-            if let distance = distanceToNearest {
+            // In Dead Men's Secrets mode, only show navigation after skeleton gives the map
+            let shouldShowNav: Bool = {
+                if locationManager.gameMode == .deadMensSecrets {
+                    return treasureHuntService.shouldShowNavigation
+                } else {
+                    // In other modes, show if we have distance data
+                    return distanceToNearest != nil
+                }
+            }()
+            
+            if shouldShowNav, let distance = distanceToNearest {
                 Button(action: {
-                    // Manually send location to server (also sent automatically every 5 seconds)
-                    userLocationManager.sendCurrentLocationToServer()
+                    // Toggle grid treasure map (only available after skeleton gives map)
+                    if treasureHuntService.hasMap,
+                       let treasureLocation = treasureHuntService.treasureLocation,
+                       let mapPiece = treasureHuntService.mapPiece {
+                        // Update grid map service with current data
+                        let landmarks = mapPiece.landmarks.map { landmarkData in
+                            let landmarkType: LandmarkType
+                            switch landmarkData.type.lowercased() {
+                            case "water": landmarkType = .water
+                            case "tree": landmarkType = .tree
+                            case "building": landmarkType = .building
+                            case "mountain": landmarkType = .mountain
+                            case "path": landmarkType = .path
+                            default: landmarkType = .building
+                            }
+                            
+                            return LandmarkAnnotation(
+                                id: UUID().uuidString,
+                                coordinate: CLLocationCoordinate2D(latitude: landmarkData.latitude, longitude: landmarkData.longitude),
+                                name: landmarkData.name,
+                                type: landmarkType,
+                                iconName: landmarkType.iconName
+                            )
+                        }
+                        
+                        gridTreasureMapService.updateMapData(
+                            treasureLocation: treasureLocation.coordinate,
+                            landmarks: landmarks,
+                            userLocation: userLocationManager.currentLocation?.coordinate
+                        )
+                        showGridTreasureMap = true
+                    } else {
+                        // Manually send location to server (also sent automatically every 5 seconds)
+                        userLocationManager.sendCurrentLocationToServer()
+                    }
                 }) {
                     VStack(alignment: .center, spacing: 4) {
                         directionArrowView
@@ -311,7 +366,8 @@ struct ContentView: View {
                 temperatureStatus: $temperatureStatus,
                 collectionNotification: $collectionNotification,
                 nearestObjectDirection: $nearestObjectDirection,
-                conversationNPC: $conversationNPC
+                conversationNPC: $conversationNPC,
+                treasureHuntService: treasureHuntService
             )
             .ignoresSafeArea()
             
@@ -319,29 +375,98 @@ struct ContentView: View {
             
             bottomCounterView
         }
+        .fullScreenCover(isPresented: $showGridTreasureMap) {
+            GridTreasureMapView(mapService: gridTreasureMapService)
+        }
         .sheet(item: $presentedSheet) { sheetType in
-            switch sheetType {
-            case .locationConfig:
-                LocationConfigView(locationManager: locationManager)
-            case .arPlacement:
-                ARPlacementView(locationManager: locationManager, userLocationManager: userLocationManager)
-            case .settings:
-                SettingsView(locationManager: locationManager, userLocationManager: userLocationManager)
-            case .leaderboard:
-                NavigationView {
-                    LeaderboardView()
-                        .navigationTitle("Leaderboard")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbar {
-                            ToolbarItem(placement: .navigationBarTrailing) {
-                                Button("Done") {
-                                    presentedSheet = nil
+            Group {
+                switch sheetType {
+                case .locationConfig:
+                    LocationConfigView(locationManager: locationManager)
+                case .arPlacement:
+                    ARPlacementView(locationManager: locationManager, userLocationManager: userLocationManager)
+                case .settings:
+                    SettingsView(locationManager: locationManager, userLocationManager: userLocationManager)
+                case .leaderboard:
+                    NavigationView {
+                        LeaderboardView()
+                            .navigationTitle("Leaderboard")
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar {
+                                ToolbarItem(placement: .navigationBarTrailing) {
+                                    Button("Done") {
+                                        presentedSheet = nil
+                                    }
                                 }
                             }
+                    }
+                case .skeletonConversation(let npcId, let npcName):
+                    SkeletonConversationView(
+                        npcName: npcName,
+                        npcId: npcId,
+                        onMapMentioned: {
+                            // Close conversation and open treasure map
+                            presentedSheet = nil
+                            // Small delay to allow conversation to close smoothly
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                presentedSheet = .treasureMap
+                            }
+                        },
+                        treasureHuntService: treasureHuntService,
+                        userLocationManager: userLocationManager
+                    )
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
+                    .presentationBackground(.clear)
+                case .treasureMap:
+                    // Show treasure map if we have map data
+                    if let mapPiece = treasureHuntService.mapPiece,
+                       let treasureLocation = treasureHuntService.treasureLocation {
+                        // Create treasure map data from map piece
+                        let landmarks = mapPiece.landmarks.map { landmarkData in
+                            let landmarkType: LandmarkType
+                            switch landmarkData.type.lowercased() {
+                            case "water": landmarkType = .water
+                            case "tree": landmarkType = .tree
+                            case "building": landmarkType = .building
+                            case "mountain": landmarkType = .mountain
+                            case "path": landmarkType = .path
+                            default: landmarkType = .building
+                            }
+                            
+                            return LandmarkAnnotation(
+                                id: UUID().uuidString,
+                                coordinate: CLLocationCoordinate2D(latitude: landmarkData.latitude, longitude: landmarkData.longitude),
+                                name: landmarkData.name,
+                                type: landmarkType,
+                                iconName: landmarkType.iconName
+                            )
                         }
+                        
+                        let mapData = TreasureMapData(
+                            mapName: "Captain Bones' Treasure Map",
+                            xMarksTheSpot: treasureLocation.coordinate,
+                            landmarks: landmarks,
+                            clueCoordinates: []
+                        )
+                        
+                        TreasureMapView(
+                            mapData: mapData,
+                            userLocationManager: userLocationManager
+                        )
+                    } else {
+                        // Fallback: show regular map if treasure map not available
+                        LocationConfigView(locationManager: locationManager)
+                    }
                 }
-            case .skeletonConversation(let npcId, let npcName):
-                SkeletonConversationView(npcName: npcName, npcId: npcId)
+            }
+            .onAppear {
+                // Notify AR coordinator that dialog is open
+                NotificationCenter.default.post(name: NSNotification.Name("DialogOpened"), object: nil)
+            }
+            .onDisappear {
+                // Notify AR coordinator that dialog is closed
+                NotificationCenter.default.post(name: NSNotification.Name("DialogClosed"), object: nil)
             }
         }
         .onChange(of: conversationNPC) { _, newNPC in
@@ -358,6 +483,68 @@ struct ContentView: View {
             // Sync saved user name to server on app startup
             // This ensures the name persists between sessions
             APIService.shared.syncSavedUserNameToServer()
+            
+            // Check API health on startup and show QR scanner if connection fails
+            if !hasCheckedHealth {
+                hasCheckedHealth = true
+                Task {
+                    do {
+                        let isHealthy = try await APIService.shared.checkHealth()
+                        if !isHealthy {
+                            // Connection failed - show QR scanner automatically
+                            await MainActor.run {
+                                showQRScanner = true
+                            }
+                        }
+                    } catch {
+                        // Connection error - show QR scanner automatically
+                        await MainActor.run {
+                            showQRScanner = true
+                        }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showQRScanner) {
+            QRCodeScannerView(scannedURL: $scannedURL)
+        }
+        .onChange(of: scannedURL) { oldURL, newURL in
+            guard let url = newURL, url != oldURL else { return }
+            
+            // Update API URL with scanned QR code
+            DispatchQueue.main.async {
+                // Save the scanned URL
+                UserDefaults.standard.set(url, forKey: "apiBaseURL")
+                
+                // Reset scannedURL after processing to allow scanning again
+                self.scannedURL = nil
+                
+                // Try to reconnect
+                WebSocketService.shared.disconnect()
+                WebSocketService.shared.connect()
+                
+                // Verify connection
+                Task {
+                    do {
+                        let isHealthy = try await APIService.shared.checkHealth()
+                        if isHealthy {
+                            // Connection successful - close QR scanner
+                            await MainActor.run {
+                                self.showQRScanner = false
+                            }
+                        }
+                    } catch {
+                        // Still failed - keep QR scanner open
+                        print("⚠️ Connection still failed after scanning QR code")
+                    }
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("APIConnectionFailed"))) { _ in
+            // Show QR scanner when API connection fails
+            if !showQRScanner {
+                showQRScanner = true
+            }
         }
         .onChange(of: userLocationManager.currentLocation) { _, newLocation in
             // PERFORMANCE: Debounce location updates to prevent excessive API calls

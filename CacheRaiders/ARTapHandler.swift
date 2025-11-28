@@ -140,10 +140,11 @@ class ARTapHandler {
         
         // If entity hit didn't work, try proximity-based detection for NPCs first
         // Check all placed NPCs to see if tap is near any of them on screen
-        if tappedEntity == nil && !placedNPCs.isEmpty {
+        // Also check even if we got an entity hit, in case the hit was on a child entity
+        if !placedNPCs.isEmpty {
             var closestNPCId: String? = nil
             var closestNPCScreenDistance: CGFloat = CGFloat.infinity
-            let maxNPCScreenDistance: CGFloat = 250.0 // Maximum screen distance in points to consider a tap "on" the NPC (increased for easier tapping)
+            let maxNPCScreenDistance: CGFloat = 300.0 // Maximum screen distance in points to consider a tap "on" the NPC (increased for easier tapping)
             
             for (npcId, anchor) in placedNPCs {
                 let anchorTransform = anchor.transformMatrix(relativeTo: nil)

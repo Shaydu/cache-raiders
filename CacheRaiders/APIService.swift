@@ -113,6 +113,28 @@ class APIService {
             
             // Validate it's a proper URL
             if URL(string: validatedURL) != nil {
+                // CRITICAL: Check if IP ends in .1 (router IP) and warn user
+                if validatedURL.contains(".1:") || validatedURL.contains(".1/") {
+                    print("⚠️ WARNING: IP ends in .1 - this is usually the ROUTER, not your computer!")
+                    if let deviceIP = ServerDiscoveryService.shared.getDeviceLocalIP() {
+                        // Extract the IP part and replace .1 with the device's last octet
+                        let deviceIPParts = deviceIP.split(separator: ".")
+                        if deviceIPParts.count == 4, let lastOctet = deviceIPParts.last {
+                            // Replace .1:port with .{lastOctet}:port
+                            let suggestedURL = validatedURL.replacingOccurrences(of: ".1:", with: ".\(lastOctet):")
+                                .replacingOccurrences(of: ".1/", with: ".\(lastOctet)/")
+                            print("   💡 Your computer's IP appears to be: \(deviceIP)")
+                            print("   💡 Try updating Settings → API Server URL to: \(suggestedURL)")
+                        } else {
+                            print("   💡 Your computer's IP appears to be: \(deviceIP)")
+                            print("   💡 Update Settings → API Server URL to use: http://\(deviceIP):5001")
+                        }
+                    } else {
+                        print("   💡 Your computer's IP is likely 192.168.68.53 (not .1)")
+                        print("   💡 Update Settings → API Server URL to use your computer's IP")
+                    }
+                }
+                
                 // If validation passed and URL changed, save the corrected version
                 if validatedURL != customURL {
                     UserDefaults.standard.set(validatedURL, forKey: "apiBaseURL")
@@ -126,8 +148,20 @@ class APIService {
         }
         // No QR code URL set - user needs to scan QR code or enter URL manually
         // Don't guess IPs - only use what's explicitly set
-        print("⚠️ No API URL configured. Please scan the QR code from the server admin panel or enter the URL manually in Settings.")
-        return "http://localhost:5001" // Fallback, but won't work - user must configure URL
+        print("⚠️ No API URL configured. Please:")
+        print("   1. Open Settings (gear icon in top right)")
+        print("   2. Go to 'API Server URL' section")
+        print("   3. Scan QR code from server admin panel OR")
+        print("   4. Manually enter server IP (e.g., 192.168.68.53:5001)")
+        print("   💡 Find your server IP: Mac: 'ifconfig | grep inet', Windows: 'ipconfig'")
+        
+        // Try to get device IP as a suggestion (but don't auto-use it)
+        if let deviceIP = ServerDiscoveryService.shared.getDeviceLocalIP() {
+            let suggestedURL = "http://\(deviceIP):5001"
+            print("   💡 Suggested IP based on your network: \(suggestedURL)")
+        }
+        
+        return "http://localhost:5001" // Fallback, but won't work on physical device - user must configure URL
     }
     
     /// Get a suggested local network IP address based on the device's network
@@ -332,6 +366,14 @@ class APIService {
                     print("   → Cannot connect to host - check:")
                     print("      • Server is running")
                     print("      • IP address is correct: \(baseURL)")
+                    
+                    // Check if IP looks like router (ends in .1)
+                    if baseURL.contains(".1:") || baseURL.contains(".1/") {
+                        print("      ⚠️ CRITICAL: IP ends in .1 - this is the ROUTER, not your computer!")
+                        print("      → Your computer IP is likely 192.168.68.53 (not .1)")
+                        print("      → Update Settings → API Server URL to: http://192.168.68.53:5001")
+                    }
+                    
                     print("      • Device and server are on same network")
                     print("      • Firewall allows connections")
                 case .timedOut:
@@ -830,6 +872,13 @@ class APIService {
     
     // MARK: - Map Piece Types
     
+    struct LandmarkData: Codable {
+        let name: String
+        let type: String
+        let latitude: Double
+        let longitude: Double
+    }
+    
     struct MapPiece: Codable {
         let piece_number: Int
         let hint: String
@@ -837,9 +886,32 @@ class APIService {
         let approximate_longitude: Double?
         let exact_latitude: Double?
         let exact_longitude: Double?
-        let landmarks: [String]
+        let landmarks: [LandmarkData]  // Now includes coordinates
         let is_first_half: Bool?
         let is_second_half: Bool?
+        
+        // Custom decoder to handle both old format (strings) and new format (dicts)
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            piece_number = try container.decode(Int.self, forKey: .piece_number)
+            hint = try container.decode(String.self, forKey: .hint)
+            approximate_latitude = try container.decodeIfPresent(Double.self, forKey: .approximate_latitude)
+            approximate_longitude = try container.decodeIfPresent(Double.self, forKey: .approximate_longitude)
+            exact_latitude = try container.decodeIfPresent(Double.self, forKey: .exact_latitude)
+            exact_longitude = try container.decodeIfPresent(Double.self, forKey: .exact_longitude)
+            is_first_half = try container.decodeIfPresent(Bool.self, forKey: .is_first_half)
+            is_second_half = try container.decodeIfPresent(Bool.self, forKey: .is_second_half)
+            
+            // Try to decode as array of LandmarkData first (new format)
+            if let landmarkData = try? container.decode([LandmarkData].self, forKey: .landmarks) {
+                landmarks = landmarkData
+            } else if (try? container.decode([String].self, forKey: .landmarks)) != nil {
+                // Fallback to old format (strings) - convert to empty array since we don't have coordinates
+                landmarks = []
+            } else {
+                landmarks = []
+            }
+        }
     }
     
     struct MapPieceResponse: Codable {

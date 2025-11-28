@@ -187,7 +187,7 @@ class ARTextOverlay {
                 let adjustedUp = cross(forward, right)
 
                 // Build rotation matrix
-                var rotationMatrix = float4x4(
+                let rotationMatrix = float4x4(
                     SIMD4<Float>(right.x, right.y, right.z, 0),
                     SIMD4<Float>(adjustedUp.x, adjustedUp.y, adjustedUp.z, 0),
                     SIMD4<Float>(forward.x, forward.y, forward.z, 0),

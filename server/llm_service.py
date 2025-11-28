@@ -33,37 +33,91 @@ class MapFeatureService:
         self,
         latitude: float,
         longitude: float,
-        radius: float = 500.0  # meters
-    ) -> List[str]:
+        radius: float = 100.0,  # Reduced to 100m to avoid "resource exceeds maximum size" error (will auto-reduce if needed)
+        return_coordinates: bool = False  # If True, returns dicts with coordinates
+    ):
         """Get real map features near a location using OpenStreetMap Overpass API.
-        Returns a list of feature names/descriptions."""
+        Returns a list of feature names/descriptions, or dicts with coordinates if return_coordinates=True."""
         try:
             import requests
         except ImportError:
             print("⚠️ requests not installed. Install with: pip install requests")
             return []
         
-        # Overpass QL query to get features
+        # Overpass QL query - STYLIZED MAP with minimal navigational aids
+        # Only get 2-3 essential features: water (most important for navigation) and maybe one building
+        # Keep it simple for a stylized, artistic map view
+        # CRITICAL: Use (limit:N) on each query type BEFORE expansion to prevent huge datasets
+        # Use out geom instead of out body to get coordinates without expanding all nodes
         query = f"""
-        [out:json][timeout:25];
+        [out:json][timeout:10][maxsize:1073741824];
         (
-          way["natural"="water"](around:{radius},{latitude},{longitude});
-          way["waterway"](around:{radius},{latitude},{longitude});
-          node["natural"="tree"](around:{radius},{latitude},{longitude});
-          way["natural"="tree_row"](around:{radius},{latitude},{longitude});
-          way["building"](around:{radius},{latitude},{longitude});
-          way["highway"](around:{radius},{latitude},{longitude});
-          relation["natural"="mountain"](around:{radius},{latitude},{longitude});
-          way["natural"="peak"](around:{radius},{latitude},{longitude});
+          way["natural"="water"](around:{radius},{latitude},{longitude})(limit:1);
+          way["waterway"](around:{radius},{latitude},{longitude})(limit:1);
+          way["building"](around:{radius},{latitude},{longitude})(limit:1);
         );
-        out body;
-        >;
-        out skel qt;
+        out geom;
         """
         
         try:
-            response = requests.post(self.overpass_url, data=query, timeout=30)
+            response = requests.post(self.overpass_url, data=query, timeout=15)
+            
+            # Check for errors in response
+            if response.status_code != 200:
+                print(f"⚠️ Overpass API error: {response.status_code} - {response.text[:200]}")
+                return []
+            
             data = response.json()
+            
+            # Check for Overpass API errors (resource exceeded, timeout, etc.)
+            if 'remark' in data:
+                remark = data['remark'].lower()
+                if 'exceeded' in remark or 'timeout' in remark or 'maximum' in remark:
+                    error_message = data['remark']
+                    print(f"⚠️ Overpass API limit exceeded: {error_message}")
+                    print(f"   Reducing radius from {radius}m and retrying with smaller area...")
+                    # Retry with smaller radius if we hit limits
+                    if radius > 75:
+                        result = self.get_features_near_location(latitude, longitude, radius=75.0, return_coordinates=return_coordinates)
+                        # If retry also failed, return error
+                        if isinstance(result, dict) and 'error' in result:
+                            return result
+                        return result
+                    elif radius > 50:
+                        result = self.get_features_near_location(latitude, longitude, radius=50.0, return_coordinates=return_coordinates)
+                        # If retry also failed, return error
+                        if isinstance(result, dict) and 'error' in result:
+                            return result
+                        return result
+                    elif radius > 25:
+                        result = self.get_features_near_location(latitude, longitude, radius=25.0, return_coordinates=return_coordinates)
+                        # If retry also failed, return error
+                        if isinstance(result, dict) and 'error' in result:
+                            return result
+                        return result
+                    else:
+                        print(f"   ⚠️ Even with 25m radius, query too large. Returning empty results instead of error.")
+                        # Return empty list instead of error - better UX than showing error to user
+                        return []
+            
+            # Check for error field in response
+            if 'error' in data:
+                error_msg = data.get('error', 'Unknown error')
+                print(f"⚠️ Overpass API error: {error_msg}")
+                # Try with smaller radius
+                if radius > 75:
+                    result = self.get_features_near_location(latitude, longitude, radius=75.0, return_coordinates=return_coordinates)
+                    if isinstance(result, dict) and 'error' in result:
+                        return result
+                    return result
+                elif radius > 50:
+                    result = self.get_features_near_location(latitude, longitude, radius=50.0, return_coordinates=return_coordinates)
+                    if isinstance(result, dict) and 'error' in result:
+                        return result
+                    return result
+                # Return empty list instead of error - better UX
+                print(f"   ⚠️ Could not fetch features even with smaller radius. Returning empty results.")
+                return []
             
             features = []
             seen_names = set()
@@ -72,22 +126,56 @@ class MapFeatureService:
                 tags = element.get('tags', {})
                 feature_type = self._classify_feature(element)
                 
+                # Get coordinates from element
+                element_lat = None
+                element_lon = None
+                if 'lat' in element and 'lon' in element:
+                    # Node has direct lat/lon
+                    element_lat = element['lat']
+                    element_lon = element['lon']
+                elif 'center' in element:
+                    # Way/relation has center
+                    element_lat = element['center'].get('lat')
+                    element_lon = element['center'].get('lon')
+                elif 'geometry' in element and len(element['geometry']) > 0:
+                    # Use first geometry point
+                    first_point = element['geometry'][0]
+                    element_lat = first_point.get('lat')
+                    element_lon = first_point.get('lon')
+                
                 # Get feature name or use type
                 name = tags.get('name', '')
-                if name and name not in seen_names:
-                    features.append(f"{name} ({feature_type})")
-                    seen_names.add(name)
-                elif not name and feature_type not in seen_names:
-                    # Use type if no name
-                    if feature_type not in ['path']:  # Skip generic paths
-                        features.append(feature_type)
-                        seen_names.add(feature_type)
+                feature_key = name if name else feature_type
                 
-                # Limit to 5 features
-                if len(features) >= 5:
+                if return_coordinates and element_lat and element_lon:
+                    # Return dict with coordinates
+                    if feature_key not in seen_names:
+                        features.append({
+                            'name': name or feature_type,
+                            'type': feature_type,
+                            'latitude': element_lat,
+                            'longitude': element_lon
+                        })
+                        seen_names.add(feature_key)
+                else:
+                    # Return string (backward compatible)
+                    if name and name not in seen_names:
+                        features.append(f"{name} ({feature_type})")
+                        seen_names.add(name)
+                    elif not name and feature_type not in seen_names:
+                        # Use type if no name
+                        if feature_type not in ['path']:  # Skip generic paths
+                            features.append(feature_type)
+                            seen_names.add(feature_type)
+                
+                # Limit to 3 features total for stylized map with minimal navigational aids
+                if len(features) >= 3:
                     break
             
             return features
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️ Error fetching map features (network): {e}")
+            return []
         except Exception as e:
             print(f"⚠️ Error fetching map features: {e}")
             return []
@@ -271,7 +359,7 @@ class LLMService:
         if is_skeleton:
             base_prompt = f"""Ye be {npc_name}, a SKELETON pirate from 200 years ago. Ye be dead, so ye can speak. Help players find the 200-year-old treasure. Speak ONLY in pirate speak (arr, ye, matey). Keep responses SHORT - 1-2 sentences max."""
             if map_features:
-                base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:5])}. Use these actual features in your clues so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
+                base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:3])}. Use these actual features in your clues so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
         elif npc_type.lower() == "traveller" or "corgi" in npc_name.lower():
             # Corgi Traveller - friendly, helpful, gives hints
             base_prompt = f"""You are {npc_name}, a friendly Corgi Traveller who loves exploring and helping adventurers. You're cheerful, helpful, and give hints about where to find treasures. Speak in a friendly, enthusiastic way (woof, tail wags, etc.). Keep responses SHORT - 1-2 sentences max."""
@@ -280,7 +368,7 @@ class LLMService:
         else:
             base_prompt = f"""Ye be {npc_name}, a {npc_type} pirate. Help players find treasures. Speak ONLY in pirate speak. Keep responses SHORT - 1-2 sentences max."""
             if map_features:
-                base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:5])}. Use these actual features in your clues so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
+                base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:3])}. Use these actual features in your clues so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
         
         system_prompt = base_prompt
         
@@ -382,8 +470,25 @@ Return ONLY valid JSON, no other text."""
         if not lat or not lon:
             return {"error": "target_location must include latitude and longitude"}
         
-        # Fetch real map features
-        map_features = self.map_feature_service.get_features_near_location(lat, lon, radius=500.0)
+        # Fetch real map features with coordinates (reduced radius to avoid "resource exceeds maximum size" error)
+        # The function will automatically retry with smaller radius if it hits API limits
+        try:
+            map_features_result = self.map_feature_service.get_features_near_location(lat, lon, radius=100.0, return_coordinates=True)
+            
+            # Check if we got an error instead of features
+            if isinstance(map_features_result, dict) and 'error' in map_features_result:
+                error_msg = map_features_result['error']
+                print(f"⚠️ Map feature fetch failed: {error_msg}")
+                # Don't fail the entire map piece generation - just continue without features
+                print(f"   Continuing without map features - map piece will still be generated")
+                map_features_with_coords = []
+            else:
+                map_features_with_coords = map_features_result if isinstance(map_features_result, list) else []
+        except Exception as e:
+            print(f"⚠️ Exception fetching map features: {e}")
+            return {"error": f"Failed to fetch map features: {str(e)}"}
+        
+        map_feature_names = [f.get('name', f.get('type', '')) for f in map_features_with_coords if isinstance(f, dict)]
         
         # Generate partial coordinates (obfuscated slightly for puzzle)
         # Piece 1 (skeleton): Shows approximate area but not exact location
@@ -394,10 +499,10 @@ Return ONLY valid JSON, no other text."""
             approximate_lon = lon + (random.random() - 0.5) * 0.001
             piece_data = {
                 "piece_number": 1,
-                "hint": f"Arr, this be the first half o' the map, matey! The treasure be near {', '.join(map_features[:2]) if map_features else 'these waters'}.",
+                "hint": f"Arr, this be the first half o' the map, matey! The treasure be near {', '.join(map_feature_names[:2]) if map_feature_names else 'these waters'}.",
                 "approximate_latitude": approximate_lat,
                 "approximate_longitude": approximate_lon,
-                "landmarks": map_features[:3] if map_features else [],
+                "landmarks": map_features_with_coords[:3] if map_features_with_coords else [],  # Stylized map - max 3 navigational aids
                 "is_first_half": True
             }
         else:
@@ -407,7 +512,7 @@ Return ONLY valid JSON, no other text."""
                 "hint": f"Woof! Here's the second half! The treasure is exactly at these coordinates!",
                 "exact_latitude": lat,
                 "exact_longitude": lon,
-                "landmarks": map_features[3:6] if len(map_features) > 3 else [],
+                "landmarks": map_features_with_coords[:3] if map_features_with_coords else [],  # Stylized map - max 3 navigational aids
                 "is_second_half": True
             }
         
@@ -427,7 +532,7 @@ Return ONLY valid JSON, no other text."""
             lon = target_location.get('longitude')
             if lat and lon:
                 print(f"🗺️  Fetching real map features near {lat}, {lon}...")
-                map_features = self.map_feature_service.get_features_near_location(lat, lon, radius=500.0)
+                map_features = self.map_feature_service.get_features_near_location(lat, lon, radius=200.0)
                 if map_features:
                     print(f"   Found: {', '.join(map_features[:3])}")
         

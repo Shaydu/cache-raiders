@@ -20,6 +20,10 @@ struct SettingsView: View {
     @State private var networkDiagnosticReport: NetworkDiagnosticReport?
     @State private var showNetworkDiagnostics = false
     
+    // PERFORMANCE: Cache expensive computed values to avoid recomputing on every view update
+    @State private var cachedGroupedTypes: [(models: [String], typeCounts: [(type: LootBoxType, count: Int)])] = []
+    @State private var regenerateTask: Task<Void, Never>?
+    
     init(locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager) {
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
@@ -37,26 +41,64 @@ struct SettingsView: View {
         return type.factory.modelNames
     }
     
-    // Group types by their model names to deduplicate
+    // PERFORMANCE: Use cached grouped types instead of computing on every view update
     private var groupedFindableTypes: [(models: [String], types: [LootBoxType])] {
-        var groups: [[String]: [LootBoxType]] = [:]
-        
-        for type in LootBoxType.allCases {
-            let models = modelNames(for: type)
-            let key = models.sorted()
-            if groups[key] == nil {
-                groups[key] = []
-            }
-            groups[key]?.append(type)
+        // Return cached data or compute once and cache
+        return cachedGroupedTypes.map { group in
+            (models: group.models, types: group.typeCounts.map { $0.type })
         }
-        
-        return groups.map { (models: $0.key, types: $0.value) }
-            .sorted { $0.types.first?.displayName ?? "" < $1.types.first?.displayName ?? "" }
     }
     
-    // Count visible items by type
+    // PERFORMANCE: Use cached counts instead of filtering locations array repeatedly
     private func countForType(_ type: LootBoxType) -> Int {
-        return locationManager.locations.filter { $0.type == type }.count
+        // Find in cached data for O(1) lookup
+        for group in cachedGroupedTypes {
+            if let typeCount = group.typeCounts.first(where: { $0.type == type }) {
+                return typeCount.count
+            }
+        }
+        return 0
+    }
+    
+    // PERFORMANCE: Update cached data off main thread when locations change
+    private func updateCachedTypeData() {
+        // Capture display names on main actor before entering detached task
+        let typeDisplayNames = Dictionary(uniqueKeysWithValues: LootBoxType.allCases.map { ($0, $0.displayName) })
+        
+        Task.detached(priority: .userInitiated) { [locations = locationManager.locations, typeDisplayNames] in
+            // Build type counts dictionary off main thread
+            var typeCounts: [LootBoxType: Int] = [:]
+            for location in locations {
+                typeCounts[location.type, default: 0] += 1
+            }
+            
+            // Group types by their model names
+            var groups: [[String]: [LootBoxType]] = [:]
+            
+            for type in LootBoxType.allCases {
+                let models = type.factory.modelNames
+                let key = models.sorted()
+                if groups[key] == nil {
+                    groups[key] = []
+                }
+                groups[key]?.append(type)
+            }
+            
+            // Build result with counts
+            let result = groups.map { (models: $0.key, typeCounts: $0.value.map { type in
+                (type: type, count: typeCounts[type] ?? 0)
+            }) }
+            .sorted { group1, group2 in
+                let name1 = typeDisplayNames[group1.typeCounts.first?.type ?? LootBoxType.treasureChest] ?? ""
+                let name2 = typeDisplayNames[group2.typeCounts.first?.type ?? LootBoxType.treasureChest] ?? ""
+                return name1 < name2
+            }
+            
+            // Update UI on main thread
+            await MainActor.run {
+                self.cachedGroupedTypes = result
+            }
+        }
     }
     
     var body: some View {
@@ -86,22 +128,43 @@ struct SettingsView: View {
             }
             .onAppear {
                 previousDistance = locationManager.maxSearchDistance
-                viewModel.loadAPIURL()
-                viewModel.loadUserName()
-                viewModel.selectedObjectId = locationManager.selectedDatabaseObjectId
                 
-                // Set up error callback to display connection errors to user
-                WebSocketService.shared.onConnectionError = { errorMessage in
-                    Task { @MainActor in
-                        viewModel.displayAlert(title: "WebSocket Connection Failed", message: errorMessage)
+                // PERFORMANCE: Load network-dependent operations on background thread
+                Task(priority: .userInitiated) {
+                    // Load API URL (network helper operations can be slow)
+                    await MainActor.run {
+                        viewModel.loadAPIURL()
+                    }
+                    
+                    // Load user name
+                    await MainActor.run {
+                        viewModel.loadUserName()
+                    }
+                    
+                    await MainActor.run {
+                        viewModel.selectedObjectId = locationManager.selectedDatabaseObjectId
+                        
+                        // Set up error callback to display connection errors to user
+                        WebSocketService.shared.onConnectionError = { errorMessage in
+                            Task { @MainActor in
+                                viewModel.displayAlert(title: "WebSocket Connection Failed", message: errorMessage)
+                            }
+                        }
+                        
+                        if locationManager.useAPISync {
+                            viewModel.loadDatabaseObjects()
+                            viewModel.loadLeaderboard()
+                            WebSocketService.shared.connect()
+                        }
                     }
                 }
                 
-                if locationManager.useAPISync {
-                    viewModel.loadDatabaseObjects()
-                    viewModel.loadLeaderboard()
-                    WebSocketService.shared.connect()
-                }
+                // Update cached type data
+                updateCachedTypeData()
+            }
+            .onChange(of: locationManager.locations.count) { _, _ in
+                // Update cache when locations change
+                updateCachedTypeData()
             }
             .alert(viewModel.alertTitle, isPresented: $viewModel.showAlert) {
                 Button("OK", role: .cancel) { }
@@ -152,9 +215,33 @@ struct SettingsView: View {
                             locationManager.maxSearchDistance = newValue
                             locationManager.saveMaxDistance()
                             
-                            if previousDistance != newValue, let userLocation = userLocationManager.currentLocation {
-                                print("🔄 Search distance changed from \(previousDistance)m to \(newValue)m, regenerating loot boxes")
-                                locationManager.regenerateLocations(near: userLocation)
+                            // PERFORMANCE: Debounce regeneration and move to background thread
+                            if previousDistance != newValue {
+                                // Cancel any pending regeneration task
+                                regenerateTask?.cancel()
+                                
+                                // Debounce: wait 500ms after user stops adjusting slider
+                                regenerateTask = Task { @MainActor [weak locationManager] in
+                                    // Capture userLocationManager from the view context
+                                    let currentUserLocationManager = userLocationManager
+                                    
+                                    try? await Task.sleep(nanoseconds: 500_000_000) // 500ms debounce
+                                    
+                                    guard !Task.isCancelled,
+                                          let locationManager = locationManager,
+                                          let userLocation = currentUserLocationManager.currentLocation else {
+                                        return
+                                    }
+                                    
+                                    print("🔄 Search distance changed from \(previousDistance)m to \(newValue)m, regenerating loot boxes")
+                                    
+                                    // Move heavy regeneration to background thread
+                                    Task.detached(priority: .userInitiated) {
+                                        await MainActor.run {
+                                            locationManager.regenerateLocations(near: userLocation)
+                                        }
+                                    }
+                                }
                             }
                             previousDistance = newValue
                         }

@@ -123,8 +123,8 @@ class ServerDiscoveryService {
         return candidates
     }
     
-    /// Get the device's local network IP address
-    private func getDeviceLocalIP() -> String? {
+    /// Get the device's local network IP address (public for use by other services)
+    func getDeviceLocalIP() -> String? {
         var address: String?
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         

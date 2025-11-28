@@ -124,6 +124,43 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     // Throttling for nearby locations logging
     private var lastNearbyLogTime: Date = Date.distantPast
+    private var lastNearbyCheckTime: Date = Date.distantPast // Throttle getNearbyLocations calls
+    private let nearbyCheckInterval: TimeInterval = 1.0 // Check nearby locations once per second
+    
+    // Dialog state tracking - pause heavy AR processing when dialog is open
+    private var isDialogOpen: Bool = false {
+        didSet {
+            if isDialogOpen {
+                Swift.print("⏸️ Dialog opened - pausing heavy AR processing")
+            } else {
+                Swift.print("▶️ Dialog closed - resuming AR processing")
+            }
+        }
+    }
+    
+    // MARK: - Background Processing Queues
+    // CRITICAL: Use dedicated queues for heavy processing to prevent UI freezes
+    // AR session delegate runs on a background queue, but we need separate queues for different operations
+    private let backgroundProcessingQueue = DispatchQueue(label: "com.cacheraiders.ar.processing", qos: .userInitiated, attributes: .concurrent)
+    private let locationProcessingQueue = DispatchQueue(label: "com.cacheraiders.ar.locations", qos: .userInitiated)
+    private let viewportProcessingQueue = DispatchQueue(label: "com.cacheraiders.ar.viewport", qos: .userInitiated)
+    private let placementProcessingQueue = DispatchQueue(label: "com.cacheraiders.ar.placement", qos: .userInitiated)
+    
+    // Thread-safe state synchronization
+    private let stateQueue = DispatchQueue(label: "com.cacheraiders.ar.state", attributes: .concurrent)
+    private var _pendingPlacements: [String: (location: LootBoxLocation, position: SIMD3<Float>)] = [:]
+    private var _pendingRemovals: Set<String> = []
+    
+    // Thread-safe accessors
+    private var pendingPlacements: [String: (location: LootBoxLocation, position: SIMD3<Float>)] {
+        get { stateQueue.sync { _pendingPlacements } }
+        set { stateQueue.async(flags: .barrier) { self._pendingPlacements = newValue } }
+    }
+    
+    private var pendingRemovals: Set<String> {
+        get { stateQueue.sync { _pendingRemovals } }
+        set { stateQueue.async(flags: .barrier) { self._pendingRemovals = newValue } }
+    }
     
     override init() {
         super.init()
@@ -316,7 +353,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     // Conversation manager reference
     private weak var conversationManager: ARConversationManager?
 
-    func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>, nearestObjectDirection: Binding<Double?>, conversationNPC: Binding<ConversationNPC?>, conversationManager: ARConversationManager) {
+    func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>, nearestObjectDirection: Binding<Double?>, conversationNPC: Binding<ConversationNPC?>, conversationManager: ARConversationManager, treasureHuntService: TreasureHuntService? = nil) {
         self.arView = arView
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
@@ -328,7 +365,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         self.conversationNPCBinding = conversationNPC
         self.conversationManager = conversationManager
 
-        // Initialize treasure hunt service for story mode
+        // Use provided treasure hunt service or create new one
+        // Note: In ContentView, we create a shared instance so state persists
         if self.treasureHuntService == nil {
             self.treasureHuntService = TreasureHuntService()
             self.treasureHuntService?.setConversationManager(conversationManager)
@@ -371,7 +409,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         } else {
             Swift.print("🔍 Object recognition disabled (saves battery/processing)")
         }
-        distanceTracker = ARDistanceTracker(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager)
+        distanceTracker = ARDistanceTracker(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, treasureHuntService: treasureHuntService)
         occlusionManager = AROcclusionManager(arView: arView, locationManager: locationManager, distanceTracker: distanceTracker)
         tapHandler = ARTapHandler(arView: arView, locationManager: locationManager)
         databaseIndicatorService = ARDatabaseIndicatorService()
@@ -663,12 +701,37 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
     
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
-        // STORY MODE: Early return - no loot boxes should be placed in story modes
+        // STORY MODE: Remove all findables and prevent new placements
         let gameMode = locationManager?.gameMode ?? .open
         let isStoryMode = gameMode == .deadMensSecrets || gameMode == .splitLegacy
+        
         if isStoryMode {
-            // In story modes, only NPCs are shown - no loot boxes should be placed
+            // In story modes, only NPCs are shown - remove all findable objects (loot boxes, turkeys, etc.)
             // NPCs are handled separately in session(_:didUpdate:) method
+            guard arView != nil else {
+                return
+            }
+            
+            // Remove all loot boxes/findables from AR scene in story modes
+            let findablesToRemove = placedBoxes.keys.filter { locationId in
+                // Keep NPCs (they're tracked in placedNPCs, not placedBoxes)
+                // But remove all findable objects (turkey, chests, etc.)
+                return !(placedNPCs.keys.contains(locationId))
+            }
+            
+            for locationId in findablesToRemove {
+                if let anchor = placedBoxes[locationId] {
+                    let locationName = locationManager?.locations.first(where: { $0.id == locationId })?.name ?? locationId
+                    Swift.print("🗑️ Removing findable '\(locationName)' (ID: \(locationId)) from story mode - only NPCs allowed")
+                    anchor.removeFromParent()
+                    placedBoxes.removeValue(forKey: locationId)
+                    findableObjects.removeValue(forKey: locationId)
+                    objectsInViewport.remove(locationId)
+                    objectPlacementTimes.removeValue(forKey: locationId)
+                }
+            }
+            
+            // Early return - no new loot boxes should be placed in story modes
             return
         }
         
@@ -816,30 +879,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
 
-        // STORY MODE: Remove all loot boxes when entering story mode (only NPCs should remain)
-        // Reuse gameMode variable declared earlier in this function (line 668)
-        let isStoryMode = gameMode == .deadMensSecrets || gameMode == .splitLegacy
-        
-        if isStoryMode {
-            // Remove all loot boxes from AR scene in story modes
-            let lootBoxesToRemove = placedBoxes.keys.filter { locationId in
-                // Keep NPCs (they're tracked in placedNPCs, not placedBoxes)
-                // But remove any loot boxes that might have been placed
-                return !(placedNPCs.keys.contains(locationId))
-            }
-            
-            for locationId in lootBoxesToRemove {
-                if let anchor = placedBoxes[locationId] {
-                    Swift.print("🗑️ Removing loot box '\(locationId)' from story mode - only NPCs allowed")
-                    anchor.removeFromParent()
-                    placedBoxes.removeValue(forKey: locationId)
-                    findableObjects.removeValue(forKey: locationId)
-                    objectsInViewport.remove(locationId)
-                    objectPlacementTimes.removeValue(forKey: locationId)
-                }
-            }
-        }
-
         // Remove the unselected objects from the scene (but never manually placed ones)
         for locationId in objectsToRemove {
             if let anchor = placedBoxes[locationId] {
@@ -882,21 +921,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
-        // STORY MODE: In story modes (deadMensSecrets, splitLegacy), only show NPCs, not loot boxes
-        // (gameMode and isStoryMode already declared above)
+        // Note: Story mode check happens at the top of this function - we return early if in story mode
+        // So all code below only executes in open mode
         
         for location in nearbyLocations {
             // Stop if we've reached the limit
             guard placedBoxes.count < maxObjects else {
                 break
-            }
-
-            // STORY MODE: Skip all loot boxes in story modes - only NPCs should appear
-            if isStoryMode {
-                // Only allow NPCs (skeleton, corgi) - skip all loot box types
-                // NPCs are handled separately in placeNPC, not through checkAndPlaceBoxes
-                Swift.print("⏭️ Skipping loot box '\(location.name)' in story mode (\(gameMode.displayName)) - only NPCs are shown")
-                continue
             }
 
             // Skip locations that are already placed (double-check to prevent duplicates)
@@ -1537,7 +1568,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         //     }
         // }
 
-        Swift.print("📍 Objects locked to initial placement - no GPS drift corrections applied")
+        // Objects are locked to initial placement - no GPS drift corrections applied
+        // (Debug print removed to reduce log spam - this runs every frame)
+        
+        // PERFORMANCE: Skip heavy processing when dialog is open to prevent freezes
+        if isDialogOpen {
+            // Only do minimal processing when dialog is open
+            // Skip object recognition, placement checks, viewport checks, etc.
+            return
+        }
         
         // Perform object recognition on camera frame (throttled to improve framerate)
         // Only run recognition every 2 seconds to reduce CPU usage
@@ -1547,112 +1586,134 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             objectRecognizer?.performObjectRecognition(on: frame.capturedImage)
         }
 
-        // Check for nearby locations when AR is tracking
+        // Check for nearby locations when AR is tracking (throttled to reduce CPU usage)
+        // CRITICAL: Move heavy processing to background threads to prevent UI freezes
+        let now = Date()
         if frame.camera.trackingState == .normal,
+           now.timeIntervalSince(lastNearbyCheckTime) > nearbyCheckInterval,
            let userLocation = userLocationManager?.currentLocation,
            let locationManager = locationManager {
-            let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
-
-            // DEBUG: Log what we found
-            if Date().timeIntervalSince(lastNearbyLogTime) > 3.0 {
-                lastNearbyLogTime = Date()
-                Swift.print("📱 AR Update: Found \(nearby.count) nearby locations, \(placedBoxes.count) placed, AR origin: \(arOriginLocation != nil)")
-                if !nearby.isEmpty && placedBoxes.isEmpty {
-                    Swift.print("   ⚠️ Objects nearby but NONE placed yet!")
-                    Swift.print("   First 3 nearby: \(nearby.prefix(3).map { $0.name })")
-                }
-            }
+            lastNearbyCheckTime = now
             
-            // Game Mode: Place NPCs based on mode
-            if let arView = arView {
-                switch locationManager.gameMode {
-                case .open:
-                    // No NPCs in open mode - remove any existing NPCs
-                    if skeletonPlaced {
-                        if let skeletonAnchor = skeletonAnchor {
-                            skeletonAnchor.removeFromParent()
-                            placedNPCs.removeValue(forKey: NPCType.skeleton.npcId)
-                        }
-                        skeletonPlaced = false
-                        skeletonAnchor = nil
-                    }
-                    if corgiPlaced {
-                        if let corgiAnchor = placedNPCs[NPCType.corgi.npcId] {
-                            corgiAnchor.removeFromParent()
-                            placedNPCs.removeValue(forKey: NPCType.corgi.npcId)
-                        }
-                        corgiPlaced = false
-                    }
-                    break
-                    
-                case .deadMensSecrets:
-                    // Dead Men's Secrets: Only skeleton appears as guide
-                    if !skeletonPlaced {
-                        placeNPC(type: .skeleton, in: arView)
-                    }
-                    // Remove corgi if it exists (shouldn't be in this mode)
-                    if corgiPlaced {
-                        if let corgiAnchor = placedNPCs[NPCType.corgi.npcId] {
-                            corgiAnchor.removeFromParent()
-                            placedNPCs.removeValue(forKey: NPCType.corgi.npcId)
-                        }
-                        corgiPlaced = false
-                    }
-                    
-                case .splitLegacy:
-                    // The Split Legacy: Skeleton appears first, Corgi appears after talking to skeleton
-                    if !skeletonPlaced {
-                        placeNPC(type: .skeleton, in: arView)
-                    }
-                    // Corgi only appears if player has talked to skeleton (tracked separately)
-                    // This will be handled in the conversation handler
-                    break
-                }
-            }
-            
-            // Throttle box placement checks to improve framerate
-            // Only check every 2 seconds instead of every frame (60fps)
-            // Objects don't need frequent re-placement checks
-            let placementNow = Date()
-            if shouldForceReplacement || placementNow.timeIntervalSince(lastPlacementCheck) > 2.0 {
-                lastPlacementCheck = placementNow
+            // Move getNearbyLocations to background thread (can be expensive with many locations)
+            locationProcessingQueue.async { [weak self] in
+                guard let self = self else { return }
+                let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
                 
-                // Force re-placement after reset if flag is set
-                if shouldForceReplacement {
-                    Swift.print("🔄 Force re-placement triggered - re-placing all nearby objects")
-                    Swift.print("   📍 Found \(nearby.count) nearby locations within \(locationManager.maxSearchDistance)m")
-                    shouldForceReplacement = false
-                    // Clear placedBoxes to ensure all objects can be re-placed
-                    // (removeAllPlacedObjects already cleared it, but double-check)
-                    checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
-                } else {
-                    checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+                // DEBUG: Log what we found (on background thread to avoid blocking)
+                if Date().timeIntervalSince(self.lastNearbyLogTime) > 3.0 {
+                    self.lastNearbyLogTime = Date()
+                    let placedCount = self.stateQueue.sync { self.placedBoxes.count }
+                    let hasOrigin = self.arOriginLocation != nil
+                    Swift.print("📱 AR Update: Found \(nearby.count) nearby locations, \(placedCount) placed, AR origin: \(hasOrigin)")
+                    if !nearby.isEmpty && placedCount == 0 {
+                        Swift.print("   ⚠️ Objects nearby but NONE placed yet!")
+                        Swift.print("   First 3 nearby: \(nearby.prefix(3).map { $0.name })")
+                    }
                 }
-            }
-
-            // No automatic sphere spawning - user must add items manually via map
-            // if !hasAutoRandomized && placedBoxes.isEmpty {
-            //     Swift.print("🎯 AR tracking stable - auto-spawning 3 spheres")
-            //     randomizeLootBoxes()
-            // }
-            
-            // Check viewport visibility and play chime when objects enter
-            // Throttle to every 1.0 seconds to improve framerate (was 0.5s)
-            // Viewport checking is expensive (screen projections) and doesn't need high frequency
-            let now = Date()
-            if now.timeIntervalSince(lastViewportCheck) > 1.0 {
-                lastViewportCheck = now
-                checkViewportVisibility()
-            }
-            
-            // CRITICAL: Periodically check for collected objects that should be removed from AR
-            // This ensures objects are removed even if checkAndPlaceBoxes hasn't run yet
-            // Check every 0.5 seconds to catch collected objects quickly
-            if now.timeIntervalSince(lastPlacementCheck) > 0.5 {
-                lastPlacementCheck = now
-                removeCollectedObjectsFromAR()
-                // Also ensure all placed objects have their FindableObjects synced to tap handler
-                syncFindableObjectsToTapHandler()
+                
+                // Game Mode: Place NPCs based on mode (must be on main thread for AR scene updates)
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, let arView = self.arView else { return }
+                    switch locationManager.gameMode {
+                    case .open:
+                        // No NPCs in open mode - remove any existing NPCs
+                        if self.skeletonPlaced {
+                            if let skeletonAnchor = self.skeletonAnchor {
+                                skeletonAnchor.removeFromParent()
+                                self.placedNPCs.removeValue(forKey: NPCType.skeleton.npcId)
+                            }
+                            self.skeletonPlaced = false
+                            self.skeletonAnchor = nil
+                        }
+                        if self.corgiPlaced {
+                            if let corgiAnchor = self.placedNPCs[NPCType.corgi.npcId] {
+                                corgiAnchor.removeFromParent()
+                                self.placedNPCs.removeValue(forKey: NPCType.corgi.npcId)
+                            }
+                            self.corgiPlaced = false
+                        }
+                        break
+                        
+                    case .deadMensSecrets:
+                        // Dead Men's Secrets: Only skeleton appears as guide
+                        if !self.skeletonPlaced {
+                            self.placeNPC(type: .skeleton, in: arView)
+                        }
+                        // Remove corgi if it exists (shouldn't be in this mode)
+                        if self.corgiPlaced {
+                            if let corgiAnchor = self.placedNPCs[NPCType.corgi.npcId] {
+                                corgiAnchor.removeFromParent()
+                                self.placedNPCs.removeValue(forKey: NPCType.corgi.npcId)
+                            }
+                            self.corgiPlaced = false
+                        }
+                        
+                    case .splitLegacy:
+                        // The Split Legacy: Skeleton appears first, Corgi appears after talking to skeleton
+                        if !self.skeletonPlaced {
+                            self.placeNPC(type: .skeleton, in: arView)
+                        }
+                        // Corgi only appears if player has talked to skeleton (tracked separately)
+                        // This will be handled in the conversation handler
+                        break
+                    }
+                }
+                
+                // Throttle box placement checks to improve framerate
+                // Only check every 2 seconds instead of every frame (60fps)
+                // Objects don't need frequent re-placement checks
+                let placementNow = Date()
+                let shouldCheck = self.shouldForceReplacement || placementNow.timeIntervalSince(self.lastPlacementCheck) > 2.0
+                
+                if shouldCheck {
+                    self.lastPlacementCheck = placementNow
+                    
+                    // Move checkAndPlaceBoxes to background thread (very expensive operation)
+                    self.placementProcessingQueue.async { [weak self] in
+                        guard let self = self else { return }
+                        
+                        // Force re-placement after reset if flag is set
+                        if self.shouldForceReplacement {
+                            Swift.print("🔄 Force re-placement triggered - re-placing all nearby objects")
+                            Swift.print("   📍 Found \(nearby.count) nearby locations within \(locationManager.maxSearchDistance)m")
+                            self.shouldForceReplacement = false
+                        }
+                        
+                        // Perform heavy computation on background thread
+                        self.checkAndPlaceBoxesAsync(userLocation: userLocation, nearbyLocations: nearby)
+                    }
+                }
+                
+                // Check viewport visibility and play chime when objects enter
+                // Throttle to every 1.0 seconds to improve framerate (was 0.5s)
+                // Viewport checking is expensive (screen projections) and doesn't need high frequency
+                let viewportNow = Date()
+                if viewportNow.timeIntervalSince(self.lastViewportCheck) > 1.0 {
+                    self.lastViewportCheck = viewportNow
+                    
+                    // Move viewport checking to background thread
+                    self.viewportProcessingQueue.async { [weak self] in
+                        guard let self = self else { return }
+                        self.checkViewportVisibilityAsync()
+                    }
+                }
+                
+                // CRITICAL: Periodically check for collected objects that should be removed from AR
+                // This ensures objects are removed even if checkAndPlaceBoxes hasn't run yet
+                // Check every 0.5 seconds to catch collected objects quickly
+                let removalNow = Date()
+                if removalNow.timeIntervalSince(self.lastPlacementCheck) > 0.5 {
+                    self.lastPlacementCheck = removalNow
+                    
+                    // Move removal check to background thread
+                    self.placementProcessingQueue.async { [weak self] in
+                        guard let self = self else { return }
+                        self.removeCollectedObjectsFromARAsync()
+                        // Also ensure all placed objects have their FindableObjects synced to tap handler
+                        self.syncFindableObjectsToTapHandlerAsync()
+                    }
+                }
             }
         }
     }
@@ -1754,6 +1815,40 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 
                 Swift.print("   ✅ Object removed from AR scene")
             }
+        }
+    }
+    
+    // MARK: - Async Wrapper Methods (for background thread processing)
+    
+    /// Async wrapper for checkAndPlaceBoxes - dispatches to main thread for AR scene updates
+    private func checkAndPlaceBoxesAsync(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
+        // AR scene updates must be on main thread
+        DispatchQueue.main.async { [weak self] in
+            self?.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
+        }
+    }
+    
+    /// Async wrapper for checkViewportVisibility - dispatches to main thread for AR scene access
+    private func checkViewportVisibilityAsync() {
+        // AR scene access must be on main thread
+        DispatchQueue.main.async { [weak self] in
+            self?.checkViewportVisibility()
+        }
+    }
+    
+    /// Async wrapper for removeCollectedObjectsFromAR - dispatches to main thread for AR scene updates
+    private func removeCollectedObjectsFromARAsync() {
+        // AR scene updates must be on main thread
+        DispatchQueue.main.async { [weak self] in
+            self?.removeCollectedObjectsFromAR()
+        }
+    }
+    
+    /// Async wrapper for syncFindableObjectsToTapHandler - thread-safe dictionary access
+    private func syncFindableObjectsToTapHandlerAsync() {
+        // Dictionary access is already thread-safe, but dispatch to main for consistency
+        DispatchQueue.main.async { [weak self] in
+            self?.syncFindableObjectsToTapHandler()
         }
     }
     
@@ -3094,6 +3189,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 : SIMD3<Float>(0.8, 0.6, 0.8) // Corgi: short and wide
             let collisionShape = ShapeResource.generateBox(size: collisionSize)
             npcEntity.collision = CollisionComponent(shapes: [collisionShape])
+            
+            // Enable input handling so the entity can be tapped
+            npcEntity.components.set(InputTargetComponent())
 
             // Make NPC face the camera while keeping it upright
             let cameraDirection = normalize(cameraPos - npcPosition)
@@ -3174,36 +3272,27 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // For skeleton, always open the conversation view
         if type == .skeleton {
             Swift.print("   📱 Opening SkeletonConversationView (full-screen dialog)")
-            DispatchQueue.main.async { [weak self] in
-                self?.conversationNPCBinding?.wrappedValue = ConversationNPC(
-                    id: type.npcId,
-                    name: type.defaultName
-                )
-                Swift.print("   ✅ ConversationNPC binding set")
-            }
+            // CRITICAL: Set binding synchronously on main thread (we're already on main from handleNPCTap)
+            // The nested DispatchQueue.main.async was causing timing issues
+            self.conversationNPCBinding?.wrappedValue = ConversationNPC(
+                id: type.npcId,
+                name: type.defaultName
+            )
+            Swift.print("   ✅ ConversationNPC binding set: id=\(type.npcId), name=\(type.defaultName)")
         }
 
         // Handle different game modes
-        Swift.print("   🎮 Checking game mode for AR sign...")
+        Swift.print("   🎮 Checking game mode...")
         switch locationManager.gameMode {
         case .open:
-            Swift.print("   ℹ️ Open mode - no AR sign in this mode")
+            Swift.print("   ℹ️ Open mode - no special game mode handling")
             break
 
         case .deadMensSecrets:
-            Swift.print("   🎯 Dead Men's Secrets mode - checking AR sign conditions...")
-            Swift.print("      type == .skeleton? \(type == .skeleton)")
-            Swift.print("      arView exists? \(arView != nil)")
-            Swift.print("      skeletonEntity in placedNPCs? \(placedNPCs[type.npcId] != nil)")
-
-            // Dead Men's Secrets: Show text input prompt, then display response above skeleton
-            // (Conversation view is also opened above for full chat experience)
-            if type == .skeleton, let arView = arView, let skeletonEntity = placedNPCs[type.npcId] {
-                Swift.print("   🎬 TRIGGERING AR SIGN: showSkeletonTextInput")
-                showSkeletonTextInput(for: skeletonEntity, in: arView, npcId: type.npcId, npcName: type.defaultName)
-            } else {
-                Swift.print("   ❌ AR sign NOT triggered - conditions not met")
-            }
+            Swift.print("   🎯 Dead Men's Secrets mode - full conversation view is already shown above")
+            // NOTE: We no longer show the UIAlertController text input here because
+            // the full-screen SkeletonConversationView (opened above) provides a better UX.
+            // The conversation view handles all interactions.
             
         case .splitLegacy:
             // Split Legacy: Each NPC gives half the map
@@ -3358,7 +3447,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                                         errorMessage = "Server error \(code). Check the server, matey!"
                                     }
                                 default:
-                                    errorMessage = apiError.localizedDescription ?? "Unknown error"
+                                    errorMessage = apiError.localizedDescription
                                 }
                             } else {
                                 // For other errors, provide a generic but friendly message
@@ -3586,37 +3675,19 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         // CRITICAL: Mark as collected IMMEDIATELY to prevent re-placement by checkAndPlaceBoxes
         // This must happen before the animation starts to prevent race conditions
+        // BUT: Don't remove the object yet - we need it for confetti and animation
         if let foundLocation = findableObject.location {
             DispatchQueue.main.async { [weak self] in
                 if let locationManager = self?.locationManager {
                     locationManager.markCollected(foundLocation.id)
                     Swift.print("✅ Marked \(foundLocation.name) as collected immediately to prevent re-placement")
-                    
-                    // CRITICAL: Immediately remove object from AR scene when marked as collected
-                    // Don't wait for animation to complete - user expects it to disappear right away
-                    if let anchor = self?.placedBoxes[foundLocation.id] {
-                        Swift.print("🗑️ Immediately removing \(foundLocation.name) (ID: \(foundLocation.id)) from AR scene...")
-                        anchor.removeFromParent()
-                        self?.placedBoxes.removeValue(forKey: foundLocation.id)
-                        self?.findableObjects.removeValue(forKey: foundLocation.id)
-                        self?.objectsInViewport.remove(foundLocation.id)
-                        
-                        // Also remove from distance tracker if applicable
-                        if let textEntity = self?.distanceTracker?.distanceTextEntities[foundLocation.id] {
-                            textEntity.removeFromParent()
-                            self?.distanceTracker?.distanceTextEntities.removeValue(forKey: foundLocation.id)
-                        }
-                        
-                        Swift.print("   ✅ Object removed from AR scene immediately")
-                    }
                 }
             }
         }
         
         // Use FindableObject's find() method - this encapsulates all the basic findable behavior
-        // The notification will appear AFTER animation completes
-        // NOTE: Object is already removed above, so this animation will run on a removed object
-        // This is fine - the animation will complete but the object won't be visible
+        // This will trigger: confetti, sound, animation
+        // The object will be removed in the completion callback
         let objectName = findableObject.itemDescription()
         findableObject.find { [weak self] in
             // Show discovery notification AFTER animation completes
@@ -3630,23 +3701,33 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
             
             // CRITICAL: Remove anchor from AR scene to make object disappear
-            // Note: Object may have already been removed when marked as collected, so check first
-            if anchor.parent != nil {
-                Swift.print("🗑️ Removing \(objectName) (ID: \(locationId)) from AR scene (animation completed)...")
-                anchor.removeFromParent()
-                Swift.print("   ✅ Anchor removed from scene - object should now be invisible")
-            } else {
-                Swift.print("ℹ️ Object \(objectName) (ID: \(locationId)) already removed from scene")
-            }
+            // This happens AFTER confetti and animation complete
+            DispatchQueue.main.async { [weak self] in
+                guard let self = self else { return }
+                
+                if anchor.parent != nil {
+                    Swift.print("🗑️ Removing \(objectName) (ID: \(locationId)) from AR scene (animation completed)...")
+                    anchor.removeFromParent()
+                    Swift.print("   ✅ Anchor removed from scene - object should now be invisible")
+                } else {
+                    Swift.print("ℹ️ Object \(objectName) (ID: \(locationId)) already removed from scene")
+                }
 
-            // Cleanup after find completes (only if not already cleaned up)
-            if self?.placedBoxes[locationId] != nil {
-                self?.placedBoxes.removeValue(forKey: locationId)
-                self?.findableObjects.removeValue(forKey: locationId)
-                self?.objectsInViewport.remove(locationId) // Also remove from viewport tracking
-                Swift.print("   ✅ Removed from placedBoxes (\(self?.placedBoxes.count ?? 0) remaining)")
-            } else {
-                Swift.print("   ℹ️ Already removed from placedBoxes")
+                // Cleanup after find completes
+                if self.placedBoxes[locationId] != nil {
+                    self.placedBoxes.removeValue(forKey: locationId)
+                    self.findableObjects.removeValue(forKey: locationId)
+                    self.objectsInViewport.remove(locationId) // Also remove from viewport tracking
+                    Swift.print("   ✅ Removed from placedBoxes (\(self.placedBoxes.count) remaining)")
+                } else {
+                    Swift.print("   ℹ️ Already removed from placedBoxes")
+                }
+                
+                // Also remove from distance tracker if applicable
+                if let textEntity = self.distanceTracker?.distanceTextEntities[locationId] {
+                    textEntity.removeFromParent()
+                    self.distanceTracker?.distanceTextEntities.removeValue(forKey: locationId)
+                }
             }
 
             // Remove randomized AR items from locationManager when found (they're AR-only, not GPS-based)
@@ -4436,5 +4517,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // This ensures the newly placed object appears immediately
         checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
     }
-
+    
+    /// Handle dialog opened notification - pause heavy AR processing
+    @objc private func handleDialogOpened(_ notification: Notification) {
+        isDialogOpen = true
+    }
+    
+    /// Handle dialog closed notification - resume AR processing
+    @objc private func handleDialogClosed(_ notification: Notification) {
+        isDialogOpen = false
+    }
+    
 }

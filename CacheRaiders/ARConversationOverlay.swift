@@ -13,35 +13,42 @@ struct ARConversationOverlay: View {
     @State private var isVisible: Bool = false
 
     var body: some View {
-        VStack {
-            Spacer()
+        GeometryReader { geometry in
+            VStack {
+                // Spacer to push content to halfway point (50% from top)
+                Spacer()
+                    .frame(height: geometry.size.height * 0.5)
 
-            if isVisible {
-                VStack(alignment: .leading, spacing: 8) {
-                    // NPC name header
-                    HStack {
-                        Text(isUserMessage ? "You" : "💀 \(npcName)")
-                            .font(.system(.headline, design: .monospaced))
-                            .foregroundColor(isUserMessage ? .blue : .yellow)
-                        Spacer()
+                if isVisible {
+                    VStack(alignment: .leading, spacing: 8) {
+                        // NPC name header
+                        HStack {
+                            Text(isUserMessage ? "You" : "💀 \(npcName)")
+                                .font(.system(.headline, design: .monospaced))
+                                .foregroundColor(isUserMessage ? .blue : .yellow)
+                            Spacer()
+                        }
+
+                        // Message content with typewriter effect
+                        Text(isUserMessage ? message : typewriterService.displayedText)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-
-                    // Message content with typewriter effect
-                    Text(isUserMessage ? message : typewriterService.displayedText)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.black.opacity(0.9))
+                            .shadow(color: .black.opacity(0.5), radius: 10, x: 0, y: -5)
+                    )
+                    .padding(.horizontal, 16)
+                    .frame(maxHeight: geometry.size.height * 0.33, alignment: .bottom) // Constrain to bottom third
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-                .padding(20)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(Color.black.opacity(0.9))
-                        .shadow(color: .black.opacity(0.5), radius: 10, x: 0, y: -5)
-                )
-                .padding(.horizontal, 16)
-                .padding(.bottom, 40)
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                
+                // Spacer to fill remaining space below
+                Spacer()
             }
         }
         .onAppear {

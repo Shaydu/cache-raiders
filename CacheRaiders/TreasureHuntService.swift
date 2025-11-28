@@ -33,7 +33,7 @@ class TreasureHuntService: ObservableObject {
     // MARK: - Map Trigger Detection
 
     /// Check if user message is requesting directions/map
-    /// Detects phrases like: "give me the map", "where is the treasure?", "show me the way"
+    /// Detects phrases like: "give me the map", "where is the treasure?", "show me the way", "instructions", "guidance", "info"
     func isMapRequest(_ message: String) -> Bool {
         let lowercased = message.lowercased()
         let mapTriggers = [
@@ -48,7 +48,14 @@ class TreasureHuntService: ObservableObject {
             "show me",
             "guide",
             "help me find",
-            "give me"
+            "give me",
+            "instruction",  // "instruction" or "instructions"
+            "guidance",      // "guidance" or "guide me"
+            "info",          // "info" or "information"
+            "tell me",       // "tell me where"
+            "how do",        // "how do I find"
+            "what do",       // "what do I do"
+            "help"           // "help" or "help me"
         ]
         return mapTriggers.contains { lowercased.contains($0) }
     }

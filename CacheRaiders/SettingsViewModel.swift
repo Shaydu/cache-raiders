@@ -33,16 +33,25 @@ class SettingsViewModel: ObservableObject {
         if let savedURL = UserDefaults.standard.string(forKey: "apiBaseURL"), !savedURL.isEmpty {
             apiURL = savedURL
         } else {
-            if let suggested = NetworkHelper.getSuggestedLocalIP() {
-                let suggestedURL = "http://\(suggested):5001"
-                apiURL = suggestedURL
-                UserDefaults.standard.set(suggestedURL, forKey: "apiBaseURL")
-                print("✅ Auto-configured API URL to: \(suggestedURL)")
-            } else {
-                let fallbackURL = "http://10.0.0.1:5001"
-                apiURL = fallbackURL
-                UserDefaults.standard.set(fallbackURL, forKey: "apiBaseURL")
-                print("⚠️ Using fallback API URL: \(fallbackURL)")
+            // PERFORMANCE: Network interface enumeration can be slow - do it off main thread
+            Task.detached(priority: .userInitiated) {
+                let suggested = await MainActor.run {
+                    NetworkHelper.getSuggestedLocalIP()
+                }
+                
+                await MainActor.run {
+                    if let suggested = suggested {
+                        let suggestedURL = "http://\(suggested):5001"
+                        self.apiURL = suggestedURL
+                        UserDefaults.standard.set(suggestedURL, forKey: "apiBaseURL")
+                        print("✅ Auto-configured API URL to: \(suggestedURL)")
+                    } else {
+                        let fallbackURL = "http://10.0.0.1:5001"
+                        self.apiURL = fallbackURL
+                        UserDefaults.standard.set(fallbackURL, forKey: "apiBaseURL")
+                        print("⚠️ Using fallback API URL: \(fallbackURL)")
+                    }
+                }
             }
         }
     }
@@ -65,9 +74,13 @@ class SettingsViewModel: ObservableObject {
             return false
         }
         
+        // PERFORMANCE: Save URL without blocking synchronize() call
         UserDefaults.standard.set(urlString, forKey: "apiBaseURL")
-        // Force UserDefaults to synchronize to ensure the value is saved immediately
-        UserDefaults.standard.synchronize()
+        // Note: synchronize() is deprecated and can block - modern iOS saves automatically
+        // Only call synchronize() on background queue if really needed
+        DispatchQueue.global(qos: .utility).async {
+            UserDefaults.standard.synchronize()
+        }
         
         // Force APIService to reload the baseURL by accessing it
         let updatedURL = APIService.shared.baseURL
@@ -82,13 +95,13 @@ class SettingsViewModel: ObservableObject {
                 }
             }
             
-            // Disconnect immediately
-            WebSocketService.shared.disconnect()
-
-            // Reconnect after a short delay to ensure disconnect completes and URL is saved
+            // PERFORMANCE: Disconnect on background queue to prevent blocking
             Task(priority: .userInitiated) { [weak self] in
-                // Wait 500ms for disconnect to complete and UserDefaults to sync
-                try? await Task.sleep(nanoseconds: 500_000_000)
+                // Disconnect immediately (non-blocking)
+                WebSocketService.shared.disconnect()
+
+                // Wait briefly for disconnect to complete
+                try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
 
                 await MainActor.run {
                     // Verify the URL was actually updated
@@ -99,25 +112,21 @@ class SettingsViewModel: ObservableObject {
                     if WebSocketService.shared.isConnected {
                         print("⚠️ WebSocket still connected, forcing disconnect")
                         WebSocketService.shared.disconnect()
-                        // Wait a bit more if still connected
-                        Task {
-                            try? await Task.sleep(nanoseconds: 200_000_000)
-                            await MainActor.run {
-                                WebSocketService.shared.connect()
-                            }
-                        }
-                    } else {
-                        WebSocketService.shared.connect()
                     }
                 }
-
-                // Load database objects after reconnecting (on main actor)
+                
+                // Wait a bit more if still connected
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                
                 await MainActor.run {
+                    WebSocketService.shared.connect()
+                    
+                    // Load database objects after reconnecting
                     self?.loadDatabaseObjects()
+                    
+                    self?.displayAlert(title: "URL Saved", message: "API URL updated to: \(urlString)\n\nReconnecting WebSocket to new server...")
                 }
             }
-            
-            displayAlert(title: "URL Saved", message: "API URL updated to: \(urlString)\n\nReconnecting WebSocket to new server...")
         } else {
             // Even if API sync is not enabled, we should still try to connect
             // in case the user enables it later - but don't force it
@@ -348,7 +357,8 @@ class SettingsViewModel: ObservableObject {
 
 // MARK: - Network Helper
 struct NetworkHelper {
-    static func getSuggestedLocalIP() -> String? {
+    /// Get the device's actual local IP address (for connecting TO this device)
+    static func getDeviceIP() -> String? {
         var address: String?
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         
@@ -361,6 +371,7 @@ struct NetworkHelper {
             
             if addrFamily == UInt8(AF_INET) {
                 let name = String(cString: interface.ifa_name)
+                // Prefer en0 (primary interface), fallback to en1
                 if name == "en0" || name == "en1" {
                     var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
                     getnameinfo(interface.ifa_addr, socklen_t(interface.ifa_addr.pointee.sa_len),
@@ -368,22 +379,21 @@ struct NetworkHelper {
                                nil, socklen_t(0), NI_NUMERICHOST)
                     address = String(cString: hostname)
                     if name == "en0" {
-                        break
+                        break // Prefer en0
                     }
                 }
             }
         }
         
         freeifaddrs(ifaddr)
-        
-        if let deviceIP = address {
-            let components = deviceIP.split(separator: ".")
-            if components.count == 4 {
-                return "\(components[0]).\(components[1]).\(components[2]).1"
-            }
-        }
-        
-        return nil
+        return address
+    }
+    
+    /// Get suggested local IP for server connection (returns device IP, not router)
+    /// This is the IP address of the computer running the server
+    static func getSuggestedLocalIP() -> String? {
+        // Return the device's actual IP address (the server is running on this device)
+        return getDeviceIP()
     }
 }
 

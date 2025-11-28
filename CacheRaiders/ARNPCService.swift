@@ -176,6 +176,9 @@ class ARNPCService {
                 : SIMD3<Float>(0.8, 0.6, 0.8) // Corgi: short and wide
             let collisionShape = ShapeResource.generateBox(size: collisionSize)
             npcEntity.collision = CollisionComponent(shapes: [collisionShape])
+            
+            // Enable input handling so the entity can be tapped
+            npcEntity.components.set(InputTargetComponent())
 
             // Make NPC face the camera while keeping it upright
             let cameraDirection = normalize(cameraPos - npcPosition)
@@ -391,7 +394,7 @@ class ARNPCService {
                                         errorMessage = "Server error \(code). Check the server, matey!"
                                     }
                                 default:
-                                    errorMessage = apiError.localizedDescription ?? "Unknown error"
+                                    errorMessage = apiError.localizedDescription
                                 }
                             } else {
                                 let errorDesc = error.localizedDescription

@@ -33,6 +33,7 @@ class TypewriterTextService: ObservableObject {
         let baseDelayPerCharacter = 1.0 / charactersPerSecond
 
         revealTask = Task { @MainActor in
+            var accumulatedText = ""
             for character in text {
                 // Check if cancelled
                 if Task.isCancelled {
@@ -40,10 +41,18 @@ class TypewriterTextService: ObservableObject {
                     return
                 }
 
-                // Add character
-                displayedText.append(character)
+                // Add character to accumulated text
+                accumulatedText.append(character)
+                
+                // PERFORMANCE: Update displayedText less frequently for long messages
+                // Update every character for short messages, every 2-3 characters for long ones
+                let updateFrequency = text.count > 100 ? 2 : 1
+                if accumulatedText.count % updateFrequency == 0 || character == text.last {
+                    displayedText = accumulatedText
+                }
 
                 // Play subtle audio tone for each character (based on settings)
+                // PERFORMANCE: Only play audio every 3rd character to prevent UI freezing
                 let shouldPlayAudio: Bool
                 if character.isWhitespace {
                     shouldPlayAudio = playAudioForSpaces
@@ -53,9 +62,14 @@ class TypewriterTextService: ObservableObject {
                     shouldPlayAudio = true
                 }
 
-                if shouldPlayAudio {
-                    // Use a subtle system sound
-                    AudioServicesPlaySystemSoundWithCompletion(audioToneID, nil)
+                // PERFORMANCE: Only play audio every 5th character to prevent UI freezing
+                // For long messages, skip audio entirely to prevent blocking
+                if shouldPlayAudio && displayedText.count % 5 == 0 && text.count < 200 {
+                    // Use a subtle system sound - play asynchronously to prevent blocking
+                    let toneID = self.audioToneID
+                    Task.detached(priority: .background) {
+                        AudioServicesPlaySystemSoundWithCompletion(toneID, nil)
+                    }
                 }
 
                 // Calculate variable delay for this character (old adventure game feel)
