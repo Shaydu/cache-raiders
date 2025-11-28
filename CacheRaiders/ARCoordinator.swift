@@ -3142,11 +3142,29 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             
             // Use grounding service to properly ground the NPC on surfaces
             // This ensures the skeleton is placed on the floor or highest blocking surface
+            // CRITICAL: The skeleton model's pivot point determines where the feet are.
+            // If pivot is at center, we need to offset by half height downward.
+            // If pivot is at bottom/feet, no offset needed. We'll assume pivot is at bottom for now.
             let npcPosition: SIMD3<Float>
             if let groundingService = groundingService {
                 // Use grounding service to find proper surface height
-                npcPosition = groundingService.groundPosition(targetPosition, cameraPos: cameraPos)
-                Swift.print("✅ \(type.defaultName) grounded using ARGroundingService at Y: \(String(format: "%.2f", npcPosition.y))")
+                let groundedPosition = groundingService.groundPosition(targetPosition, cameraPos: cameraPos)
+                
+                // The grounding service returns the surface Y where the object should rest.
+                // For skeleton, if the model pivot is at the center (not at feet), we'd need to offset.
+                // Based on SKELETON_HEIGHT_OFFSET (1.65m), if pivot is at center, feet would be 0.825m below.
+                // However, most 3D models have pivot at bottom/feet, so we'll use 0 offset initially.
+                // If skeleton appears floating, adjust this offset.
+                let skeletonFootOffset: Float = 0.0 // Adjust if skeleton model pivot is at center instead of feet
+                npcPosition = SIMD3<Float>(
+                    groundedPosition.x,
+                    groundedPosition.y + skeletonFootOffset,
+                    groundedPosition.z
+                )
+                Swift.print("✅ \(type.defaultName) grounded using ARGroundingService")
+                Swift.print("   Surface Y: \(String(format: "%.2f", groundedPosition.y))")
+                Swift.print("   Final anchor Y: \(String(format: "%.2f", npcPosition.y))")
+                Swift.print("   Foot offset: \(String(format: "%.2f", skeletonFootOffset))m")
             } else {
                 // Fallback: use simple raycast if grounding service not available
                 let raycastQuery = ARRaycastQuery(
@@ -3159,11 +3177,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 let raycastResults = arView.session.raycast(raycastQuery)
                 
                 if let firstResult = raycastResults.first {
+                    let surfaceY = firstResult.worldTransform.columns.3.y
+                    // Same foot offset logic as grounding service path
+                    let skeletonFootOffset: Float = 0.0
                     npcPosition = SIMD3<Float>(
                         firstResult.worldTransform.columns.3.x,
-                        firstResult.worldTransform.columns.3.y,
+                        surfaceY + skeletonFootOffset,
                         firstResult.worldTransform.columns.3.z
                     )
+                    Swift.print("✅ \(type.defaultName) grounded using raycast at Y: \(String(format: "%.2f", npcPosition.y))")
                 } else {
                     // Final fallback: use camera Y position (assume ground level)
                     // Skeleton height offset is defined in SKELETON_HEIGHT_OFFSET constant above

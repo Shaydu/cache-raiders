@@ -49,8 +49,9 @@ class MapFeatureService:
         # Keep it simple for a stylized, artistic map view
         # CRITICAL: Use (limit:N) on each query type BEFORE expansion to prevent huge datasets
         # Use out geom instead of out body to get coordinates without expanding all nodes
+        # Reduced Overpass timeout to 5 seconds to prevent UI freezes
         query = f"""
-        [out:json][timeout:10][maxsize:1073741824];
+        [out:json][timeout:5][maxsize:1073741824];
         (
           way["natural"="water"](around:{radius},{latitude},{longitude})(limit:1);
           way["waterway"](around:{radius},{latitude},{longitude})(limit:1);
@@ -60,7 +61,9 @@ class MapFeatureService:
         """
         
         try:
-            response = requests.post(self.overpass_url, data=query, timeout=15)
+            # Reduced timeout to 3 seconds to prevent UI freezes
+            # If Overpass API is slow, we'll fail fast and continue without features
+            response = requests.post(self.overpass_url, data=query, timeout=3)
             
             # Check for errors in response
             if response.status_code != 200:
@@ -344,16 +347,21 @@ class LLMService:
         """
         
         # Fetch real OSM features from user location if provided (for findable clues)
+        # PERFORMANCE: Skip Overpass API for conversations to prevent UI freeze
+        # Map features are only needed for treasure map generation, not for conversation responses
+        # This prevents the 2-15 second delay that freezes the UI when Captain Bones responds
         map_features = []
-        if user_location and user_location.get('latitude') and user_location.get('longitude'):
-            try:
-                map_features = self.map_feature_service.get_features_near_location(
-                    user_location['latitude'],
-                    user_location['longitude'],
-                    radius=100.0  # 100 meters - ensure treasure is winnable
-                )
-            except Exception as e:
-                print(f"⚠️ Could not fetch OSM features: {e}")
+        # Skip Overpass API call during conversations - it causes UI freezes
+        # Map features are fetched separately when generating treasure maps
+        # if user_location and user_location.get('latitude') and user_location.get('longitude'):
+        #     try:
+        #         map_features = self.map_feature_service.get_features_near_location(
+        #             user_location['latitude'],
+        #             user_location['longitude'],
+        #             radius=100.0  # 100 meters - ensure treasure is winnable
+        #         )
+        #     except Exception as e:
+        #         print(f"⚠️ Could not fetch OSM features: {e}")
         
         # Build system prompt with real map features if available
         if is_skeleton:

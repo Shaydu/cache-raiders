@@ -126,6 +126,17 @@ class ARTapHandler {
                     let parentKey = "\(ObjectIdentifier(parent))"
                     if !checkedEntities.contains(parentKey) {
                         checkedEntities.insert(parentKey)
+                        
+                        // FIRST: Check if parent is an NPC
+                        if placedNPCs[parentName] != nil {
+                            Swift.print("💬 ✅ NPC TAPPED via parent (ID: \(parentName)) - triggering onNPCTap callback")
+                            Swift.print("   onNPCTap callback exists: \(onNPCTap != nil)")
+                            onNPCTap?(parentName)
+                            Swift.print("   ✅ onNPCTap callback invoked")
+                            return // Don't process as regular object - NPCs are not loot boxes
+                        }
+                        
+                        // Then check if parent is a loot box
                         if placedBoxes[parentName] != nil {
                             locationId = parentName
                             Swift.print("🎯 Found matching placed box ID via parent: \(parentName)")

@@ -30,11 +30,21 @@ class TypewriterTextService: ObservableObject {
         displayedText = ""
         isRevealing = true
         
+        // If text is empty, just set it immediately
+        guard !text.isEmpty else {
+            displayedText = ""
+            isRevealing = false
+            onComplete?()
+            return
+        }
+        
         let baseDelayPerCharacter = 1.0 / charactersPerSecond
 
         revealTask = Task { @MainActor in
             var accumulatedText = ""
-            for character in text {
+            let updateFrequency = text.count > 100 ? 2 : 1
+            
+            for (index, character) in text.enumerated() {
                 // Check if cancelled
                 if Task.isCancelled {
                     isRevealing = false
@@ -46,13 +56,14 @@ class TypewriterTextService: ObservableObject {
                 
                 // PERFORMANCE: Update displayedText less frequently for long messages
                 // Update every character for short messages, every 2-3 characters for long ones
-                let updateFrequency = text.count > 100 ? 2 : 1
-                if accumulatedText.count % updateFrequency == 0 || character == text.last {
+                // Always update on the last character to ensure complete text is shown
+                let isLastCharacter = index == text.count - 1
+                if accumulatedText.count % updateFrequency == 0 || isLastCharacter {
                     displayedText = accumulatedText
                 }
 
                 // Play subtle audio tone for each character (based on settings)
-                // PERFORMANCE: Only play audio every 3rd character to prevent UI freezing
+                // PERFORMANCE: Only play audio every 5th character to prevent UI freezing
                 let shouldPlayAudio: Bool
                 if character.isWhitespace {
                     shouldPlayAudio = playAudioForSpaces
@@ -64,7 +75,8 @@ class TypewriterTextService: ObservableObject {
 
                 // PERFORMANCE: Only play audio every 5th character to prevent UI freezing
                 // For long messages, skip audio entirely to prevent blocking
-                if shouldPlayAudio && displayedText.count % 5 == 0 && text.count < 200 {
+                // Use accumulatedText.count instead of displayedText.count to avoid sync issues
+                if shouldPlayAudio && accumulatedText.count % 5 == 0 && text.count < 200 {
                     // Use a subtle system sound - play asynchronously to prevent blocking
                     let toneID = self.audioToneID
                     Task.detached(priority: .background) {
@@ -90,7 +102,8 @@ class TypewriterTextService: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(characterDelay * 1_000_000_000))
             }
             
-            // Reveal complete
+            // Ensure final text is always displayed (in case last update was missed)
+            displayedText = text
             isRevealing = false
             onComplete?()
         }
