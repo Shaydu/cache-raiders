@@ -13,10 +13,24 @@ import io
 import qrcode
 from datetime import datetime
 from typing import Optional, List, Dict
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (never commit this file!)
+load_dotenv()
+
+# Import LLM service
+try:
+    from llm_service import llm_service
+    LLM_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ LLM service not available: {e}")
+    LLM_AVAILABLE = False
+    llm_service = None
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)  # Enable CORS for iOS app
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')  # Enable WebSocket support
+# Use 'threading' instead of 'eventlet' for Python 3.12 compatibility
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')  # Enable WebSocket support
 
 # Database file path
 DB_PATH = os.path.join(os.path.dirname(__file__), 'cache_raiders.db')
@@ -1791,6 +1805,174 @@ def handle_get_connected_clients():
         print(f"   Sessions without device UUID: {sum(1 for uuid in connected_clients.values() if uuid is None)}")
     
     emit('connected_clients_list', {'clients': clients_info})
+
+# ============================================================================
+# LLM Integration Endpoints
+# ============================================================================
+
+@app.route('/api/llm/test', methods=['GET'])
+def test_llm():
+    """Test if LLM service is working."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    result = llm_service.test_connection()
+    return jsonify(result), 200 if result['status'] == 'success' else 500
+
+@app.route('/api/npcs/<npc_id>/interact', methods=['POST'])
+def interact_with_npc(npc_id: str):
+    """Interact with an NPC (including skeletons) via LLM conversation."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    data = request.json
+    device_uuid = data.get('device_uuid')
+    message = data.get('message')
+    
+    if not device_uuid or not message:
+        return jsonify({'error': 'device_uuid and message required'}), 400
+    
+    # For now, we'll use a simple skeleton NPC
+    # In full implementation, this would fetch NPC data from database
+    npc_name = data.get('npc_name', 'Captain Bones')
+    npc_type = data.get('npc_type', 'skeleton')
+    is_skeleton = data.get('is_skeleton', True)  # Default to skeleton for testing
+    
+    try:
+        response = llm_service.generate_npc_response(
+            npc_name=npc_name,
+            npc_type=npc_type,
+            user_message=message,
+            is_skeleton=is_skeleton
+        )
+        
+        return jsonify({
+            'npc_id': npc_id,
+            'response': response,
+            'npc_name': npc_name
+        }), 200
+    except Exception as e:
+        return jsonify({'error': f'LLM error: {str(e)}'}), 500
+
+@app.route('/api/llm/generate-clue', methods=['POST'])
+def generate_clue():
+    """Generate a pirate riddle clue based on REAL map features from OpenStreetMap."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    data = request.json
+    target_location = data.get('target_location', {})
+    map_features = data.get('map_features', [])  # Optional: can provide features or let it fetch
+    fetch_real = data.get('fetch_real_features', True)  # Default to fetching real features
+    
+    if not target_location.get('latitude') or not target_location.get('longitude'):
+        return jsonify({'error': 'target_location must include latitude and longitude'}), 400
+    
+    try:
+        clue = llm_service.generate_clue(target_location, map_features, fetch_real_features=fetch_real)
+        return jsonify({
+            'clue': clue,
+            'target_location': target_location,
+            'used_real_map_data': fetch_real and not map_features
+        }), 200
+    except Exception as e:
+        return jsonify({'error': f'LLM error: {str(e)}'}), 500
+
+@app.route('/api/npcs/<npc_id>/map-piece', methods=['GET', 'POST'])
+def get_npc_map_piece(npc_id: str):
+    """Get a treasure map piece from an NPC (skeleton has first half, corgi has second half)."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    # Determine which NPC and which piece
+    npc_type = "skeleton" if "skeleton" in npc_id.lower() else "corgi"
+    piece_number = 1 if npc_type == "skeleton" else 2
+    
+    # Get target location from request (POST body or query params)
+    target_location = {}
+    if request.method == 'POST' and request.json:
+        target_location = request.json.get('target_location', {})
+    elif request.method == 'GET':
+        # Try to get from query params
+        lat = request.args.get('latitude')
+        lon = request.args.get('longitude')
+        if lat and lon:
+            target_location = {'latitude': float(lat), 'longitude': float(lon)}
+    
+    # If no target provided, use a default location (for testing)
+    if not target_location.get('latitude') or not target_location.get('longitude'):
+        # Default to San Francisco for testing
+        target_location = {
+            'latitude': 37.7749,
+            'longitude': -122.4194
+        }
+    
+    try:
+        map_piece = llm_service.generate_map_piece(
+            target_location=target_location,
+            piece_number=piece_number,
+            total_pieces=2,
+            npc_type=npc_type
+        )
+        
+        if 'error' in map_piece:
+            return jsonify(map_piece), 400
+        
+        return jsonify({
+            'npc_id': npc_id,
+            'npc_type': npc_type,
+            'map_piece': map_piece,
+            'message': f"Here's piece {piece_number} of the treasure map!"
+        }), 200
+    except Exception as e:
+        return jsonify({'error': f'LLM error: {str(e)}'}), 500
+
+@app.route('/api/map-pieces/combine', methods=['POST'])
+def combine_map_pieces():
+    """Combine two map pieces into a complete treasure map."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    data = request.json
+    piece1 = data.get('piece1')
+    piece2 = data.get('piece2')
+    
+    if not piece1 or not piece2:
+        return jsonify({'error': 'Both piece1 and piece2 are required'}), 400
+    
+    # Combine the pieces
+    # Piece 1 has approximate location, Piece 2 has exact location
+    exact_lat = piece2.get('exact_latitude') or piece1.get('approximate_latitude')
+    exact_lon = piece2.get('exact_longitude') or piece1.get('approximate_longitude')
+    
+    if not exact_lat or not exact_lon:
+        return jsonify({'error': 'Could not determine treasure location from map pieces'}), 400
+    
+    # Combine landmarks from both pieces
+    landmarks = (piece1.get('landmarks', []) + piece2.get('landmarks', [])).copy()
+    
+    # Remove duplicates
+    seen = set()
+    unique_landmarks = []
+    for landmark in landmarks:
+        if landmark not in seen:
+            seen.add(landmark)
+            unique_landmarks.append(landmark)
+    
+    combined_map = {
+        'map_name': 'Complete Treasure Map',
+        'x_marks_the_spot': {
+            'latitude': exact_lat,
+            'longitude': exact_lon
+        },
+        'landmarks': unique_landmarks,
+        'combined_from_pieces': [piece1.get('piece_number'), piece2.get('piece_number')]
+    }
+    
+    return jsonify({
+        'complete_map': combined_map,
+        'message': 'Map pieces combined! X marks the spot!'
+    }), 200
 
 if __name__ == '__main__':
     init_db()

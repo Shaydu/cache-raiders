@@ -2,9 +2,22 @@
 
 ## Overview
 This document proposes an architecture for integrating Large Language Models (LLMs) into CacheRaiders to enable:
-1. **Interactive Conversations** with findable objects
-2. **Dynamic Clue Generation** based on context
-3. **Quest Chains** where finding one object unlocks clues for the next
+1. **LLM-Driven Quest Generation** - LLM creates storylines, selects target objects, and generates quests dynamically
+2. **NPC Guide Characters** - Non-findable characters that users can chat with for guidance
+3. **Clue Objects** - Findable objects that reveal information leading to hidden treasures
+4. **Dynamic Object Hiding** - Target objects are hidden until clues are found
+5. **Interactive Conversations** with findable objects and NPCs
+6. **Quest Chains** where finding clues and talking to NPCs leads to the final treasure
+
+### LLM-Driven Quest Flow
+When LLM mode is enabled, the system:
+1. **Storyline Generation**: LLM creates a storyline/theme (e.g., "The Lost Temple of Anubis")
+2. **Object Selection**: LLM selects a relevant object from available treasures to be the quest target
+3. **Object Hiding**: The target object is hidden (not visible/findable in AR)
+4. **Clue Generation**: LLM generates 3-5 clues as findable objects placed in the world
+5. **NPC Placement**: LLM creates and places NPCs that know about the quest
+6. **Progressive Revelation**: As users find clues and talk to NPCs, they get closer to the hidden object
+7. **Object Unlocking**: Once all clues are found, the target object becomes visible and findable
 
 ## Architecture Decision: Server-Side LLM
 
@@ -73,6 +86,53 @@ CREATE TABLE user_quest_progress (
     completed_at TEXT,
     FOREIGN KEY (chain_id) REFERENCES quest_chains(id),
     UNIQUE(device_uuid, chain_id)
+);
+
+-- NPC Characters: Non-findable guide characters that users can interact with
+CREATE TABLE npc_characters (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    character_type TEXT NOT NULL,  -- 'guide', 'historian', 'guardian', 'merchant', etc.
+    appearance_description TEXT,  -- Description for AR visualization
+    personality TEXT NOT NULL,  -- Personality traits for LLM
+    backstory TEXT,  -- Character backstory
+    latitude REAL,  -- GPS location (optional, can be AR-only)
+    longitude REAL,
+    ar_offset_x REAL,  -- AR offset if placed manually
+    ar_offset_y REAL,
+    ar_offset_z REAL,
+    ar_origin_latitude REAL,
+    ar_origin_longitude REAL,
+    radius REAL DEFAULT 50.0,  -- Interaction radius
+    is_active BOOLEAN DEFAULT 1,
+    created_at TEXT NOT NULL,
+    created_by TEXT
+);
+
+-- NPC knowledge: What objects/quests this NPC knows about
+CREATE TABLE npc_knowledge (
+    id TEXT PRIMARY KEY,
+    npc_id TEXT NOT NULL,
+    object_id TEXT,  -- NULL if knowledge is about a quest
+    quest_chain_id TEXT,  -- NULL if knowledge is about an object
+    knowledge_type TEXT NOT NULL,  -- 'hint', 'clue', 'backstory', 'location_hint'
+    knowledge_text TEXT,  -- LLM-generated knowledge
+    unlock_condition TEXT,  -- When this knowledge becomes available (e.g., "after_finding_object:obj123")
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (npc_id) REFERENCES npc_characters(id),
+    FOREIGN KEY (object_id) REFERENCES objects(id),
+    FOREIGN KEY (quest_chain_id) REFERENCES quest_chains(id)
+);
+
+-- NPC interactions: Conversation history with NPCs
+CREATE TABLE npc_interactions (
+    id TEXT PRIMARY KEY,
+    npc_id TEXT NOT NULL,
+    device_uuid TEXT NOT NULL,
+    message TEXT NOT NULL,
+    response TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (npc_id) REFERENCES npc_characters(id)
 );
 ```
 
@@ -161,6 +221,71 @@ Your backstory: {backstory}
 Respond to the player's questions and comments in character. Be helpful but mysterious. 
 You can provide hints about other treasures, share your history, or engage in conversation.
 Keep responses to 1-3 sentences."""
+        
+        messages = [{"role": "system", "content": system_prompt}]
+        
+        # Add conversation history
+        if conversation_history:
+            for msg in conversation_history[-5:]:  # Last 5 messages for context
+                messages.append({
+                    "role": "user" if msg['from_user'] else "assistant",
+                    "content": msg['message']
+                })
+        
+        messages.append({"role": "user", "content": user_message})
+        
+        response = self._call_llm(messages=messages)
+        return response.strip()
+    
+    def generate_npc_response(
+        self,
+        npc_data: Dict,
+        user_message: str,
+        available_knowledge: List[Dict] = None,
+        user_progress: Dict = None,
+        conversation_history: List[Dict] = None
+    ) -> str:
+        """Generate a conversational response from an NPC character."""
+        npc_name = npc_data.get('name', 'Guide')
+        character_type = npc_data.get('character_type', 'guide')
+        personality = npc_data.get('personality', 'helpful and friendly')
+        backstory = npc_data.get('backstory', 'A knowledgeable guide')
+        
+        # Build knowledge context
+        knowledge_context = ""
+        if available_knowledge:
+            knowledge_context = "\n\nYou know about these treasures and quests:\n"
+            for knowledge in available_knowledge:
+                if knowledge.get('unlocked', True):  # Only include unlocked knowledge
+                    knowledge_context += f"- {knowledge.get('knowledge_text', '')}\n"
+        
+        # Build progress context
+        progress_context = ""
+        if user_progress:
+            found_objects = user_progress.get('found_objects', [])
+            if found_objects:
+                progress_context = f"\n\nThe player has found: {', '.join(found_objects[:5])}"
+            active_quests = user_progress.get('active_quests', [])
+            if active_quests:
+                progress_context += f"\nActive quests: {', '.join(active_quests)}"
+        
+        system_prompt = f"""You are {npc_name}, a {character_type} in a treasure hunting game.
+Your personality: {personality}
+Your backstory: {backstory}
+
+Your role is to help players find treasures by providing hints, clues, and guidance.
+Be helpful but don't give away solutions too easily. Encourage exploration.
+{knowledge_context}
+{progress_context}
+
+Respond naturally to the player's questions. You can:
+- Give hints about nearby treasures
+- Share information about quest chains
+- Provide location clues
+- Tell stories about the area
+- Encourage the player to explore
+
+Keep responses to 2-4 sentences. Be engaging and in character."""
         
         messages = [{"role": "system", "content": system_prompt}]
         
@@ -465,6 +590,266 @@ def mark_found_with_quest_check(object_id: str):
     
     # ... return existing response ...
 
+@app.route('/api/npcs', methods=['GET'])
+def get_npcs():
+    """Get all NPCs, optionally filtered by location."""
+    try:
+        latitude = request.args.get('latitude', type=float)
+        longitude = request.args.get('longitude', type=float)
+        radius = request.args.get('radius', type=float, default=10000.0)
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        query = 'SELECT * FROM npc_characters WHERE is_active = 1'
+        params = []
+        
+        if latitude is not None and longitude is not None:
+            lat_range = radius / 111000.0
+            lon_range = radius / (111000.0 * abs(math.cos(math.radians(latitude))))
+            query += ' AND (latitude BETWEEN ? AND ?) AND (longitude BETWEEN ? AND ?)'
+            params.extend([latitude - lat_range, latitude + lat_range,
+                          longitude - lon_range, longitude + lon_range])
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        
+        npcs = [{
+            'id': row['id'],
+            'name': row['name'],
+            'character_type': row['character_type'],
+            'personality': row['personality'],
+            'backstory': row['backstory'],
+            'latitude': row['latitude'],
+            'longitude': row['longitude'],
+            'ar_offset_x': row['ar_offset_x'],
+            'ar_offset_y': row['ar_offset_y'],
+            'ar_offset_z': row['ar_offset_z'],
+            'radius': row['radius']
+        } for row in rows]
+        
+        return jsonify(npcs), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/npcs/<npc_id>/interact', methods=['POST'])
+def interact_with_npc(npc_id: str):
+    """Interact with an NPC character via LLM conversation."""
+    data = request.json
+    device_uuid = data.get('device_uuid')
+    message = data.get('message')
+    
+    if not device_uuid or not message:
+        return jsonify({'error': 'device_uuid and message required'}), 400
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get NPC data
+    cursor.execute('SELECT * FROM npc_characters WHERE id = ? AND is_active = 1', (npc_id,))
+    npc_row = cursor.fetchone()
+    
+    if not npc_row:
+        conn.close()
+        return jsonify({'error': 'NPC not found'}), 404
+    
+    npc_data = {
+        'name': npc_row['name'],
+        'character_type': npc_row['character_type'],
+        'personality': npc_row['personality'],
+        'backstory': npc_row['backstory']
+    }
+    
+    # Get NPC's knowledge (what they know about)
+    cursor.execute('''
+        SELECT nk.*, 
+               CASE 
+                   WHEN nk.unlock_condition IS NULL THEN 1
+                   WHEN nk.unlock_condition LIKE 'after_finding_object:%' THEN
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM finds f 
+                           WHERE f.object_id = SUBSTR(nk.unlock_condition, 24)
+                           AND f.found_by = ?
+                       ) THEN 1 ELSE 0 END
+                   ELSE 1
+               END as unlocked
+        FROM npc_knowledge nk
+        WHERE nk.npc_id = ?
+    ''', (device_uuid, npc_id))
+    knowledge_rows = cursor.fetchall()
+    
+    available_knowledge = [
+        {
+            'knowledge_text': row['knowledge_text'],
+            'knowledge_type': row['knowledge_type'],
+            'unlocked': bool(row['unlocked'])
+        }
+        for row in knowledge_rows if row['unlocked']
+    ]
+    
+    # Get user's progress
+    cursor.execute('''
+        SELECT o.name
+        FROM finds f
+        JOIN objects o ON f.object_id = o.id
+        WHERE f.found_by = ?
+        ORDER BY f.found_at DESC
+        LIMIT 10
+    ''', (device_uuid,))
+    found_objects = [row['name'] for row in cursor.fetchall()]
+    
+    cursor.execute('''
+        SELECT DISTINCT qc.name
+        FROM user_quest_progress uqp
+        JOIN quest_chains qc ON uqp.chain_id = qc.id
+        WHERE uqp.device_uuid = ?
+    ''', (device_uuid,))
+    active_quests = [row['name'] for row in cursor.fetchall()]
+    
+    user_progress = {
+        'found_objects': found_objects,
+        'active_quests': active_quests
+    }
+    
+    # Get conversation history
+    cursor.execute('''
+        SELECT message, response, created_at
+        FROM npc_interactions
+        WHERE npc_id = ? AND device_uuid = ?
+        ORDER BY created_at DESC
+        LIMIT 10
+    ''', (npc_id, device_uuid))
+    history = cursor.fetchall()
+    
+    conversation_history = [
+        {
+            'from_user': True,
+            'message': row['message'],
+            'timestamp': row['created_at']
+        }
+        for row in reversed(history)
+    ]
+    
+    # Generate response using LLM
+    try:
+        response = llm_service.generate_npc_response(
+            npc_data,
+            message,
+            available_knowledge,
+            user_progress,
+            conversation_history
+        )
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': f'LLM error: {str(e)}'}), 500
+    
+    # Save interaction
+    interaction_id = str(uuid.uuid4())
+    cursor.execute('''
+        INSERT INTO npc_interactions 
+        (id, npc_id, device_uuid, message, response, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (interaction_id, npc_id, device_uuid, message, response, datetime.utcnow().isoformat()))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({
+        'interaction_id': interaction_id,
+        'response': response,
+        'npc_id': npc_id,
+        'npc_name': npc_data['name']
+    }), 200
+
+@app.route('/api/npcs', methods=['POST'])
+def create_npc():
+    """Create a new NPC character."""
+    data = request.json
+    
+    required_fields = ['name', 'character_type', 'personality']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    npc_id = str(uuid.uuid4())
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        INSERT INTO npc_characters 
+        (id, name, character_type, personality, backstory, latitude, longitude,
+         ar_offset_x, ar_offset_y, ar_offset_z, ar_origin_latitude, ar_origin_longitude,
+         radius, is_active, created_at, created_by)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        npc_id,
+        data['name'],
+        data['character_type'],
+        data['personality'],
+        data.get('backstory'),
+        data.get('latitude'),
+        data.get('longitude'),
+        data.get('ar_offset_x'),
+        data.get('ar_offset_y'),
+        data.get('ar_offset_z'),
+        data.get('ar_origin_latitude'),
+        data.get('ar_origin_longitude'),
+        data.get('radius', 50.0),
+        data.get('is_active', True),
+        datetime.utcnow().isoformat(),
+        data.get('created_by', 'system')
+    ))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({
+        'id': npc_id,
+        'message': 'NPC created successfully'
+    }), 201
+
+@app.route('/api/npcs/<npc_id>/knowledge', methods=['POST'])
+def add_npc_knowledge(npc_id: str):
+    """Add knowledge to an NPC about objects or quests."""
+    data = request.json
+    
+    if 'knowledge_text' not in data or 'knowledge_type' not in data:
+        return jsonify({'error': 'knowledge_text and knowledge_type required'}), 400
+    
+    knowledge_id = str(uuid.uuid4())
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Verify NPC exists
+    cursor.execute('SELECT id FROM npc_characters WHERE id = ?', (npc_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'error': 'NPC not found'}), 404
+    
+    cursor.execute('''
+        INSERT INTO npc_knowledge
+        (id, npc_id, object_id, quest_chain_id, knowledge_type, knowledge_text, unlock_condition, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        knowledge_id,
+        npc_id,
+        data.get('object_id'),
+        data.get('quest_chain_id'),
+        data['knowledge_type'],
+        data['knowledge_text'],
+        data.get('unlock_condition'),
+        datetime.utcnow().isoformat()
+    ))
+    
+    conn.commit()
+    conn.close()
+    
+    return jsonify({
+        'id': knowledge_id,
+        'message': 'Knowledge added to NPC'
+    }), 201
+
 @app.route('/api/quests', methods=['POST'])
 def create_quest_chain():
     """Create a new quest chain linking objects together."""
@@ -606,6 +991,40 @@ func getClueForObject(objectId: String, deviceUUID: String) async throws -> Ques
     let url = URL(string: "\(baseURL)/api/objects/\(objectId)/clue?device_uuid=\(deviceUUID)")!
     let (data, _) = try await URLSession.shared.data(from: url)
     return try JSONDecoder().decode(QuestClue.self, from: data)
+}
+
+func getNPCs(latitude: Double? = nil, longitude: Double? = nil, radius: Double = 10000.0) async throws -> [NPCCharacter] {
+    var urlString = "\(baseURL)/api/npcs"
+    var components = URLComponents(string: urlString)!
+    var queryItems: [URLQueryItem] = []
+    
+    if let lat = latitude, let lon = longitude {
+        queryItems.append(URLQueryItem(name: "latitude", value: String(lat)))
+        queryItems.append(URLQueryItem(name: "longitude", value: String(lon)))
+        queryItems.append(URLQueryItem(name: "radius", value: String(radius)))
+    }
+    
+    components.queryItems = queryItems.isEmpty ? nil : queryItems
+    let url = components.url!
+    
+    let (data, _) = try await URLSession.shared.data(from: url)
+    return try JSONDecoder().decode([NPCCharacter].self, from: data)
+}
+
+func interactWithNPC(npcId: String, message: String, deviceUUID: String) async throws -> NPCInteraction {
+    let url = URL(string: "\(baseURL)/api/npcs/\(npcId)/interact")!
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    
+    let body: [String: Any] = [
+        "device_uuid": deviceUUID,
+        "message": message
+    ]
+    request.httpBody = try JSONSerialization.data(withJSONObject: body)
+    
+    let (data, _) = try await URLSession.shared.data(for: request)
+    return try JSONDecoder().decode(NPCInteraction.self, from: data)
 }
 ```
 

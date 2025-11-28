@@ -4,3 +4,6 @@ flask-socketio==5.3.6
 python-socketio==5.10.0
 eventlet==0.33.3
 qrcode[pil]==7.4.2
+python-dotenv==1.0.0
+openai>=1.0.0
+requests>=2.31.0
