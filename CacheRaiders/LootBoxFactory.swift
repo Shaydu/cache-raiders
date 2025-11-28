@@ -1260,7 +1260,7 @@ struct TurkeyFactory: LootBoxFactory {
                 
                 // Set up continuous looping
                 let estimatedDuration: TimeInterval = 2.0
-                var isLooping = true
+                let isLooping = true
                 
                 func loopAnimation() {
                     guard isLooping, turkey.parent != nil else {

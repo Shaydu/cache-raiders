@@ -19,6 +19,10 @@ class ARDistanceTracker: ObservableObject {
     var proximitySoundPlayed: Set<String> = []
     private var lastDistanceText: [String: String] = [:] // Cache last text to avoid recreating textures
     
+    // PERFORMANCE: Cache texture resources to avoid expensive texture recreation
+    private var textureCache: [String: TextureResource] = [:]
+    private let maxTextureCacheSize = 50 // Limit cache size to prevent memory issues
+    
     var distanceToNearestBinding: Binding<Double?>?
     var temperatureStatusBinding: Binding<String?>?
     var nearestObjectDirectionBinding: Binding<Double?>?
@@ -109,12 +113,12 @@ class ARDistanceTracker: ObservableObject {
             // Format as feet and inches
             let distanceText = formatDistance(distance)
             
-            // Only update texture if text changed (texture creation is expensive)
+            // PERFORMANCE: Only update texture if text changed (texture creation is expensive)
             if lastDistanceText[locationId] != distanceText {
                 lastDistanceText[locationId] = distanceText
                 
-                // Update text material
-                let newMaterial = createTextMaterial(text: distanceText)
+                // PERFORMANCE: Use cached texture if available, otherwise create new one
+                let newMaterial = createTextMaterial(text: distanceText, cacheKey: distanceText)
                 if var model = textEntity.model {
                     model.materials = [newMaterial]
                     textEntity.model = model
@@ -656,7 +660,18 @@ class ARDistanceTracker: ObservableObject {
     }
     
     /// Creates a material with text rendered on it
-    private func createTextMaterial(text: String) -> SimpleMaterial {
+    /// PERFORMANCE: Uses texture cache to avoid expensive recreation
+    private func createTextMaterial(text: String, cacheKey: String? = nil) -> SimpleMaterial {
+        let key = cacheKey ?? text
+        
+        // PERFORMANCE: Check cache first to avoid expensive texture creation
+        if let cachedTexture = textureCache[key] {
+            var material = SimpleMaterial()
+            material.color = .init(texture: .init(cachedTexture))
+            material.roughness = 0.1
+            material.metallic = 0.0
+            return material
+        }
         // Create text image
         let fontSize: CGFloat = 48
         let font = UIFont.boldSystemFont(ofSize: fontSize)
@@ -704,6 +719,19 @@ class ARDistanceTracker: ObservableObject {
             do {
                 let texture = try TextureResource(image: cgImage, options: .init(semantic: .color))
                 material.color = .init(texture: .init(texture))
+                
+                // PERFORMANCE: Cache the texture for future use
+                // Only cache if we have space (prevent memory issues)
+                if textureCache.count < maxTextureCacheSize {
+                    textureCache[key] = texture
+                } else {
+                    // Cache is full - remove oldest entry (simple FIFO)
+                    // In practice, this rarely happens since we only cache unique distance texts
+                    if let firstKey = textureCache.keys.first {
+                        textureCache.removeValue(forKey: firstKey)
+                        textureCache[key] = texture
+                    }
+                }
             } catch {
                 print("⚠️ Failed to create texture from text: \(error)")
                 material.color = .init(tint: .white)
@@ -713,6 +741,12 @@ class ARDistanceTracker: ObservableObject {
         material.metallic = 0.0
         
         return material
+    }
+    
+    /// Clears the texture cache (call when memory is low or when resetting)
+    func clearTextureCache() {
+        textureCache.removeAll()
+        Swift.print("🧹 ARDistanceTracker: Texture cache cleared")
     }
     
     deinit {

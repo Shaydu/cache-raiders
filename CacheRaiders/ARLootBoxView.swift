@@ -3,7 +3,7 @@ import RealityKit
 import ARKit
 
 // MARK: - AR Loot Box View
-struct ARLootBoxView: UIViewRepresentable {
+struct ARLootBoxView: View {
     @ObservedObject var locationManager: LootBoxLocationManager
     @ObservedObject var userLocationManager: UserLocationManager
     @Binding var nearbyLocations: [LootBoxLocation]
@@ -11,6 +11,48 @@ struct ARLootBoxView: UIViewRepresentable {
     @Binding var temperatureStatus: String?
     @Binding var collectionNotification: String?
     @Binding var nearestObjectDirection: Double?
+    @Binding var conversationNPC: ConversationNPC?
+
+    @StateObject private var conversationManager = ARConversationManager()
+
+    var body: some View {
+        ZStack {
+            ARViewContainer(
+                locationManager: locationManager,
+                userLocationManager: userLocationManager,
+                nearbyLocations: $nearbyLocations,
+                distanceToNearest: $distanceToNearest,
+                temperatureStatus: $temperatureStatus,
+                collectionNotification: $collectionNotification,
+                nearestObjectDirection: $nearestObjectDirection,
+                conversationNPC: $conversationNPC,
+                conversationManager: conversationManager
+            )
+            .edgesIgnoringSafeArea(.all)
+
+            // Conversation overlay in bottom third
+            if let message = conversationManager.currentMessage {
+                ARConversationOverlay(
+                    npcName: message.npcName,
+                    message: message.message,
+                    isUserMessage: message.isUserMessage
+                )
+            }
+        }
+    }
+}
+
+// MARK: - AR View Container (UIViewRepresentable)
+struct ARViewContainer: UIViewRepresentable {
+    @ObservedObject var locationManager: LootBoxLocationManager
+    @ObservedObject var userLocationManager: UserLocationManager
+    @Binding var nearbyLocations: [LootBoxLocation]
+    @Binding var distanceToNearest: Double?
+    @Binding var temperatureStatus: String?
+    @Binding var collectionNotification: String?
+    @Binding var nearestObjectDirection: Double?
+    @Binding var conversationNPC: ConversationNPC?
+    @ObservedObject var conversationManager: ARConversationManager
     
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
@@ -67,7 +109,7 @@ struct ARLootBoxView: UIViewRepresentable {
         // Uncomment the line below to enable debug visuals (green feature points, anchor origins)
         // arView.debugOptions = [.showFeaturePoints, .showAnchorOrigins]
 
-        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection)
+        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, conversationNPC: $conversationNPC, conversationManager: conversationManager)
         return arView
     }
     

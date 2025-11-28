@@ -62,6 +62,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             List {
+                gameModeSection
                 searchDistanceSection
                 maxObjectLimitSection
                 findableTypesSection
@@ -111,6 +112,32 @@ struct SettingsView: View {
     }
     
     // MARK: - View Sections
+    
+    private var gameModeSection: some View {
+        Section("Game Mode") {
+            Picker("Game Mode", selection: Binding(
+                get: { locationManager.gameMode },
+                set: { newValue in
+                    locationManager.gameMode = newValue
+                    locationManager.saveGameMode()
+                }
+            )) {
+                ForEach(GameMode.allCases, id: \.self) { mode in
+                    Text(mode.displayName).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.vertical, 4)
+            
+            Text(gameModeDescription)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+    }
+    
+    private var gameModeDescription: String {
+        return locationManager.gameMode.description
+    }
     
     private var searchDistanceSection: some View {
         Section("Search Distance") {

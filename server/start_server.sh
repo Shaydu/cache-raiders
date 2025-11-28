@@ -35,3 +35,4 @@ echo "✅ Starting server..."
 echo ""
 python3 app.py
 
+

@@ -159,6 +159,40 @@ def init_db():
         )
     ''')
     
+    # Remove any UNIQUE constraint on player_name if it exists
+    # SQLite doesn't support DROP CONSTRAINT, so we need to check and recreate if needed
+    try:
+        # Check if there's a UNIQUE constraint on player_name
+        cursor.execute("""
+            SELECT sql FROM sqlite_master 
+            WHERE type='table' AND name='players'
+        """)
+        table_sql = cursor.fetchone()
+        if table_sql and table_sql[0] and 'UNIQUE' in table_sql[0] and 'player_name' in table_sql[0]:
+            print("⚠️ Found UNIQUE constraint on player_name - removing it to allow duplicate names")
+            # Recreate table without UNIQUE constraint
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS players_new (
+                    device_uuid TEXT PRIMARY KEY,
+                    player_name TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
+            # Copy data
+            cursor.execute('''
+                INSERT INTO players_new (device_uuid, player_name, created_at, updated_at)
+                SELECT device_uuid, player_name, created_at, updated_at FROM players
+            ''')
+            # Drop old table
+            cursor.execute('DROP TABLE players')
+            # Rename new table
+            cursor.execute('ALTER TABLE players_new RENAME TO players')
+            print("✅ Removed UNIQUE constraint on player_name")
+    except (sqlite3.OperationalError, TypeError, IndexError) as e:
+        # Table might not exist yet, constraint doesn't exist, or sql is None - that's fine
+        pass
+    
     # Create index for faster lookups by player name (non-unique, allows duplicates)
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_player_name ON players(player_name)
@@ -190,7 +224,8 @@ def health():
     return jsonify({
         'status': 'healthy', 
         'timestamp': datetime.utcnow().isoformat(),
-        'server_ip': server_ip
+        'server_ip': server_ip,
+        'llm_available': LLM_AVAILABLE
     })
 
 @app.route('/api/objects', methods=['GET'])
@@ -1086,6 +1121,9 @@ def get_all_user_locations():
 @app.route('/api/players/<device_uuid>', methods=['POST', 'PUT'])
 def create_or_update_player(device_uuid: str):
     """Create or update player name for a device UUID."""
+    import time
+    import sqlite3
+    
     data = request.json
     
     if not data or 'player_name' not in data:
@@ -1095,47 +1133,120 @@ def create_or_update_player(device_uuid: str):
     if not player_name:
         return jsonify({'error': 'player_name cannot be empty'}), 400
     
-    conn = get_db_connection()
-    cursor = conn.cursor()
+    # Retry logic for database locking (up to 3 attempts)
+    max_retries = 3
+    retry_delay = 0.1  # 100ms between retries
     
-    now = datetime.utcnow().isoformat()
-    
-    # Check if player exists (device UUID is the unique identifier)
-    cursor.execute('SELECT device_uuid FROM players WHERE device_uuid = ?', (device_uuid,))
-    current_player = cursor.fetchone()
-    
-    if current_player:
-        # Update existing player (device UUID is unique, names can be duplicated)
-        cursor.execute('''
-            UPDATE players
-            SET player_name = ?, updated_at = ?
-            WHERE device_uuid = ?
-        ''', (player_name, now, device_uuid))
-    else:
-        # Create new player (device UUID is the primary key, ensures uniqueness)
-        cursor.execute('''
-            INSERT INTO players (device_uuid, player_name, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
-        ''', (device_uuid, player_name, now, now))
-    
-    conn.commit()
-    
-    # Get the updated/created player
-    cursor.execute('''
-        SELECT device_uuid, player_name, created_at, updated_at
-        FROM players
-        WHERE device_uuid = ?
-    ''', (device_uuid,))
-    
-    row = cursor.fetchone()
-    conn.close()
-    
-    return jsonify({
-        'device_uuid': row['device_uuid'],
-        'player_name': row['player_name'],
-        'created_at': row['created_at'],
-        'updated_at': row['updated_at']
-    }), 200
+    for attempt in range(max_retries):
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            now = datetime.utcnow().isoformat()
+            
+            # Check if player exists (device UUID is the unique identifier)
+            cursor.execute('SELECT device_uuid FROM players WHERE device_uuid = ?', (device_uuid,))
+            current_player = cursor.fetchone()
+            
+            if current_player:
+                # Update existing player (device UUID is unique, names can be duplicated)
+                cursor.execute('''
+                    UPDATE players
+                    SET player_name = ?, updated_at = ?
+                    WHERE device_uuid = ?
+                ''', (player_name, now, device_uuid))
+            else:
+                # Create new player (device UUID is the primary key, ensures uniqueness)
+                cursor.execute('''
+                    INSERT INTO players (device_uuid, player_name, created_at, updated_at)
+                    VALUES (?, ?, ?, ?)
+                ''', (device_uuid, player_name, now, now))
+            
+            conn.commit()
+            
+            # Get the updated/created player
+            cursor.execute('''
+                SELECT device_uuid, player_name, created_at, updated_at
+                FROM players
+                WHERE device_uuid = ?
+            ''', (device_uuid,))
+            
+            row = cursor.fetchone()
+            conn.close()
+            
+            if not row:
+                return jsonify({'error': 'Failed to retrieve player after creation/update'}), 500
+            
+            return jsonify({
+                'device_uuid': row['device_uuid'],
+                'player_name': row['player_name'],
+                'created_at': row['created_at'],
+                'updated_at': row['updated_at']
+            }), 200
+            
+        except sqlite3.IntegrityError as e:
+            # Handle UNIQUE constraint violations
+            error_msg = str(e).lower()
+            if 'unique constraint failed' in error_msg and 'player_name' in error_msg:
+                # UNIQUE constraint on player_name exists but shouldn't
+                # Try to remove it and retry (only on first attempt to avoid infinite loop)
+                if attempt == 0:
+                    try:
+                        print("⚠️ UNIQUE constraint on player_name detected - attempting to remove it")
+                        # Recreate table without UNIQUE constraint
+                        cursor.execute('''
+                            CREATE TABLE IF NOT EXISTS players_new (
+                                device_uuid TEXT PRIMARY KEY,
+                                player_name TEXT NOT NULL,
+                                created_at TEXT NOT NULL,
+                                updated_at TEXT NOT NULL
+                            )
+                        ''')
+                        # Copy data
+                        cursor.execute('''
+                            INSERT INTO players_new (device_uuid, player_name, created_at, updated_at)
+                            SELECT device_uuid, player_name, created_at, updated_at FROM players
+                        ''')
+                        # Drop old table
+                        cursor.execute('DROP TABLE players')
+                        # Rename new table
+                        cursor.execute('ALTER TABLE players_new RENAME TO players')
+                        # Recreate index
+                        cursor.execute('''
+                            CREATE INDEX IF NOT EXISTS idx_player_name ON players(player_name)
+                        ''')
+                        conn.commit()
+                        conn.close()
+                        print("✅ Removed UNIQUE constraint on player_name - retrying operation")
+                        # Retry the operation (will get new connection on next iteration)
+                        continue
+                    except Exception as fix_error:
+                        print(f"❌ Failed to remove UNIQUE constraint: {fix_error}")
+                        conn.close()
+                        return jsonify({'error': f'UNIQUE constraint on player_name exists. Please contact administrator to remove it. Error: {str(e)}'}), 500
+                else:
+                    # Already tried to fix, return error
+                    conn.close()
+                    return jsonify({'error': f'UNIQUE constraint failed: player_name. This constraint should not exist. Error: {str(e)}'}), 500
+            else:
+                # Other integrity error
+                print(f"❌ Integrity error in create_or_update_player: {e}")
+                conn.close()
+                return jsonify({'error': f'Database integrity error: {str(e)}'}), 500
+        except sqlite3.OperationalError as e:
+            if 'database is locked' in str(e).lower() and attempt < max_retries - 1:
+                # Database is locked, wait and retry
+                time.sleep(retry_delay * (attempt + 1))  # Exponential backoff
+                continue
+            else:
+                # Re-raise if it's not a locking issue or we've exhausted retries
+                print(f"❌ Database error in create_or_update_player: {e}")
+                return jsonify({'error': f'Database error: {str(e)}'}), 500
+        except Exception as e:
+            print(f"❌ Error in create_or_update_player: {e}")
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': f'Internal server error: {str(e)}'}), 500
 
 @app.route('/api/players/<device_uuid>', methods=['DELETE'])
 def delete_player(device_uuid: str):

@@ -242,9 +242,17 @@ class LLMService:
         npc_name: str,
         npc_type: str,
         user_message: str,
-        is_skeleton: bool = False
-    ) -> str:
-        """Generate a conversational response from an NPC (skeleton, corgi, etc.)."""
+        is_skeleton: bool = False,
+        include_placement: bool = False
+    ) -> Dict:
+        """Generate a conversational response from an NPC (skeleton, corgi, etc.).
+        
+        Args:
+            include_placement: If True, also generate structured placement instructions for AR objects
+        
+        Returns:
+            Dict with 'response' (text) and optionally 'placement' (structured instructions)
+        """
         
         if is_skeleton:
             system_prompt = f"""Ye be {npc_name}, a SKELETON pirate from 200 years ago. Ye be dead, so ye can speak. Help players find the 200-year-old treasure. Speak ONLY in pirate speak (arr, ye, matey). Keep responses SHORT - 1-2 sentences max."""
@@ -259,8 +267,80 @@ class LLMService:
             {"role": "user", "content": user_message}
         ]
         
-        response = self._call_llm(messages=messages)
-        return response.strip()
+        response_text = self._call_llm(messages=messages)
+        
+        result = {
+            "response": response_text.strip()
+        }
+        
+        # Generate placement instructions if requested
+        if include_placement:
+            placement = self._extract_placement_instructions(response_text, user_message)
+            if placement:
+                result["placement"] = placement
+        
+        return result
+    
+    def _extract_placement_instructions(self, npc_response: str, user_message: str) -> Optional[Dict]:
+        """Extract placement instructions from NPC response using LLM.
+        
+        Returns structured data like:
+        {
+            "objects": [
+                {"type": "tree", "count": 3, "description": "three palm trees"}
+            ],
+            "treasure_location": {
+                "object_index": 1,  # Which tree (0-indexed)
+                "description": "at the base of the second palm tree"
+            }
+        }
+        """
+        # Use LLM to extract structured placement data from the conversation
+        extraction_prompt = f"""Extract AR object placement instructions from this NPC conversation.
+
+NPC Response: "{npc_response}"
+User Message: "{user_message}"
+
+If the NPC mentions placing objects (like trees, rocks, etc.) or hiding treasure at a specific location, return JSON with:
+{{
+    "objects": [
+        {{"type": "tree", "count": 3, "description": "three palm trees"}}
+    ],
+    "treasure_location": {{
+        "object_index": 1,
+        "description": "at the base of the second palm tree"
+    }}
+}}
+
+If no placement instructions are mentioned, return: {{"objects": [], "treasure_location": null}}
+
+Return ONLY valid JSON, no other text."""
+
+        try:
+            json_response = self._call_llm(prompt=extraction_prompt, max_tokens=200)
+            # Try to parse JSON from response
+            json_str = json_response.strip()
+            # Remove markdown code blocks if present
+            if json_str.startswith("```"):
+                json_str = json_str.split("```")[1]
+                if json_str.startswith("json"):
+                    json_str = json_str[4:]
+                json_str = json_str.strip()
+            if json_str.endswith("```"):
+                json_str = json_str[:-3].strip()
+            
+            placement_data = json.loads(json_str)
+            
+            # Validate structure
+            if isinstance(placement_data, dict):
+                # Only return if there are actual objects to place
+                if placement_data.get("objects") and len(placement_data.get("objects", [])) > 0:
+                    return placement_data
+        except (json.JSONDecodeError, Exception) as e:
+            # If extraction fails, return None (no placement instructions)
+            print(f"⚠️ Could not extract placement instructions: {e}")
+        
+        return None
     
     def generate_map_piece(self, target_location: Dict, piece_number: int, total_pieces: int = 2, npc_type: str = "skeleton") -> Dict:
         """Generate a treasure map piece (half of the map) for an NPC.

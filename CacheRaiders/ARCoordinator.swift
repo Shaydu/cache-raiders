@@ -10,14 +10,6 @@ import UIKit
 
 // Findable protocol and base class are now in FindableObject.swift
 
-// MARK: - Object Types for Random Placement
-enum PlacedObjectType {
-    case chalice
-    case treasureBox
-    case sphere
-    case cube
-}
-
 // MARK: - AR Coordinator
 class ARCoordinator: NSObject, ARSessionDelegate {
 
@@ -31,7 +23,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var groundingService: ARGroundingService?
     private var precisionPositioningService: ARPrecisionPositioningService? // Legacy - kept for compatibility
     private var geospatialService: ARGeospatialService? // New ENU-based geospatial service
-    
+    private var treasureHuntService: TreasureHuntService? // Treasure hunt game mode service
+
     weak var arView: ARView?
     private var locationManager: LootBoxLocationManager?
     private var userLocationManager: UserLocationManager?
@@ -39,6 +32,58 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var placedBoxes: [String: AnchorEntity] = [:]
     private var findableObjects: [String: FindableObject] = [:] // Track all findable objects
     private var objectPlacementTimes: [String: Date] = [:] // Track when objects were placed (for grace period)
+    // MARK: - NPC Types
+    enum NPCType: String, CaseIterable {
+        case skeleton = "skeleton"
+        case corgi = "corgi"
+        
+        var modelName: String {
+            switch self {
+            case .skeleton: return "Curious_skeleton"
+            case .corgi: return "Corgi_Traveller"
+            }
+        }
+        
+        var npcId: String {
+            switch self {
+            case .skeleton: return "skeleton-1"
+            case .corgi: return "corgi-1"
+            }
+        }
+        
+        var defaultName: String {
+            switch self {
+            case .skeleton: return "Captain Bones"
+            case .corgi: return "Corgi Traveller"
+            }
+        }
+        
+        var npcType: String {
+            switch self {
+            case .skeleton: return "skeleton"
+            case .corgi: return "traveller"
+            }
+        }
+        
+        var isSkeleton: Bool {
+            return self == .skeleton
+        }
+    }
+    
+    private var placedNPCs: [String: AnchorEntity] = [:] // Track all placed NPCs by ID
+    private var skeletonPlaced: Bool = false // Track if skeleton has been placed
+    private var corgiPlaced: Bool = false // Track if corgi has been placed (for Split Legacy mode)
+    private var skeletonAnchor: AnchorEntity? // Reference to skeleton anchor (kept for backward compatibility)
+    private let SKELETON_NPC_ID = "skeleton-1" // ID for the skeleton NPC
+    
+    // MARK: - Skeleton Size Constants (defined in one place)
+    // Target: 6-7 feet tall (1.83-2.13m) in AR space
+    // Assuming base model is ~1.4m at scale 1.0, scale of 1.4 gives ~1.96m (6.4 feet)
+    private static let SKELETON_SCALE: Float = 1.4 // Results in approximately 6.5 feet tall skeleton
+    private static let SKELETON_COLLISION_SIZE = SIMD3<Float>(0.66, 2.0, 0.66) // Scaled proportionally for 6-7ft skeleton
+    private static let SKELETON_HEIGHT_OFFSET: Float = 1.65 // Scaled proportionally
+    private var hasTalkedToSkeleton: Bool = false // Track if player has talked to skeleton (for Split Legacy)
+    private var collectedMapPieces: Set<Int> = [] // Track which map pieces player has collected (1 = skeleton, 2 = corgi)
     private var arOriginLocation: CLLocation? // GPS location when AR session started
     private var arOriginSetTime: Date? // When AR origin was set (for degraded mode timeout)
     private var isDegradedMode: Bool = false // True if operating without GPS (AR-only mode)
@@ -47,6 +92,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     var temperatureStatusBinding: Binding<String?>?
     var collectionNotificationBinding: Binding<String?>?
     var nearestObjectDirectionBinding: Binding<Double?>?
+    var conversationNPCBinding: Binding<ConversationNPC?>?
     private var lastSpherePlacementTime: Date? // Prevent rapid duplicate sphere placements
     private var sphereModeActive: Bool = false // Track when we're in sphere randomization mode
     private var hasAutoRandomized: Bool = false // Track if we've already auto-randomized spheres
@@ -267,7 +313,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         objectsInViewport = currentlyVisible
     }
     
-    func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>, nearestObjectDirection: Binding<Double?>) {
+    // Conversation manager reference
+    private weak var conversationManager: ARConversationManager?
+
+    func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>, nearestObjectDirection: Binding<Double?>, conversationNPC: Binding<ConversationNPC?>, conversationManager: ARConversationManager) {
         self.arView = arView
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
@@ -276,7 +325,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         self.temperatureStatusBinding = temperatureStatus
         self.collectionNotificationBinding = collectionNotification
         self.nearestObjectDirectionBinding = nearestObjectDirection
-        
+        self.conversationNPCBinding = conversationNPC
+        self.conversationManager = conversationManager
+
+        // Initialize treasure hunt service for story mode
+        if self.treasureHuntService == nil {
+            self.treasureHuntService = TreasureHuntService()
+            self.treasureHuntService?.setConversationManager(conversationManager)
+        }
+
         // Size changes not supported - objects are randomized on placement
         // locationManager.onSizeChanged callback removed
         
@@ -339,6 +396,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         tapHandler?.placedBoxes = placedBoxes
         tapHandler?.findableObjects = findableObjects
         tapHandler?.collectionNotificationBinding = collectionNotification
+        tapHandler?.placedNPCs = placedNPCs // Pass NPCs to tap handler
         
         // Set up tap handler callbacks
         tapHandler?.onFindLootBox = { [weak self] locationId, anchor, cameraPos, sphereEntity in
@@ -346,6 +404,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         tapHandler?.onPlaceLootBoxAtTap = { [weak self] location, result in
             self?.placeLootBoxAtTapLocation(location, tapResult: result, in: arView)
+        }
+        tapHandler?.onNPCTap = { [weak self] npcId in
+            // Convert NPC ID string to NPCType
+            if let npcType = NPCType.allCases.first(where: { $0.npcId == npcId }) {
+                self?.handleNPCTap(type: npcType)
+            } else {
+                Swift.print("⚠️ Unknown NPC ID: \(npcId)")
+            }
         }
         
         // Monitor AR session
@@ -597,6 +663,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
     
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
+        // STORY MODE: Early return - no loot boxes should be placed in story modes
+        let gameMode = locationManager?.gameMode ?? .open
+        let isStoryMode = gameMode == .deadMensSecrets || gameMode == .splitLegacy
+        if isStoryMode {
+            // In story modes, only NPCs are shown - no loot boxes should be placed
+            // NPCs are handled separately in session(_:didUpdate:) method
+            return
+        }
+        
         // PERFORMANCE: Throttle calls to prevent excessive placement checks
         let now = Date()
         let timeSinceLastCall = now.timeIntervalSince(lastCheckAndPlaceBoxesCall)
@@ -741,6 +816,30 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
 
+        // STORY MODE: Remove all loot boxes when entering story mode (only NPCs should remain)
+        // Reuse gameMode variable declared earlier in this function (line 668)
+        let isStoryMode = gameMode == .deadMensSecrets || gameMode == .splitLegacy
+        
+        if isStoryMode {
+            // Remove all loot boxes from AR scene in story modes
+            let lootBoxesToRemove = placedBoxes.keys.filter { locationId in
+                // Keep NPCs (they're tracked in placedNPCs, not placedBoxes)
+                // But remove any loot boxes that might have been placed
+                return !(placedNPCs.keys.contains(locationId))
+            }
+            
+            for locationId in lootBoxesToRemove {
+                if let anchor = placedBoxes[locationId] {
+                    Swift.print("🗑️ Removing loot box '\(locationId)' from story mode - only NPCs allowed")
+                    anchor.removeFromParent()
+                    placedBoxes.removeValue(forKey: locationId)
+                    findableObjects.removeValue(forKey: locationId)
+                    objectsInViewport.remove(locationId)
+                    objectPlacementTimes.removeValue(forKey: locationId)
+                }
+            }
+        }
+
         // Remove the unselected objects from the scene (but never manually placed ones)
         for locationId in objectsToRemove {
             if let anchor = placedBoxes[locationId] {
@@ -783,10 +882,21 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
+        // STORY MODE: In story modes (deadMensSecrets, splitLegacy), only show NPCs, not loot boxes
+        // (gameMode and isStoryMode already declared above)
+        
         for location in nearbyLocations {
             // Stop if we've reached the limit
             guard placedBoxes.count < maxObjects else {
                 break
+            }
+
+            // STORY MODE: Skip all loot boxes in story modes - only NPCs should appear
+            if isStoryMode {
+                // Only allow NPCs (skeleton, corgi) - skip all loot box types
+                // NPCs are handled separately in placeNPC, not through checkAndPlaceBoxes
+                Swift.print("⏭️ Skipping loot box '\(location.name)' in story mode (\(gameMode.displayName)) - only NPCs are shown")
+                continue
             }
 
             // Skip locations that are already placed (double-check to prevent duplicates)
@@ -1450,6 +1560,53 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 if !nearby.isEmpty && placedBoxes.isEmpty {
                     Swift.print("   ⚠️ Objects nearby but NONE placed yet!")
                     Swift.print("   First 3 nearby: \(nearby.prefix(3).map { $0.name })")
+                }
+            }
+            
+            // Game Mode: Place NPCs based on mode
+            if let arView = arView {
+                switch locationManager.gameMode {
+                case .open:
+                    // No NPCs in open mode - remove any existing NPCs
+                    if skeletonPlaced {
+                        if let skeletonAnchor = skeletonAnchor {
+                            skeletonAnchor.removeFromParent()
+                            placedNPCs.removeValue(forKey: NPCType.skeleton.npcId)
+                        }
+                        skeletonPlaced = false
+                        skeletonAnchor = nil
+                    }
+                    if corgiPlaced {
+                        if let corgiAnchor = placedNPCs[NPCType.corgi.npcId] {
+                            corgiAnchor.removeFromParent()
+                            placedNPCs.removeValue(forKey: NPCType.corgi.npcId)
+                        }
+                        corgiPlaced = false
+                    }
+                    break
+                    
+                case .deadMensSecrets:
+                    // Dead Men's Secrets: Only skeleton appears as guide
+                    if !skeletonPlaced {
+                        placeNPC(type: .skeleton, in: arView)
+                    }
+                    // Remove corgi if it exists (shouldn't be in this mode)
+                    if corgiPlaced {
+                        if let corgiAnchor = placedNPCs[NPCType.corgi.npcId] {
+                            corgiAnchor.removeFromParent()
+                            placedNPCs.removeValue(forKey: NPCType.corgi.npcId)
+                        }
+                        corgiPlaced = false
+                    }
+                    
+                case .splitLegacy:
+                    // The Split Legacy: Skeleton appears first, Corgi appears after talking to skeleton
+                    if !skeletonPlaced {
+                        placeNPC(type: .skeleton, in: arView)
+                    }
+                    // Corgi only appears if player has talked to skeleton (tracked separately)
+                    // This will be handled in the conversation handler
+                    break
                 }
             }
             
@@ -2589,9 +2746,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
         
-        // CRITICAL: Check for collision with already placed objects (minimum 2m horizontal separation, 0.5m vertical)
-        let minHorizontalSeparation: Float = 2.0 // Minimum 2 meters horizontal distance between objects
-        let minVerticalSeparation: Float = 0.5 // Minimum 0.5 meters vertical distance (prevents stacking)
+        // CRITICAL: Check for collision with already placed objects (minimum 3m horizontal separation, 1m vertical)
+        // Increased from 2m to 3m to prevent objects from appearing on top of each other
+        let minHorizontalSeparation: Float = 3.0 // Minimum 3 meters horizontal distance between objects
+        let minVerticalSeparation: Float = 1.0 // Minimum 1 meter vertical distance (prevents stacking)
         for (existingId, existingAnchor) in placedBoxes {
             let existingTransform = existingAnchor.transformMatrix(relativeTo: nil)
             let existingPos = SIMD3<Float>(
@@ -2828,6 +2986,432 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
 
         // Database indicators removed - no longer adding visual indicators to objects
+    }
+    
+    // MARK: - DMTNT NPC Placement
+    
+    /// Place an NPC in AR for story mode
+    /// - Parameters:
+    ///   - type: The type of NPC to place (skeleton, corgi, etc.)
+    ///   - arView: The AR view to place the NPC in
+    private func placeNPC(type: NPCType, in arView: ARView) {
+        // Check if already placed
+        if placedNPCs[type.npcId] != nil {
+            Swift.print("💬 \(type.defaultName) already placed, skipping")
+            return
+        }
+        
+        guard let frame = arView.session.currentFrame else {
+            Swift.print("⚠️ Cannot place \(type.defaultName): AR frame not available")
+            return
+        }
+        
+        Swift.print("💬 Placing \(type.defaultName) NPC for story mode...")
+        Swift.print("   Game mode: \(locationManager?.gameMode.displayName ?? "unknown")")
+        Swift.print("   Model: \(type.modelName).usdz")
+        
+        // Load the NPC model
+        guard let modelURL = Bundle.main.url(forResource: type.modelName, withExtension: "usdz") else {
+            Swift.print("❌ Could not find \(type.modelName).usdz in bundle")
+            Swift.print("   Make sure \(type.modelName).usdz is added to the Xcode project")
+            Swift.print("   Bundle path: \(Bundle.main.bundlePath)")
+            return
+        }
+        
+        Swift.print("✅ Found model at: \(modelURL.path)")
+        
+        do {
+            // Load the NPC model
+            let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
+            
+            // Wrap in ModelEntity for proper scaling
+            let npcEntity = ModelEntity()
+            npcEntity.addChild(loadedEntity)
+            
+            // Scale NPC to reasonable size
+            // Skeleton size is defined in SKELETON_SCALE constant above
+            let npcScale: Float = type == .skeleton ? Self.SKELETON_SCALE : 0.5
+            npcEntity.scale = SIMD3<Float>(repeating: npcScale)
+            
+            // Position NPC in front of camera
+            let cameraTransform = frame.camera.transform
+            let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+            let forward = SIMD3<Float>(-cameraTransform.columns.2.x, -cameraTransform.columns.2.y, -cameraTransform.columns.2.z)
+            
+            // Place NPCs at different distances to avoid overlap
+            // Skeleton: 5.5m (more distant), Corgi: 4.5m (to the side)
+            let baseDistance: Float = type == .skeleton ? 5.5 : 4.5
+            let sideOffset: Float = type == .corgi ? 1.5 : 0.0 // Place corgi to the side
+            let right = SIMD3<Float>(-cameraTransform.columns.0.x, -cameraTransform.columns.0.y, -cameraTransform.columns.0.z)
+            let targetPosition = cameraPos + forward * baseDistance + right * sideOffset
+            
+            // Use grounding service to properly ground the NPC on surfaces
+            // This ensures the skeleton is placed on the floor or highest blocking surface
+            let npcPosition: SIMD3<Float>
+            if let groundingService = groundingService {
+                // Use grounding service to find proper surface height
+                npcPosition = groundingService.groundPosition(targetPosition, cameraPos: cameraPos)
+                Swift.print("✅ \(type.defaultName) grounded using ARGroundingService at Y: \(String(format: "%.2f", npcPosition.y))")
+            } else {
+                // Fallback: use simple raycast if grounding service not available
+                let raycastQuery = ARRaycastQuery(
+                    origin: SIMD3<Float>(targetPosition.x, cameraPos.y, targetPosition.z),
+                    direction: SIMD3<Float>(0, -1, 0),
+                    allowing: .estimatedPlane,
+                    alignment: .horizontal
+                )
+                
+                let raycastResults = arView.session.raycast(raycastQuery)
+                
+                if let firstResult = raycastResults.first {
+                    npcPosition = SIMD3<Float>(
+                        firstResult.worldTransform.columns.3.x,
+                        firstResult.worldTransform.columns.3.y,
+                        firstResult.worldTransform.columns.3.z
+                    )
+                } else {
+                    // Final fallback: use camera Y position (assume ground level)
+                    // Skeleton height offset is defined in SKELETON_HEIGHT_OFFSET constant above
+                    npcPosition = SIMD3<Float>(
+                        targetPosition.x,
+                        cameraPos.y - (type == .skeleton ? Self.SKELETON_HEIGHT_OFFSET : 1.2), // Skeleton taller, corgi shorter
+                        targetPosition.z
+                    )
+                    Swift.print("⚠️ \(type.defaultName) using fallback ground height: Y=\(String(format: "%.2f", npcPosition.y))")
+                }
+            }
+            
+            // Create anchor for NPC
+            let anchor = AnchorEntity(world: npcPosition)
+            anchor.name = type.npcId
+            npcEntity.name = type.npcId // Make it tappable
+
+            // Add collision component for tap detection
+            // Use a bounding box collision shape that covers the NPC model
+            // Skeleton collision size is defined in SKELETON_COLLISION_SIZE constant above
+            let collisionSize: SIMD3<Float> = type == .skeleton
+                ? Self.SKELETON_COLLISION_SIZE
+                : SIMD3<Float>(0.8, 0.6, 0.8) // Corgi: short and wide
+            let collisionShape = ShapeResource.generateBox(size: collisionSize)
+            npcEntity.collision = CollisionComponent(shapes: [collisionShape])
+
+            // Make NPC face the camera while keeping it upright
+            let cameraDirection = normalize(cameraPos - npcPosition)
+            
+            // Project camera direction onto horizontal plane (XZ plane) to keep NPC upright
+            let horizontalDirection = normalize(SIMD3<Float>(cameraDirection.x, 0, cameraDirection.z))
+            
+            // Calculate rotation to face camera (only horizontal rotation, Y-axis stays up)
+            // Default forward direction is -Z, so we rotate to face horizontalDirection
+            let modelForward = SIMD3<Float>(0, 0, -1) // Model's default forward direction
+            var angle = atan2(horizontalDirection.x, horizontalDirection.z) - atan2(modelForward.x, modelForward.z)
+            
+            // Fix skeleton rotation: add 180° (π radians) to face the correct direction
+            if type == .skeleton {
+                angle += Float.pi
+            }
+            
+            // Create rotation quaternion around Y-axis only (keeps model upright)
+            let yAxis = SIMD3<Float>(0, 1, 0)
+            let rotation = simd_quatf(angle: angle, axis: yAxis)
+            
+            npcEntity.orientation = rotation
+            
+            anchor.addChild(npcEntity)
+            arView.scene.addAnchor(anchor)
+            
+            // Track NPC
+            placedNPCs[type.npcId] = anchor
+            // Also update tap handler's placedNPCs so it can detect taps
+            tapHandler?.placedNPCs = placedNPCs
+            
+            if type == .skeleton {
+                skeletonAnchor = anchor
+                skeletonPlaced = true
+            } else if type == .corgi {
+                corgiPlaced = true
+            }
+            
+            Swift.print("✅ \(type.defaultName) NPC placed at position: \(npcPosition)")
+            Swift.print("   \(type.defaultName) is tappable and ready for interaction")
+            
+        } catch {
+            Swift.print("❌ Error loading \(type.defaultName) model: \(error)")
+        }
+    }
+    
+    // MARK: - NPC Interaction
+    
+    /// Handle tap on any NPC - opens conversation
+    /// - Parameter type: The type of NPC that was tapped
+    private func handleNPCTap(type: NPCType) {
+        Swift.print("💬 ========== handleNPCTap CALLED ==========")
+        Swift.print("   NPC Type: \(type.rawValue)")
+        Swift.print("   NPC Name: \(type.defaultName)")
+        Swift.print("   NPC ID: \(type.npcId)")
+
+        // Show conversation alert
+        // Note: In a full implementation, this would open a proper conversation view
+        DispatchQueue.main.async { [weak self] in
+            Swift.print("   📞 Calling showNPCConversation on main thread")
+            self?.showNPCConversation(type: type)
+        }
+    }
+    
+    /// Show NPC conversation UI
+    /// - Parameter type: The type of NPC to show conversation for
+    private func showNPCConversation(type: NPCType) {
+        Swift.print("   ========== showNPCConversation CALLED ==========")
+        Swift.print("   NPC: \(type.defaultName)")
+
+        guard let locationManager = locationManager else {
+            Swift.print("   ❌ ERROR: locationManager is nil!")
+            return
+        }
+
+        Swift.print("   Current game mode: \(locationManager.gameMode.rawValue)")
+
+        // For skeleton, always open the conversation view
+        if type == .skeleton {
+            Swift.print("   📱 Opening SkeletonConversationView (full-screen dialog)")
+            DispatchQueue.main.async { [weak self] in
+                self?.conversationNPCBinding?.wrappedValue = ConversationNPC(
+                    id: type.npcId,
+                    name: type.defaultName
+                )
+                Swift.print("   ✅ ConversationNPC binding set")
+            }
+        }
+
+        // Handle different game modes
+        Swift.print("   🎮 Checking game mode for AR sign...")
+        switch locationManager.gameMode {
+        case .open:
+            Swift.print("   ℹ️ Open mode - no AR sign in this mode")
+            break
+
+        case .deadMensSecrets:
+            Swift.print("   🎯 Dead Men's Secrets mode - checking AR sign conditions...")
+            Swift.print("      type == .skeleton? \(type == .skeleton)")
+            Swift.print("      arView exists? \(arView != nil)")
+            Swift.print("      skeletonEntity in placedNPCs? \(placedNPCs[type.npcId] != nil)")
+
+            // Dead Men's Secrets: Show text input prompt, then display response above skeleton
+            // (Conversation view is also opened above for full chat experience)
+            if type == .skeleton, let arView = arView, let skeletonEntity = placedNPCs[type.npcId] {
+                Swift.print("   🎬 TRIGGERING AR SIGN: showSkeletonTextInput")
+                showSkeletonTextInput(for: skeletonEntity, in: arView, npcId: type.npcId, npcName: type.defaultName)
+            } else {
+                Swift.print("   ❌ AR sign NOT triggered - conditions not met")
+            }
+            
+        case .splitLegacy:
+            // Split Legacy: Each NPC gives half the map
+            if type == .skeleton {
+                // Skeleton has first half, also tells you where to find the corgi
+                if !collectedMapPieces.contains(1) {
+                    collectionNotificationBinding?.wrappedValue = "💀 Captain Bones: I have the first half of the map! The Corgi Traveller has the other half. Find them near the old oak tree!"
+                    // Mark piece 1 as collected
+                    collectedMapPieces.insert(1)
+                    
+                    // Spawn corgi after getting first map piece
+                    if !corgiPlaced, let arView = arView {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                            self?.placeNPC(type: .corgi, in: arView)
+                        }
+                    }
+                } else {
+                    collectionNotificationBinding?.wrappedValue = "💀 Captain Bones: Ye already have me half of the map, matey! Find the Corgi for the other half!"
+                }
+            } else if type == .corgi {
+                // Corgi has second half
+                if !collectedMapPieces.contains(2) {
+                    collectionNotificationBinding?.wrappedValue = "🐕 Corgi Traveller: Woof! Here's the second half of the map! Combine both halves to find the treasure!"
+                    // Mark piece 2 as collected
+                    collectedMapPieces.insert(2)
+                    
+                    // If player has both pieces, combine them
+                    if collectedMapPieces.contains(1) && collectedMapPieces.contains(2) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                            guard let self = self else { return }
+                            self.combineMapPieces()
+                        }
+                    }
+                } else {
+                    collectionNotificationBinding?.wrappedValue = "🐕 Corgi Traveller: You already have my half! Combine both pieces to see where X marks the spot!"
+                }
+            }
+            
+            // Hide notification after 5 seconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+                self?.collectionNotificationBinding?.wrappedValue = nil
+            }
+        }
+    }
+    
+    /// Combine map pieces to reveal treasure location (Split Legacy mode)
+    private func combineMapPieces() {
+        Swift.print("🗺️ Combining map pieces - revealing treasure location!")
+        
+        // Show notification that map is combined
+        collectionNotificationBinding?.wrappedValue = "🗺️ Map Combined! The treasure location has been revealed on the map!"
+        
+        // Hide notification after 5 seconds
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
+            self?.collectionNotificationBinding?.wrappedValue = nil
+        }
+        
+        // TODO: In a full implementation, this would:
+        // 1. Reveal a special treasure location on the map
+        // 2. Place a treasure chest at a specific GPS location
+        // 3. Show visual indicators in AR
+        Swift.print("💡 Map pieces combined - treasure location should be revealed")
+    }
+    
+    /// Show text input prompt for skeleton conversation (Dead Men's Secrets mode)
+    private func showSkeletonTextInput(for skeletonEntity: AnchorEntity, in arView: ARView, npcId: String, npcName: String) {
+        Swift.print("   ========== showSkeletonTextInput CALLED ==========")
+        Swift.print("   NPC ID: \(npcId)")
+        Swift.print("   NPC Name: \(npcName)")
+        Swift.print("   Skeleton Entity: \(skeletonEntity.name)")
+
+        // Show alert with text input
+        DispatchQueue.main.async {
+            Swift.print("   📝 Creating UIAlertController for text input...")
+            let alert = UIAlertController(title: "💀 Talk to \(npcName)", message: "Ask the skeleton about the treasure...", preferredStyle: .alert)
+            
+            alert.addTextField { textField in
+                textField.placeholder = "Ask about the treasure..."
+                textField.autocapitalizationType = .sentences
+            }
+            
+            alert.addAction(UIAlertAction(title: "Ask", style: .default) { [weak self] _ in
+                guard let self = self,
+                      let textField = alert.textFields?.first,
+                      let message = textField.text,
+                      !message.isEmpty else {
+                    return
+                }
+
+                // Show user message in 2D overlay (bottom third of screen)
+                self.conversationManager?.showMessage(
+                    npcName: npcName,
+                    message: message,
+                    isUserMessage: true,
+                    duration: 2.0
+                )
+
+                // Check if this is a map/direction request
+                let isMapRequest = self.treasureHuntService?.isMapRequest(message) ?? false
+
+                // Get response from API
+                Task {
+                    do {
+                        if isMapRequest, let userLocation = self.userLocationManager?.currentLocation {
+                            // User is asking for the map - fetch and show treasure map via service
+                            Swift.print("🗺️ Map request detected in message: '\(message)'")
+                            try await self.treasureHuntService?.handleMapRequest(
+                                npcId: npcId,
+                                npcName: npcName,
+                                userLocation: userLocation
+                            )
+                        } else {
+                            // Regular conversation
+                            let response = try await APIService.shared.interactWithNPC(
+                                npcId: npcId,
+                                message: message,
+                                npcName: npcName,
+                                npcType: "skeleton",
+                                isSkeleton: true
+                            )
+
+                            await MainActor.run {
+                                // Show skeleton response in 2D overlay after a brief delay
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                                    self?.conversationManager?.showMessage(
+                                        npcName: npcName,
+                                        message: response.response,
+                                        isUserMessage: false,
+                                        duration: 10.0
+                                    )
+                                }
+                            }
+                        }
+                    } catch {
+                        await MainActor.run { [weak self] in
+                            // Provide user-friendly error messages
+                            let errorMessage: String
+                            if let apiError = error as? APIError {
+                                switch apiError {
+                                case .serverError(let message):
+                                    if message.contains("LLM service not available") || message.contains("not available") {
+                                        errorMessage = "Arr, the treasure map service be down! The server needs the LLM service running. Check the server logs, matey!"
+                                    } else {
+                                        errorMessage = message
+                                    }
+                                case .serverUnreachable:
+                                    errorMessage = "Arr, I can't reach the server! Make sure it's running and we're on the same network, matey!"
+                                case .httpError(let code):
+                                    if code == 503 {
+                                        errorMessage = "The treasure map service be unavailable! Check if the LLM service is running on the server."
+                                    } else {
+                                        errorMessage = "Server error \(code). Check the server, matey!"
+                                    }
+                                default:
+                                    errorMessage = apiError.localizedDescription ?? "Unknown error"
+                                }
+                            } else {
+                                // For other errors, provide a generic but friendly message
+                                let errorDesc = error.localizedDescription
+                                if errorDesc.contains("not available") || errorDesc.contains("unreachable") {
+                                    errorMessage = "Arr, I can't reach the server! Make sure it's running, matey!"
+                                } else {
+                                    errorMessage = errorDesc
+                                }
+                            }
+
+                            // Show error message in 2D overlay (bottom third)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                self?.conversationManager?.showMessage(
+                                    npcName: npcName,
+                                    message: errorMessage,
+                                    isUserMessage: false,
+                                    duration: 8.0
+                                )
+                            }
+                        }
+                    }
+                }
+            })
+            
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            
+            // Present alert from root view controller
+            Swift.print("   🎭 Attempting to present UIAlertController...")
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+               let rootViewController = windowScene.windows.first?.rootViewController {
+                Swift.print("   ✅ Found root view controller")
+
+                // Check if there's already a presented view controller (like another alert)
+                if let presentedVC = rootViewController.presentedViewController {
+                    Swift.print("   ⚠️ Found existing presented view controller: \(type(of: presentedVC))")
+                    Swift.print("   Dismissing it first...")
+                    presentedVC.dismiss(animated: false) {
+                        // Present our alert after dismissing the existing one
+                        Swift.print("   ✅ Existing alert dismissed, presenting new alert")
+                        rootViewController.present(alert, animated: true)
+                        Swift.print("   ✅ Alert presented successfully")
+                    }
+                } else {
+                    // No existing alert, present directly
+                    Swift.print("   ✅ No existing alerts, presenting directly")
+                    rootViewController.present(alert, animated: true)
+                    Swift.print("   ✅ Alert presented successfully")
+                }
+            } else {
+                Swift.print("   ❌ ERROR: Could not find root view controller!")
+            }
+        }
     }
     
     // MARK: - Distance Text Overlay (delegated to ARDistanceTracker)
@@ -3138,14 +3722,74 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Entity.name is a String, not String?, so check if it's not empty
             if !entityName.isEmpty {
                 let idString = entityName
-                // Check if this ID matches a placed box
-                if placedBoxes[idString] != nil {
+                
+                // Check if this is an NPC (skeleton, corgi, etc.)
+                // CRITICAL: NPCs should NEVER be treated as loot boxes, even if they're accidentally in placedBoxes
+                if let npcType = NPCType.allCases.first(where: { $0.npcId == idString }) {
+                    Swift.print("💬 \(npcType.defaultName) NPC tapped - opening conversation")
+                    handleNPCTap(type: npcType)
+                    return // Don't process as regular object - NPCs are not loot boxes
+                }
+                
+                // Check if this ID matches a placed box (but NOT an NPC)
+                // Double-check it's not an NPC to prevent accidental matching
+                if placedBoxes[idString] != nil && placedNPCs[idString] == nil {
                     locationId = idString
                     Swift.print("🎯 Found matching placed box ID: \(idString)")
                     break
                 }
             }
             entityToCheck = currentEntity.parent
+        }
+        
+        // If entity hit didn't work, try proximity-based detection for NPCs first
+        // Check all placed NPCs to see if tap is near any of them on screen
+        if tappedEntity == nil && !placedNPCs.isEmpty {
+            var closestNPCId: String? = nil
+            var closestNPCScreenDistance: CGFloat = CGFloat.infinity
+            let maxNPCScreenDistance: CGFloat = 250.0 // Maximum screen distance in points to consider a tap "on" the NPC (increased for easier tapping)
+            
+            for (npcId, anchor) in placedNPCs {
+                let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+                let anchorWorldPos = SIMD3<Float>(
+                    anchorTransform.columns.3.x,
+                    anchorTransform.columns.3.y,
+                    anchorTransform.columns.3.z
+                )
+                
+                // Project the NPC's world position to screen coordinates
+                guard let screenPoint = arView.project(anchorWorldPos) else {
+                    continue // NPC is not visible (behind camera or outside view)
+                }
+                
+                // Check if the projection is valid (NPC is visible on screen)
+                let viewWidth = CGFloat(arView.bounds.width)
+                let viewHeight = CGFloat(arView.bounds.height)
+                let isOnScreen = screenPoint.x >= 0 && screenPoint.x <= viewWidth &&
+                                screenPoint.y >= 0 && screenPoint.y <= viewHeight
+                
+                if isOnScreen {
+                    // Calculate screen-space distance from tap to NPC
+                    let tapX = CGFloat(tapLocation.x)
+                    let tapY = CGFloat(tapLocation.y)
+                    let dx = tapX - screenPoint.x
+                    let dy = tapY - screenPoint.y
+                    let screenDistance = sqrt(dx * dx + dy * dy)
+                    
+                    // If screen distance is within threshold, consider it a hit
+                    if screenDistance < maxNPCScreenDistance && screenDistance < closestNPCScreenDistance {
+                        closestNPCScreenDistance = screenDistance
+                        closestNPCId = npcId
+                        Swift.print("💬 Found candidate NPC \(npcId): screen dist=\(String(format: "%.1f", screenDistance))px")
+                    }
+                }
+            }
+            
+            if let npcId = closestNPCId, let npcType = NPCType.allCases.first(where: { $0.npcId == npcId }) {
+                Swift.print("💬 \(npcType.defaultName) NPC tapped via proximity detection - opening conversation")
+                handleNPCTap(type: npcType)
+                return // Don't process as regular object
+            }
         }
         
         // If entity hit didn't work, try proximity-based detection using screen-space projection
@@ -3157,6 +3801,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             
             // Use ARView's project method to convert world positions to screen coordinates
             for (boxId, anchor) in placedBoxes {
+                // CRITICAL: Skip NPCs - they should never be treated as loot boxes
+                // NPCs are in placedNPCs, but double-check to prevent accidental matching
+                if placedNPCs[boxId] != nil {
+                    Swift.print("⏭️ Skipping \(boxId) in loot box proximity check - it's an NPC")
+                    continue
+                }
+                
                 let anchorTransform = anchor.transformMatrix(relativeTo: nil)
                 let anchorWorldPos = SIMD3<Float>(
                     anchorTransform.columns.3.x,
@@ -3771,7 +4422,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     /// Handles notification from ARPlacementView when an object is saved
     /// This triggers immediate placement so the object appears right after placement view dismisses
     @objc private func handleARPlacementObjectSaved(_ notification: Notification) {
-        guard let arView = arView,
+        guard arView != nil,
               let userLocation = userLocationManager?.currentLocation,
               let nearbyLocations = nearbyLocationsBinding?.wrappedValue else {
             Swift.print("⚠️ [Placement Notification] Cannot place object: Missing AR view, location, or nearbyLocations")

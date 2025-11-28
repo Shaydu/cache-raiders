@@ -1,6 +1,12 @@
 import SwiftUI
 import CoreLocation
 
+// MARK: - NPC Info
+struct ConversationNPC: Equatable {
+    let id: String
+    let name: String
+}
+
 // MARK: - Main Content View
 struct ContentView: View {
     @StateObject private var locationManager = LootBoxLocationManager()
@@ -12,6 +18,7 @@ struct ContentView: View {
         case arPlacement
         case settings
         case leaderboard
+        case skeletonConversation(npcId: String, npcName: String)
         
         var id: String {
             switch self {
@@ -19,16 +26,21 @@ struct ContentView: View {
             case .arPlacement: return "arPlacement"
             case .settings: return "settings"
             case .leaderboard: return "leaderboard"
+            case .skeletonConversation(let npcId, _): return "skeletonConversation_\(npcId)"
             }
         }
     }
     
     @State private var presentedSheet: SheetType? = nil
+    @State private var conversationNPC: ConversationNPC? = nil
     @State private var nearbyLocations: [LootBoxLocation] = []
     @State private var distanceToNearest: Double?
     @State private var temperatureStatus: String?
     @State private var collectionNotification: String?
     @State private var nearestObjectDirection: Double?
+    
+    // PERFORMANCE: Task for debouncing location updates to prevent excessive API calls
+    @State private var locationUpdateTask: Task<Void, Never>?
     
     // Computed property for loot box counter - counts ALL locations from database (not just nearby)
     // This matches the admin panel which shows all objects, not just nearby ones
@@ -241,7 +253,8 @@ struct ContentView: View {
     
     private var notificationsView: some View {
         VStack(spacing: 8) {
-            if !nearbyLocations.isEmpty {
+            // Only show "loot boxes nearby" in open mode
+            if locationManager.gameMode == .open && !nearbyLocations.isEmpty {
                 Text("🎯 \(nearbyLocations.count) loot box\(nearbyLocations.count == 1 ? "" : "es") nearby!")
                     .font(.headline)
                     .padding()
@@ -271,7 +284,8 @@ struct ContentView: View {
         VStack {
             Spacer()
             HStack {
-                if !locationManager.locations.isEmpty {
+                // Only show "Loot Boxes Found" counter in open mode
+                if locationManager.gameMode == .open && !locationManager.locations.isEmpty {
                     Text("Loot Boxes Found: \(lootBoxCounter.found)/\(lootBoxCounter.total)")
                         .font(.caption)
                         .padding(.horizontal, 8)
@@ -296,7 +310,8 @@ struct ContentView: View {
                 distanceToNearest: $distanceToNearest,
                 temperatureStatus: $temperatureStatus,
                 collectionNotification: $collectionNotification,
-                nearestObjectDirection: $nearestObjectDirection
+                nearestObjectDirection: $nearestObjectDirection,
+                conversationNPC: $conversationNPC
             )
             .ignoresSafeArea()
             
@@ -325,6 +340,13 @@ struct ContentView: View {
                             }
                         }
                 }
+            case .skeletonConversation(let npcId, let npcName):
+                SkeletonConversationView(npcName: npcName, npcId: npcId)
+            }
+        }
+        .onChange(of: conversationNPC) { _, newNPC in
+            if let npc = newNPC {
+                presentedSheet = .skeletonConversation(npcId: npc.id, npcName: npc.name)
             }
         }
         .onAppear {
@@ -338,16 +360,41 @@ struct ContentView: View {
             APIService.shared.syncSavedUserNameToServer()
         }
         .onChange(of: userLocationManager.currentLocation) { _, newLocation in
+            // PERFORMANCE: Debounce location updates to prevent excessive API calls
+            // Cancel previous task if still pending
+            locationUpdateTask?.cancel()
+            
             // When we get a GPS fix, automatically load shared objects from API
+            // SKIP in story modes - we only show NPCs, no loot boxes
+            guard locationManager.gameMode == .open else {
+                Swift.print("📖 Story mode active - skipping API object loading (NPCs only)")
+                return
+            }
+
             if let location = newLocation {
                 // Check if we have a valid GPS fix
                 guard location.horizontalAccuracy >= 0 && location.horizontalAccuracy < 100 else {
                     return
                 }
 
-                // Auto-load shared objects from API on background thread
-                Task.detached(priority: .utility) {
-                    await locationManager.loadLocationsFromAPI(userLocation: location)
+                // PERFORMANCE: Debounce - wait 2 seconds before making API call
+                // This prevents rapid-fire API calls when GPS updates frequently
+                locationUpdateTask = Task {
+                    do {
+                        // Wait 2 seconds before making the call
+                        try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                        
+                        // Check if task was cancelled
+                        guard !Task.isCancelled else { return }
+                        
+                        // Auto-load shared objects from API on background thread
+                        await locationManager.loadLocationsFromAPI(userLocation: location)
+                    } catch {
+                        // Task was cancelled or sleep failed - ignore
+                        if !(error is CancellationError) {
+                            Swift.print("⚠️ Location update task error: \(error)")
+                        }
+                    }
                 }
             }
         }

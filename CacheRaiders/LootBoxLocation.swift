@@ -2,6 +2,36 @@ import Foundation
 import CoreLocation
 import Combine
 
+// MARK: - Game Mode Enum
+/// Represents the game mode
+enum GameMode: String, Codable, CaseIterable {
+    case open = "open"                    // Open mode - all treasures appear normally
+    case deadMensSecrets = "dead_mens_secrets"  // Dead Men's Secrets - skeleton guides you to treasure
+    case splitLegacy = "split_legacy"     // The Split Legacy - find both NPCs, get map halves, combine to find treasure
+    
+    var displayName: String {
+        switch self {
+        case .open:
+            return "Open"
+        case .deadMensSecrets:
+            return "Dead Men's Secrets"
+        case .splitLegacy:
+            return "The Split Legacy"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .open:
+            return "Open mode: All treasures appear normally. Find any treasure you want!"
+        case .deadMensSecrets:
+            return "Dead Men's Secrets: Skeleton appears in AR to guide you. Follow the skeleton's clues to find the 200-year-old treasure."
+        case .splitLegacy:
+            return "The Split Legacy: Find the skeleton first, who will help you find the Corgi Traveller. Each NPC holds half of the treasure map. Combine both halves to find the treasure!"
+        }
+    }
+}
+
 // MARK: - Item Source Enum
 /// Represents where a loot box location came from
 enum ItemSource: String, Codable {
@@ -199,6 +229,24 @@ class LootBoxLocationManager: ObservableObject {
     @Published var databaseStats: DatabaseStats? = nil // Database stats for loot box counter
     @Published var showOnlyNextItem: Bool = false // Show only the next unfound item in the list
     @Published var useGenericDoubloonIcons: Bool = false // When enabled, show generic doubloon icons and reveal real objects with animation
+    @Published var gameMode: GameMode = .open { // Game mode: Open, Dead Men's Secrets, or The Split Legacy
+        didSet {
+            // STORY MODE: Remove all API objects when entering story mode (only NPCs should remain)
+            if (gameMode == .deadMensSecrets || gameMode == .splitLegacy) && oldValue != gameMode {
+                let objectsToRemove = locations.filter { location in
+                    // Remove all API-sourced objects (keep AR-manual and AR-randomized for now)
+                    return location.source == .api || location.source == .map
+                }
+                if !objectsToRemove.isEmpty {
+                    locations.removeAll { location in
+                        location.source == .api || location.source == .map
+                    }
+                    Swift.print("🗑️ Story mode activated: Removed \(objectsToRemove.count) API/map objects (only NPCs will be shown)")
+                    saveLocations() // Persist the change
+                }
+            }
+        }
+    }
     var onSizeChanged: (() -> Void)? // Callback when size settings change
     var onObjectCollectedByOtherUser: ((String) -> Void)? // Callback when object is collected by another user (to remove from AR)
     var onObjectUncollected: ((String) -> Void)? // Callback when object is uncollected (to re-place in AR)
@@ -218,6 +266,7 @@ class LootBoxLocationManager: ObservableObject {
     private let selectedARLensKey = "selectedARLens"
     private let showOnlyNextItemKey = "showOnlyNextItem"
     private let useGenericDoubloonIconsKey = "useGenericDoubloonIcons"
+    private let gameModeKey = "gameMode"
     
     // API refresh timer - refreshes from API periodically when enabled
     private var apiRefreshTimer: Timer?
@@ -242,6 +291,7 @@ class LootBoxLocationManager: ObservableObject {
         loadSelectedARLens()
         loadShowOnlyNextItem()
         loadUseGenericDoubloonIcons()
+        loadGameMode()
         
         // API sync is always enabled - start refresh timer
         startAPIRefreshTimer()
@@ -601,6 +651,16 @@ class LootBoxLocationManager: ObservableObject {
                 return false
             }
 
+            // Story Mode: Only show story-relevant treasures (treasure map, clues, final treasure)
+            // In story modes, filter out regular loot boxes - only NPCs and story items
+            if gameMode == .deadMensSecrets || gameMode == .splitLegacy {
+                // In story modes, we don't show regular loot boxes from the API
+                // Only NPCs (skeleton, corgi) are shown, and they're placed by ARCoordinator
+                // So we filter out ALL API objects in story modes
+                Swift.print("   📖 Story mode: Skipping API object '\(location.name)' (only NPCs shown in story mode)")
+                return false
+            }
+
             // Exclude AR-only locations (no GPS coordinates) - they're placed in AR space, not GPS space
             // AR-placed objects with GPS coordinates should be treated the same as admin-placed objects
             if location.isAROnly {
@@ -826,6 +886,21 @@ class LootBoxLocationManager: ObservableObject {
     // Load generic doubloon icon preference
     private func loadUseGenericDoubloonIcons() {
         useGenericDoubloonIcons = UserDefaults.standard.bool(forKey: useGenericDoubloonIconsKey)
+    }
+    
+    // Save game mode preference
+    func saveGameMode() {
+        UserDefaults.standard.set(gameMode.rawValue, forKey: gameModeKey)
+    }
+    
+    // Load game mode preference
+    private func loadGameMode() {
+        if let savedMode = UserDefaults.standard.string(forKey: gameModeKey),
+           let mode = GameMode(rawValue: savedMode) {
+            gameMode = mode // didSet will handle cleanup if needed
+        } else {
+            gameMode = .open // Default to open mode
+        }
     }
     
     // Save selected AR lens preference

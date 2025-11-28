@@ -99,70 +99,67 @@ struct ARPlacementView: View {
                             print("   AR Origin: \(arOrigin != nil ? "available" : "nil")")
                             
                             Task {
-                                do {
-                                    if let selected = selectedObject {
-                                        print("📝 [Placement] Updating existing object: \(selected.name) (ID: \(selected.id))")
-                                        // Update existing object
-                                        await updateObjectLocation(
-                                            objectId: selected.id,
-                                            coordinate: gpsCoordinate,
-                                            arPosition: arPosition,
-                                            arOrigin: arOrigin,
-                                            groundingHeight: groundingHeight,
-                                            scale: scale
-                                        )
-                                        print("✅ [Placement] Object location updated successfully")
-                                    } else {
-                                        print("➕ [Placement] Creating new object of type: \(selectedObjectType.displayName)")
-                                        // Create new object
-                                        await createNewObject(
-                                            type: selectedObjectType,
-                                            coordinate: gpsCoordinate,
-                                            arPosition: arPosition,
-                                            arOrigin: arOrigin,
-                                            groundingHeight: groundingHeight,
-                                            scale: scale
-                                        )
-                                        print("✅ [Placement] New object created successfully")
-                                    }
-
-                                    // Reload locations so main ARCoordinator picks up the new/updated object
-                                    // This ensures the object persists when we dismiss this placement view
-                                    print("🔄 [Placement] Reloading locations so object persists in main AR view...")
-                                    await locationManager.loadLocationsFromAPI(userLocation: userLocationManager.currentLocation)
-                                    print("✅ [Placement] Locations reloaded")
-
-                                    // CRITICAL: Post notification to trigger immediate placement in main AR view
-                                    // The main AR view will listen for this and call checkAndPlaceBoxes immediately
-                                    let objectId = selectedObject?.id ?? "new"
-                                    await MainActor.run {
-                                        NotificationCenter.default.post(
-                                            name: NSNotification.Name("ARPlacementObjectSaved"),
-                                            object: nil,
-                                            userInfo: ["objectId": objectId]
-                                        )
-                                        print("📢 [Placement] Posted notification for immediate placement")
-                                    }
-
-                                    // Longer delay to ensure the main AR view has time to:
-                                    // 1. Receive the notification
-                                    // 2. Process the reloaded locations
-                                    // 3. Place the object via checkAndPlaceBoxes
-                                    try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-
-                                    print("✅ [Placement] Placement process complete - dismissing view")
-                                    dismiss()
-                                } catch {
-                                    print("❌ [Placement] Error during placement process: \(error)")
-                                    print("   Error details: \(error.localizedDescription)")
-                                    // Still dismiss the view even if there was an error
-                                    dismiss()
+                                if let selected = selectedObject {
+                                    print("📝 [Placement] Updating existing object: \(selected.name) (ID: \(selected.id))")
+                                    // Update existing object
+                                    await updateObjectLocation(
+                                        objectId: selected.id,
+                                        coordinate: gpsCoordinate,
+                                        arPosition: arPosition,
+                                        arOrigin: arOrigin,
+                                        groundingHeight: groundingHeight,
+                                        scale: scale
+                                    )
+                                    print("✅ [Placement] Object location updated successfully")
+                                } else {
+                                    print("➕ [Placement] Creating new object of type: \(selectedObjectType.displayName)")
+                                    // Create new object
+                                    await createNewObject(
+                                        type: selectedObjectType,
+                                        coordinate: gpsCoordinate,
+                                        arPosition: arPosition,
+                                        arOrigin: arOrigin,
+                                        groundingHeight: groundingHeight,
+                                        scale: scale
+                                    )
+                                    print("✅ [Placement] New object created successfully")
                                 }
+
+                                // Reload locations so main ARCoordinator picks up the new/updated object
+                                // This ensures the object persists when we dismiss this placement view
+                                print("🔄 [Placement] Reloading locations so object persists in main AR view...")
+                                await locationManager.loadLocationsFromAPI(userLocation: userLocationManager.currentLocation)
+                                print("✅ [Placement] Locations reloaded")
+
+                                // CRITICAL: Post notification to trigger immediate placement in main AR view
+                                // The main AR view will listen for this and call checkAndPlaceBoxes immediately
+                                let objectId = selectedObject?.id ?? "new"
+                                await MainActor.run {
+                                    NotificationCenter.default.post(
+                                        name: NSNotification.Name("ARPlacementObjectSaved"),
+                                        object: nil,
+                                        userInfo: ["objectId": objectId]
+                                    )
+                                    print("📢 [Placement] Posted notification for immediate placement")
+                                }
+
+                                // Longer delay to ensure the main AR view has time to:
+                                // 1. Receive the notification
+                                // 2. Process the reloaded locations
+                                // 3. Place the object via checkAndPlaceBoxes
+                                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+
+                                print("✅ [Placement] Placement process complete - dismissing view")
+                                dismiss()
                             }
                         },
                         onCancel: {
                             placementMode = .selecting
                             showObjectSelector = true
+                        },
+                        onDone: {
+                            // User pressed Done - save any placed object and dismiss
+                            dismiss()
                         }
                     )
                 }
@@ -181,6 +178,14 @@ struct ARPlacementView: View {
                             dismiss()
                         }
                     }
+                }
+            }
+            .onDisappear {
+                // When view disappears, save any placed object if one exists
+                // This handles swipe-to-dismiss and navigation bar Done button
+                if placementMode == .placing {
+                    // The onDone callback in ARPlacementARViewWrapper will handle saving
+                    // This is a fallback in case the view is dismissed another way
                 }
             }
         }
@@ -327,10 +332,13 @@ struct ARPlacementARViewWrapper: View {
     let isNewObject: Bool
     let onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void
     let onCancel: () -> Void
+    let onDone: () -> Void
 
     @StateObject private var placementReticle = ARPlacementReticle(arView: nil)
     @State private var isPlacementMode = true
     @State private var scaleMultiplier: Float = 1.0
+    @State private var coordinator: ARPlacementARView.Coordinator?
+    @State private var hasPlacedObject = false
 
     var body: some View {
         ZStack {
@@ -344,7 +352,26 @@ struct ARPlacementARViewWrapper: View {
                 placementReticle: placementReticle,
                 scaleMultiplier: $scaleMultiplier,
                 onPlace: onPlace,
-                onCancel: onCancel
+                onCancel: onCancel,
+                coordinatorBinding: Binding(
+                    get: { coordinator },
+                    set: { 
+                        coordinator = $0
+                        // Update hasPlacedObject when coordinator changes
+                        if let coord = $0 {
+                            // Use a timer to periodically check if object is placed
+                            // This is needed because hasPlacedObject is a computed property
+                            Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
+                                if coord.hasPlacedObject != hasPlacedObject {
+                                    hasPlacedObject = coord.hasPlacedObject
+                                }
+                                if !coord.hasPlacedObject {
+                                    timer.invalidate()
+                                }
+                            }
+                        }
+                    }
+                )
             )
 
             // Placement overlay UI
@@ -354,12 +381,23 @@ struct ARPlacementARViewWrapper: View {
                 placementDistance: $placementReticle.distanceFromCamera,
                 scaleMultiplier: $scaleMultiplier,
                 objectType: objectType,
+                hasPlacedObject: hasPlacedObject,
                 onPlaceObject: {
                     // Trigger placement at reticle position via notification
                     NotificationCenter.default.post(name: NSNotification.Name("TriggerPlacementAtReticle"), object: nil)
                 },
+                onDone: {
+                    // Save the placed object if one exists
+                    if let coord = coordinator, coord.hasPlacedObject {
+                        coord.savePlacedObject()
+                    }
+                    onDone()
+                },
                 onCancel: onCancel
             )
+        }
+        .onChange(of: coordinator?.hasPlacedObject ?? false) { oldValue, newValue in
+            hasPlacedObject = newValue
         }
     }
 }
@@ -375,6 +413,7 @@ struct ARPlacementARView: UIViewRepresentable {
     @Binding var scaleMultiplier: Float
     let onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void
     let onCancel: () -> Void
+    @Binding var coordinatorBinding: Coordinator?
     
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
@@ -407,6 +446,9 @@ struct ARPlacementARView: UIViewRepresentable {
         context.coordinator.setup(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, selectedObject: selectedObject, objectType: objectType, isNewObject: isNewObject, placementReticle: placementReticle)
         context.coordinator.onPlace = onPlace
         context.coordinator.scaleMultiplier = scaleMultiplier
+        
+        // Expose coordinator to parent view
+        coordinatorBinding = context.coordinator
         
         return arView
     }
@@ -443,6 +485,14 @@ struct ARPlacementARView: UIViewRepresentable {
         var previewWireframeAnchor: AnchorEntity?
         var placedObjectAnchor: AnchorEntity? // Track placed object to show immediately
         var placedObjectEntity: ModelEntity? // Track placed object entity
+        
+        // Track if an object has been placed (for Done button)
+        var hasPlacedObject: Bool {
+            return placedObjectAnchor != nil
+        }
+        
+        // Store placement data for saving
+        var pendingPlacementData: (gpsCoordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float)?
         
         init(onPlace: @escaping (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void, onCancel: @escaping () -> Void) {
             self.onPlace = onPlace
@@ -831,7 +881,34 @@ struct ARPlacementARView: UIViewRepresentable {
             // GPS is only for fallback when AR session restarts
             let surfaceY = Double(tapWorldPos.y)
             print("✅ Placing object at AR position: \(tapWorldPos) (mm-precision), GPS fallback: \(gpsCoordinate?.latitude ?? 0), \(gpsCoordinate?.longitude ?? 0), Y: \(surfaceY)m, scale: \(scaleMultiplier)x")
-            onPlace(gpsCoordinate ?? arOrigin.coordinate, tapWorldPos, arOrigin, surfaceY, scaleMultiplier)
+            
+            // Store placement data for potential later save (if user presses Done instead of Place)
+            pendingPlacementData = (
+                gpsCoordinate: gpsCoordinate ?? arOrigin.coordinate,
+                arPosition: tapWorldPos,
+                arOrigin: arOrigin,
+                groundingHeight: surfaceY,
+                scale: scaleMultiplier
+            )
+            
+            // Place object immediately in AR scene
+            let objectId = selectedObject?.id ?? UUID().uuidString
+            let locationName = selectedObject?.name ?? "New \(objectType.displayName)"
+            let tempLocation = LootBoxLocation(
+                id: objectId,
+                name: locationName,
+                type: objectType,
+                latitude: gpsCoordinate?.latitude ?? arOrigin.coordinate.latitude,
+                longitude: gpsCoordinate?.longitude ?? arOrigin.coordinate.longitude,
+                radius: 5.0,
+                grounding_height: surfaceY,
+                source: .arManual
+            )
+            
+            placeObjectImmediately(at: tapWorldPos, location: tempLocation, in: arView)
+            
+            // Note: onPlace is NOT called here - user must press "Place Object" or "Done" to save
+            print("💡 Object placed in AR scene. Press 'Place Object' to save, or 'Done' to save and dismiss.")
         }
 
         /// Handles placement button tap from overlay UI
@@ -917,8 +994,34 @@ struct ARPlacementARView: UIViewRepresentable {
             
             placeObjectImmediately(at: adjustedPosition, location: tempLocation, in: arView)
             
+            // Store placement data for potential later save (if user presses Done instead of Place)
+            pendingPlacementData = (
+                gpsCoordinate: gpsCoordinate ?? arOrigin.coordinate,
+                arPosition: adjustedPosition,
+                arOrigin: arOrigin,
+                groundingHeight: surfaceY,
+                scale: scaleMultiplier
+            )
+            
             // Then save to API and dismiss (object already visible)
             onPlace(gpsCoordinate ?? arOrigin.coordinate, adjustedPosition, arOrigin, surfaceY, scaleMultiplier)
+        }
+        
+        /// Saves the currently placed object (called when Done button is pressed)
+        func savePlacedObject() {
+            guard let placementData = pendingPlacementData else {
+                print("⚠️ No placement data to save")
+                return
+            }
+            
+            print("💾 Saving placed object via Done button...")
+            onPlace(
+                placementData.gpsCoordinate,
+                placementData.arPosition,
+                placementData.arOrigin,
+                placementData.groundingHeight,
+                placementData.scale
+            )
         }
         
         /// Immediately places the object in AR scene at the specified position
@@ -1171,6 +1274,15 @@ struct ARPlacementARView: UIViewRepresentable {
             draggingAnchor = nil
             isDragging = false
 
+            // Store placement data for potential later save (if user presses Done instead of Place)
+            pendingPlacementData = (
+                gpsCoordinate: gpsCoordinate ?? arOrigin.coordinate,
+                arPosition: finalWorldPos,
+                arOrigin: arOrigin,
+                groundingHeight: surfaceY,
+                scale: scaleMultiplier
+            )
+            
             // Place the object using AR coordinates (primary) with GPS fallback
             onPlace(gpsCoordinate ?? arOrigin.coordinate, finalWorldPos, arOrigin, surfaceY, scaleMultiplier)
         }

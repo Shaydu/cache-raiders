@@ -142,7 +142,7 @@ class ChaliceLootContainer {
                     materials.append(material)
                 } else {
                     // No textures - can enhance with lighting properties
-                    if var simpleMaterial = material as? SimpleMaterial {
+                    if let simpleMaterial = material as? SimpleMaterial {
                         // Enhance lighting properties without overriding original color
                         materials.append(simpleMaterial)
                     } else {

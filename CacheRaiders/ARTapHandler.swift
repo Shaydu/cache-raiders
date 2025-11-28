@@ -25,25 +25,34 @@ class ARTapHandler {
     // Callback for placing loot box at tap location
     var onPlaceLootBoxAtTap: ((LootBoxLocation, ARRaycastResult) -> Void)?
     
+    // Callback for NPC taps (takes NPC ID string, ARCoordinator will convert to NPCType)
+    var onNPCTap: ((String) -> Void)?
+    
+    // Reference to placed NPCs for tap detection
+    var placedNPCs: [String: AnchorEntity] = [:]
+    
     init(arView: ARView?, locationManager: LootBoxLocationManager?) {
         self.arView = arView
         self.locationManager = locationManager
     }
     
     @objc func handleTap(_ sender: UITapGestureRecognizer) {
+        Swift.print("👆 ========== TAP DETECTED ==========")
         guard let arView = arView,
               let locationManager = locationManager,
               let frame = arView.session.currentFrame else {
             Swift.print("⚠️ Tap handler: Missing AR view, location manager, or frame")
             return
         }
-        
+
         let tapLocation = sender.location(in: arView)
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-        
-        Swift.print("👆 Tap detected at screen: (\(tapLocation.x), \(tapLocation.y))")
-        Swift.print("   Placed boxes count: \(placedBoxes.count), keys: \(placedBoxes.keys.sorted())")
+
+        Swift.print("   Screen location: (\(tapLocation.x), \(tapLocation.y))")
+        Swift.print("   Placed boxes: \(placedBoxes.count) - \(placedBoxes.keys.sorted())")
+        Swift.print("   Placed NPCs: \(placedNPCs.count) - \(placedNPCs.keys.sorted())")
+        Swift.print("   onNPCTap callback exists: \(onNPCTap != nil)")
 
         // Get screen center for crosshair placement
         let screenCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
@@ -85,8 +94,25 @@ class ARTapHandler {
                 checkedEntities.insert(entityKey)
                 
                 let idString = entityName
-                // Check if this ID matches a placed box
-                if placedBoxes[idString] != nil {
+                
+                // FIRST: Check if this is an NPC (skeleton, corgi, etc.)
+                // CRITICAL: NPCs should NEVER be treated as loot boxes, even if they're accidentally in placedBoxes
+                Swift.print("🔍 DEBUG TAP: Checking if '\(idString)' is an NPC")
+                Swift.print("   placedNPCs keys: \(placedNPCs.keys.sorted())")
+                Swift.print("   Is in placedNPCs? \(placedNPCs[idString] != nil)")
+                if placedNPCs[idString] != nil {
+                    Swift.print("💬 ✅ NPC TAPPED (ID: \(idString)) - triggering onNPCTap callback")
+                    Swift.print("   onNPCTap callback exists: \(onNPCTap != nil)")
+                    onNPCTap?(idString)
+                    Swift.print("   ✅ onNPCTap callback invoked")
+                    return // Don't process as regular object - NPCs are not loot boxes
+                } else {
+                    Swift.print("   ℹ️ Not an NPC (not in placedNPCs)")
+                }
+                
+                // Check if this ID matches a placed box (but NOT an NPC)
+                // Double-check it's not an NPC to prevent accidental matching
+                if placedBoxes[idString] != nil && placedNPCs[idString] == nil {
                     locationId = idString
                     Swift.print("🎯 Found matching placed box ID: \(idString)")
                     break
@@ -112,6 +138,56 @@ class ARTapHandler {
             entityToCheck = currentEntity.parent
         }
         
+        // If entity hit didn't work, try proximity-based detection for NPCs first
+        // Check all placed NPCs to see if tap is near any of them on screen
+        if tappedEntity == nil && !placedNPCs.isEmpty {
+            var closestNPCId: String? = nil
+            var closestNPCScreenDistance: CGFloat = CGFloat.infinity
+            let maxNPCScreenDistance: CGFloat = 250.0 // Maximum screen distance in points to consider a tap "on" the NPC (increased for easier tapping)
+            
+            for (npcId, anchor) in placedNPCs {
+                let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+                let anchorWorldPos = SIMD3<Float>(
+                    anchorTransform.columns.3.x,
+                    anchorTransform.columns.3.y,
+                    anchorTransform.columns.3.z
+                )
+                
+                // Project the NPC's world position to screen coordinates
+                guard let screenPoint = arView.project(anchorWorldPos) else {
+                    continue // NPC is not visible (behind camera or outside view)
+                }
+                
+                // Check if the projection is valid (NPC is visible on screen)
+                let viewWidth = CGFloat(arView.bounds.width)
+                let viewHeight = CGFloat(arView.bounds.height)
+                let isOnScreen = screenPoint.x >= 0 && screenPoint.x <= viewWidth &&
+                                screenPoint.y >= 0 && screenPoint.y <= viewHeight
+                
+                if isOnScreen {
+                    // Calculate screen-space distance from tap to NPC
+                    let tapX = CGFloat(tapLocation.x)
+                    let tapY = CGFloat(tapLocation.y)
+                    let dx = tapX - screenPoint.x
+                    let dy = tapY - screenPoint.y
+                    let screenDistance = sqrt(dx * dx + dy * dy)
+                    
+                    // If screen distance is within threshold, consider it a hit
+                    if screenDistance < maxNPCScreenDistance && screenDistance < closestNPCScreenDistance {
+                        closestNPCScreenDistance = screenDistance
+                        closestNPCId = npcId
+                        Swift.print("💬 Found candidate NPC \(npcId): screen dist=\(String(format: "%.1f", screenDistance))px")
+                    }
+                }
+            }
+            
+            if let npcId = closestNPCId {
+                Swift.print("💬 NPC tapped via proximity detection (ID: \(npcId)) - opening conversation")
+                onNPCTap?(npcId)
+                return // Don't process as regular object
+            }
+        }
+        
         // If entity hit didn't work, try proximity-based detection using screen-space projection
         // Check all placed boxes to see if tap is near any of them on screen
         if locationId == nil && !placedBoxes.isEmpty {
@@ -129,6 +205,13 @@ class ARTapHandler {
             
             // Use ARView's project method to convert world positions to screen coordinates
             for (boxId, anchor) in placedBoxes {
+                // CRITICAL: Skip NPCs - they should never be treated as loot boxes
+                // NPCs are in placedNPCs, but double-check to prevent accidental matching
+                if placedNPCs[boxId] != nil {
+                    Swift.print("⏭️ Skipping \(boxId) in loot box proximity check - it's an NPC")
+                    continue
+                }
+                
                 let anchorTransform = anchor.transformMatrix(relativeTo: nil)
                 let anchorWorldPos = SIMD3<Float>(
                     anchorTransform.columns.3.x,

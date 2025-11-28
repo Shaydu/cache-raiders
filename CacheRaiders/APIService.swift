@@ -63,9 +63,39 @@ struct HealthResponse: Codable {
     let server_ip: String
 }
 
+// MARK: - Network Request Queue
+/// Limits concurrent network requests to prevent freezes from too many simultaneous requests
+actor NetworkRequestQueue {
+    private var activeCount = 0
+    private let maxConcurrent = 3 // Max 3 concurrent requests
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    
+    func waitForSlot() async {
+        if activeCount < maxConcurrent {
+            activeCount += 1
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+    
+    func releaseSlot() {
+        activeCount -= 1
+        if !waiters.isEmpty {
+            let next = waiters.removeFirst()
+            activeCount += 1
+            next.resume()
+        }
+    }
+}
+
 // MARK: - API Service
 class APIService {
     static let shared = APIService()
+    
+    // Network request queue to limit concurrent requests and prevent freezes
+    private static let requestQueue = NetworkRequestQueue()
     
     // Configure your API base URL here
     // For local development: "http://localhost:5001"
@@ -185,9 +215,19 @@ class APIService {
     ) async throws -> T {
         print("🔍 [API Request] \(method) \(url.absoluteString)")
         
+        // PERFORMANCE: Wait for available slot in request queue to prevent too many concurrent requests
+        await Self.requestQueue.waitForSlot()
+        defer { 
+            Task {
+                await Self.requestQueue.releaseSlot()
+            }
+        }
+        
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // PERFORMANCE: Add timeout to prevent hanging requests
+        request.timeoutInterval = 10.0 // 10 second timeout
         
         if let body = body {
             request.httpBody = body
@@ -708,6 +748,182 @@ class APIService {
         }
         
         return location
+    }
+    
+    // MARK: - Story Mode API Methods (Dead Men's Secrets & The Split Legacy)
+    
+    /// Interact with an NPC (skeleton) via LLM conversation
+    func interactWithNPC(npcId: String, message: String, npcName: String = "Captain Bones", npcType: String = "skeleton", isSkeleton: Bool = true) async throws -> (npcName: String, response: String) {
+        guard let url = URL(string: "\(baseURL)/api/npcs/\(npcId)/interact") else {
+            throw APIError.invalidURL
+        }
+        
+        struct NPCInteractionRequest: Codable {
+            let device_uuid: String
+            let message: String
+            let npc_name: String
+            let npc_type: String
+            let is_skeleton: Bool
+        }
+        
+        struct NPCInteractionResponse: Codable {
+            let npc_id: String
+            let npc_name: String
+            let response: String
+        }
+        
+        let request = NPCInteractionRequest(
+            device_uuid: currentUserID,
+            message: message,
+            npc_name: npcName,
+            npc_type: npcType,
+            is_skeleton: isSkeleton
+        )
+        
+        let encoder = JSONEncoder()
+        let body = try encoder.encode(request)
+        
+        let response: NPCInteractionResponse = try await makeRequest(url: url, method: "POST", body: body)
+        return (response.npc_name, response.response)
+    }
+    
+    /// Generate a pirate riddle clue based on location and map features
+    func generateClue(targetLocation: CLLocation, mapFeatures: [String]? = nil, fetchRealFeatures: Bool = true) async throws -> String {
+        guard let url = URL(string: "\(baseURL)/api/llm/generate-clue") else {
+            throw APIError.invalidURL
+        }
+        
+        struct ClueRequest: Codable {
+            let target_location: TargetLocation
+            let map_features: [String]?
+            let fetch_real_features: Bool
+            
+            struct TargetLocation: Codable {
+                let latitude: Double
+                let longitude: Double
+            }
+        }
+        
+        struct ClueResponse: Codable {
+            let clue: String
+            let target_location: ClueRequest.TargetLocation
+            let used_real_map_data: Bool
+        }
+        
+        let request = ClueRequest(
+            target_location: ClueRequest.TargetLocation(
+                latitude: targetLocation.coordinate.latitude,
+                longitude: targetLocation.coordinate.longitude
+            ),
+            map_features: mapFeatures,
+            fetch_real_features: fetchRealFeatures
+        )
+        
+        let encoder = JSONEncoder()
+        let body = try encoder.encode(request)
+        
+        let response: ClueResponse = try await makeRequest(url: url, method: "POST", body: body)
+        return response.clue
+    }
+    
+    // MARK: - Split Legacy Map Pieces
+    
+    // MARK: - Map Piece Types
+    
+    struct MapPiece: Codable {
+        let piece_number: Int
+        let hint: String
+        let approximate_latitude: Double?
+        let approximate_longitude: Double?
+        let exact_latitude: Double?
+        let exact_longitude: Double?
+        let landmarks: [String]
+        let is_first_half: Bool?
+        let is_second_half: Bool?
+    }
+    
+    struct MapPieceResponse: Codable {
+        let npc_id: String
+        let npc_type: String
+        let map_piece: MapPiece
+        let message: String
+    }
+    
+    struct CombinedMapResponse: Codable {
+        let complete_map: CompleteMap
+        let message: String
+        
+        struct CompleteMap: Codable {
+            let map_name: String
+            let x_marks_the_spot: XMarksTheSpot
+            let landmarks: [String]
+            let combined_from_pieces: [Int]
+            
+            struct XMarksTheSpot: Codable {
+                let latitude: Double
+                let longitude: Double
+            }
+        }
+    }
+    
+    /// Get a treasure map piece from an NPC
+    /// - Parameters:
+    ///   - npcId: The ID of the NPC (skeleton-1 or corgi-1)
+    ///   - targetLocation: Optional target location for the treasure (if not provided, uses default)
+    /// - Returns: Map piece data with coordinates and landmarks
+    func getMapPiece(npcId: String, targetLocation: CLLocation? = nil) async throws -> MapPieceResponse {
+        let urlString = "\(baseURL)/api/npcs/\(npcId)/map-piece"
+        
+        struct MapPieceRequest: Codable {
+            let target_location: TargetLocation?
+            
+            struct TargetLocation: Codable {
+                let latitude: Double
+                let longitude: Double
+            }
+        }
+        
+        var requestBody: Data?
+        if let targetLocation = targetLocation {
+            let request = MapPieceRequest(
+                target_location: MapPieceRequest.TargetLocation(
+                    latitude: targetLocation.coordinate.latitude,
+                    longitude: targetLocation.coordinate.longitude
+                )
+            )
+            let encoder = JSONEncoder()
+            requestBody = try encoder.encode(request)
+        }
+        
+        guard let url = URL(string: urlString) else {
+            throw APIError.invalidURL
+        }
+        
+        let response: MapPieceResponse = try await makeRequest(url: url, method: "GET", body: requestBody)
+        return response
+    }
+    
+    /// Combine two map pieces into a complete treasure map
+    /// - Parameters:
+    ///   - piece1: First map piece (from skeleton)
+    ///   - piece2: Second map piece (from corgi)
+    /// - Returns: Complete treasure map with X marks the spot location
+    func combineMapPieces(piece1: MapPiece, piece2: MapPiece) async throws -> CombinedMapResponse {
+        guard let url = URL(string: "\(baseURL)/api/map-pieces/combine") else {
+            throw APIError.invalidURL
+        }
+        
+        struct CombineRequest: Codable {
+            let piece1: MapPiece
+            let piece2: MapPiece
+        }
+        
+        let request = CombineRequest(piece1: piece1, piece2: piece2)
+        let encoder = JSONEncoder()
+        let body = try encoder.encode(request)
+        
+        let response: CombinedMapResponse = try await makeRequest(url: url, method: "POST", body: body)
+        return response
     }
 }
 
