@@ -52,12 +52,13 @@ struct SkeletonConversationView: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 8) {
-                        // Initial greeting (compact)
+                        // Initial greeting (compact) - show immediately without typewriter effect
                         if messages.isEmpty {
                             ShadowgateMessageBox(
                                 text: initialGreeting,
                                 isFromUser: false,
-                                npcName: npcName
+                                npcName: npcName,
+                                skipTypewriter: true // Skip typewriter for initial greeting to prevent freezing
                             )
                             .id("greeting")
                         }
@@ -305,6 +306,7 @@ struct ShadowgateMessageBox: View {
     let text: String
     let isFromUser: Bool
     let npcName: String
+    var skipTypewriter: Bool = false // Skip typewriter effect (e.g., for initial greeting)
     
     @StateObject private var typewriterService = TypewriterTextService()
     @AppStorage("enableTypewriterEffect") private var enableTypewriterEffect: Bool = true
@@ -382,9 +384,9 @@ struct ShadowgateMessageBox: View {
             }
         }
         .onAppear {
-            // Start typewriter effect for NPC messages if enabled
+            // Start typewriter effect for NPC messages if enabled and not skipped
             // Use async to prevent blocking the main thread
-            if !isFromUser && enableTypewriterEffect {
+            if !isFromUser && enableTypewriterEffect && !skipTypewriter {
                 // Configure typewriter service with same settings as ARConversationOverlay
                 typewriterService.charactersPerSecond = 30.0
                 typewriterService.audioToneID = 1104 // Keyboard clack sound
@@ -408,8 +410,8 @@ struct ShadowgateMessageBox: View {
             }
         }
         .onChange(of: text) { oldText, newText in
-            // Restart typewriter effect if text changes (for new messages) and enabled
-            if !isFromUser && newText != oldText && enableTypewriterEffect {
+            // Restart typewriter effect if text changes (for new messages) and enabled and not skipped
+            if !isFromUser && newText != oldText && enableTypewriterEffect && !skipTypewriter {
                 Task { @MainActor in
                     typewriterService.startReveal(text: newText)
                 }

@@ -157,10 +157,18 @@
             
             <div class="form-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #444;">
                 <label for="llmProvider">🤖 LLM Provider</label>
-                <select id="llmProvider" class="loot-type-select" onchange="SettingsManager.updateLLMProvider()">
+                <select id="llmProvider" class="loot-type-select" onchange="SettingsManager.onProviderChange()">
                     <option value="openai">OpenAI (Cloud)</option>
                     <option value="ollama">Ollama (Local)</option>
                 </select>
+                
+                <label for="llmModel" style="margin-top: 10px; display: block;">Model</label>
+                <select id="llmModel" class="loot-type-select" onchange="SettingsManager.updateLLMProvider()">
+                    <option value="gpt-4o-mini">gpt-4o-mini (OpenAI)</option>
+                    <option value="gpt-4o">gpt-4o (OpenAI)</option>
+                    <option value="gpt-4-turbo">gpt-4-turbo (OpenAI)</option>
+                </select>
+                
                 <p style="color: #999; font-size: 11px; margin-top: 5px;" id="llmProviderInfo">
                     Current: Loading...
                 </p>

@@ -277,11 +277,14 @@ const SettingsManager = {
             if (response.ok) {
                 const data = await response.json();
                 
-                // Update dropdown
-                const dropdown = document.getElementById('llmProvider');
-                if (dropdown) {
-                    dropdown.value = data.provider;
+                // Update provider dropdown
+                const providerDropdown = document.getElementById('llmProvider');
+                if (providerDropdown) {
+                    providerDropdown.value = data.provider;
                 }
+                
+                // Update model dropdown based on provider
+                await this.updateModelDropdown(data.provider, data.model, data.available_models);
                 
                 // Update info text
                 const info = document.getElementById('llmProviderInfo');
@@ -305,22 +308,176 @@ const SettingsManager = {
     },
 
     /**
+     * Update model dropdown based on provider
+     */
+    async updateModelDropdown(provider, currentModel, availableModels = null) {
+        const modelDropdown = document.getElementById('llmModel');
+        if (!modelDropdown) return;
+        
+        // Clear existing options
+        modelDropdown.innerHTML = '';
+        
+        if (provider === 'openai') {
+            // OpenAI models
+            const openaiModels = [
+                { value: 'gpt-4o-mini', label: 'gpt-4o-mini (Fast & Cheap)' },
+                { value: 'gpt-4o', label: 'gpt-4o (Best Quality)' },
+                { value: 'gpt-4-turbo', label: 'gpt-4-turbo (High Quality)' },
+                { value: 'gpt-3.5-turbo', label: 'gpt-3.5-turbo (Legacy)' }
+            ];
+            
+            openaiModels.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.value;
+                option.textContent = model.label;
+                if (model.value === currentModel) {
+                    option.selected = true;
+                }
+                modelDropdown.appendChild(option);
+            });
+        } else if (provider === 'ollama') {
+            // Ollama models - use available models from server or fetch them
+            let models = availableModels || [];
+            
+            if (models.length === 0) {
+                // Try to fetch models if not provided
+                try {
+                    const response = await fetch(`${Config.API_BASE}/api/llm/provider`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        models = data.available_models || [];
+                    }
+                } catch (error) {
+                    console.warn('Could not fetch Ollama models:', error);
+                }
+            }
+            
+            if (models.length > 0) {
+                models.forEach(modelName => {
+                    const option = document.createElement('option');
+                    option.value = modelName;
+                    option.textContent = modelName;
+                    if (modelName === currentModel || modelName.includes(currentModel)) {
+                        option.selected = true;
+                    }
+                    modelDropdown.appendChild(option);
+                });
+            } else {
+                // No models available
+                const option = document.createElement('option');
+                option.value = 'llama3:8b';
+                option.textContent = 'llama3:8b (No models found - install with: ollama pull llama3:8b)';
+                option.selected = currentModel === 'llama3:8b';
+                modelDropdown.appendChild(option);
+            }
+        }
+    },
+
+    /**
+     * Handle provider change - update model dropdown
+     */
+    async onProviderChange() {
+        const providerDropdown = document.getElementById('llmProvider');
+        if (!providerDropdown) return;
+        
+        const provider = providerDropdown.value;
+        
+        // Determine default model for the provider
+        const defaultModel = provider === 'ollama' ? 'llama3:8b' : 'gpt-4o-mini';
+        
+        // First, update the provider on the server with the default model
+        // This ensures the server knows which provider we're using and uses a valid model
+        try {
+            const response = await fetch(`${Config.API_BASE}/api/llm/provider`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ provider: provider, model: defaultModel })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                
+                // Now fetch available models (server will return models for the new provider)
+                let availableModels = null;
+                if (provider === 'ollama') {
+                    availableModels = data.available_models || [];
+                    // If not in response, fetch separately
+                    if (!availableModels || availableModels.length === 0) {
+                        try {
+                            const providerResponse = await fetch(`${Config.API_BASE}/api/llm/provider`);
+                            if (providerResponse.ok) {
+                                const providerData = await providerResponse.json();
+                                availableModels = providerData.available_models || [];
+                            }
+                        } catch (error) {
+                            console.warn('Could not fetch Ollama models:', error);
+                        }
+                    }
+                }
+                
+                // Update model dropdown with fetched models, using the model from server response
+                await this.updateModelDropdown(provider, data.model || defaultModel, availableModels);
+                
+                // Update info text
+                const info = document.getElementById('llmProviderInfo');
+                if (info) {
+                    let statusText = `Current: ${data.provider} (${data.model})`;
+                    if (data.provider === 'openai') {
+                        statusText += data.api_key_configured ? ' ✅ API Key configured' : ' ⚠️ API Key missing';
+                    } else if (data.provider === 'ollama') {
+                        statusText += ` - Base URL: ${data.ollama_base_url || 'http://localhost:11434'}`;
+                    }
+                    info.textContent = statusText;
+                }
+            }
+        } catch (error) {
+            console.error('Error updating provider:', error);
+            // Fallback: just update dropdown without fetching models
+            await this.updateModelDropdown(provider, defaultModel);
+        }
+    },
+
+    /**
      * Update LLM provider
      */
     async updateLLMProvider() {
-        const dropdown = document.getElementById('llmProvider');
-        if (!dropdown) return;
+        const providerDropdown = document.getElementById('llmProvider');
+        const modelDropdown = document.getElementById('llmModel');
         
-        const provider = dropdown.value;
+        if (!providerDropdown) return;
+        
+        const provider = providerDropdown.value;
         if (!provider) {
             console.error('Invalid provider value');
             return;
         }
         
-        // Determine model based on provider
-        let model = 'gpt-4o-mini'; // Default for OpenAI
-        if (provider === 'ollama') {
-            model = 'llama2'; // Default for Ollama
+        // Get model from dropdown, or use default based on provider
+        let model = null;
+        if (modelDropdown && modelDropdown.value) {
+            model = modelDropdown.value;
+        } else {
+            // Fallback to defaults based on provider
+            model = provider === 'ollama' ? 'llama3:8b' : 'gpt-4o-mini';
+        }
+        
+        // Validate model matches provider (prevent sending OpenAI model to Ollama)
+        if (provider === 'ollama' && model && model.startsWith('gpt-')) {
+            console.warn('Invalid model for Ollama provider, using default');
+            model = 'llama3:8b';
+            // Update dropdown to reflect correct model
+            if (modelDropdown) {
+                modelDropdown.value = model;
+            }
+        } else if (provider === 'openai' && model && !model.startsWith('gpt-')) {
+            console.warn('Invalid model for OpenAI provider, using default');
+            model = 'gpt-4o-mini';
+            // Update dropdown to reflect correct model
+            if (modelDropdown) {
+                modelDropdown.value = model;
+            }
         }
         
         try {

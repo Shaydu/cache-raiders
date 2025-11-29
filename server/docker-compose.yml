@@ -1,10 +1,28 @@
-version: '3.8'
-
 services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cache-raiders-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      # Persist Ollama models and data
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Expose Ollama on all interfaces (0.0.0.0) so it's accessible from the API container
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+
   api:
     build: .
     ports:
       - "5001:5001"
+    depends_on:
+      - ollama
     volumes:
       # Persist database across container restarts
       - ./data:/app/data
@@ -22,19 +40,28 @@ services:
       - ./static:/app/static
       # Mount logs directory for debugging (create on host if needed)
       - ./logs:/app/logs
-      # Mount .env file so it's accessible in container
+      # Mount .env file so it's accessible in container (for other settings)
       - ./.env:/app/.env
-    env_file:
-      - .env  # Load environment variables from .env file
+    # Don't use env_file for LLM settings - use environment section to ensure container settings take precedence
     environment:
       - FLASK_ENV=production
       - PORT=5001
       - HOST_IP=192.168.1.29
+      # LLM settings - these override any .env file values
+      - LLM_PROVIDER=ollama
+      - LLM_BASE_URL=http://ollama:11434
+      - LLM_MODEL=llama3:8b
+      # Prevent dotenv from overriding container environment variables
+      - DOCKER_CONTAINER=true
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+volumes:
+  ollama_data:
+    driver: local
 
 

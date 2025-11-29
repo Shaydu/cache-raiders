@@ -32,7 +32,9 @@ map_logger.addHandler(map_handler)
 map_logger.propagate = False  # Don't propagate to root logger
 
 # Load environment variables from .env file (never commit this file!)
-load_dotenv()
+# But only if not running in a Docker container (container env vars take precedence)
+if not os.getenv("DOCKER_CONTAINER"):
+    load_dotenv()
 
 # Import LLM service
 try:
@@ -2052,6 +2054,21 @@ def get_llm_provider():
         return jsonify({'error': 'LLM service not available'}), 503
     
     info = llm_service.get_provider_info()
+    
+    # If Ollama, also fetch available models
+    if info.get('provider') == 'ollama':
+        try:
+            import requests
+            ollama_url = info.get('ollama_base_url', 'http://localhost:11434')
+            response = requests.get(f"{ollama_url}/api/tags", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                models = [m.get('name', m.get('model', '')) for m in data.get('models', [])]
+                info['available_models'] = models
+        except Exception as e:
+            info['available_models'] = []
+            print(f"⚠️ Could not fetch Ollama models: {e}")
+    
     return jsonify(info), 200
 
 @app.route('/api/llm/provider', methods=['POST'])
@@ -2107,6 +2124,11 @@ def interact_with_npc(npc_id: str):
             user_location=user_location
         )
         
+        # Get current LLM provider info to include in response
+        provider_info = llm_service.get_provider_info()
+        model_name = provider_info.get('model', 'unknown')
+        provider = provider_info.get('provider', 'unknown')
+        
         # Handle both old string return and new dict return for backward compatibility
         if isinstance(result, dict):
             response_text = result.get('response', '')
@@ -2115,7 +2137,9 @@ def interact_with_npc(npc_id: str):
             response_data = {
                 'npc_id': npc_id,
                 'response': response_text,
-                'npc_name': npc_name
+                'npc_name': npc_name,
+                'model': model_name,
+                'provider': provider
             }
             
             if placement:
@@ -2127,7 +2151,9 @@ def interact_with_npc(npc_id: str):
             return jsonify({
                 'npc_id': npc_id,
                 'response': result,
-                'npc_name': npc_name
+                'npc_name': npc_name,
+                'model': model_name,
+                'provider': provider
             }), 200
     except Exception as e:
         return jsonify({'error': f'LLM error: {str(e)}'}), 500

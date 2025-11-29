@@ -14,8 +14,8 @@ This installs `openai` and `python-dotenv`.
 ### 2. Verify API Key
 
 ```bash
-cd server
-cat .env
+    cd server
+    cat .env
 ```
 
 Should show:

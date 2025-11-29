@@ -3397,30 +3397,74 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                             let normalizedBearing = (bearing + 360.0).truncatingRemainder(dividingBy: 360.0)
                             let npcGPS = arOrigin.coordinate.coordinate(atDistance: Double(distance), atBearing: normalizedBearing)
                             
-                            // Create NPC on server with AR coordinates
-                            _ = try await APIService.shared.createNPC(
-                                id: type.npcId,
-                                name: type.defaultName,
-                                npcType: type.npcType,
-                                latitude: npcGPS.latitude,
-                                longitude: npcGPS.longitude,
-                                arOriginLatitude: arOrigin.coordinate.latitude,
-                                arOriginLongitude: arOrigin.coordinate.longitude,
-                                arOffsetX: Double(npcPosition.x),
-                                arOffsetY: Double(npcPosition.y),
-                                arOffsetZ: Double(npcPosition.z)
-                            )
-                            Swift.print("✅ Sent \(type.defaultName) to server via NPC API")
+                            // Try to create NPC on server with AR coordinates
+                            // If it already exists (409 error), update it instead
+                            do {
+                                _ = try await APIService.shared.createNPC(
+                                    id: type.npcId,
+                                    name: type.defaultName,
+                                    npcType: type.npcType,
+                                    latitude: npcGPS.latitude,
+                                    longitude: npcGPS.longitude,
+                                    arOriginLatitude: arOrigin.coordinate.latitude,
+                                    arOriginLongitude: arOrigin.coordinate.longitude,
+                                    arOffsetX: Double(npcPosition.x),
+                                    arOffsetY: Double(npcPosition.y),
+                                    arOffsetZ: Double(npcPosition.z)
+                                )
+                                Swift.print("✅ Created \(type.defaultName) on server via NPC API")
+                            } catch let createError as APIError {
+                                // Check if this is a "already exists" error (409)
+                                if case .serverError(let message) = createError,
+                                   message.contains("already exists") {
+                                    // NPC already exists - update it instead
+                                    _ = try await APIService.shared.updateNPC(
+                                        id: type.npcId,
+                                        name: type.defaultName,
+                                        npcType: type.npcType,
+                                        latitude: npcGPS.latitude,
+                                        longitude: npcGPS.longitude,
+                                        arOriginLatitude: arOrigin.coordinate.latitude,
+                                        arOriginLongitude: arOrigin.coordinate.longitude,
+                                        arOffsetX: Double(npcPosition.x),
+                                        arOffsetY: Double(npcPosition.y),
+                                        arOffsetZ: Double(npcPosition.z)
+                                    )
+                                    Swift.print("✅ Updated \(type.defaultName) on server via NPC API (already existed)")
+                                } else {
+                                    // Some other error - rethrow it
+                                    throw createError
+                                }
+                            }
                         } else {
                             // No AR origin - use default GPS location
-                            _ = try await APIService.shared.createNPC(
-                                id: type.npcId,
-                                name: type.defaultName,
-                                npcType: type.npcType,
-                                latitude: npcLocation.latitude,
-                                longitude: npcLocation.longitude
-                            )
-                            Swift.print("✅ Sent \(type.defaultName) to server via NPC API (no AR origin)")
+                            do {
+                                _ = try await APIService.shared.createNPC(
+                                    id: type.npcId,
+                                    name: type.defaultName,
+                                    npcType: type.npcType,
+                                    latitude: npcLocation.latitude,
+                                    longitude: npcLocation.longitude
+                                )
+                                Swift.print("✅ Created \(type.defaultName) on server via NPC API (no AR origin)")
+                            } catch let createError as APIError {
+                                // Check if this is a "already exists" error (409)
+                                if case .serverError(let message) = createError,
+                                   message.contains("already exists") {
+                                    // NPC already exists - update it instead
+                                    _ = try await APIService.shared.updateNPC(
+                                        id: type.npcId,
+                                        name: type.defaultName,
+                                        npcType: type.npcType,
+                                        latitude: npcLocation.latitude,
+                                        longitude: npcLocation.longitude
+                                    )
+                                    Swift.print("✅ Updated \(type.defaultName) on server via NPC API (already existed, no AR origin)")
+                                } else {
+                                    // Some other error - rethrow it
+                                    throw createError
+                                }
+                            }
                         }
                     } catch {
                         Swift.print("⚠️ Failed to send \(type.defaultName) to server: \(error.localizedDescription)")

@@ -11,9 +11,13 @@ import time
 from typing import Optional, Dict, List
 
 # Load environment variables from .env file
+# But only if not running in a Docker container (container env vars take precedence)
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # Only load .env if DOCKER_CONTAINER is not set (i.e., running locally)
+    # When running in Docker, environment variables are set by docker-compose.yml
+    if not os.getenv("DOCKER_CONTAINER"):
+        load_dotenv()
 except ImportError:
     # dotenv not available, but that's okay - environment variables might be set another way
     pass
@@ -51,15 +55,67 @@ except ImportError:
 # Import MapFeatureService from separate module
 from map_feature_service import MapFeatureService
 
+def get_local_ip():
+    """Get the local network IP address (same logic as app.py)."""
+    import socket
+    
+    # First, check if HOST_IP environment variable is set
+    host_ip = os.environ.get('HOST_IP')
+    if host_ip:
+        return host_ip
+    
+    # Try to get IP from all network interfaces
+    try:
+        # Get hostname to determine local IP
+        hostname = socket.gethostname()
+        try:
+            ip = socket.gethostbyname(hostname)
+            if ip and not ip.startswith('127.'):
+                return ip
+        except socket.gaierror:
+            pass
+        
+        # Fallback: Connect to a remote address to determine local IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(('8.8.8.8', 80))
+            ip = s.getsockname()[0]
+            if ip and not ip.startswith('127.'):
+                return ip
+        except Exception:
+            pass
+        finally:
+            s.close()
+    except Exception:
+        pass
+    
+    # Last resort: return localhost
+    return '127.0.0.1'
+
 class LLMService:
     def __init__(self):
         """Initialize LLM service with configuration from environment."""
         self.provider = os.getenv("LLM_PROVIDER", "openai").lower()
-        self.model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        
+        # Set default model based on provider
+        # If LLM_MODEL is explicitly set, use it; otherwise use provider-specific default
+        if os.getenv("LLM_MODEL"):
+            self.model = os.getenv("LLM_MODEL")
+        elif self.provider == "ollama" or self.provider == "local":
+            # Default Ollama model (user should have llama2 or llama3 installed)
+            # Use "llama2:latest" to match the format returned by Ollama
+            self.model = os.getenv("LLM_MODEL", "llama2:latest")
+        else:
+            # Default OpenAI model
+            self.model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        
         self.temperature = 0.7
         self.max_tokens = 150  # Reduced from 500 to save tokens
         
         # Ollama configuration
+        # The Python server connects to Ollama. When running in Docker, use the container name
+        # (http://ollama:11434). When running locally, use localhost (http://localhost:11434).
+        # The iOS app does NOT connect directly to Ollama - it goes through the Python API server.
         self.ollama_base_url = os.getenv("LLM_BASE_URL", "http://localhost:11434")
         
         # Store original API key from environment
@@ -139,10 +195,25 @@ class LLMService:
         else:
             return self._call_openai(prompt=prompt, messages=messages, max_tokens=tokens)
     
+    def _get_available_models(self) -> str:
+        """Get list of available Ollama models."""
+        try:
+            response = requests.get(f"{self.ollama_base_url}/api/tags", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                models = [m.get('name', 'unknown') for m in data.get('models', [])]
+                return ', '.join(models) if models else 'No models installed'
+            return 'Unable to fetch models'
+        except Exception:
+            return 'Unable to fetch models'
+    
     def _call_ollama(self, prompt: str = None, messages: List[Dict] = None, max_tokens: int = None) -> str:
         """Call Ollama API (local model)."""
         if not REQUESTS_AVAILABLE:
             return "Error: requests package not installed. Run: pip install requests"
+        
+        # Use provided max_tokens or default
+        tokens = max_tokens if max_tokens is not None else self.max_tokens
         
         # Ollama API endpoint
         url = f"{self.ollama_base_url}/api/chat"
@@ -178,14 +249,26 @@ class LLMService:
         }
         
         try:
-            response = requests.post(url, json=payload, timeout=60)
+            # Increased timeout to 120 seconds for Ollama (local models can be slow, especially on first request)
+            response = requests.post(url, json=payload, timeout=120)
             response.raise_for_status()
             data = response.json()
             return data.get("message", {}).get("content", "").strip()
-        except requests.exceptions.ConnectionError:
-            return f"Error: Cannot connect to Ollama at {self.ollama_base_url}. Make sure Ollama is running: ollama serve"
+        except requests.exceptions.ConnectionError as e:
+            return f"Error: Cannot connect to Ollama at {self.ollama_base_url}. Make sure Ollama is running: ollama serve. Connection error: {str(e)}"
         except requests.exceptions.Timeout:
-            return "Error: Ollama request timed out. The model might be too slow or not loaded."
+            return "Error: Ollama request timed out after 120 seconds. The model might be too slow, not loaded, or the server is overloaded. Try again in a moment."
+        except requests.exceptions.HTTPError as e:
+            # Handle HTTP errors (like 404 for missing model) separately
+            if e.response.status_code == 404:
+                try:
+                    error_data = e.response.json() if e.response.text else {}
+                    error_msg = error_data.get('error', 'Model not found')
+                except:
+                    error_msg = 'Model not found'
+                available = self._get_available_models()
+                return f"Error: {error_msg}. Available models: {available}. Install a model with: ollama pull <model-name>"
+            return f"Error calling Ollama: HTTP {e.response.status_code} - {e.response.text[:200] if e.response.text else 'Unknown error'}"
         except Exception as e:
             return f"Error calling Ollama: {str(e)}"
     

@@ -1066,6 +1066,8 @@ class APIService {
             let npc_id: String
             let npc_name: String
             let response: String
+            let model: String?
+            let provider: String?
         }
         
         let request = NPCInteractionRequest(
@@ -1079,8 +1081,15 @@ class APIService {
         let encoder = JSONEncoder()
         let body = try encoder.encode(request)
         
-        let response: NPCInteractionResponse = try await makeRequest(url: url, method: "POST", body: body)
-        return (response.npc_name, response.response)
+        // Use longer timeout for LLM requests (Ollama can be slow, especially on first request)
+        // Server has 120 second timeout, so we use 150 seconds to account for network overhead
+        let response: NPCInteractionResponse = try await makeRequest(url: url, method: "POST", body: body, timeout: 150.0)
+        
+        // Include model name in response if available
+        let modelInfo = response.model.map { "(\($0))" } ?? ""
+        let fullResponse = modelInfo.isEmpty ? response.response : "\(modelInfo) \(response.response)"
+        
+        return (response.npc_name, fullResponse)
     }
     
     /// Generate a pirate riddle clue based on location and map features
