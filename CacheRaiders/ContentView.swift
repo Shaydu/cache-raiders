@@ -374,6 +374,10 @@ struct ContentView: View {
             
             bottomCounterView
         }
+        .onAppear {
+            // Set location manager reference in user location manager for game mode checks
+            userLocationManager.locationManager = locationManager
+        }
         .fullScreenCover(isPresented: $showGridTreasureMap) {
             GridTreasureMapView(mapService: gridTreasureMapService)
         }
@@ -480,12 +484,20 @@ struct ContentView: View {
         .onAppear {
             userLocationManager.requestLocationPermission()
 
-            // Auto-connect WebSocket on app start
-            WebSocketService.shared.connect()
+            // Initialize offline mode manager with location manager reference
+            OfflineModeManager.shared.setLocationManager(locationManager)
+
+            // Auto-connect WebSocket on app start (only if not in offline mode)
+            if !OfflineModeManager.shared.isOfflineMode {
+                WebSocketService.shared.connect()
+            } else {
+                print("📴 Offline mode enabled - skipping WebSocket connection")
+            }
             
-            // Sync saved user name to server on app startup
-            // This ensures the name persists between sessions
-            APIService.shared.syncSavedUserNameToServer()
+            // Sync saved user name to server on app startup (only if not offline)
+            if !OfflineModeManager.shared.isOfflineMode {
+                APIService.shared.syncSavedUserNameToServer()
+            }
             
             // Note: QR scanner is now only available manually from Settings
             // Offline mode is supported, so we don't automatically show QR scanner on connection failures

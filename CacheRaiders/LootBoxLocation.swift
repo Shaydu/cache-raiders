@@ -315,8 +315,10 @@ class LootBoxLocationManager: ObservableObject {
         // API sync is always enabled - start refresh timer
         startAPIRefreshTimer()
         
-        // Auto-connect to WebSocket
-        WebSocketService.shared.connect()
+        // Auto-connect to WebSocket (only if not in offline mode)
+        if !OfflineModeManager.shared.isOfflineMode {
+            WebSocketService.shared.connect()
+        }
         
         // Set up WebSocket event handlers for real-time updates
         setupWebSocketCallbacks()
@@ -755,6 +757,12 @@ class LootBoxLocationManager: ObservableObject {
     
     // Unmark collected in API
     private func unmarkCollectedInAPI(_ locationId: String) async {
+        // Don't sync to API if offline mode is enabled
+        if OfflineModeManager.shared.isOfflineMode {
+            print("📴 Offline mode enabled - location unmarked in local database, will sync when online")
+            return
+        }
+        
         do {
             try await APIService.shared.unmarkFound(objectId: locationId)
             print("✅ Successfully unmarked \(locationId) as not collected in API")
@@ -800,7 +808,11 @@ class LootBoxLocationManager: ObservableObject {
                     // In story modes, we don't show regular loot boxes from the API
                     // Only NPCs (skeleton, corgi) are shown, and they're placed by ARCoordinator
                     // So we filter out ALL API objects in story modes
-                    Swift.print("   📖 Story mode: Skipping API object '\(location.name)' (only NPCs shown in story mode)")
+                    // Note: API calls are prevented in story mode, so this should rarely be hit
+                    // Only logs if debug mode is enabled to reduce log spam
+                    if UserDefaults.standard.bool(forKey: "showARDebugVisuals") {
+                        Swift.print("   📖 Story mode: Skipping API object '\(location.name)' (only NPCs shown in story mode)")
+                    }
                     return false
                 }
 
@@ -1095,6 +1107,12 @@ class LootBoxLocationManager: ObservableObject {
     private func startAPIRefreshTimer() {
         stopAPIRefreshTimer() // Stop any existing timer first
         
+        // Don't start timer in offline mode (use local database)
+        if OfflineModeManager.shared.isOfflineMode {
+            print("⏭️ Skipping API refresh timer start (offline mode - using local database)")
+            return
+        }
+        
         // Don't start timer in story mode (no API objects needed)
         if gameMode == .deadMensSecrets || gameMode == .splitLegacy {
             print("⏭️ Skipping API refresh timer start (story mode - no API objects needed)")
@@ -1105,6 +1123,12 @@ class LootBoxLocationManager: ObservableObject {
             guard let self = self else { return }
             guard self.useAPISync else {
                 self.stopAPIRefreshTimer()
+                return
+            }
+            
+            // Check offline mode in timer callback (in case mode changed while timer was running)
+            if OfflineModeManager.shared.isOfflineMode {
+                print("⏭️ Skipping API refresh (offline mode active)")
                 return
             }
             
@@ -1161,6 +1185,13 @@ class LootBoxLocationManager: ObservableObject {
     /// Load locations from API instead of local file
     /// Note: includeFound defaults to true to ensure all objects (including found ones) are loaded for accurate counting
     func loadLocationsFromAPI(userLocation: CLLocation? = nil, includeFound: Bool = true) async {
+        // OFFLINE MODE: Use local Core Data if offline mode is enabled
+        if OfflineModeManager.shared.isOfflineMode {
+            print("📴 Offline mode enabled - loading from local SQLite database")
+            loadLocations(userLocation: userLocation)
+            return
+        }
+        
         guard useAPISync else {
             print("ℹ️ API sync is disabled, using local storage")
             return
@@ -1402,6 +1433,12 @@ class LootBoxLocationManager: ObservableObject {
     
     /// Save location to API
     func saveLocationToAPI(_ location: LootBoxLocation) async {
+        // Don't sync to API if offline mode is enabled
+        if OfflineModeManager.shared.isOfflineMode {
+            print("📴 Offline mode enabled - location '\(location.name)' saved to local database, will sync when online")
+            return
+        }
+        
         guard useAPISync else {
             print("⚠️ API sync is disabled - location '\(location.name)' (ID: \(location.id)) not synced to shared database")
             return
@@ -1443,6 +1480,12 @@ class LootBoxLocationManager: ObservableObject {
     
     /// Mark location as found in API
     func markCollectedInAPI(_ locationId: String) async {
+        // Don't sync to API if offline mode is enabled
+        if OfflineModeManager.shared.isOfflineMode {
+            print("📴 Offline mode enabled - location marked as collected in local database, will sync when online")
+            return
+        }
+        
         guard useAPISync else {
             print("⚠️ API sync is disabled - not marking location \(locationId) as found in API")
             return

@@ -3125,7 +3125,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Check if already placed - verify the anchor is actually in the scene
         if let existingAnchor = placedNPCs[type.npcId] {
             // Verify the anchor is still in the scene (might have been removed)
-            if arView.scene.anchors.contains(existingAnchor) {
+            if arView.scene.anchors.contains(where: { ($0 as? AnchorEntity) === existingAnchor }) {
                 Swift.print("💬 \(type.defaultName) already placed and in scene, skipping")
                 return
             } else {

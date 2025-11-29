@@ -83,6 +83,12 @@ class WebSocketService: ObservableObject {
             return
         }
         
+        // Don't connect if offline mode is enabled
+        if OfflineModeManager.shared.isOfflineMode {
+            print("📴 Offline mode enabled - skipping WebSocket connection")
+            return
+        }
+        
         // Convert HTTP URL to WebSocket URL
         // Socket.IO endpoint: /socket.io/?EIO=4&transport=websocket
         let httpURL = baseURL.replacingOccurrences(of: "http://", with: "ws://")

@@ -7,6 +7,7 @@ struct SettingsView: View {
     @ObservedObject var locationManager: LootBoxLocationManager
     @ObservedObject var userLocationManager: UserLocationManager
     @ObservedObject private var webSocketService = WebSocketService.shared
+    @ObservedObject private var offlineModeManager = OfflineModeManager.shared
     @StateObject private var viewModel: SettingsViewModel
     @Environment(\.dismiss) var dismiss
     @State private var previousDistance: Double = 10.0
@@ -681,6 +682,47 @@ struct SettingsView: View {
                     Text("Server: \(APIService.shared.baseURL)")
                         .font(.caption2)
                         .foregroundColor(.blue)
+                }
+            }
+            .padding(.vertical, 4)
+            
+            // Offline Mode Toggle
+            Divider()
+                .padding(.vertical, 4)
+            
+            Toggle("Offline Mode", isOn: Binding(
+                get: { OfflineModeManager.shared.isOfflineMode },
+                set: { newValue in
+                    OfflineModeManager.shared.isOfflineMode = newValue
+                }
+            ))
+            .padding(.vertical, 4)
+            
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(OfflineModeManager.shared.isOfflineMode ? Color.orange : Color.blue)
+                    .frame(width: 12, height: 12)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(OfflineModeManager.shared.statusMessage)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    if OfflineModeManager.shared.isOfflineMode {
+                        Text("Using local SQLite database. WebSocket and API calls disabled.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        if OfflineModeManager.shared.pendingSyncCount > 0 {
+                            Text("\(OfflineModeManager.shared.pendingSyncCount) item(s) pending sync when you go online")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        }
+                    } else {
+                        Text("Connected to server. WebSocket and API calls enabled.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             .padding(.vertical, 4)

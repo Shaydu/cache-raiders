@@ -1,39 +1,34 @@
 import Foundation
 import Combine
+import CoreLocation
 
-/// Offline Mode Manager - Manages offline mode state and user notifications
+/// Offline Mode Manager - Manages offline mode state (user-controlled toggle)
 class OfflineModeManager: ObservableObject {
     static let shared = OfflineModeManager()
     
-    @Published var isOfflineMode: Bool = false
-    @Published var offlineReason: OfflineReason = .unknown
-    @Published var lastOfflineNotificationTime: Date?
-    @Published var lastOnlineNotificationTime: Date?
-    @Published var pendingSyncCount: Int = 0
-    
-    enum OfflineReason: String {
-        case noNetwork = "No network connection"
-        case apiUnreachable = "Server unreachable"
-        case apiTimeout = "Server timeout"
-        case apiError = "Server error"
-        case unknown = "Unknown"
-        
-        var displayName: String {
-            return self.rawValue
+    @Published var isOfflineMode: Bool = false {
+        didSet {
+            // Save to UserDefaults
+            UserDefaults.standard.set(isOfflineMode, forKey: "offlineModeEnabled")
+            
+            // Handle mode change
+            handleModeChange()
         }
     }
     
-    private let networkMonitor = NetworkMonitorService.shared
+    @Published var pendingSyncCount: Int = 0
+    
+    private let offlineModeKey = "offlineModeEnabled"
+    
     private weak var locationManager: LootBoxLocationManager?
     private var cancellables = Set<AnyCancellable>()
     
     private init() {
-        setupObservers()
+        // Load saved offline mode preference (defaults to false/online)
+        isOfflineMode = UserDefaults.standard.bool(forKey: offlineModeKey)
         
-        // Perform initial check
-        Task {
-            await checkOfflineStatus()
-        }
+        // Setup observers for pending sync count
+        setupObservers()
     }
     
     /// Set location manager reference (for sync count and sync operations)
@@ -41,166 +36,62 @@ class OfflineModeManager: ObservableObject {
         self.locationManager = manager
     }
     
+    // MARK: - Mode Change Handler
+    
+    /// Handle mode change between offline and online
+    private func handleModeChange() {
+        if isOfflineMode {
+            // Going offline: disconnect WebSocket, use local Core Data
+            print("📴 Offline mode enabled - using local SQLite database")
+            WebSocketService.shared.disconnect()
+            
+            NotificationCenter.default.post(
+                name: NSNotification.Name("OfflineModeEnabled"),
+                object: nil,
+                userInfo: ["message": "Using local database"]
+            )
+        } else {
+            // Going online: connect WebSocket, sync with server, reload from API
+            print("📡 Online mode enabled - connecting to server and WebSocket")
+            
+            // Connect WebSocket
+            if let locationManager = locationManager, locationManager.useAPISync {
+                WebSocketService.shared.connect()
+                
+                // Reload locations from API (replaces local Core Data with server data)
+                Task {
+                    // Load all locations from API (no user location filter needed)
+                    await locationManager.loadLocationsFromAPI(userLocation: nil)
+                    
+                    // Then sync any pending changes
+                    await locationManager.syncPendingChangesToAPI()
+                }
+            }
+            
+            NotificationCenter.default.post(
+                name: NSNotification.Name("OfflineModeDisabled"),
+                object: nil,
+                userInfo: ["message": "Connected to server"]
+            )
+        }
+    }
+    
     // MARK: - Observers
     
     private func setupObservers() {
-        // Observe network monitor changes
-        networkMonitor.$isNetworkAvailable
-            .receive(on: DispatchQueue.main)
+        // Update pending sync count periodically
+        Timer.publish(every: 10.0, on: .main, in: .common)
+            .autoconnect()
             .sink { [weak self] _ in
-                Task { @MainActor in
-                    await self?.checkOfflineStatus()
-                }
+                self?.updatePendingSyncCount()
             }
             .store(in: &cancellables)
-        
-        networkMonitor.$isAPIReachable
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                Task { @MainActor in
-                    await self?.checkOfflineStatus()
-                }
-            }
-            .store(in: &cancellables)
-        
-        // Observe API online/offline notifications
-        NotificationCenter.default.publisher(for: NSNotification.Name("APIOffline"))
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                Task { @MainActor in
-                    await self?.checkOfflineStatus()
-                }
-            }
-            .store(in: &cancellables)
-        
-        NotificationCenter.default.publisher(for: NSNotification.Name("APIOnline"))
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                Task { @MainActor in
-                    await self?.checkOfflineStatus()
-                }
-            }
-            .store(in: &cancellables)
-    }
-    
-    // MARK: - Offline Status Checking
-    
-    /// Check and update offline status
-    @MainActor
-    func checkOfflineStatus() async {
-        let wasOffline = isOfflineMode
-        let previousReason = offlineReason
-        
-        // Determine if we're offline and why
-        if !networkMonitor.isNetworkAvailable {
-            isOfflineMode = true
-            offlineReason = .noNetwork
-        } else if !networkMonitor.isAPIReachable {
-            isOfflineMode = true
-            
-            // Determine specific reason
-            if let error = networkMonitor.lastAPIError {
-                if error.contains("timeout") || error.contains("timed out") {
-                    offlineReason = .apiTimeout
-                } else {
-                    offlineReason = .apiError
-                }
-            } else {
-                offlineReason = .apiUnreachable
-            }
-        } else {
-            isOfflineMode = false
-            offlineReason = .unknown
-        }
-        
-        // Notify user if status changed
-        if wasOffline != isOfflineMode {
-            if isOfflineMode {
-                await notifyWentOffline(reason: offlineReason)
-            } else {
-                await notifyWentOnline()
-            }
-        } else if isOfflineMode && previousReason != offlineReason {
-            // Reason changed while still offline
-            await notifyOfflineReasonChanged(to: offlineReason)
-        }
-        
-        // Update pending sync count (if we have location manager access)
-        updatePendingSyncCount()
-    }
-    
-    // MARK: - User Notifications
-    
-    /// Notify user that we went offline
-    @MainActor
-    private func notifyWentOffline(reason: OfflineReason) async {
-        let now = Date()
-        
-        // Throttle notifications - only show once per minute
-        if let lastNotification = lastOfflineNotificationTime,
-           now.timeIntervalSince(lastNotification) < 60 {
-            return
-        }
-        
-        lastOfflineNotificationTime = now
-        
-        let message = "Offline Mode: \(reason.displayName). Using cached data."
-        print("📴 \(message)")
-        
-        // Post notification for UI to display
-        NotificationCenter.default.post(
-            name: NSNotification.Name("OfflineModeEnabled"),
-            object: nil,
-            userInfo: ["reason": reason.rawValue, "message": message]
-        )
-    }
-    
-    /// Notify user that we came back online
-    @MainActor
-    private func notifyWentOnline() async {
-        let now = Date()
-        
-        // Throttle notifications - only show once per minute
-        if let lastNotification = lastOnlineNotificationTime,
-           now.timeIntervalSince(lastNotification) < 60 {
-            return
-        }
-        
-        lastOnlineNotificationTime = now
-        
-        let message = "Back online! Syncing with server..."
-        print("📡 \(message)")
-        
-        // Post notification for UI to display
-        NotificationCenter.default.post(
-            name: NSNotification.Name("OfflineModeDisabled"),
-            object: nil,
-            userInfo: ["message": message]
-        )
-        
-        // Trigger sync of pending changes
-        locationManager?.syncPendingChangesToAPI()
-    }
-    
-    /// Notify user that offline reason changed
-    @MainActor
-    private func notifyOfflineReasonChanged(to reason: OfflineReason) async {
-        let message = "Connection issue: \(reason.displayName)"
-        print("⚠️ \(message)")
-        
-        NotificationCenter.default.post(
-            name: NSNotification.Name("OfflineReasonChanged"),
-            object: nil,
-            userInfo: ["reason": reason.rawValue, "message": message]
-        )
     }
     
     // MARK: - Helper Methods
     
     /// Update pending sync count from Core Data
     private func updatePendingSyncCount() {
-        // This will be called to update the count of items needing sync
-        // We'll use a notification or delegate pattern to get this from LootBoxLocationManager
         Task.detached {
             do {
                 let dataService = GameItemDataService.shared
@@ -218,9 +109,9 @@ class OfflineModeManager: ObservableObject {
     /// Get status message for display
     var statusMessage: String {
         if isOfflineMode {
-            return "Offline: \(offlineReason.displayName)"
+            return "Offline Mode - Using local database"
         } else {
-            return "Online"
+            return "Online Mode - Connected to server"
         }
     }
 }

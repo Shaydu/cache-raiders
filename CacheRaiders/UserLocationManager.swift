@@ -13,8 +13,9 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     @Published var lastLocationSentSuccessfully: Date? // Track when location was successfully received by server
     private var isSendingInProgress: Bool = false // Prevent concurrent sends
     weak var arCoordinator: ARCoordinator? // Reference to AR coordinator for enhanced location
+    weak var locationManager: LootBoxLocationManager? // Reference to location manager for game mode checks
     private var locationUpdateTimer: Timer? // Timer for automatic periodic location updates
-    private var locationUpdateInterval: TimeInterval = 1.0 // Default 1 second, will be fetched from server
+    private var locationUpdateInterval: TimeInterval = 5.0 // Default 5 seconds, will be fetched from server (admin panel setting)
     
     override init() {
         super.init()
@@ -70,9 +71,9 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
                 print("📍 Location update interval fetched from server: \(intervalSeconds)s")
             }
         } catch {
-            print("⚠️ Failed to fetch location update interval from server, using default 1.0s: \(error)")
+            print("⚠️ Failed to fetch location update interval from server, using default 5.0s: \(error)")
             await MainActor.run {
-                self.locationUpdateInterval = 1.0 // Default 1 second
+                self.locationUpdateInterval = 5.0 // Default 5 seconds
             }
         }
     }
@@ -95,7 +96,7 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
                 self?.sendCurrentLocationToServer()
             }
             // Add timer to common run loop modes so it works even when scrolling
-            if let timer = self?.locationUpdateTimer {
+            if let timer = self.locationUpdateTimer {
                 RunLoop.current.add(timer, forMode: .common)
             }
         }
@@ -109,6 +110,7 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     
     // Send current location to server (for admin map display)
     // Called automatically at the configured interval, and also manually when user taps the GPS direction box
+    // Note: Location updates continue in story mode for admin tracking, using the frequency set in admin panel
     func sendCurrentLocationToServer() {
         // Prevent concurrent sends
         guard !isSendingInProgress else {
