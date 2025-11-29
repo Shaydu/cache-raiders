@@ -127,16 +127,21 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var lastNearbyCheckTime: Date = Date.distantPast // Throttle getNearbyLocations calls
     private let nearbyCheckInterval: TimeInterval = 1.0 // Check nearby locations once per second
     
-    // Dialog state tracking - pause heavy AR processing when dialog is open
+    // Dialog state tracking - pause AR session when sheet is open
     private var isDialogOpen: Bool = false {
         didSet {
-            if isDialogOpen {
-                Swift.print("⏸️ Dialog opened - pausing heavy AR processing")
-            } else {
-                Swift.print("▶️ Dialog closed - resuming AR processing")
+            if isDialogOpen != oldValue {
+                if isDialogOpen {
+                    pauseARSession()
+                } else {
+                    resumeARSession()
+                }
             }
         }
     }
+    
+    // Store AR configuration for resuming
+    private var savedARConfiguration: ARWorldTrackingConfiguration?
     
     // MARK: - Background Processing Queues
     // CRITICAL: Use dedicated queues for heavy processing to prevent UI freezes
