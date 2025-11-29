@@ -110,6 +110,7 @@ struct SettingsView: View {
                 maxObjectLimitSection
                 findableTypesSection
                 mapDisplaySection
+                conversationSection
                 arZoomSection
                 arDebugSection
                 userProfileSection
@@ -352,6 +353,22 @@ struct SettingsView: View {
             .padding(.vertical, 4)
             
             Text("When enabled, found items appear in deep red and unfound items appear in green on the map")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+    }
+    
+    private var conversationSection: some View {
+        Section("Conversation") {
+            Toggle("Typewriter Effect", isOn: Binding(
+                get: { UserDefaults.standard.bool(forKey: "enableTypewriterEffect") },
+                set: { newValue in
+                    UserDefaults.standard.set(newValue, forKey: "enableTypewriterEffect")
+                }
+            ))
+            .padding(.vertical, 4)
+            
+            Text("When enabled, NPC messages will type out character by character with sound effects. When disabled, messages appear instantly.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }

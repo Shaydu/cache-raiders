@@ -306,6 +306,9 @@ struct ShadowgateMessageBox: View {
     let isFromUser: Bool
     let npcName: String
     
+    @StateObject private var typewriterService = TypewriterTextService()
+    @AppStorage("enableTypewriterEffect") private var enableTypewriterEffect: Bool = false
+    
     var body: some View {
         HStack {
             if isFromUser {
@@ -352,12 +355,22 @@ struct ShadowgateMessageBox: View {
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
                         } else {
-                            // NPC messages: show immediately (no typewriter effect)
-                            Text(text)
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(.yellow.opacity(0.95))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
+                            // NPC messages: use typewriter effect with sound if enabled
+                            if enableTypewriterEffect {
+                                // Show typewriter text (or empty string if not started yet)
+                                Text(typewriterService.displayedText.isEmpty ? "" : typewriterService.displayedText)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(.yellow.opacity(0.95))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                            } else {
+                                // Show full text immediately when typewriter is disabled
+                                Text(text)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(.yellow.opacity(0.95))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                            }
                         }
                     }
                 }
@@ -366,6 +379,60 @@ struct ShadowgateMessageBox: View {
             
             if !isFromUser {
                 Spacer()
+            }
+        }
+        .onAppear {
+            // Start typewriter effect for NPC messages if enabled
+            // Use async to prevent blocking the main thread
+            if !isFromUser && enableTypewriterEffect {
+                // Configure typewriter service with same settings as ARConversationOverlay
+                typewriterService.charactersPerSecond = 30.0
+                typewriterService.audioToneID = 1104 // Keyboard clack sound
+                typewriterService.playAudioForSpaces = false
+                typewriterService.playAudioForPunctuation = false
+                typewriterService.randomVariation = 0.3
+                typewriterService.punctuationPauseMultiplier = 3.0
+                
+                // Start revealing text with typewriter effect (non-blocking)
+                // Use Task to ensure it doesn't block the main thread during view rendering
+                Task { @MainActor [text, typewriterService] in
+                    typewriterService.startReveal(text: text)
+                }
+            }
+            // If disabled, do nothing - text will display immediately via the Text(text) path
+        }
+        .onDisappear {
+            // Cancel typewriter effect when view disappears
+            if !isFromUser {
+                typewriterService.cancel()
+            }
+        }
+        .onChange(of: text) { oldText, newText in
+            // Restart typewriter effect if text changes (for new messages) and enabled
+            if !isFromUser && newText != oldText && enableTypewriterEffect {
+                Task { @MainActor in
+                    typewriterService.startReveal(text: newText)
+                }
+            }
+        }
+        .onChange(of: enableTypewriterEffect) { oldValue, newValue in
+            // Handle toggle change (non-blocking)
+            if !isFromUser {
+                Task { @MainActor in
+                    if newValue {
+                        // Enable: start typewriter effect
+                        typewriterService.charactersPerSecond = 30.0
+                        typewriterService.audioToneID = 1104
+                        typewriterService.playAudioForSpaces = false
+                        typewriterService.playAudioForPunctuation = false
+                        typewriterService.randomVariation = 0.3
+                        typewriterService.punctuationPauseMultiplier = 3.0
+                        typewriterService.startReveal(text: text)
+                    } else {
+                        // Disable: cancel and show full text immediately
+                        typewriterService.cancel()
+                    }
+                }
             }
         }
     }

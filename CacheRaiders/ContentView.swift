@@ -431,7 +431,14 @@ struct ContentView: View {
             }
             
             // Find Captain Bones location if available
-            let npcLocation = locationManager.locations.first(where: { $0.id.hasPrefix("npc_") && $0.name.contains("Bones") })?.coordinate
+            // Use exact NPC ID to avoid duplicates (skeleton-1 becomes npc_skeleton-1 in locations)
+            // Filter to ensure we only get one unique coordinate
+            let npcLocations = locationManager.locations.filter { location in
+                location.id == "npc_skeleton-1" || 
+                (location.id.hasPrefix("npc_") && location.id.contains("skeleton-1"))
+            }
+            // Get the first unique coordinate (in case there are duplicates with same coordinates)
+            let npcLocation = npcLocations.first?.coordinate
             
             let mapData = TreasureMapData(
                 mapName: "Captain Bones' Treasure Map",
