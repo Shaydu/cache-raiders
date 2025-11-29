@@ -120,8 +120,13 @@ struct SkeletonConversationView: View {
                     .font(.caption)
                     .disabled(isSending)
                     .focused($isTextFieldFocused)
+                    .submitLabel(.send)
                     .onSubmit {
                         sendMessage()
+                    }
+                    .onTapGesture {
+                        // Ensure keyboard appears when tapping the field
+                        isTextFieldFocused = true
                     }
                 
                 Button(action: sendMessage) {
@@ -143,7 +148,8 @@ struct SkeletonConversationView: View {
         .background(Color.black.opacity(0.95))
         .onAppear {
             // Auto-focus the text field when the view appears
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            // Use a longer delay to ensure the sheet is fully presented
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 isTextFieldFocused = true
             }
         }
@@ -285,8 +291,6 @@ struct ShadowgateMessageBox: View {
     let isFromUser: Bool
     let npcName: String
     
-    @StateObject private var typewriterService = TypewriterTextService()
-    
     var body: some View {
         HStack {
             if isFromUser {
@@ -333,25 +337,12 @@ struct ShadowgateMessageBox: View {
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
                         } else {
-                            // NPC messages: typewriter effect with audio
-                            Text(typewriterService.displayedText)
+                            // NPC messages: show immediately (no typewriter effect)
+                            Text(text)
                                 .font(.system(.caption, design: .monospaced))
                                 .foregroundColor(.yellow.opacity(0.95))
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
-                                .onAppear {
-                                    // Configure typewriter service
-                                    typewriterService.charactersPerSecond = 30.0
-                                    typewriterService.audioToneID = 1103 // Subtle notification sound
-                                    typewriterService.playAudioForSpaces = false
-                                    typewriterService.playAudioForPunctuation = false
-                                    
-                                    // Start reveal
-                                    typewriterService.startReveal(text: text)
-                                }
-                                .onDisappear {
-                                    typewriterService.cancel()
-                                }
                         }
                     }
                 }

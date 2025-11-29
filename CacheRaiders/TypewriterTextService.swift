@@ -40,26 +40,41 @@ class TypewriterTextService: ObservableObject {
         
         let baseDelayPerCharacter = 1.0 / charactersPerSecond
 
-        revealTask = Task { @MainActor in
+        revealTask = Task {
             var accumulatedText = ""
-            let updateFrequency = text.count > 100 ? 2 : 1
+            // PERFORMANCE: Update less frequently to prevent UI blocking
+            // For short messages (<50 chars), update every 2 characters
+            // For medium messages (50-100), update every 3 characters  
+            // For long messages (>100), update every 5 characters
+            let updateFrequency: Int
+            if text.count < 50 {
+                updateFrequency = 2
+            } else if text.count < 100 {
+                updateFrequency = 3
+            } else {
+                updateFrequency = 5
+            }
             
             for (index, character) in text.enumerated() {
                 // Check if cancelled
                 if Task.isCancelled {
-                    isRevealing = false
+                    await MainActor.run {
+                        isRevealing = false
+                    }
                     return
                 }
 
                 // Add character to accumulated text
                 accumulatedText.append(character)
                 
-                // PERFORMANCE: Update displayedText less frequently for long messages
-                // Update every character for short messages, every 2-3 characters for long ones
+                // PERFORMANCE: Update displayedText less frequently to prevent UI blocking
                 // Always update on the last character to ensure complete text is shown
                 let isLastCharacter = index == text.count - 1
                 if accumulatedText.count % updateFrequency == 0 || isLastCharacter {
-                    displayedText = accumulatedText
+                    // Update UI property on main thread, but do the loop work off main thread
+                    await MainActor.run {
+                        displayedText = accumulatedText
+                    }
                 }
 
                 // Play subtle audio tone for each character (based on settings)
@@ -103,8 +118,10 @@ class TypewriterTextService: ObservableObject {
             }
             
             // Ensure final text is always displayed (in case last update was missed)
-            displayedText = text
-            isRevealing = false
+            await MainActor.run {
+                displayedText = text
+                isRevealing = false
+            }
             onComplete?()
         }
     }

@@ -30,7 +30,14 @@ except ImportError as e:
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)  # Enable CORS for iOS app
 # Use 'threading' instead of 'eventlet' for Python 3.12 compatibility
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')  # Enable WebSocket support
+# Configure Socket.IO with explicit ping/pong settings for better compatibility
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins="*", 
+    async_mode='threading',
+    ping_interval=25,  # Server sends ping every 25 seconds
+    ping_timeout=10    # Wait 10 seconds for pong response
+)  # Enable WebSocket support
 
 # Database file path
 DB_PATH = os.path.join(os.path.dirname(__file__), 'cache_raiders.db')
@@ -205,6 +212,25 @@ def init_db():
             latitude REAL NOT NULL,
             longitude REAL NOT NULL,
             updated_at TEXT NOT NULL
+        )
+    ''')
+    
+    # NPCs table - tracks all NPCs (Captain Bones, Corgi, etc.)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS npcs (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            npc_type TEXT NOT NULL,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by TEXT,
+            ar_origin_latitude REAL,
+            ar_origin_longitude REAL,
+            ar_offset_x REAL,
+            ar_offset_y REAL,
+            ar_offset_z REAL,
+            ar_placement_timestamp TEXT
         )
     ''')
     

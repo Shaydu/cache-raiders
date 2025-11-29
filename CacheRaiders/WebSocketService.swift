@@ -284,8 +284,11 @@ class WebSocketService: ObservableObject {
         // Handle other Socket.IO packet types
         if text == "2" {
             // Server sent ping - respond with pong "3"
+            lastServerPingTime = Date()
             print("📥 [Ping] Received ping from server, sending pong")
             sendSocketIOPacket("3")
+            // Reset failure count since we're receiving server pings
+            pingPongFailures = 0
             return
         }
         
@@ -368,8 +371,9 @@ class WebSocketService: ObservableObject {
     }
     
     // Track ping/pong for diagnostics
-    private var lastPingTime: Date?
-    private var lastPongTime: Date?
+    private var lastPingTime: Date? // When we sent a ping (not used anymore, but kept for compatibility)
+    private var lastPongTime: Date? // When we received a pong (not used anymore, but kept for compatibility)
+    private var lastServerPingTime: Date? // When we received a ping from server
     private var pingPongFailures: Int = 0
     
     /// Parse Socket.IO event message format: 42["event_name", {...}]
@@ -520,9 +524,35 @@ class WebSocketService: ObservableObject {
     
     private func startPingTimer() {
         stopPingTimer()
-        pingTimer = Timer.scheduledTimer(withTimeInterval: pingInterval, repeats: true) { [weak self] _ in
-            self?.sendPing()
+        // Note: We don't send client-initiated pings anymore
+        // Flask-SocketIO server sends pings, and we respond with pongs
+        // This avoids ping/pong failures in threading mode
+        // The server is configured to ping every 25 seconds, and we respond automatically
+        // Monitor if we stop receiving server pings (indicates connection issue)
+        pingTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            if let lastPing = self.lastServerPingTime {
+                let timeSinceLastPing = Date().timeIntervalSince(lastPing)
+                if timeSinceLastPing > 60.0 {
+                    // Haven't received server ping in over 60 seconds
+                    self.pingPongFailures += 1
+                    print("⚠️ [Ping/Pong] Haven't received server ping in \(Int(timeSinceLastPing))s (failures: \(self.pingPongFailures))")
+                    if self.pingPongFailures >= 3 {
+                        print("❌ [Ping/Pong] Server ping timeout - connection may be stale")
+                    }
+                } else {
+                    // Reset failures if we're receiving pings regularly
+                    if self.pingPongFailures > 0 {
+                        print("✅ [Ping/Pong] Receiving server pings regularly again")
+                        self.pingPongFailures = 0
+                    }
+                }
+            } else {
+                // No server ping received yet - give it time
+                print("ℹ️ [Ping/Pong] Waiting for first server ping...")
+            }
         }
+        print("📡 [Ping] Ping monitor started - will track server pings (server pings every 25s)")
     }
     
     private func stopPingTimer() {

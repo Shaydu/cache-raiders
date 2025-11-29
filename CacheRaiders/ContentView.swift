@@ -414,11 +414,9 @@ struct ContentView: View {
                         treasureHuntService: treasureHuntService,
                         userLocationManager: userLocationManager
                     )
-                    .presentationDetents([.medium])
+                    .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationBackground(.clear)
-                    .presentationContentInteraction(.scrolls)
-                    .scrollDismissesKeyboard(.interactively)
                 case .treasureMap:
                     // Show treasure map if we have map data
                     if let mapPiece = treasureHuntService.mapPiece,

@@ -471,28 +471,12 @@ Return ONLY valid JSON, no other text."""
         if not lat or not lon:
             return {"error": "target_location must include latitude and longitude"}
         
-        # Fetch real map features with coordinates (reduced radius to avoid "resource exceeds maximum size" error)
-        # The function will automatically retry with smaller radius if it hits API limits
+        # Skip map features entirely to ensure fast, small response
+        # Map features can cause "resource exceeds maximum size" errors from Overpass API
+        # The map piece will work fine without them - just won't have landmark names in hints
         map_features_with_coords = []
-        try:
-            map_features_result = self.map_feature_service.get_features_near_location(lat, lon, radius=50.0, return_coordinates=True)
-            
-            # Check if we got an error instead of features
-            if isinstance(map_features_result, dict) and 'error' in map_features_result:
-                error_msg = map_features_result['error']
-                print(f"⚠️ Map feature fetch failed: {error_msg}")
-                # Don't fail the entire map piece generation - just continue without features
-                print(f"   Continuing without map features - map piece will still be generated")
-                map_features_with_coords = []
-            else:
-                map_features_with_coords = map_features_result if isinstance(map_features_result, list) else []
-        except Exception as e:
-            print(f"⚠️ Exception fetching map features: {e}")
-            # Don't fail the entire map piece generation - just continue without features
-            print(f"   Continuing without map features - map piece will still be generated")
-            map_features_with_coords = []
-        
-        map_feature_names = [f.get('name', f.get('type', '')) for f in map_features_with_coords if isinstance(f, dict)]
+        map_feature_names = []
+        print("ℹ️ Skipping map feature fetch for fast response (map piece will still be generated)")
         
         # Generate partial coordinates (obfuscated slightly for puzzle)
         # Piece 1 (skeleton): Shows approximate area but not exact location
@@ -503,20 +487,20 @@ Return ONLY valid JSON, no other text."""
             approximate_lon = lon + (random.random() - 0.5) * 0.001
             piece_data = {
                 "piece_number": 1,
-                "hint": f"Arr, this be the first half o' the map, matey! The treasure be near {', '.join(map_feature_names[:2]) if map_feature_names else 'these waters'}.",
+                "hint": "Arr, this be the first half o' the map, matey! The treasure be near these waters!",
                 "approximate_latitude": approximate_lat,
                 "approximate_longitude": approximate_lon,
-                "landmarks": map_features_with_coords[:3] if map_features_with_coords else [],  # Stylized map - max 3 navigational aids
+                "landmarks": [],  # No landmarks for fast response
                 "is_first_half": True
             }
         else:
             # Second half: exact location
             piece_data = {
                 "piece_number": 2,
-                "hint": f"Woof! Here's the second half! The treasure is exactly at these coordinates!",
+                "hint": "Woof! Here's the second half! The treasure is exactly at these coordinates!",
                 "exact_latitude": lat,
                 "exact_longitude": lon,
-                "landmarks": map_features_with_coords[:3] if map_features_with_coords else [],  # Stylized map - max 3 navigational aids
+                "landmarks": [],  # No landmarks for fast response
                 "is_second_half": True
             }
         

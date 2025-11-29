@@ -962,17 +962,14 @@ struct SettingsView: View {
         Button(action: {
             guard !viewModel.isLoading else { return }
             viewModel.isLoading = true
-            if let userLocation = userLocationManager.currentLocation {
-                Task {
-                    await locationManager.loadLocationsFromAPI(userLocation: userLocation)
-                    await MainActor.run {
-                        viewModel.displayAlert(title: "Success", message: "Refreshed locations from API. Check console for details.")
-                        viewModel.isLoading = false
-                    }
+            Task {
+                // Pass nil for userLocation to load ALL objects (no distance filter)
+                // This matches what the admin panel shows
+                await locationManager.loadLocationsFromAPI(userLocation: nil, includeFound: true)
+                await MainActor.run {
+                    viewModel.displayAlert(title: "Success", message: "Refreshed all locations from API. Check console for details.")
+                    viewModel.isLoading = false
                 }
-            } else {
-                viewModel.displayAlert(title: "Error", message: "No user location available. Please enable location services.")
-                viewModel.isLoading = false
             }
         }) {
             HStack {
