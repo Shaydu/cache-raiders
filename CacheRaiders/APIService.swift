@@ -227,17 +227,24 @@ class APIService {
     
     /// Sync saved user name to server on app startup
     /// This ensures the name persists between sessions and is synced to the server
+    /// Note: This is a background operation that doesn't block app startup
     func syncSavedUserNameToServer() {
         // Get saved name from UserDefaults
         if let savedName = UserDefaults.standard.string(forKey: "userName"), !savedName.isEmpty {
             // Sync to server in background (don't block app startup)
+            // Use a longer timeout since server may have retry logic for database operations
             Task {
                 do {
                     try await updatePlayerNameOnServer(savedName)
                     print("✅ Synced saved player name to server on startup: \(savedName)")
                 } catch {
                     // Log error but don't fail - this is a background sync
-                    print("⚠️ Failed to sync saved player name to server on startup: \(error.localizedDescription)")
+                    // Suppress verbose error logging for timeouts during startup (expected if server is slow)
+                    if let urlError = error as? URLError, urlError.code == .timedOut {
+                        print("⚠️ Player name sync timed out on startup (server may be slow - will retry later)")
+                    } else {
+                        print("⚠️ Failed to sync saved player name to server on startup: \(error.localizedDescription)")
+                    }
                 }
             }
         }
@@ -277,7 +284,8 @@ class APIService {
     private func makeRequest<T: Decodable>(
         url: URL,
         method: String = "GET",
-        body: Data? = nil
+        body: Data? = nil,
+        timeout: TimeInterval = 10.0
     ) async throws -> T {
         print("🔍 [API Request] \(method) \(url.absoluteString)")
         
@@ -292,8 +300,8 @@ class APIService {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // PERFORMANCE: Add timeout to prevent hanging requests
-        request.timeoutInterval = 10.0 // 10 second timeout
+        // PERFORMANCE: Add timeout to prevent hanging requests (configurable per request)
+        request.timeoutInterval = timeout
         
         if let body = body {
             request.httpBody = body
@@ -671,7 +679,8 @@ class APIService {
         let encoder = JSONEncoder()
         let bodyData = try encoder.encode(body)
         
-        let _: [String: String] = try await makeRequest(url: url, method: "POST", body: bodyData)
+        // Use longer timeout for player name sync (server may have retry logic)
+        let _: [String: String] = try await makeRequest(url: url, method: "POST", body: bodyData, timeout: 30.0)
     }
     
     /// Update grounding height for an object
@@ -1216,7 +1225,9 @@ class APIService {
             throw APIError.invalidURL
         }
         
-        let response: MapPieceResponse = try await makeRequest(url: url, method: "GET", body: requestBody)
+        // Use POST method to send location in request body (GET with body is not allowed)
+        // Use longer timeout for map piece requests (Overpass API may take time)
+        let response: MapPieceResponse = try await makeRequest(url: url, method: "POST", body: requestBody, timeout: 30.0)
         return response
     }
     

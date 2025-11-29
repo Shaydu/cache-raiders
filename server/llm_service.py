@@ -6,7 +6,25 @@ Supports OpenAI, Anthropic, and local Ollama models
 import os
 import json
 import random
+import logging
+import time
 from typing import Optional, Dict, List
+
+# Set up file logging for map piece generation
+log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+os.makedirs(log_dir, exist_ok=True)
+map_log_file = os.path.join(log_dir, 'map_requests.log')
+
+# Configure map logger (reuse same file as app.py)
+map_logger = logging.getLogger('map_requests')
+if not map_logger.handlers:  # Only add handler if not already added
+    map_handler = logging.FileHandler(map_log_file, mode='a')
+    map_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    map_handler.setFormatter(formatter)
+    map_logger.addHandler(map_handler)
+    map_logger.setLevel(logging.DEBUG)
+    map_logger.propagate = False
 
 try:
     from openai import OpenAI
@@ -15,201 +33,8 @@ except ImportError:
     OPENAI_AVAILABLE = False
     print("⚠️ openai package not installed. Run: pip install openai")
 
-try:
-    import requests
-    REQUESTS_AVAILABLE = True
-except ImportError:
-    REQUESTS_AVAILABLE = False
-    print("⚠️ requests package not installed. Run: pip install requests")
-
-class MapFeatureService:
-    """Service to detect real map features from geographic data using OpenStreetMap."""
-    
-    def __init__(self):
-        # Uses OpenStreetMap Overpass API (free, no API key needed)
-        self.overpass_url = "https://overpass-api.de/api/interpreter"
-    
-    def get_features_near_location(
-        self,
-        latitude: float,
-        longitude: float,
-        radius: float = 25.0,  # Start with 25m to minimize OSM data and avoid "resource exceeds maximum size" error
-        return_coordinates: bool = False  # If True, returns dicts with coordinates
-    ):
-        """Get real map features near a location using OpenStreetMap Overpass API.
-        Returns a list of feature names/descriptions, or dicts with coordinates if return_coordinates=True.
-        Uses center points only (not full geometry) to keep data size small."""
-        try:
-            import requests
-        except ImportError:
-            print("⚠️ requests not installed. Install with: pip install requests")
-            return []
-        
-        # Overpass QL query - Get minimal landmarks within radius for crude treasure map
-        # CRITICAL: Use (limit:N) on each query type BEFORE expansion to prevent huge datasets
-        # Use "out center" to get ONLY the center point (not all geometry points)
-        # This dramatically reduces data size - a large lake with 1000+ points becomes just 1 center point
-        # OPTIMIZATION: Get only 1-2 total landmarks to minimize OSM data and avoid resource limits
-        # Use very small radius (25m) and only query nodes (not ways) to reduce complexity
-        query = f"""
-        [out:json][timeout:2][maxsize:268435456];
-        (
-          node["amenity"](around:{radius},{latitude},{longitude})(limit:1);
-          node["natural"](around:{radius},{latitude},{longitude})(limit:1);
-        );
-        out center;
-        """
-        
-        try:
-            # Reduced timeout to 3 seconds to prevent UI freezes
-            # If Overpass API is slow, we'll fail fast and continue without features
-            response = requests.post(self.overpass_url, data=query, timeout=3)
-            
-            # Check for errors in response
-            if response.status_code != 200:
-                print(f"⚠️ Overpass API error: {response.status_code} - {response.text[:200]}")
-                return []
-            
-            # Check response text for error messages before parsing JSON
-            response_text = response.text.lower()
-            if 'too large' in response_text or 'exceeded' in response_text or 'maximum size' in response_text or 'resource' in response_text:
-                print(f"⚠️ Overpass API returned 'too large' or similar error in response text")
-                print(f"   Response preview: {response.text[:300]}")
-                # Return empty list instead of error - better UX than showing error to user
-                return []
-            
-            # Try to parse JSON, but handle decode errors gracefully
-            try:
-                data = response.json()
-            except (ValueError, json.JSONDecodeError) as e:
-                # If JSON parsing fails, check if it's an error message
-                if 'too large' in response.text.lower() or 'exceeded' in response.text.lower():
-                    print(f"⚠️ Overpass API error (non-JSON response): {response.text[:200]}")
-                    return []
-                raise  # Re-raise if it's a different JSON error
-            
-            # Check for Overpass API errors (resource exceeded, timeout, etc.)
-            if 'remark' in data:
-                remark = data['remark'].lower()
-                if 'exceeded' in remark or 'timeout' in remark or 'maximum' in remark or 'size' in remark or 'too large' in remark:
-                    error_message = data['remark']
-                    print(f"⚠️ Overpass API limit exceeded: {error_message}")
-                    print(f"   Reducing radius from {radius}m and retrying with smaller area...")
-                    # Retry with smaller radius if we hit limits
-                    if radius > 50:
-                        result = self.get_features_near_location(latitude, longitude, radius=50.0, return_coordinates=return_coordinates)
-                        # If retry also failed, return empty list (not error)
-                        if isinstance(result, dict) and 'error' in result:
-                            return []
-                        return result
-                    elif radius > 25:
-                        result = self.get_features_near_location(latitude, longitude, radius=25.0, return_coordinates=return_coordinates)
-                        # If retry also failed, return empty list (not error)
-                        if isinstance(result, dict) and 'error' in result:
-                            return []
-                        return result
-                    else:
-                        print(f"   ⚠️ Even with 25m radius, query too large. Returning empty results instead of error.")
-                        # Return empty list instead of error - better UX than showing error to user
-                        return []
-            
-            # Check for error field in response
-            if 'error' in data:
-                error_msg = data.get('error', 'Unknown error')
-                error_msg_lower = str(error_msg).lower()
-                if 'too large' in error_msg_lower or 'exceeded' in error_msg_lower or 'maximum' in error_msg_lower:
-                    print(f"⚠️ Overpass API error: {error_msg}")
-                    # Return empty list instead of error - better UX
-                    return []
-                # Try with smaller radius for other errors
-                if radius > 75:
-                    result = self.get_features_near_location(latitude, longitude, radius=75.0, return_coordinates=return_coordinates)
-                    if isinstance(result, dict) and 'error' in result:
-                        return []
-                    return result
-                elif radius > 50:
-                    result = self.get_features_near_location(latitude, longitude, radius=50.0, return_coordinates=return_coordinates)
-                    if isinstance(result, dict) and 'error' in result:
-                        return []
-                    return result
-                # Return empty list instead of error - better UX
-                print(f"   ⚠️ Could not fetch features even with smaller radius. Returning empty results.")
-                return []
-            
-            features = []
-            seen_names = set()
-            
-            for element in data.get('elements', []):
-                tags = element.get('tags', {})
-                feature_type = self._classify_feature(element)
-                
-                # Get coordinates from element
-                # With "out center", ways/relations have a 'center' field with lat/lon
-                element_lat = None
-                element_lon = None
-                if 'lat' in element and 'lon' in element:
-                    # Node has direct lat/lon
-                    element_lat = element['lat']
-                    element_lon = element['lon']
-                elif 'center' in element:
-                    # Way/relation has center (from "out center" query)
-                    element_lat = element['center'].get('lat')
-                    element_lon = element['center'].get('lon')
-                # Note: No 'geometry' field when using "out center" - that's the whole point!
-                
-                # Get feature name or use type
-                name = tags.get('name', '')
-                feature_key = name if name else feature_type
-                
-                if return_coordinates and element_lat and element_lon:
-                    # Return dict with coordinates (center point only)
-                    if feature_key not in seen_names:
-                        features.append({
-                            'name': name or feature_type,
-                            'type': feature_type,
-                            'latitude': element_lat,
-                            'longitude': element_lon
-                        })
-                        seen_names.add(feature_key)
-                else:
-                    # Return string (backward compatible)
-                    if name and name not in seen_names:
-                        features.append(f"{name} ({feature_type})")
-                        seen_names.add(name)
-                    elif not name and feature_type not in seen_names:
-                        # Use type if no name
-                        if feature_type not in ['path']:  # Skip generic paths
-                            features.append(feature_type)
-                            seen_names.add(feature_type)
-                
-                # Limit to 3 features total to minimize OSM data
-                if len(features) >= 3:
-                    break
-            
-            return features
-        except requests.exceptions.RequestException as e:
-            print(f"⚠️ Error fetching map features (network): {e}")
-            return []
-        except Exception as e:
-            print(f"⚠️ Error fetching map features: {e}")
-            return []
-    
-    def _classify_feature(self, element: Dict) -> str:
-        """Classify an OSM element into a feature type."""
-        tags = element.get('tags', {})
-        
-        if 'waterway' in tags or tags.get('natural') == 'water':
-            return 'water'
-        elif tags.get('natural') == 'tree' or tags.get('natural') == 'tree_row':
-            return 'tree'
-        elif 'building' in tags:
-            return 'building'
-        elif tags.get('natural') == 'peak' or tags.get('natural') == 'mountain':
-            return 'mountain'
-        elif 'highway' in tags:
-            return 'path'
-        else:
-            return 'landmark'
+# Import MapFeatureService from separate module
+from map_feature_service import MapFeatureService
 
 class LLMService:
     def __init__(self):
@@ -483,11 +308,18 @@ Return ONLY valid JSON, no other text."""
         Returns:
             Dict with map piece data including partial coordinates and landmarks
         """
+        request_id = f"map_{int(time.time() * 1000)}"
+        map_logger.info(f"[{request_id}] [LLM Service] generate_map_piece() called")
+        map_logger.info(f"[{request_id}] [LLM Service] Parameters: piece_number={piece_number}, npc_type={npc_type}, total_pieces={total_pieces}")
+        
         # Extract coordinates first
         lat = target_location.get('latitude')
         lon = target_location.get('longitude')
         
+        map_logger.info(f"[{request_id}] [LLM Service] Target location: lat={lat}, lon={lon}")
+        
         if not lat or not lon:
+            map_logger.error(f"[{request_id}] [LLM Service] Missing coordinates in target_location")
             return {"error": "target_location must include latitude and longitude"}
         
         # Helper function to create map piece data (used in both success and error cases)
@@ -533,15 +365,23 @@ Return ONLY valid JSON, no other text."""
             if npc_type.lower() == "skeleton":
                 # Only fetch Overpass landmarks for Captain Bones (skeleton) game mode
                 print(f"🗺️ [Captain Bones Game Mode] Fetching landmarks within 50m of {lat}, {lon} for crude treasure map...")
+                map_logger.info(f"[{request_id}] [LLM Service] Starting Overpass API call for landmarks...")
+                map_logger.info(f"[{request_id}] [LLM Service] Location: lat={lat}, lon={lon}, radius=50m")
+                
                 try:
+                    overpass_start = time.time()
                     # Get 2-3 landmarks with coordinates for a minimal crude map
                     # Use 50m radius to keep OSM data to absolute minimum
                     landmarks = self.map_feature_service.get_features_near_location(
                         latitude=lat,
                         longitude=lon,
                         radius=50.0,  # 50 meters - minimal radius to reduce OSM data
-                        return_coordinates=True  # Get coordinates for map display
+                        return_coordinates=True,  # Get coordinates for map display
+                        request_id=request_id  # Pass request ID for logging
                     )
+                    overpass_duration = time.time() - overpass_start
+                    map_logger.info(f"[{request_id}] [LLM Service] Overpass API call completed in {overpass_duration:.2f}s")
+                    map_logger.info(f"[{request_id}] [LLM Service] Received {len(landmarks) if isinstance(landmarks, list) else 0} landmarks")
 
                     # Ensure landmarks is a list (get_features_near_location should always return a list)
                     if not isinstance(landmarks, list):
@@ -572,12 +412,19 @@ Return ONLY valid JSON, no other text."""
                     landmarks = filtered_landmarks
                     print(f"   [Captain Bones] Found {len(landmarks)} landmarks within 50m range")
                 except Exception as e:
-                    # If landmark fetch fails, continue without landmarks (map still works)
+                    overpass_duration = time.time() - overpass_start if 'overpass_start' in locals() else 0
                     error_msg = str(e).lower()
+                    map_logger.error(f"[{request_id}] [LLM Service] Overpass API call failed after {overpass_duration:.2f}s")
+                    map_logger.error(f"[{request_id}] [LLM Service] Error type: {type(e).__name__}")
+                    map_logger.error(f"[{request_id}] [LLM Service] Error message: {str(e)}")
+                    
+                    # If landmark fetch fails, continue without landmarks (map still works)
                     if 'too large' in error_msg or 'exceeded' in error_msg or 'maximum' in error_msg or 'resource' in error_msg:
+                        map_logger.warning(f"[{request_id}] [LLM Service] Overpass API resource limit exceeded - continuing without landmarks")
                         print(f"⚠️ [Captain Bones] Overpass API resource limit exceeded: {e}")
                         print("   Continuing with map piece without landmarks (this is expected and safe)")
                     else:
+                        map_logger.warning(f"[{request_id}] [LLM Service] Overpass API error - continuing without landmarks")
                         print(f"⚠️ [Captain Bones] Could not fetch landmarks: {e}")
                     landmarks = []
             else:
@@ -585,12 +432,21 @@ Return ONLY valid JSON, no other text."""
                 print(f"ℹ️ Skipping Overpass API for {npc_type} NPC (not Captain Bones game mode)")
             
             # Generate and return map piece
-            return create_map_piece_data(landmarks)
+            map_logger.info(f"[{request_id}] [LLM Service] Creating map piece data with {len(landmarks) if isinstance(landmarks, list) else 0} landmarks")
+            result = create_map_piece_data(landmarks)
+            map_logger.info(f"[{request_id}] [LLM Service] Map piece created successfully")
+            return result
             
         except Exception as e:
             # Catch any errors (including Overpass API errors if somehow called)
             error_msg = str(e).lower()
+            map_logger.error(f"[{request_id}] [LLM Service] Exception in generate_map_piece: {type(e).__name__}")
+            map_logger.error(f"[{request_id}] [LLM Service] Exception message: {str(e)}")
+            import traceback
+            map_logger.error(f"[{request_id}] [LLM Service] Traceback: {traceback.format_exc()}")
+            
             if 'too large' in error_msg or 'exceeded' in error_msg or 'maximum' in error_msg or 'resource' in error_msg:
+                map_logger.warning(f"[{request_id}] [LLM Service] Resource exceeded error - returning map piece without landmarks")
                 print(f"⚠️ Caught 'resource exceeded' error in generate_map_piece: {e}")
                 print("   Returning map piece without features (this is expected and safe)")
                 # Return a valid map piece even if there was an error
@@ -598,6 +454,7 @@ Return ONLY valid JSON, no other text."""
                 return create_map_piece_data([])  # Empty landmarks if fetch failed
             else:
                 # For other errors, return error dict
+                map_logger.error(f"[{request_id}] [LLM Service] Returning error response")
                 print(f"⚠️ Error in generate_map_piece: {e}")
                 return {"error": f"Failed to generate map piece: {str(e)}"}
     

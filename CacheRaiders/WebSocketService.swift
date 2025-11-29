@@ -49,7 +49,7 @@ class WebSocketService: ObservableObject {
     private let reconnectInterval: TimeInterval = 5.0
     private let pingInterval: TimeInterval = 30.0
     private let healthCheckInterval: TimeInterval = 10.0
-    private let connectionTimeoutInterval: TimeInterval = 10.0 // Timeout after 10 seconds
+    private let connectionTimeoutInterval: TimeInterval = 30.0 // Increased timeout to 30 seconds for slow networks
     
     // Callbacks for WebSocket events
     var onObjectCollected: ((String, String, String) -> Void)? // (object_id, found_by, found_at)

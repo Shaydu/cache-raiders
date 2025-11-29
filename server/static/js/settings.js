@@ -197,8 +197,11 @@ const SettingsManager = {
                 console.log(`✅ Game mode updated to: ${data.game_mode}`);
                 
                 // Reload objects to update map display (filter based on new game mode)
+                // This will clear existing markers and re-add only the ones that match the new game mode
                 if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
-                    ObjectsManager.loadObjects();
+                    ObjectsManager.loadObjects().then(() => {
+                        console.log('🗺️ Map markers refreshed for new game mode');
+                    });
                 }
             } else {
                 const error = await response.json();
@@ -254,8 +257,11 @@ const SettingsManager = {
                 console.log(`🎮 Game mode changed via WebSocket: ${data.game_mode}`);
                 
                 // Reload objects to update map display (filter based on new game mode)
+                // This will clear existing markers and re-add only the ones that match the new game mode
                 if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
-                    ObjectsManager.loadObjects();
+                    ObjectsManager.loadObjects().then(() => {
+                        console.log('🗺️ Map markers refreshed for new game mode (via WebSocket)');
+                    });
                 }
             });
         }

@@ -92,6 +92,12 @@ const ApiService = {
             return ApiService.fetch(`/api/players/${deviceUuid}`, {
                 method: 'DELETE'
             });
+        },
+
+        async kick(deviceUuid) {
+            return ApiService.fetch(`/api/players/${deviceUuid}/kick`, {
+                method: 'POST'
+            });
         }
     },
 

@@ -164,7 +164,7 @@
             <p style="color: #ccc; font-size: 12px; margin-bottom: 10px;">Scan this QR code with your iOS app to connect:</p>
             <div id="qrcodeContainer" style="text-align: center; margin: 15px 0; min-height: 220px; display: flex; align-items: center; justify-content: center; position: relative;">
                 <div style="position: relative; display: inline-block;">
-                    <img id="qrcode" src="/api/qrcode" alt="Server QR Code" style="background: white; padding: 10px; border-radius: 8px; display: inline-block; max-width: 100%;" onerror="QRCodeManager.handleQRCodeError()">
+                    <img id="qrcode" src="/api/qrcode?t=0" alt="Server QR Code" style="background: white; padding: 10px; border-radius: 8px; display: inline-block; max-width: 100%;" onerror="QRCodeManager.handleQRCodeError()">
                     <button onclick="QRCodeManager.initQRCode()" style="position: absolute; bottom: 8px; right: 8px; background: rgba(0, 0, 0, 0.7); border: 1px solid #666; color: #fff; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 10px; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; backdrop-filter: blur(4px);" title="Regenerate QR Code">
                         <span style="font-size: 12px;">🔄</span>
                     </button>

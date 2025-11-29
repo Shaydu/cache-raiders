@@ -11,9 +11,25 @@ import math
 import socket
 import io
 import qrcode
+import logging
 from datetime import datetime
 from typing import Optional, List, Dict
 from dotenv import load_dotenv
+
+# Set up file logging for map requests debugging
+log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+os.makedirs(log_dir, exist_ok=True)
+map_log_file = os.path.join(log_dir, 'map_requests.log')
+
+# Configure map request logger
+map_logger = logging.getLogger('map_requests')
+map_logger.setLevel(logging.DEBUG)
+map_handler = logging.FileHandler(map_log_file, mode='a')
+map_handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+map_handler.setFormatter(formatter)
+map_logger.addHandler(map_handler)
+map_logger.propagate = False  # Don't propagate to root logger
 
 # Load environment variables from .env file (never commit this file!)
 load_dotenv()
@@ -36,7 +52,7 @@ socketio = SocketIO(
     cors_allowed_origins="*", 
     async_mode='threading',
     ping_interval=25,  # Server sends ping every 25 seconds
-    ping_timeout=10    # Wait 10 seconds for pong response
+    ping_timeout=30    # Increased to 30 seconds for slow networks
 )  # Enable WebSocket support
 
 # Database file path
@@ -49,7 +65,7 @@ user_locations: Dict[str, Dict] = {}
 # Location update interval setting (in milliseconds, default 1000ms = 1 second)
 location_update_interval_ms: int = 1000
 
-# Game mode setting (default: "open")
+# Game mode setting (default: "open", will be loaded from database on startup)
 game_mode: str = "open"
 
 # Track connected WebSocket clients (session_id -> device_uuid)
@@ -57,14 +73,8 @@ game_mode: str = "open"
 connected_clients: Dict[str, str] = {}  # session_id -> device_uuid
 client_sessions: Dict[str, set] = {}  # device_uuid -> set of session_ids
 
-def get_local_ip():
-    """Get the local network IP address."""
-    # First, check if HOST_IP environment variable is set (useful for Docker)
-    host_ip = os.environ.get('HOST_IP')
-    if host_ip:
-        print(f"🌐 Using HOST_IP from environment: {host_ip}")
-        return host_ip
-    
+def get_local_ip_dynamic():
+    """Get the local network IP address dynamically (always detects current IP)."""
     # Try to get IP from all network interfaces using socket
     try:
         import socket
@@ -74,7 +84,7 @@ def get_local_ip():
         try:
             ip = socket.gethostbyname(hostname)
             if ip and not ip.startswith('127.'):
-                print(f"🌐 Detected IP from hostname {hostname}: {ip}")
+                print(f"🌐 [Dynamic] Detected IP from hostname {hostname}: {ip}")
                 return ip
         except socket.gaierror:
             pass
@@ -87,18 +97,30 @@ def get_local_ip():
             s.connect(('8.8.8.8', 80))
             ip = s.getsockname()[0]
             if ip and not ip.startswith('127.'):
-                print(f"🌐 Detected IP via socket connection: {ip}")
+                print(f"🌐 [Dynamic] Detected IP via socket connection: {ip}")
                 return ip
         except Exception:
             pass
         finally:
             s.close()
     except Exception as e:
-        print(f"⚠️ Error detecting IP: {e}")
+        print(f"⚠️ Error detecting IP dynamically: {e}")
     
     # Last resort: return localhost
-    print("⚠️ Could not detect network IP, using 127.0.0.1")
+    print("⚠️ Could not detect network IP dynamically, using 127.0.0.1")
     return '127.0.0.1'
+
+def get_local_ip():
+    """Get the local network IP address."""
+    # First, check if HOST_IP environment variable is set (useful for Docker)
+    # But for QR code, we use get_local_ip_dynamic() instead
+    host_ip = os.environ.get('HOST_IP')
+    if host_ip:
+        print(f"🌐 Using HOST_IP from environment: {host_ip}")
+        return host_ip
+    
+    # Fall back to dynamic detection
+    return get_local_ip_dynamic()
 
 def get_db_connection():
     """Get a database connection with timeout for handling concurrent access."""
@@ -239,6 +261,24 @@ def init_db():
             ar_placement_timestamp TEXT
         )
     ''')
+    
+    # Settings table - stores application settings (game mode, etc.)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    ''')
+    
+    # Initialize default game mode if not exists
+    cursor.execute('SELECT value FROM settings WHERE key = ?', ('game_mode',))
+    if not cursor.fetchone():
+        cursor.execute('''
+            INSERT INTO settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+        ''', ('game_mode', 'open', datetime.utcnow().isoformat()))
+        print("✅ Initialized default game mode: open")
     
     conn.commit()
     conn.close()
@@ -1313,6 +1353,43 @@ def delete_player(device_uuid: str):
         'finds_deleted': finds_deleted
     }), 200
 
+@app.route('/api/players/<device_uuid>/kick', methods=['POST'])
+def kick_player(device_uuid: str):
+    """Kick/disconnect a player by closing their WebSocket connection."""
+    # Find all sessions for this device
+    target_sessions = client_sessions.get(device_uuid, set())
+    
+    if not target_sessions:
+        return jsonify({
+            'message': f'Player {device_uuid[:8]}... is not connected',
+            'kicked': False
+        }), 200
+    
+    # Disconnect all sessions for this device
+    disconnected_count = 0
+    for session_id in list(target_sessions):
+        try:
+            socketio.server.disconnect(session_id)
+            disconnected_count += 1
+        except Exception as e:
+            print(f"⚠️ Error disconnecting session {session_id[:8]}...: {e}")
+    
+    # Clean up tracking
+    for session_id in list(target_sessions):
+        connected_clients.pop(session_id, None)
+        client_sessions[device_uuid].discard(session_id)
+    
+    if not client_sessions[device_uuid]:
+        del client_sessions[device_uuid]
+    
+    print(f"👢 Kicked player {device_uuid[:8]}... ({disconnected_count} session(s) disconnected)")
+    
+    return jsonify({
+        'message': f'Player kicked successfully. {disconnected_count} connection(s) closed.',
+        'kicked': True,
+        'sessions_disconnected': disconnected_count
+    }), 200
+
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
     """Get statistics about objects and finds."""
@@ -1514,7 +1591,12 @@ def delete_object(object_id: str):
 @app.route('/admin/')
 def admin_ui():
     """Serve the admin web UI."""
-    return send_from_directory(os.path.dirname(__file__), 'admin.html')
+    response = send_from_directory(os.path.dirname(__file__), 'admin.html')
+    # Disable caching for admin panel during development
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/api/server-info', methods=['GET'])
 def get_server_info():
@@ -1769,7 +1851,8 @@ def generate_qrcode():
     """Generate a QR code for the server URL."""
     
     port = int(os.environ.get('PORT', 5001))
-    local_ip = get_local_ip()
+    # Always detect IP dynamically (ignore HOST_IP env var for QR code)
+    local_ip = get_local_ip_dynamic()
     server_url = f'http://{local_ip}:{port}'
     
     # Generate QR code
@@ -2086,6 +2169,31 @@ def set_location_update_interval():
         'message': f'Location update interval set to {location_update_interval_ms/1000.0} seconds'
     })
 
+def load_game_mode_from_db():
+    """Load game mode from database on startup."""
+    global game_mode
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT value FROM settings WHERE key = ?', ('game_mode',))
+        row = cursor.fetchone()
+        if row:
+            game_mode = row['value']
+            print(f"🎮 Loaded game mode from database: {game_mode}")
+        else:
+            # Initialize with default if not found
+            cursor.execute('''
+                INSERT INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            ''', ('game_mode', 'open', datetime.utcnow().isoformat()))
+            conn.commit()
+            game_mode = 'open'
+            print(f"🎮 Initialized game mode to default: {game_mode}")
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Error loading game mode from database: {e}, using default: open")
+        game_mode = 'open'
+
 @app.route('/api/settings/game-mode', methods=['GET'])
 def get_game_mode():
     """Get the current game mode."""
@@ -2095,7 +2203,7 @@ def get_game_mode():
 
 @app.route('/api/settings/game-mode', methods=['POST', 'PUT'])
 def set_game_mode():
-    """Set the game mode."""
+    """Set the game mode and persist to database."""
     global game_mode
     
     data = request.get_json()
@@ -2111,7 +2219,23 @@ def set_game_mode():
             'error': f'Invalid game mode. Must be one of: {allowed_modes}'
         }), 400
     
+    # Update in-memory variable
     game_mode = new_game_mode
+    
+    # Persist to database
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+        ''', ('game_mode', game_mode, datetime.utcnow().isoformat()))
+        conn.commit()
+        conn.close()
+        print(f"💾 Persisted game mode to database: {game_mode}")
+    except Exception as e:
+        print(f"⚠️ Error persisting game mode to database: {e}")
+        # Continue anyway - in-memory value is set
     
     # Broadcast the new game mode to all connected clients via WebSocket
     socketio.emit('game_mode_changed', {
@@ -2128,23 +2252,48 @@ def set_game_mode():
 @app.route('/api/npcs/<npc_id>/map-piece', methods=['GET', 'POST'])
 def get_npc_map_piece(npc_id: str):
     """Get a treasure map piece from an NPC (skeleton has first half, corgi has second half)."""
+    import time
+    request_start_time = time.time()
+    request_id = f"{npc_id}_{int(time.time() * 1000)}"
+    
+    map_logger.info(f"[{request_id}] ========== MAP REQUEST STARTED ==========")
+    map_logger.info(f"[{request_id}] NPC ID: {npc_id}")
+    map_logger.info(f"[{request_id}] Method: {request.method}")
+    map_logger.info(f"[{request_id}] Headers: {dict(request.headers)}")
+    
     if not LLM_AVAILABLE:
+        map_logger.error(f"[{request_id}] LLM service not available")
         return jsonify({'error': 'LLM service not available'}), 503
     
     # Determine which NPC and which piece
     npc_type = "skeleton" if "skeleton" in npc_id.lower() else "corgi"
     piece_number = 1 if npc_type == "skeleton" else 2
+    map_logger.info(f"[{request_id}] NPC Type: {npc_type}, Piece Number: {piece_number}")
     
-    # Get target location from request (POST body or query params)
+    # Get target location from request (JSON body or query params)
     target_location = {}
-    if request.method == 'POST' and request.json:
+    # Try to get from JSON body first (works for both GET and POST)
+    # Note: Flask may not parse JSON body for GET requests, so we need to handle it manually
+    if request.method == 'GET' and request.content_length and request.content_length > 0:
+        # For GET requests with body, manually parse JSON
+        try:
+            import json
+            body_data = json.loads(request.get_data(as_text=True))
+            if 'target_location' in body_data:
+                target_location = body_data.get('target_location', {})
+                map_logger.info(f"[{request_id}] Target location from JSON body (GET): {target_location}")
+        except (json.JSONDecodeError, ValueError) as e:
+            map_logger.warning(f"[{request_id}] Failed to parse JSON body for GET request: {e}")
+    elif request.json and 'target_location' in request.json:
         target_location = request.json.get('target_location', {})
-    elif request.method == 'GET':
-        # Try to get from query params
+        map_logger.info(f"[{request_id}] Target location from JSON body: {target_location}")
+    # Fallback to query params for GET requests without body
+    if request.method == 'GET' and not target_location:
         lat = request.args.get('latitude')
         lon = request.args.get('longitude')
         if lat and lon:
             target_location = {'latitude': float(lat), 'longitude': float(lon)}
+            map_logger.info(f"[{request_id}] Target location from query params: {target_location}")
     
     # If no target provided, use a default location (for testing)
     if not target_location.get('latitude') or not target_location.get('longitude'):
@@ -2153,8 +2302,14 @@ def get_npc_map_piece(npc_id: str):
             'latitude': 37.7749,
             'longitude': -122.4194
         }
+        map_logger.warning(f"[{request_id}] No target location provided, using default: {target_location}")
+    
+    map_logger.info(f"[{request_id}] Final target location: lat={target_location.get('latitude')}, lon={target_location.get('longitude')}")
     
     try:
+        map_logger.info(f"[{request_id}] Calling llm_service.generate_map_piece()...")
+        call_start_time = time.time()
+        
         map_piece = llm_service.generate_map_piece(
             target_location=target_location,
             piece_number=piece_number,
@@ -2162,14 +2317,48 @@ def get_npc_map_piece(npc_id: str):
             npc_type=npc_type
         )
         
+        call_duration = time.time() - call_start_time
+        map_logger.info(f"[{request_id}] generate_map_piece() completed in {call_duration:.2f}s")
+        
+        map_logger.info(f"[{request_id}] Map piece result keys: {list(map_piece.keys()) if isinstance(map_piece, dict) else 'not a dict'}")
+        
         if 'error' in map_piece:
             error_msg = map_piece.get('error', 'Unknown error')
+            map_logger.error(f"[{request_id}] Map piece generation returned error: {error_msg}")
             # Check if it's a resource limit error - these should be handled gracefully
             error_lower = str(error_msg).lower()
             if 'too large' in error_lower or 'exceeded' in error_lower or 'maximum' in error_lower or 'resource' in error_lower:
                 # For resource limit errors, return a map piece without landmarks instead of an error
+                map_logger.warning(f"[{request_id}] Resource limit error - returning map piece without landmarks")
                 print(f"⚠️ Resource limit error caught in endpoint, returning map piece without landmarks")
                 # Generate a basic map piece without landmarks
+                lat = target_location.get('latitude', 37.7749)
+                lon = target_location.get('longitude', -122.4194)
+                import random
+                if piece_number == 1:
+                    approximate_lat = lat + (random.random() - 0.5) * 0.001
+                    approximate_lon = lon + (random.random() - 0.5) * 0.001
+                    map_piece = {
+                        "piece_number": 1,
+                        "hint": "Arr, this be the first half o' the map, matey! The treasure be near these waters!",
+                        "approximate_latitude": approximate_lat,
+                        "approximate_longitude": approximate_lon,
+                        "landmarks": [],
+                        "is_first_half": True
+                    }
+                    map_logger.info(f"[{request_id}] Generated fallback map piece (piece 1) without landmarks")
+                else:
+                    map_piece = {
+                        "piece_number": 2,
+                        "hint": "Woof! Here's the second half! The treasure is exactly at these coordinates!",
+                        "exact_latitude": lat,
+                        "exact_longitude": lon,
+                        "landmarks": [],
+                        "is_second_half": True
+                    }
+            else:
+                # For other errors, still try to return a basic map piece instead of error
+                map_logger.warning(f"[{request_id}] Other error in map piece - returning basic map piece without landmarks")
                 lat = target_location.get('latitude', 37.7749)
                 lon = target_location.get('longitude', -122.4194)
                 import random
@@ -2193,16 +2382,21 @@ def get_npc_map_piece(npc_id: str):
                         "landmarks": [],
                         "is_second_half": True
                     }
-            else:
-                # For other errors, return the error
-                return jsonify(map_piece), 400
+                map_logger.info(f"[{request_id}] Generated fallback map piece (piece {piece_number}) without landmarks")
         
-        return jsonify({
+        response_data = {
             'npc_id': npc_id,
             'npc_type': npc_type,
             'map_piece': map_piece,
             'message': f"Here's piece {piece_number} of the treasure map!"
-        }), 200
+        }
+        
+        total_duration = time.time() - request_start_time
+        map_logger.info(f"[{request_id}] ========== MAP REQUEST SUCCESS ==========")
+        map_logger.info(f"[{request_id}] Total duration: {total_duration:.2f}s")
+        map_logger.info(f"[{request_id}] Response size: {len(str(response_data))} bytes")
+        
+        return jsonify(response_data), 200
     except Exception as e:
         error_msg = str(e).lower()
         # Check if it's a resource limit error
@@ -2599,6 +2793,7 @@ def delete_npc(npc_id: str):
 
 if __name__ == '__main__':
     init_db()
+    load_game_mode_from_db()  # Load persisted game mode from database
     port = int(os.environ.get('PORT', 5001))  # Use 5001 as default to avoid conflicts
     local_ip = get_local_ip()
     

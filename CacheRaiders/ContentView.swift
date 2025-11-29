@@ -456,6 +456,13 @@ struct ContentView: View {
             .onAppear(perform: handleAppear)
             .onChange(of: presentedSheet) { oldSheet, newSheet in
                 handleSheetChange(oldSheet: oldSheet, newSheet: newSheet)
+                // Clear conversationNPC when skeleton conversation sheet is dismissed
+                if oldSheet != nil, newSheet == nil {
+                    // Sheet was dismissed - check if it was a skeleton conversation
+                    if case .skeletonConversation = oldSheet {
+                        conversationNPC = nil
+                    }
+                }
             }
             .onChange(of: showGridTreasureMap) { oldValue, newValue in
                 handleGridMapChange(oldValue: oldValue, newValue: newValue)

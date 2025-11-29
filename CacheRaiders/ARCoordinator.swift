@@ -24,6 +24,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var precisionPositioningService: ARPrecisionPositioningService? // Legacy - kept for compatibility
     private var geospatialService: ARGeospatialService? // New ENU-based geospatial service
     private var treasureHuntService: TreasureHuntService? // Treasure hunt game mode service
+    private var npcService: ARNPCService? // NPC management service
 
     weak var arView: ARView?
     private var locationManager: LootBoxLocationManager?
@@ -1620,6 +1621,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Move getNearbyLocations to background thread (can be expensive with many locations)
             locationProcessingQueue.async { [weak self] in
                 guard let self = self else { return }
+                
+                // CRITICAL: Skip all processing if dialog is open to prevent UI freezes
+                guard !self.isDialogOpen else { return }
+                
                 let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
                 
                 // DEBUG: Log what we found (on background thread to avoid blocking)
@@ -1634,9 +1639,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     }
                 }
                 
+                // CRITICAL: Double-check dialog state before dispatching to main thread
+                guard !self.isDialogOpen else { return }
+                
                 // Game Mode: Place NPCs based on mode (must be on main thread for AR scene updates)
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self, let arView = self.arView else { return }
+                    
+                    // CRITICAL: Final check on main thread - dialog may have opened
+                    guard !self.isDialogOpen else { return }
                     
                     // Check for NPCs in nearby locations that should be placed in AR
                     // This handles NPCs loaded from the API/map that might not be placed yet
@@ -1711,9 +1722,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 if shouldCheck {
                     self.lastPlacementCheck = placementNow
                     
+                    // CRITICAL: Skip if dialog is open
+                    guard !self.isDialogOpen else { return }
+                    
                     // Move checkAndPlaceBoxes to background thread (very expensive operation)
                     self.placementProcessingQueue.async { [weak self] in
                         guard let self = self else { return }
+                        
+                        // CRITICAL: Skip if dialog is open
+                        guard !self.isDialogOpen else { return }
                         
                         // Force re-placement after reset if flag is set
                         if self.shouldForceReplacement {
@@ -1734,9 +1751,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 if viewportNow.timeIntervalSince(self.lastViewportCheck) > 1.0 {
                     self.lastViewportCheck = viewportNow
                     
+                    // CRITICAL: Skip if dialog is open
+                    guard !self.isDialogOpen else { return }
+                    
                     // Move viewport checking to background thread
                     self.viewportProcessingQueue.async { [weak self] in
                         guard let self = self else { return }
+                        // CRITICAL: Skip if dialog is open
+                        guard !self.isDialogOpen else { return }
                         self.checkViewportVisibilityAsync()
                     }
                 }
@@ -1748,9 +1770,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 if removalNow.timeIntervalSince(self.lastPlacementCheck) > 0.5 {
                     self.lastPlacementCheck = removalNow
                     
+                    // CRITICAL: Skip if dialog is open
+                    guard !self.isDialogOpen else { return }
+                    
                     // Move removal check to background thread
                     self.placementProcessingQueue.async { [weak self] in
                         guard let self = self else { return }
+                        // CRITICAL: Skip if dialog is open
+                        guard !self.isDialogOpen else { return }
                         self.removeCollectedObjectsFromARAsync()
                         // Also ensure all placed objects have their FindableObjects synced to tap handler
                         self.syncFindableObjectsToTapHandlerAsync()
@@ -1864,33 +1891,53 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     /// Async wrapper for checkAndPlaceBoxes - dispatches to main thread for AR scene updates
     private func checkAndPlaceBoxesAsync(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
+        // CRITICAL: Skip if dialog is open to prevent UI freezes
+        guard !isDialogOpen else { return }
+        
         // AR scene updates must be on main thread
         DispatchQueue.main.async { [weak self] in
-            self?.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
+            // Double-check dialog state on main thread (may have changed)
+            guard let self = self, !self.isDialogOpen else { return }
+            self.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
         }
     }
     
     /// Async wrapper for checkViewportVisibility - dispatches to main thread for AR scene access
     private func checkViewportVisibilityAsync() {
+        // CRITICAL: Skip if dialog is open to prevent UI freezes
+        guard !isDialogOpen else { return }
+        
         // AR scene access must be on main thread
         DispatchQueue.main.async { [weak self] in
-            self?.checkViewportVisibility()
+            // Double-check dialog state on main thread (may have changed)
+            guard let self = self, !self.isDialogOpen else { return }
+            self.checkViewportVisibility()
         }
     }
     
     /// Async wrapper for removeCollectedObjectsFromAR - dispatches to main thread for AR scene updates
     private func removeCollectedObjectsFromARAsync() {
+        // CRITICAL: Skip if dialog is open to prevent UI freezes
+        guard !isDialogOpen else { return }
+        
         // AR scene updates must be on main thread
         DispatchQueue.main.async { [weak self] in
-            self?.removeCollectedObjectsFromAR()
+            // Double-check dialog state on main thread (may have changed)
+            guard let self = self, !self.isDialogOpen else { return }
+            self.removeCollectedObjectsFromAR()
         }
     }
     
     /// Async wrapper for syncFindableObjectsToTapHandler - thread-safe dictionary access
     private func syncFindableObjectsToTapHandlerAsync() {
+        // CRITICAL: Skip if dialog is open to prevent UI freezes
+        guard !isDialogOpen else { return }
+        
         // Dictionary access is already thread-safe, but dispatch to main for consistency
         DispatchQueue.main.async { [weak self] in
-            self?.syncFindableObjectsToTapHandler()
+            // Double-check dialog state on main thread (may have changed)
+            guard let self = self, !self.isDialogOpen else { return }
+            self.syncFindableObjectsToTapHandler()
         }
     }
     
@@ -4836,6 +4883,42 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Resume with saved configuration
         arView.session.run(config, options: [])
         savedARConfiguration = nil // Clear saved config after resuming
+    }
+    
+    /// Clear all placed objects from AR scene (loot boxes and NPCs)
+    /// Called when game mode changes to ensure clean state
+    func clearAllARObjects() {
+        guard let arView = arView else { return }
+        
+        Swift.print("🗑️ Clearing all AR objects due to game mode change...")
+        
+        // Remove all placed loot boxes
+        let lootBoxCount = placedBoxes.count
+        for (_, anchor) in placedBoxes {
+            anchor.removeFromParent()
+        }
+        placedBoxes.removeAll()
+        findableObjects.removeAll()
+        objectPlacementTimes.removeAll()
+        
+        // Remove all placed NPCs
+        let npcCount = placedNPCs.count
+        for (_, anchor) in placedNPCs {
+            anchor.removeFromParent()
+        }
+        placedNPCs.removeAll()
+        skeletonPlaced = false
+        corgiPlaced = false
+        skeletonAnchor = nil
+        
+        // Clear found loot boxes sets
+        distanceTracker?.foundLootBoxes.removeAll()
+        tapHandler?.foundLootBoxes.removeAll()
+        
+        // Update tap handler's NPC reference
+        tapHandler?.placedNPCs = placedNPCs
+        
+        Swift.print("✅ Cleared \(lootBoxCount) loot boxes and \(npcCount) NPCs from AR scene")
     }
     
 }

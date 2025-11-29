@@ -14,12 +14,18 @@ services:
       - ./admin.html:/app/admin.html
       # Mount app.py for live editing (no rebuild needed for code changes)
       - ./app.py:/app/app.py
+      # Mount llm_service.py for live editing
+      - ./llm_service.py:/app/llm_service.py
+      # Mount map_feature_service.py for live editing
+      - ./map_feature_service.py:/app/map_feature_service.py
       # Mount static files for live editing
       - ./static:/app/static
+      # Mount logs directory for debugging (create on host if needed)
+      - ./logs:/app/logs
     environment:
       - FLASK_ENV=production
       - PORT=5001
-      - HOST_IP=192.168.68.53
+      - HOST_IP=192.168.1.29
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
