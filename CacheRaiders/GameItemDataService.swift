@@ -49,13 +49,13 @@ class GameItemDataService {
         gameItem.longitude = location.longitude
         gameItem.radius = location.radius
         gameItem.collected = location.collected
-        gameItem.grounding_height = location.grounding_height as NSNumber?
+        gameItem.grounding_height = location.grounding_height ?? 0.0
         gameItem.source = location.source.rawValue
-        gameItem.ar_origin_latitude = location.ar_origin_latitude as NSNumber?
-        gameItem.ar_origin_longitude = location.ar_origin_longitude as NSNumber?
-        gameItem.ar_offset_x = location.ar_offset_x as NSNumber?
-        gameItem.ar_offset_y = location.ar_offset_y as NSNumber?
-        gameItem.ar_offset_z = location.ar_offset_z as NSNumber?
+        gameItem.ar_origin_latitude = location.ar_origin_latitude ?? 0.0
+        gameItem.ar_origin_longitude = location.ar_origin_longitude ?? 0.0
+        gameItem.ar_offset_x = location.ar_offset_x ?? 0.0
+        gameItem.ar_offset_y = location.ar_offset_y ?? 0.0
+        gameItem.ar_offset_z = location.ar_offset_z ?? 0.0
         gameItem.ar_placement_timestamp = location.ar_placement_timestamp
         gameItem.created_at = Date()
         gameItem.updated_at = Date()
@@ -70,13 +70,13 @@ class GameItemDataService {
         gameItem.longitude = location.longitude
         gameItem.radius = location.radius
         gameItem.collected = location.collected
-        gameItem.grounding_height = location.grounding_height as NSNumber?
+        gameItem.grounding_height = location.grounding_height ?? 0.0
         gameItem.source = location.source.rawValue
-        gameItem.ar_origin_latitude = location.ar_origin_latitude as NSNumber?
-        gameItem.ar_origin_longitude = location.ar_origin_longitude as NSNumber?
-        gameItem.ar_offset_x = location.ar_offset_x as NSNumber?
-        gameItem.ar_offset_y = location.ar_offset_y as NSNumber?
-        gameItem.ar_offset_z = location.ar_offset_z as NSNumber?
+        gameItem.ar_origin_latitude = location.ar_origin_latitude ?? 0.0
+        gameItem.ar_origin_longitude = location.ar_origin_longitude ?? 0.0
+        gameItem.ar_offset_x = location.ar_offset_x ?? 0.0
+        gameItem.ar_offset_y = location.ar_offset_y ?? 0.0
+        gameItem.ar_offset_z = location.ar_offset_z ?? 0.0
         gameItem.ar_placement_timestamp = location.ar_placement_timestamp
         gameItem.updated_at = Date()
     }
@@ -94,6 +94,10 @@ class GameItemDataService {
             return nil
         }
         
+        // Core Data stores optional Double as non-optional Double (0.0 for nil)
+        // Convert back to optional: if value is 0.0, treat as nil (0.0 is unlikely for these AR values)
+        let groundingHeight: Double? = gameItem.grounding_height != 0.0 ? gameItem.grounding_height : nil
+        
         var location = LootBoxLocation(
             id: id,
             name: name,
@@ -102,25 +106,27 @@ class GameItemDataService {
             longitude: gameItem.longitude,
             radius: gameItem.radius,
             collected: gameItem.collected,
-            grounding_height: gameItem.grounding_height?.doubleValue,
+            grounding_height: groundingHeight,
             source: source
         )
         
         // Set optional AR offset fields
-        if let arOriginLat = gameItem.ar_origin_latitude?.doubleValue,
-           let arOriginLon = gameItem.ar_origin_longitude?.doubleValue {
-            location.ar_origin_latitude = arOriginLat
-            location.ar_origin_longitude = arOriginLon
+        // Convert non-zero values back to optional Double
+        if gameItem.ar_origin_latitude != 0.0 {
+            location.ar_origin_latitude = gameItem.ar_origin_latitude
+        }
+        if gameItem.ar_origin_longitude != 0.0 {
+            location.ar_origin_longitude = gameItem.ar_origin_longitude
         }
         
-        if let arOffsetX = gameItem.ar_offset_x?.doubleValue {
-            location.ar_offset_x = arOffsetX
+        if gameItem.ar_offset_x != 0.0 {
+            location.ar_offset_x = gameItem.ar_offset_x
         }
-        if let arOffsetY = gameItem.ar_offset_y?.doubleValue {
-            location.ar_offset_y = arOffsetY
+        if gameItem.ar_offset_y != 0.0 {
+            location.ar_offset_y = gameItem.ar_offset_y
         }
-        if let arOffsetZ = gameItem.ar_offset_z?.doubleValue {
-            location.ar_offset_z = arOffsetZ
+        if gameItem.ar_offset_z != 0.0 {
+            location.ar_offset_z = gameItem.ar_offset_z
         }
         
         location.ar_placement_timestamp = gameItem.ar_placement_timestamp

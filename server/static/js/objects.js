@@ -53,7 +53,7 @@ const ObjectsManager = {
         };
 
         // Create icon based on calculated size
-        const icon = this.createMarkerIcon(obj.collected, markerSize);
+        const icon = this.createMarkerIcon(obj.collected, markerSize, obj);
 
         const marker = L.marker([obj.latitude, obj.longitude], { icon })
             .addTo(MapManager.getMap())
@@ -75,11 +75,35 @@ const ObjectsManager = {
     /**
      * Create marker icon with specified size
      */
-    createMarkerIcon(isCollected, size) {
+    createMarkerIcon(isCollected, size, obj = null) {
         let iconHtml;
         const anchorOffset = size / 2;
         
-        if (isCollected) {
+        // Check if this is an NPC (Dead Men's Secrets mode)
+        const isNPC = obj && obj.id && obj.id.startsWith('npc_');
+        const isSkeleton = isNPC && (obj.name && (obj.name.includes('Bones') || obj.name.includes('skeleton')));
+        
+        if (isNPC) {
+            // NPC icon - skull for skeleton, person for others
+            const iconColor = '#ffd700'; // Gold color for NPCs
+            const borderColor = '#b8860b';
+            const borderWidth = Math.max(2, Math.min(4, size / 6));
+            const iconSymbol = isSkeleton ? '💀' : '👤';
+            iconHtml = `
+                <div style="
+                    background: ${iconColor}; 
+                    width: ${size}px; 
+                    height: ${size}px; 
+                    border-radius: 50%; 
+                    border: ${borderWidth}px solid ${borderColor}; 
+                    box-shadow: 0 0 ${size/2}px rgba(255, 215, 0, 0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: ${size * 0.6}px;
+                ">${iconSymbol}</div>
+            `;
+        } else if (isCollected) {
             // Stylized red X for found treasure
             // Adjust stroke width based on size to keep proportions
             const strokeWidth = Math.max(2, Math.min(5, size / 6));
@@ -131,7 +155,7 @@ const ObjectsManager = {
             const newSize = MapManager.calculateMarkerSize(zoom, markerInfo.collected);
             
             // Create new icon with updated size
-            const newIcon = this.createMarkerIcon(markerInfo.collected, newSize);
+            const newIcon = this.createMarkerIcon(markerInfo.collected, newSize, markerInfo.obj);
             
             // Update marker icon
             marker.setIcon(newIcon);

@@ -97,6 +97,11 @@ class APIService {
     // Network request queue to limit concurrent requests and prevent freezes
     private static let requestQueue = NetworkRequestQueue()
     
+    // Track last error message to suppress repeated identical errors
+    private var lastErrorLogTime: Date?
+    private var lastErrorMessage: String = ""
+    private let errorLogThrottleInterval: TimeInterval = 30.0 // Only log same error every 30 seconds
+    
     // Configure your API base URL here
     // For local development: "http://localhost:5001"
     // For production: "https://your-api-domain.com"
@@ -240,6 +245,33 @@ class APIService {
     
     private init() {}
     
+    // MARK: - Error Logging Helpers
+    
+    /// Determine if an error should be logged (throttles repeated identical errors)
+    private func shouldLogError(message: String, isLocalhostError: Bool) -> Bool {
+        let now = Date()
+        
+        // Always log if it's a different error
+        if message != lastErrorMessage {
+            return true
+        }
+        
+        // For localhost errors, only log once per throttle interval
+        if isLocalhostError {
+            if let lastTime = lastErrorLogTime {
+                return now.timeIntervalSince(lastTime) >= errorLogThrottleInterval
+            }
+            return true
+        }
+        
+        // For other errors, log if enough time has passed
+        if let lastTime = lastErrorLogTime {
+            return now.timeIntervalSince(lastTime) >= errorLogThrottleInterval
+        }
+        
+        return true
+    }
+    
     // MARK: - Helper Methods
     
     private func makeRequest<T: Decodable>(
@@ -292,23 +324,48 @@ class APIService {
             let decoder = JSONDecoder()
             return try decoder.decode(T.self, from: data)
         } catch {
-            // Enhanced error logging
-            print("❌ [API Request] Request failed: \(error.localizedDescription)")
-            print("   Error type: \(type(of: error))")
-            print("   URL: \(url.absoluteString)")
-            print("   Method: \(method)")
+            // Check if this is a localhost connection error on a physical device
+            let isLocalhostError = url.host == "localhost" || url.host == "127.0.0.1"
+            let isConnectionError = (error as? URLError)?.code == .cannotConnectToHost || 
+                                   (error as? URLError)?.code == .timedOut
             
-            if let urlError = error as? URLError {
-                print("   URLError code: \(urlError.code.rawValue) (\(urlError.code))")
-                print("   Failed URL: \(urlError.failureURLString ?? "unknown")")
-                let nsError = error as NSError
-                if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
-                    print("   Underlying error: \(underlyingError)")
+            // Create error message
+            let errorMessage = error.localizedDescription
+            let shouldLog = shouldLogError(message: errorMessage, isLocalhostError: isLocalhostError && isConnectionError)
+            
+            if shouldLog {
+                if isLocalhostError && isConnectionError {
+                    // Special handling for localhost connection errors
+                    print("❌ [API Request] Cannot connect to localhost:5001")
+                    print("   💡 This won't work on a physical device!")
+                    print("   📱 To fix: Open Settings → API Server URL")
+                    print("   📱 Enter your computer's IP (e.g., 192.168.1.100:5001)")
+                    print("   📱 Or scan the QR code from the server admin page")
+                    print("   💻 Find your IP: Mac: 'ifconfig | grep inet', Windows: 'ipconfig'")
+                } else {
+                    // Enhanced error logging for other errors
+                    print("❌ [API Request] Request failed: \(errorMessage)")
+                    print("   Error type: \(type(of: error))")
+                    print("   URL: \(url.absoluteString)")
+                    print("   Method: \(method)")
+                    
+                    if let urlError = error as? URLError {
+                        print("   URLError code: \(urlError.code.rawValue) (\(urlError.code))")
+                        print("   Failed URL: \(urlError.failureURLString ?? "unknown")")
+                        let nsError = error as NSError
+                        if let underlyingError = nsError.userInfo[NSUnderlyingErrorKey] as? Error {
+                            print("   Underlying error: \(underlyingError)")
+                        }
+                    } else if let nsError = error as NSError? {
+                        print("   NSError domain: \(nsError.domain)")
+                        print("   NSError code: \(nsError.code)")
+                        print("   User info: \(nsError.userInfo)")
+                    }
                 }
-            } else if let nsError = error as NSError? {
-                print("   NSError domain: \(nsError.domain)")
-                print("   NSError code: \(nsError.code)")
-                print("   User info: \(nsError.userInfo)")
+                
+                // Update last error tracking
+                lastErrorLogTime = Date()
+                lastErrorMessage = errorMessage
             }
             
             throw error

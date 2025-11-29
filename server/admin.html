@@ -79,8 +79,8 @@
                     <div class="stat-label">Unfound</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-value" id="totalFinds">-</div>
-                    <div class="stat-label">Total Finds</div>
+                    <div class="stat-value" id="avgFinds">-</div>
+                    <div class="stat-label">AVG Finds</div>
                 </div>
             </div>
             
@@ -106,35 +106,6 @@
             <div class="section-header">
                 <h2>👥 Player Management</h2>
                 <button class="btn-refresh" onclick="PlayersManager.loadPlayers()" title="Refresh Players">🔄</button>
-            </div>
-            
-            <!-- Create New Player Form -->
-            <div style="margin-bottom: 15px; padding: 12px; background: #1a1a1a; border-radius: 4px; border: 1px solid #444;">
-                <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #ccc;">Create New Player</h3>
-                <div style="display: flex; gap: 8px; align-items: flex-end;">
-                    <div style="flex: 1;">
-                        <label style="display: block; margin-bottom: 4px; font-size: 12px; color: #999;">Device UUID</label>
-                        <input type="text" id="newPlayerDeviceUuid" 
-                               placeholder="Enter device UUID (e.g., from iOS app)"
-                               onkeypress="if(event.key === 'Enter') document.getElementById('newPlayerName').focus()"
-                               style="width: 100%; padding: 6px; border: 1px solid #444; border-radius: 4px; background: #2a2a2a; color: #fff; font-size: 12px; font-family: monospace;">
-                    </div>
-                    <div style="flex: 1;">
-                        <label style="display: block; margin-bottom: 4px; font-size: 12px; color: #999;">Player Name</label>
-                        <input type="text" id="newPlayerName" 
-                               placeholder="Enter player name"
-                               onkeypress="if(event.key === 'Enter') PlayersManager.createNewPlayer()"
-                               style="width: 100%; padding: 6px; border: 1px solid #444; border-radius: 4px; background: #2a2a2a; color: #fff; font-size: 12px;">
-                    </div>
-                    <button onclick="PlayersManager.createNewPlayer()" 
-                            onkeypress="if(event.key === 'Enter') PlayersManager.createNewPlayer()"
-                            style="background: #4caf50; color: #fff; border: none; border-radius: 4px; padding: 6px 12px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap; height: fit-content;">
-                        Create
-                    </button>
-                </div>
-                <p style="margin: 8px 0 0 0; font-size: 11px; color: #666; font-style: italic;">
-                    Tip: You can also update existing player names using the input fields below.
-                </p>
             </div>
             
             <div class="filter-controls">

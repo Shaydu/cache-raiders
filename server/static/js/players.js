@@ -139,50 +139,6 @@ const PlayersManager = {
     },
 
     /**
-     * Create a new player
-     */
-    async createNewPlayer() {
-        const deviceUuidInput = document.getElementById('newPlayerDeviceUuid');
-        const nameInput = document.getElementById('newPlayerName');
-        
-        if (!deviceUuidInput || !nameInput) return;
-
-        const deviceUuid = deviceUuidInput.value.trim();
-        const playerName = nameInput.value.trim();
-
-        if (!deviceUuid) {
-            UI.showStatus('Device UUID is required', 'error');
-            return;
-        }
-
-        if (!playerName) {
-            UI.showStatus('Player name is required', 'error');
-            return;
-        }
-
-        // Validate UUID format (basic check - should be a valid UUID string)
-        if (deviceUuid.length < 8) {
-            UI.showStatus('Device UUID appears to be invalid (too short)', 'error');
-            return;
-        }
-
-        try {
-            await ApiService.players.updateName(deviceUuid, playerName);
-            UI.showStatus(`Player "${playerName}" created/updated successfully`, 'success');
-            
-            // Clear form
-            deviceUuidInput.value = '';
-            nameInput.value = '';
-            
-            // Reload players and stats to reflect changes
-            await this.loadPlayers();
-            await StatsManager.refreshStats();
-        } catch (error) {
-            UI.showStatus('Error creating player: ' + error.message, 'error');
-        }
-    },
-
-    /**
      * Update player name
      */
     async updatePlayerName(deviceUuid) {

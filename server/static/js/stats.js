@@ -13,7 +13,16 @@ const StatsManager = {
             this.updateStatValue('totalObjects', stats.total_objects);
             this.updateStatValue('foundObjects', stats.found_objects);
             this.updateStatValue('unfoundObjects', stats.unfound_objects);
-            this.updateStatValue('totalFinds', stats.total_finds);
+            
+            // Calculate and display average finds per player
+            // Average = total finds / number of players who have finds
+            let avgFinds = '0.0';
+            if (stats.total_finds && stats.top_finders && stats.top_finders.length > 0) {
+                const playersWithFinds = stats.top_finders.length;
+                const average = stats.total_finds / playersWithFinds;
+                avgFinds = average.toFixed(1);
+            }
+            this.updateStatValue('avgFinds', avgFinds);
 
             // Update leaderboard
             this.updateLeaderboard(stats.top_finders || []);

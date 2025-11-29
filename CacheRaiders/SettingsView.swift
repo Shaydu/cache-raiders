@@ -62,10 +62,11 @@ struct SettingsView: View {
     
     // PERFORMANCE: Update cached data off main thread when locations change
     private func updateCachedTypeData() {
-        // Capture display names on main actor before entering detached task
+        // Capture display names and model names on main actor before entering detached task
         let typeDisplayNames = Dictionary(uniqueKeysWithValues: LootBoxType.allCases.map { ($0, $0.displayName) })
+        let typeModelNames = Dictionary(uniqueKeysWithValues: LootBoxType.allCases.map { ($0, $0.factory.modelNames) })
         
-        Task.detached(priority: .userInitiated) { [locations = locationManager.locations, typeDisplayNames] in
+        Task.detached(priority: .userInitiated) { [locations = locationManager.locations, typeDisplayNames, typeModelNames] in
             // Build type counts dictionary off main thread
             var typeCounts: [LootBoxType: Int] = [:]
             for location in locations {
@@ -76,7 +77,7 @@ struct SettingsView: View {
             var groups: [[String]: [LootBoxType]] = [:]
             
             for type in LootBoxType.allCases {
-                let models = type.factory.modelNames
+                let models = typeModelNames[type] ?? []
                 let key = models.sorted()
                 if groups[key] == nil {
                     groups[key] = []

@@ -7,7 +7,8 @@ struct TreasureMapData {
     let mapName: String
     let xMarksTheSpot: CLLocationCoordinate2D // Where the treasure is buried
     let landmarks: [LandmarkAnnotation] // Landmarks from OpenStreetMap (water, trees, buildings, etc.)
-    let clueCoordinates: [CLLocationCoordinate2D] // Coordinates extracted from LLM clues
+    let clueCoordinates: [CLLocationCoordinate2D] // Coordinates extracted from LLM clues (shown as red X marks)
+    let npcLocation: CLLocationCoordinate2D? // Captain Bones location (if available)
 }
 
 // MARK: - Landmark Annotation
@@ -115,21 +116,47 @@ struct TreasureMapView: View {
                             }
                         }
                         
-                        // Clue coordinates (from LLM clues)
+                        // Clue coordinates (from LLM clues) - shown as red X marks
                         ForEach(Array(mapData.clueCoordinates.enumerated()), id: \.offset) { index, coordinate in
                             Annotation("Clue \(index + 1)", coordinate: coordinate) {
+                                ZStack {
+                                    // Red circle background
+                                    Circle()
+                                        .fill(Color.red.opacity(0.3))
+                                        .frame(width: 50, height: 50)
+                                    
+                                    // Red X mark
+                                    Text("✕")
+                                        .font(.system(size: 30, weight: .bold))
+                                        .foregroundColor(.red)
+                                        .rotationEffect(.degrees(45))
+                                    
+                                    // Outer ring
+                                    Circle()
+                                        .stroke(Color.red, lineWidth: 2)
+                                        .frame(width: 50, height: 50)
+                                }
+                                .shadow(radius: 3)
+                            }
+                        }
+                        
+                        // Captain Bones (NPC) location
+                        if let npcLocation = mapData.npcLocation {
+                            Annotation("💀 Captain Bones", coordinate: npcLocation) {
                                 VStack(spacing: 2) {
-                                    Image(systemName: "questionmark.circle.fill")
+                                    Image(systemName: "person.fill")
                                         .foregroundColor(.yellow)
                                         .font(.title3)
-                                        .background(Circle().fill(.white))
+                                        .background(Circle().fill(Color(red: 1.0, green: 0.843, blue: 0.0).opacity(0.9)))
                                         .shadow(radius: 2)
                                     
-                                    Text("Clue \(index + 1)")
+                                    Text("💀 Captain Bones")
                                         .font(.caption2)
+                                        .fontWeight(.bold)
                                         .padding(2)
                                         .background(.ultraThinMaterial)
                                         .cornerRadius(4)
+                                        .lineLimit(1)
                                 }
                             }
                         }
@@ -215,9 +242,13 @@ struct TreasureMapView: View {
                         }
                         
                         HStack(spacing: 16) {
-                            LegendItem(icon: "questionmark.circle.fill", color: .yellow, label: "Clue")
+                            LegendItem(icon: "person.fill", color: .yellow, label: "Captain Bones")
                             LegendItem(icon: "location.fill", color: .blue, label: "You")
                             LegendItem(icon: "xmark", color: .red, label: "Treasure")
+                        }
+                        
+                        HStack(spacing: 16) {
+                            LegendItem(icon: "xmark", color: .red, label: "Clue (Red X)")
                         }
                     }
                     .padding()
@@ -236,10 +267,32 @@ struct TreasureMapView: View {
                 }
             }
             .onAppear {
-                // Center map on treasure location
+                // Center map to show all important points: treasure, landmarks, NPC, and clues
+                var allCoords: [CLLocationCoordinate2D] = [mapData.xMarksTheSpot]
+                allCoords.append(contentsOf: mapData.landmarks.map { $0.coordinate })
+                allCoords.append(contentsOf: mapData.clueCoordinates)
+                if let npcLoc = mapData.npcLocation {
+                    allCoords.append(npcLoc)
+                }
+                
+                // Calculate bounding box
+                let minLat = allCoords.map { $0.latitude }.min() ?? mapData.xMarksTheSpot.latitude
+                let maxLat = allCoords.map { $0.latitude }.max() ?? mapData.xMarksTheSpot.latitude
+                let minLon = allCoords.map { $0.longitude }.min() ?? mapData.xMarksTheSpot.longitude
+                let maxLon = allCoords.map { $0.longitude }.max() ?? mapData.xMarksTheSpot.longitude
+                
+                let center = CLLocationCoordinate2D(
+                    latitude: (minLat + maxLat) / 2,
+                    longitude: (minLon + maxLon) / 2
+                )
+                
+                // Add padding to span
+                let latDelta = max((maxLat - minLat) * 1.5, 0.005) // At least 500m
+                let lonDelta = max((maxLon - minLon) * 1.5, 0.005)
+                
                 let region = MKCoordinateRegion(
-                    center: mapData.xMarksTheSpot,
-                    span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01) // ~1km view
+                    center: center,
+                    span: MKCoordinateSpan(latitudeDelta: latDelta, longitudeDelta: lonDelta)
                 )
                 position = .region(region)
                 hasInitialized = true

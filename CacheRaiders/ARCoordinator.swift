@@ -3255,6 +3255,45 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             Swift.print("✅ \(type.defaultName) NPC placed at position: \(npcPosition)")
             Swift.print("   \(type.defaultName) is tappable and ready for interaction")
             
+            // Add NPC to map in Dead Men's Secrets mode
+            if let locationManager = locationManager,
+               locationManager.gameMode == .deadMensSecrets,
+               let arOrigin = arOriginLocation {
+                // Convert AR position to GPS coordinates
+                let distance = sqrt(npcPosition.x * npcPosition.x + npcPosition.z * npcPosition.z)
+                let bearing = atan2(Double(npcPosition.x), -Double(npcPosition.z)) * 180.0 / .pi
+                let normalizedBearing = (bearing + 360.0).truncatingRemainder(dividingBy: 360.0)
+                let npcGPS = arOrigin.coordinate.coordinate(atDistance: Double(distance), atBearing: normalizedBearing)
+                
+                // Create a special location for the NPC (only in Dead Men's Secrets mode)
+                let npcLocation = LootBoxLocation(
+                    id: "npc_\(type.npcId)",
+                    name: type.defaultName,
+                    type: type == .skeleton ? .treasureChest : .chalice, // Use existing type for icon
+                    latitude: npcGPS.latitude,
+                    longitude: npcGPS.longitude,
+                    radius: 10.0,
+                    collected: false,
+                    source: .map // Mark as map source so it syncs to server
+                )
+                
+                // Remove existing NPC location if any, then add new one
+                locationManager.locations.removeAll { $0.id == npcLocation.id }
+                locationManager.addLocation(npcLocation)
+                
+                Swift.print("🗺️ Added \(type.defaultName) to map at GPS: (\(String(format: "%.8f", npcGPS.latitude)), \(String(format: "%.8f", npcGPS.longitude)))")
+                
+                // Send NPC location to server so it appears on admin map
+                Task {
+                    do {
+                        _ = try await APIService.shared.createObject(npcLocation)
+                        Swift.print("✅ Sent \(type.defaultName) location to server")
+                    } catch {
+                        Swift.print("⚠️ Failed to send \(type.defaultName) to server: \(error.localizedDescription)")
+                    }
+                }
+            }
+            
         } catch {
             Swift.print("❌ Error loading \(type.defaultName) model: \(error)")
         }

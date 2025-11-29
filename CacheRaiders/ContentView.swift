@@ -417,6 +417,8 @@ struct ContentView: View {
                     .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
                     .presentationBackground(.clear)
+                    .presentationContentInteraction(.scrolls)
+                    .scrollDismissesKeyboard(.interactively)
                 case .treasureMap:
                     // Show treasure map if we have map data
                     if let mapPiece = treasureHuntService.mapPiece,
@@ -442,11 +444,15 @@ struct ContentView: View {
                             )
                         }
                         
+                        // Find Captain Bones location if available
+                        let npcLocation = locationManager.locations.first(where: { $0.id.hasPrefix("npc_") && $0.name.contains("Bones") })?.coordinate
+                        
                         let mapData = TreasureMapData(
                             mapName: "Captain Bones' Treasure Map",
                             xMarksTheSpot: treasureLocation.coordinate,
                             landmarks: landmarks,
-                            clueCoordinates: []
+                            clueCoordinates: [], // Clues can be added here if needed
+                            npcLocation: npcLocation
                         )
                         
                         TreasureMapView(

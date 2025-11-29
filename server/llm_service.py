@@ -37,7 +37,8 @@ class MapFeatureService:
         return_coordinates: bool = False  # If True, returns dicts with coordinates
     ):
         """Get real map features near a location using OpenStreetMap Overpass API.
-        Returns a list of feature names/descriptions, or dicts with coordinates if return_coordinates=True."""
+        Returns a list of feature names/descriptions, or dicts with coordinates if return_coordinates=True.
+        Uses center points only (not full geometry) to keep data size small."""
         try:
             import requests
         except ImportError:
@@ -48,7 +49,8 @@ class MapFeatureService:
         # Only get 2-3 essential features: water (most important for navigation) and maybe one building
         # Keep it simple for a stylized, artistic map view
         # CRITICAL: Use (limit:N) on each query type BEFORE expansion to prevent huge datasets
-        # Use out geom instead of out body to get coordinates without expanding all nodes
+        # Use "out center" to get ONLY the center point (not all geometry points)
+        # This dramatically reduces data size - a large lake with 1000+ points becomes just 1 center point
         # Reduced Overpass timeout to 5 seconds to prevent UI freezes
         query = f"""
         [out:json][timeout:5][maxsize:1073741824];
@@ -57,7 +59,7 @@ class MapFeatureService:
           way["waterway"](around:{radius},{latitude},{longitude})(limit:1);
           way["building"](around:{radius},{latitude},{longitude})(limit:1);
         );
-        out geom;
+        out center;
         """
         
         try:
@@ -75,28 +77,22 @@ class MapFeatureService:
             # Check for Overpass API errors (resource exceeded, timeout, etc.)
             if 'remark' in data:
                 remark = data['remark'].lower()
-                if 'exceeded' in remark or 'timeout' in remark or 'maximum' in remark:
+                if 'exceeded' in remark or 'timeout' in remark or 'maximum' in remark or 'size' in remark:
                     error_message = data['remark']
                     print(f"⚠️ Overpass API limit exceeded: {error_message}")
                     print(f"   Reducing radius from {radius}m and retrying with smaller area...")
                     # Retry with smaller radius if we hit limits
-                    if radius > 75:
-                        result = self.get_features_near_location(latitude, longitude, radius=75.0, return_coordinates=return_coordinates)
-                        # If retry also failed, return error
-                        if isinstance(result, dict) and 'error' in result:
-                            return result
-                        return result
-                    elif radius > 50:
+                    if radius > 50:
                         result = self.get_features_near_location(latitude, longitude, radius=50.0, return_coordinates=return_coordinates)
-                        # If retry also failed, return error
+                        # If retry also failed, return empty list (not error)
                         if isinstance(result, dict) and 'error' in result:
-                            return result
+                            return []
                         return result
                     elif radius > 25:
                         result = self.get_features_near_location(latitude, longitude, radius=25.0, return_coordinates=return_coordinates)
-                        # If retry also failed, return error
+                        # If retry also failed, return empty list (not error)
                         if isinstance(result, dict) and 'error' in result:
-                            return result
+                            return []
                         return result
                     else:
                         print(f"   ⚠️ Even with 25m radius, query too large. Returning empty results instead of error.")
@@ -130,6 +126,7 @@ class MapFeatureService:
                 feature_type = self._classify_feature(element)
                 
                 # Get coordinates from element
+                # With "out center", ways/relations have a 'center' field with lat/lon
                 element_lat = None
                 element_lon = None
                 if 'lat' in element and 'lon' in element:
@@ -137,21 +134,17 @@ class MapFeatureService:
                     element_lat = element['lat']
                     element_lon = element['lon']
                 elif 'center' in element:
-                    # Way/relation has center
+                    # Way/relation has center (from "out center" query)
                     element_lat = element['center'].get('lat')
                     element_lon = element['center'].get('lon')
-                elif 'geometry' in element and len(element['geometry']) > 0:
-                    # Use first geometry point
-                    first_point = element['geometry'][0]
-                    element_lat = first_point.get('lat')
-                    element_lon = first_point.get('lon')
+                # Note: No 'geometry' field when using "out center" - that's the whole point!
                 
                 # Get feature name or use type
                 name = tags.get('name', '')
                 feature_key = name if name else feature_type
                 
                 if return_coordinates and element_lat and element_lon:
-                    # Return dict with coordinates
+                    # Return dict with coordinates (center point only)
                     if feature_key not in seen_names:
                         features.append({
                             'name': name or feature_type,
@@ -480,8 +473,9 @@ Return ONLY valid JSON, no other text."""
         
         # Fetch real map features with coordinates (reduced radius to avoid "resource exceeds maximum size" error)
         # The function will automatically retry with smaller radius if it hits API limits
+        map_features_with_coords = []
         try:
-            map_features_result = self.map_feature_service.get_features_near_location(lat, lon, radius=100.0, return_coordinates=True)
+            map_features_result = self.map_feature_service.get_features_near_location(lat, lon, radius=50.0, return_coordinates=True)
             
             # Check if we got an error instead of features
             if isinstance(map_features_result, dict) and 'error' in map_features_result:
@@ -494,7 +488,9 @@ Return ONLY valid JSON, no other text."""
                 map_features_with_coords = map_features_result if isinstance(map_features_result, list) else []
         except Exception as e:
             print(f"⚠️ Exception fetching map features: {e}")
-            return {"error": f"Failed to fetch map features: {str(e)}"}
+            # Don't fail the entire map piece generation - just continue without features
+            print(f"   Continuing without map features - map piece will still be generated")
+            map_features_with_coords = []
         
         map_feature_names = [f.get('name', f.get('type', '')) for f in map_features_with_coords if isinstance(f, dict)]
         

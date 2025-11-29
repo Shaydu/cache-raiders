@@ -84,14 +84,25 @@ struct LootBoxMapView: View {
         // Add loot box locations that have valid GPS coordinates
         // Filter by selection: if an item is selected, show only that item; otherwise show ALL items
         let filteredLocations = locationManager.locations.filter { location in
-            // If an item is selected, only show that item
-            if let selected = selectedId {
+            // Always show NPCs (Dead Men's Secrets mode)
+            let isNPC = location.id.hasPrefix("npc_")
+            
+            // If an item is selected, only show that item (unless it's an NPC, always show NPCs)
+            if let selected = selectedId, !isNPC {
                 if location.id != selected {
                     return false // Filter out non-selected items
                 }
                 // Selected item: continue with other filters
             }
             // No selection: show all items (no ID filter)
+            
+            // NPCs are always shown (never collected, always visible)
+            if isNPC {
+                guard !(location.latitude == 0 && location.longitude == 0) else {
+                    return false // Exclude invalid GPS coordinates
+                }
+                return true // Always show NPCs
+            }
             
             // If showFoundOnMap is disabled, exclude collected items
             if !showFound && location.collected {
@@ -164,41 +175,16 @@ struct LootBoxMapView: View {
                         } else if let location = annotation.lootBoxLocation {
                             // Check if this is the preview marker (crosshair)
                             let isPreview = location.id == "preview"
+                            // Check if this is an NPC (Dead Men's Secrets mode)
+                            let isNPC = location.id.hasPrefix("npc_")
                             
                             // Loot box pin
                             Annotation("", coordinate: annotation.coordinate) {
-                                VStack(spacing: 4) {
-                                    // Determine icon
-                                    let iconName = isPreview ? "plus.circle.fill" :
-                                        (location.collected ? "checkmark.circle.fill" :
-                                        (location.type == .sphere ? "circle.fill" :
-                                        (location.type == .cube ? "cube.fill" : "mappin.circle.fill")))
-                                    
-                                    // Determine color based on collected status
-                                    // Unfound objects: gold, Found objects: red
-                                    let iconColor: Color = if isPreview {
-                                        .blue
-                                    } else if location.collected {
-                                        // Red for found items
-                                        .red
-                                    } else {
-                                        // Gold for unfound items
-                                        Color(red: 1.0, green: 0.843, blue: 0.0) // Gold color (#FFD700)
-                                    }
-                                    
-                                    Image(systemName: iconName)
-                                        .foregroundColor(iconColor)
-                                        .font(.title)
-                                        .background(Circle().fill(isPreview ? .white.opacity(0.8) : .white))
-                                        .shadow(radius: 3)
-                                        .opacity(isPreview ? 0.7 : 1.0)
-
-                                    Text(isPreview ? "New \(location.type.displayName)" : location.name)
-                                        .font(.caption)
-                                        .padding(4)
-                                        .background(.ultraThinMaterial)
-                                        .cornerRadius(4)
-                                }
+                                LootBoxAnnotationView(
+                                    location: location,
+                                    isPreview: isPreview,
+                                    isNPC: isNPC
+                                )
                             }
                         }
                     }
@@ -594,6 +580,77 @@ struct LootBoxMapView: View {
         // Reset add mode after adding
         withAnimation {
             isAddModeActive = false
+        }
+    }
+}
+
+// MARK: - Loot Box Annotation View Helper
+/// Helper view to simplify complex annotation rendering
+struct LootBoxAnnotationView: View {
+    let location: LootBoxLocation
+    let isPreview: Bool
+    let isNPC: Bool
+    
+    private var iconName: String {
+        if isPreview {
+            return "plus.circle.fill"
+        } else if isNPC {
+            // NPC icon - person for skeleton, paw for corgi
+            if location.name.contains("Bones") || location.name.contains("skeleton") {
+                return "person.fill"
+            } else {
+                return "pawprint.fill"
+            }
+        } else if location.collected {
+            return "checkmark.circle.fill"
+        } else {
+            switch location.type {
+            case .sphere:
+                return "circle.fill"
+            case .cube:
+                return "cube.fill"
+            default:
+                return "mappin.circle.fill"
+            }
+        }
+    }
+    
+    private var iconColor: Color {
+        if isPreview {
+            return .blue
+        } else if isNPC {
+            // Gold color for NPCs (Captain Bones theme)
+            return Color(red: 1.0, green: 0.843, blue: 0.0)
+        } else if location.collected {
+            return .red
+        } else {
+            // Gold for unfound items
+            return Color(red: 1.0, green: 0.843, blue: 0.0)
+        }
+    }
+    
+    private var displayText: String {
+        if isPreview {
+            return "New \(location.type.displayName)"
+        } else {
+            return location.name
+        }
+    }
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: iconName)
+                .foregroundColor(iconColor)
+                .font(.title)
+                .background(Circle().fill(isPreview ? .white.opacity(0.8) : .white))
+                .shadow(radius: 3)
+                .opacity(isPreview ? 0.7 : 1.0)
+
+            Text(displayText)
+                .font(.caption)
+                .padding(4)
+                .background(.ultraThinMaterial)
+                .cornerRadius(4)
         }
     }
 }
