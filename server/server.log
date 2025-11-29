@@ -43799,3 +43799,2171 @@ AssertionError: write() before start_response
 192.168.1.29 - - [29/Nov/2025 13:13:48] "GET /api/players?t=1764440028379 HTTP/1.1" 200 -
 192.168.1.29 - - [29/Nov/2025 13:13:48] "GET /api/players?t=1764440028385 HTTP/1.1" 200 -
 192.168.1.30 - - [29/Nov/2025 13:13:48] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:49] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:49] "GET /api/players?t=1764440029372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:49] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:49] "GET /api/players?t=1764440029382 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:13:49] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:50] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:50] "GET /api/players?t=1764440030371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:50] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:50] "GET /api/players?t=1764440030385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:13:50] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:51] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:51] "GET /api/players?t=1764440031375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:51] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:51] "GET /api/players?t=1764440031389 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:13:51] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:52] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:52] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:52] "GET /api/players?t=1764440032380 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:52] "GET /api/players?t=1764440032387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:13:52] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:53] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:53] "GET /api/players?t=1764440033371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:53] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:53] "GET /api/players?t=1764440033382 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:13:53] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:54] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:54] "GET /api/players?t=1764440034371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:54] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:54] "GET /api/players?t=1764440034382 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:13:54] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:55] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:55] "GET /api/players?t=1764440035374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:55] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:55] "GET /api/players?t=1764440035387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:13:55] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:56] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:56] "GET /api/players?t=1764440036373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:56] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:56] "GET /api/players?t=1764440036384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:13:56] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:57] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:57] "GET /api/players?t=1764440037370 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:57] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:57] "GET /api/players?t=1764440037383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:13:57] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:13:58] "GET /health HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:58] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:58] "GET /api/players?t=1764440038370 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:58] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:58] "GET /api/players?t=1764440038384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:58] "GET /api/players?t=1764440038382 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:58] "GET /api/stats?t=1764440038382 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:58] "GET /api/objects?include_found=true HTTP/1.1" 200 -
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.001, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.002, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.001, 0.002, 0.001)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.004, 0.002, 0.001)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.005, 0.002, 0.002)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, -0.000, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.002, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.002, -0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.002, -0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (0.000, 0.001, -0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.001, -0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.002, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.002, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (0.001, 0.002, -0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (0.003, 0.002, -0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.001, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.002, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (0.000, 0.002, 0.000)m
+   Total users in memory: 1
+192.168.1.30 - - [29/Nov/2025 13:13:58] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:59] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:59] "GET /api/players?t=1764440039371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:59] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:13:59] "GET /api/players?t=1764440039382 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:13:59] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:00] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:00] "GET /api/players?t=1764440040372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:00] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:00] "GET /api/players?t=1764440040383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:00] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:01] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:01] "GET /api/players?t=1764440041371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:01] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:01] "GET /api/players?t=1764440041383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:01] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:02] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:02] "GET /api/players?t=1764440042373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:02] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:02] "GET /api/players?t=1764440042383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:02] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:03] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:03] "GET /api/players?t=1764440043376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:03] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:03] "GET /api/players?t=1764440043385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:03] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:04] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:04] "GET /api/players?t=1764440044375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:04] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:04] "GET /api/players?t=1764440044388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:04] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:05] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:05] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:05] "GET /api/players?t=1764440045378 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:05] "GET /api/players?t=1764440045387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:05] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:06] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:06] "GET /api/players?t=1764440046376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:06] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:06] "GET /api/players?t=1764440046387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:06] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:07] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:07] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:07] "GET /api/players?t=1764440047378 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:07] "GET /api/players?t=1764440047387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:07] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:08] "GET /health HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:08] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:08] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:08] "GET /api/players?t=1764440048380 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:08] "GET /api/players?t=1764440048383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:08] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:09] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:09] "GET /api/players?t=1764440049374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:09] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:09] "GET /api/players?t=1764440049388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:09] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:10] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:10] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:10] "GET /api/players?t=1764440050381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:10] "GET /api/players?t=1764440050387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:10] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:11] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:11] "GET /api/players?t=1764440051372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:11] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:11] "GET /api/players?t=1764440051382 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:11] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:12] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:12] "GET /api/players?t=1764440052375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:12] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:12] "GET /api/players?t=1764440052384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:12] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:13] "[35m[1mGET /socket.io/?EIO=4&transport=websocket HTTP/1.1[0m" 500 -
+192.168.1.30 - - [29/Nov/2025 13:14:13] "[35m[1mGET /socket.io/?EIO=4&transport=websocket HTTP/1.1[0m" 500 -
+Error on request:
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/werkzeug/serving.py", line 370, in run_wsgi
+    execute(self.server.app)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/werkzeug/serving.py", line 336, in execute
+    write(b"")
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/werkzeug/serving.py", line 261, in write
+    assert status_set is not None, "write() before start_response"
+AssertionError: write() before start_response
+Error on request:
+Traceback (most recent call last):
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/werkzeug/serving.py", line 370, in run_wsgi
+    execute(self.server.app)
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/werkzeug/serving.py", line 336, in execute
+    write(b"")
+  File "/Library/Frameworks/Python.framework/Versions/3.12/lib/python3.12/site-packages/werkzeug/serving.py", line 261, in write
+    assert status_set is not None, "write() before start_response"
+AssertionError: write() before start_response
+192.168.1.29 - - [29/Nov/2025 13:14:13] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:13] "GET /api/players?t=1764440053372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:13] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:13] "GET /api/players?t=1764440053390 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:14] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:14] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:14] "GET /api/players?t=1764440054379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:14] "GET /api/players?t=1764440054385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:15] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:15] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:15] "GET /api/players?t=1764440055379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:15] "GET /api/players?t=1764440055382 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:16] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:16] "GET /api/players?t=1764440056374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:16] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:16] "GET /api/players?t=1764440056384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:17] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:17] "GET /api/players?t=1764440057374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:17] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:17] "GET /api/players?t=1764440057384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:18] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:18] "GET /api/players?t=1764440058375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:18] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:18] "GET /api/players?t=1764440058387 HTTP/1.1" 200 -
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.001, 0.002, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.001, 0.001, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.001, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909120), AR offset: (-0.000, 0.002, -0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909125), AR offset: (-0.399, 0.265, -0.005)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247493, -84.909127), AR offset: (-0.558, 0.370, 0.039)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247492, -84.909125), AR offset: (-0.417, 0.403, 0.120)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247492, -84.909126), AR offset: (-0.447, 0.383, 0.060)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247492, -84.909128), AR offset: (-0.644, 0.352, 0.066)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247492, -84.909129), AR offset: (-0.732, 0.345, 0.100)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247492, -84.909129), AR offset: (-0.703, 0.344, 0.101)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247492, -84.909129), AR offset: (-0.709, 0.323, 0.101)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247492, -84.909129), AR offset: (-0.704, 0.313, 0.104)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247492, -84.909128), AR offset: (-0.689, 0.317, 0.105)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🔌 Client disconnected: McqFClVTeF4ZeYrwAAAH
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 0 connected client(s)
+   ⚠️ No clients registered - check if iOS app is connected and registered device UUID
+   Total WebSocket sessions: 1
+   Sessions without device UUID: 1
+192.168.1.29 - - [29/Nov/2025 13:14:19] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:19] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:19] "GET /api/players?t=1764440059379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:19] "GET /api/players?t=1764440059385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:20] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:20] "GET /api/players?t=1764440060375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:20] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:20] "GET /api/players?t=1764440060385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:21] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:21] "GET /api/players?t=1764440061371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:21] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:21] "GET /api/players?t=1764440061383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:22] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:22] "GET /api/players?t=1764440062374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:22] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:22] "GET /api/players?t=1764440062384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:23] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:23] "GET /api/players?t=1764440063374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:23] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:23] "GET /api/players?t=1764440063384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:24] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:24] "GET /api/players?t=1764440064371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:24] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:24] "GET /api/players?t=1764440064384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:25] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:25] "GET /api/players?t=1764440065371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:25] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:25] "GET /api/players?t=1764440065387 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:26] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:26] "GET /api/players?t=1764440066371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:26] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:26] "GET /api/players?t=1764440066388 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:27] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:27] "GET /api/players?t=1764440067375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:27] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:27] "GET /api/players?t=1764440067386 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:28] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:28] "GET /api/players?t=1764440068375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:28] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:28] "GET /api/players?t=1764440068381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:28] "GET /api/stats?t=1764440068381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:28] "GET /api/objects?include_found=true HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:28] "GET /api/players?t=1764440068388 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:29] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:29] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:29] "GET /api/players?t=1764440069379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:29] "GET /api/players?t=1764440069384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:30] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:30] "GET /api/players?t=1764440070371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:30] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:30] "GET /api/players?t=1764440070384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:31] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:31] "GET /api/players?t=1764440071371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:31] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:31] "GET /api/players?t=1764440071383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:32] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:32] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:32] "GET /api/players?t=1764440072378 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:32] "GET /api/players?t=1764440072383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:33] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:33] "GET /api/players?t=1764440073375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:33] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:33] "GET /api/players?t=1764440073390 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:34] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:34] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:34] "GET /api/players?t=1764440074379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:34] "GET /api/players?t=1764440074383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:35] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:35] "GET /api/players?t=1764440075376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:35] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:35] "GET /api/players?t=1764440075385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:35] "GET /api/settings/game-mode HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:35] "GET /api/settings/location-update-interval HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:35] "POST /api/players/EE2B3D6B-418D-40F8-A299-89F0F6875B5C HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:36] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:36] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:36] "GET /api/players?t=1764440076380 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:36] "GET /api/players?t=1764440076385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:37] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:37] "GET /api/players?t=1764440077377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:37] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:37] "GET /api/players?t=1764440077386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:37] "GET /health HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:38] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:38] "GET /api/players?t=1764440078374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:38] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:38] "GET /api/players?t=1764440078390 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:39] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:39] "GET /api/players?t=1764440079371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:39] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:39] "GET /api/players?t=1764440079384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:40] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:40] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:40] "GET /api/players?t=1764440080379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:40] "GET /api/players?t=1764440080382 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:41] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:41] "GET /api/players?t=1764440081375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:41] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:41] "GET /api/players?t=1764440081384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:42] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:42] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:42] "GET /api/players?t=1764440082379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:42] "GET /api/players?t=1764440082385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:43] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:43] "GET /api/players?t=1764440083378 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:43] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:43] "GET /api/players?t=1764440083388 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:44] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:44] "GET /api/players?t=1764440084374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:44] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:44] "GET /api/players?t=1764440084387 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:45] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:45] "GET /api/players?t=1764440085375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:45] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:45] "GET /api/players?t=1764440085385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:46] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:46] "GET /api/players?t=1764440086371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:46] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:46] "GET /api/players?t=1764440086385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:46] "GET /health HTTP/1.1" 200 -
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🔌 Client connected: RT24t25nwJ9YcUSoAAAJ
+   Namespace: /
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 0 connected client(s)
+   ⚠️ No clients registered - check if iOS app is connected and registered device UUID
+   Total WebSocket sessions: 2
+   Sessions without device UUID: 2
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 0 connected client(s)
+   ⚠️ No clients registered - check if iOS app is connected and registered device UUID
+   Total WebSocket sessions: 2
+   Sessions without device UUID: 2
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🔌 Client connected: 15e99tjiSkhRWcGPAAAL
+   Namespace: /
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📱 [register_device] Received registration request from session 15e99tji...
+   Device UUID: EE2B3D6B...
+✅ Device registered: EE2B3D6B... (session: 15e99tji...)
+   Total registered clients: 1
+📱 [register_device] Received registration request from session 15e99tji...
+   Device UUID: EE2B3D6B...
+   🔄 Removed old UUID mapping: EE2B3D6B...
+✅ Device registered: EE2B3D6B... (session: 15e99tji...)
+   Total registered clients: 1
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 User location updated: EE2B3D6B... at (39.247518, -84.909093)
+   Total users in memory: 1
+192.168.1.30 - - [29/Nov/2025 13:14:46] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:47] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:47] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:47] "GET /api/players?t=1764440087380 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:47] "GET /api/players?t=1764440087385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:47] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:48] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:48] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:48] "GET /api/players?t=1764440088382 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:48] "GET /api/players?t=1764440088386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:48] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:49] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:49] "GET /api/players?t=1764440089376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:49] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:49] "GET /api/players?t=1764440089386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:49] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:50] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:50] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:50] "GET /api/players?t=1764440090380 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:50] "GET /api/players?t=1764440090386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:50] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:51] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:51] "GET /api/players?t=1764440091373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:51] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:51] "GET /api/players?t=1764440091386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:51] "[31m[1mPOST /api/npcs HTTP/1.1[0m" 409 -
+192.168.1.30 - - [29/Nov/2025 13:14:51] "PUT /api/npcs/skeleton-1 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:51] "GET /api/npcs/skeleton-1 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:51] "GET /health HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:51] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:52] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:52] "GET /api/players?t=1764440092373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:52] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:52] "GET /api/players?t=1764440092391 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:53] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:53] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:53] "GET /api/players?t=1764440093372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:53] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:53] "GET /api/players?t=1764440093385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:53] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:54] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:54] "GET /api/players?t=1764440094376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:54] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:54] "GET /api/players?t=1764440094388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:54] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:55] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:55] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:55] "GET /api/players?t=1764440095378 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:55] "GET /api/players?t=1764440095383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:55] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:56] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:56] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:56] "GET /api/players?t=1764440096381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:56] "GET /api/players?t=1764440096383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:56] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:57] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:57] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:57] "GET /api/players?t=1764440097384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:57] "GET /api/players?t=1764440097390 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:57] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:58] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:58] "GET /api/players?t=1764440098375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:58] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:58] "GET /api/players?t=1764440098381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:58] "GET /api/objects?include_found=true HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:58] "GET /api/stats?t=1764440098381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:58] "GET /api/players?t=1764440098388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:14:58] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:59] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:59] "GET /api/players?t=1764440099376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:59] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:14:59] "GET /api/players?t=1764440099387 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:00] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:00] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:00] "GET /api/players?t=1764440100377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:00] "GET /api/players?t=1764440100384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:01] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:01] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:01] "GET /api/players?t=1764440101383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:01] "GET /api/players?t=1764440101385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:02] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:02] "GET /api/players?t=1764440102371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:02] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:02] "GET /api/players?t=1764440102382 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:03] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:03] "GET /api/players?t=1764440103377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:03] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:03] "GET /api/players?t=1764440103388 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:04] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:04] "GET /api/players?t=1764440104375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:04] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:04] "GET /api/players?t=1764440104383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:05] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:05] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:05] "GET /api/players?t=1764440105379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:05] "GET /api/players?t=1764440105383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:06] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:06] "GET /api/players?t=1764440106376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:06] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:06] "GET /api/players?t=1764440106386 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:07] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:07] "GET /api/players?t=1764440107371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:07] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:07] "GET /api/players?t=1764440107384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:08] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:08] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:08] "GET /api/players?t=1764440108379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:08] "GET /api/players?t=1764440108383 HTTP/1.1" 200 -
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909093), AR offset: (0.000, 0.000, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909093), AR offset: (0.000, 0.000, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909093), AR offset: (0.000, 0.000, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909093), AR offset: (0.000, 0.000, 0.000)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.054, 0.068, -0.001)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.110, 0.035, -0.020)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909094), AR offset: (-0.078, 0.019, 0.076)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247517, -84.909094), AR offset: (-0.081, 0.040, 0.109)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909093), AR offset: (0.004, 0.067, 0.017)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.024, 0.100, -0.003)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.051, 0.084, -0.013)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.051, 0.088, -0.009)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+192.168.1.29 - - [29/Nov/2025 13:15:09] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:09] "GET /api/players?t=1764440109376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:09] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:09] "GET /api/players?t=1764440109389 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:10] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:10] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:10] "GET /api/players?t=1764440110374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:10] "GET /api/players?t=1764440110391 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:11] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:11] "GET /api/players?t=1764440111376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:11] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:11] "GET /api/players?t=1764440111389 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:12] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:12] "GET /api/players?t=1764440112373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:12] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:12] "GET /api/players?t=1764440112389 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:13] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:13] "GET /api/players?t=1764440113373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:13] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:13] "GET /api/players?t=1764440113386 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:14] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:14] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:14] "GET /api/players?t=1764440114377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:14] "GET /api/players?t=1764440114384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:15] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:15] "GET /api/players?t=1764440115376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:15] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:15] "GET /api/players?t=1764440115389 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:16] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:16] "GET /api/players?t=1764440116376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:16] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:16] "GET /api/players?t=1764440116384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:17] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:17] "GET /api/players?t=1764440117374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:17] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:17] "GET /api/players?t=1764440117386 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:18] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:18] "GET /api/players?t=1764440118374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:18] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:18] "GET /api/players?t=1764440118386 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:19] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:19] "GET /api/players?t=1764440119375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:19] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:19] "GET /api/players?t=1764440119389 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:20] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:20] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:20] "GET /api/players?t=1764440120383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:20] "GET /api/players?t=1764440120389 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:21] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:21] "GET /api/players?t=1764440121371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:21] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:21] "GET /api/players?t=1764440121387 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:22] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:22] "GET /api/players?t=1764440122374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:22] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:22] "GET /api/players?t=1764440122385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:23] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:23] "GET /api/players?t=1764440123376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:23] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:23] "GET /api/players?t=1764440123389 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:24] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:24] "GET /api/players?t=1764440124374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:24] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:24] "GET /api/players?t=1764440124385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:25] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:25] "GET /api/players?t=1764440125375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:25] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:25] "GET /api/players?t=1764440125390 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:26] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:26] "GET /api/players?t=1764440126372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:26] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:26] "GET /api/players?t=1764440126387 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:27] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:27] "GET /api/players?t=1764440127376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:27] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:27] "GET /api/players?t=1764440127387 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:28] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:28] "GET /api/players?t=1764440128375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:28] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:28] "GET /api/objects?include_found=true HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:28] "GET /api/players?t=1764440128382 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:28] "GET /api/players?t=1764440128394 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:28] "GET /api/stats?t=1764440128381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:29] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:29] "GET /api/players?t=1764440129377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:29] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:29] "GET /api/players?t=1764440129388 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:30] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:30] "GET /api/players?t=1764440130371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:30] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:30] "GET /api/players?t=1764440130383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:31] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:31] "GET /api/players?t=1764440131377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:31] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:31] "GET /api/players?t=1764440131387 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:32] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:32] "GET /api/players?t=1764440132375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:32] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:32] "GET /api/players?t=1764440132390 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:33] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:33] "GET /api/players?t=1764440133378 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:33] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:33] "GET /api/players?t=1764440133388 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:34] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:34] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:34] "GET /api/players?t=1764440134381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:34] "GET /api/players?t=1764440134387 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:35] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:35] "GET /api/players?t=1764440135373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:35] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:35] "GET /api/players?t=1764440135387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:35] "GET /health HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:35] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:36] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:36] "GET /api/players?t=1764440136374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:36] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:36] "GET /api/players?t=1764440136388 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:37] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:37] "GET /api/players?t=1764440137376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:37] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:37] "GET /api/players?t=1764440137385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:38] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:38] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:38] "GET /api/players?t=1764440138382 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:38] "GET /api/players?t=1764440138384 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:39] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:39] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:39] "GET /api/players?t=1764440139382 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:39] "GET /api/players?t=1764440139385 HTTP/1.1" 200 -
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🔌 Client disconnected: RT24t25nwJ9YcUSoAAAJ
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.051, 0.088, -0.009)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+192.168.1.29 - - [29/Nov/2025 13:15:40] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:40] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:40] "GET /api/players?t=1764440140376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:40] "GET /api/players?t=1764440140397 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:41] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:41] "GET /api/players?t=1764440141375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:41] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:41] "GET /api/players?t=1764440141387 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:42] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:42] "GET /api/players?t=1764440142378 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:42] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:42] "GET /api/players?t=1764440142387 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:43] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:43] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:43] "GET /api/players?t=1764440143383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:43] "GET /api/players?t=1764440143385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:44] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:44] "GET /api/players?t=1764440144374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:44] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:44] "GET /api/players?t=1764440144386 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:45] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:45] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:45] "GET /api/players?t=1764440145377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:45] "GET /api/players?t=1764440145385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:46] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:46] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:46] "GET /api/players?t=1764440146383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:46] "GET /api/players?t=1764440146386 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:47] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:47] "GET /api/players?t=1764440147375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:47] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:47] "GET /api/players?t=1764440147388 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:48] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:48] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:48] "GET /api/players?t=1764440148381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:48] "GET /api/players?t=1764440148385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:49] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:49] "GET /health HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:49] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:49] "GET /api/players?t=1764440149372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:49] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:49] "GET /api/players?t=1764440149382 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:49] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:50] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:50] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:50] "GET /api/players?t=1764440150377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:50] "GET /api/players?t=1764440150383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:50] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:51] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:51] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:51] "GET /api/players?t=1764440151379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:51] "GET /api/players?t=1764440151384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:51] "GET /health HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:51] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:52] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:52] "GET /api/players?t=1764440152377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:52] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:52] "GET /api/players?t=1764440152387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:52] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:53] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:53] "GET /api/players?t=1764440153376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:53] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:53] "GET /api/players?t=1764440153384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:53] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:54] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:54] "GET /api/players?t=1764440154372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:54] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:54] "GET /api/players?t=1764440154387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:54] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:55] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:55] "GET /api/players?t=1764440155372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:55] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:55] "GET /api/players?t=1764440155387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:55] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:56] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:56] "GET /api/players?t=1764440156373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:56] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:56] "GET /api/players?t=1764440156385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:56] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:57] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:57] "GET /api/players?t=1764440157372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:57] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:57] "GET /api/players?t=1764440157382 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:57] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:58] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:58] "GET /api/players?t=1764440158372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:58] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:58] "GET /api/players?t=1764440158381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:58] "GET /api/players?t=1764440158392 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:58] "GET /api/stats?t=1764440158381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:58] "GET /api/objects?include_found=true HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:58] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:59] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:59] "GET /api/players?t=1764440159375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:59] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:15:59] "GET /api/players?t=1764440159384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:15:59] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:00] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:00] "GET /api/players?t=1764440160375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:00] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:00] "GET /api/players?t=1764440160386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:00] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.051, 0.088, -0.009)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.051, 0.088, -0.009)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.055, 0.090, -0.010)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909093), AR offset: (0.000, -0.052, -0.014)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909093), AR offset: (-0.001, -0.050, -0.011)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909093), AR offset: (0.001, -0.045, -0.011)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909093), AR offset: (0.009, 0.008, -0.207)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909091), AR offset: (0.173, -0.116, -0.227)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.506, -0.352, -0.158)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909089), AR offset: (0.364, -0.367, 0.013)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.536, -0.356, -0.187)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.534, -0.357, -0.188)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.534, -0.358, -0.189)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+192.168.1.29 - - [29/Nov/2025 13:16:01] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:01] "GET /api/players?t=1764440161375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:01] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:01] "GET /api/players?t=1764440161383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:01] "GET /health HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:01] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:02] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:02] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:02] "GET /api/players?t=1764440162380 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:02] "GET /api/players?t=1764440162383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:02] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:03] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:03] "GET /api/players?t=1764440163374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:03] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:03] "GET /api/players?t=1764440163387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:03] "POST /api/npcs/skeleton-1/interact HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:03] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:04] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:04] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:04] "GET /api/players?t=1764440164379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:04] "GET /api/players?t=1764440164386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:04] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:05] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:05] "GET /api/players?t=1764440165375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:05] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:05] "GET /api/players?t=1764440165386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:05] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:06] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:06] "GET /api/players?t=1764440166370 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:06] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:06] "GET /api/players?t=1764440166383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:06] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:07] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:07] "GET /api/players?t=1764440167370 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:07] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:07] "GET /api/players?t=1764440167388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:07] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:08] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:08] "GET /api/players?t=1764440168373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:08] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:08] "GET /api/players?t=1764440168387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:08] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:09] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:09] "GET /api/players?t=1764440169371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:09] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:09] "GET /api/players?t=1764440169383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:09] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:10] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:10] "GET /api/players?t=1764440170378 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:10] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:10] "GET /api/players?t=1764440170385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:10] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:11] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:11] "GET /api/players?t=1764440171374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:11] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:11] "GET /api/players?t=1764440171385 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:11] "GET /api/llm/test HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:11] "GET /health HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:11] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:12] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:12] "GET /api/players?t=1764440172372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:12] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:12] "GET /api/players?t=1764440172385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:12] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:13] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:13] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:13] "GET /api/players?t=1764440173379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:13] "GET /api/players?t=1764440173383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:13] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:14] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:14] "GET /api/players?t=1764440174375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:14] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:14] "GET /api/players?t=1764440174388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:14] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:15] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:15] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:15] "GET /api/players?t=1764440175381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:15] "GET /api/players?t=1764440175386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:15] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:16] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:16] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:16] "GET /api/players?t=1764440176374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:16] "GET /api/players?t=1764440176385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:16] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:17] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:17] "GET /api/players?t=1764440177374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:17] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:17] "GET /api/players?t=1764440177384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:17] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:18] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:18] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:18] "GET /api/players?t=1764440178377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:18] "GET /api/players?t=1764440178382 HTTP/1.1" 200 -
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.534, -0.358, -0.189)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.534, -0.358, -0.189)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.533, -0.358, -0.189)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.533, -0.359, -0.189)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.533, -0.359, -0.189)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.533, -0.359, -0.189)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.532, -0.359, -0.188)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.532, -0.360, -0.188)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.532, -0.360, -0.189)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.532, -0.360, -0.189)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.532, -0.360, -0.189)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909087), AR offset: (0.532, -0.360, -0.189)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247519, -84.909090), AR offset: (0.280, -0.130, -0.123)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247519, -84.909091), AR offset: (0.182, -0.180, -0.093)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247519, -84.909091), AR offset: (0.173, -0.143, -0.102)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247519, -84.909091), AR offset: (0.169, -0.137, -0.100)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247519, -84.909091), AR offset: (0.161, -0.127, -0.093)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+192.168.1.30 - - [29/Nov/2025 13:16:18] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:19] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:19] "GET /api/players?t=1764440179377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:19] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:19] "GET /api/players?t=1764440179386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:19] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:20] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:20] "GET /api/players?t=1764440180370 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:20] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:20] "GET /api/players?t=1764440180382 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:20] "POST /api/npcs/skeleton-1/map-piece HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:20] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:21] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:21] "GET /api/players?t=1764440181376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:21] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:21] "GET /api/players?t=1764440181384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:21] "GET /health HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:21] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:22] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:22] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:22] "GET /api/players?t=1764440182379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:22] "GET /api/players?t=1764440182383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:22] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:23] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:23] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:23] "GET /api/players?t=1764440183380 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:23] "GET /api/players?t=1764440183384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:23] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:24] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:24] "GET /api/players?t=1764440184376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:24] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:24] "GET /api/players?t=1764440184385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:24] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:25] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:25] "GET /api/players?t=1764440185372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:25] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:25] "GET /api/players?t=1764440185385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:25] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:26] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:26] "GET /api/players?t=1764440186371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:26] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:26] "GET /api/players?t=1764440186385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:26] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:27] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:27] "GET /api/players?t=1764440187375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:27] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:27] "GET /api/players?t=1764440187389 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:27] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:28] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:28] "GET /api/players?t=1764440188374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:28] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:28] "GET /api/players?t=1764440188386 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:28] "GET /api/stats?t=1764440188386 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:28] "GET /api/objects?include_found=true HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:28] "GET /api/players?t=1764440188386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:28] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:29] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:29] "GET /api/players?t=1764440189376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:29] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:29] "GET /api/players?t=1764440189390 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:29] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:30] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:30] "GET /api/players?t=1764440190373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:30] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:30] "GET /api/players?t=1764440190390 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:30] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:31] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:31] "GET /api/players?t=1764440191373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:31] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:31] "GET /api/players?t=1764440191385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:31] "GET /health HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:31] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:32] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:32] "GET /api/players?t=1764440192375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:32] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:32] "GET /api/players?t=1764440192386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:32] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:33] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:33] "GET /api/players?t=1764440193371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:33] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:33] "GET /api/players?t=1764440193386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:33] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:34] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:34] "GET /api/players?t=1764440194376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:34] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:34] "GET /api/players?t=1764440194391 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:34] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:35] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:35] "GET /api/players?t=1764440195377 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:35] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:35] "GET /api/players?t=1764440195384 HTTP/1.1" 200 -
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247519, -84.909091), AR offset: (0.161, -0.127, -0.094)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247519, -84.909091), AR offset: (0.167, -0.126, -0.090)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🗺️ [Captain Bones Game Mode] Fetching landmarks within 50m of 39.24751829663231, -84.9090927657111 for crude treasure map...
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+   [Captain Bones] Found 0 landmarks within 50m range
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247519, -84.909091), AR offset: (0.163, -0.135, -0.093)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247519, -84.909091), AR offset: (0.163, -0.136, -0.092)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247519, -84.909091), AR offset: (0.162, -0.136, -0.092)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247520, -84.909091), AR offset: (0.161, -0.127, -0.144)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.154, -0.161, -0.015)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.153, -0.166, -0.019)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247519, -84.909091), AR offset: (0.142, -0.183, -0.023)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.156, -0.166, -0.013)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.164, -0.173, -0.006)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.149, -0.150, 0.003)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909088), AR offset: (0.370, -0.303, -0.007)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247517, -84.909095), AR offset: (-0.215, 0.206, 0.095)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.155, -0.154, -0.003)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.155, -0.148, -0.012)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.155, -0.148, -0.010)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+192.168.1.30 - - [29/Nov/2025 13:16:35] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:36] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:36] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:36] "GET /api/players?t=1764440196383 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:36] "GET /api/players?t=1764440196390 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:36] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:37] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:37] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:37] "GET /api/players?t=1764440197382 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:37] "GET /api/players?t=1764440197388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:37] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:38] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:38] "GET /api/players?t=1764440198376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:38] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:38] "GET /api/players?t=1764440198387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:38] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:39] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:39] "GET /api/players?t=1764440199375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:39] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:39] "GET /api/players?t=1764440199384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:39] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:40] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:40] "GET /api/players?t=1764440200373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:40] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:40] "GET /api/players?t=1764440200386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:40] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:41] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:41] "GET /api/players?t=1764440201376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:41] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:41] "GET /api/players?t=1764440201382 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:41] "GET /health HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:41] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:42] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:42] "GET /api/players?t=1764440202374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:42] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:42] "GET /api/players?t=1764440202393 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:42] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:42] "POST /api/npcs/skeleton-1/map-piece HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:43] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:43] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:43] "GET /api/players?t=1764440203379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:43] "GET /api/players?t=1764440203385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:43] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:44] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:44] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:44] "GET /api/players?t=1764440204380 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:44] "GET /api/players?t=1764440204385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:44] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:45] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:45] "GET /api/players?t=1764440205376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:45] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:45] "GET /api/players?t=1764440205384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:45] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:46] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:46] "GET /api/players?t=1764440206375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:46] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:46] "GET /api/players?t=1764440206388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:46] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:47] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:47] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:47] "GET /api/players?t=1764440207379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:47] "GET /api/players?t=1764440207383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:47] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:48] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:48] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:48] "GET /api/players?t=1764440208379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:48] "GET /api/players?t=1764440208383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:48] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:49] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:49] "GET /api/players?t=1764440209371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:49] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:49] "GET /api/players?t=1764440209383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:49] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:50] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:50] "GET /api/players?t=1764440210374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:50] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:50] "GET /api/players?t=1764440210384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:50] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:51] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:51] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:51] "GET /api/players?t=1764440211379 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:51] "GET /api/players?t=1764440211384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:51] "GET /health HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:51] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:52] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:52] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:52] "GET /api/players?t=1764440212378 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:52] "GET /api/players?t=1764440212382 HTTP/1.1" 200 -
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.150, -0.146, -0.010)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.147, -0.144, -0.008)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.148, -0.144, -0.006)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.149, -0.141, -0.007)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.144, -0.144, -0.009)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.146, -0.143, -0.009)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.144, -0.143, -0.014)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🗺️ [Captain Bones Game Mode] Fetching landmarks within 50m of 39.24751829663231, -84.9090927657111 for crude treasure map...
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.149, -0.140, -0.010)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+   [Captain Bones] Found 0 landmarks within 50m range
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.149, -0.141, -0.009)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.149, -0.140, -0.007)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.103, -0.150, 0.003)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.147, -0.154, -0.019)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.074, -0.183, -0.008)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📡 [get_connected_clients] Returning 1 connected client(s)
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.074, -0.194, -0.007)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909092), AR offset: (0.087, -0.181, -0.008)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.127, -0.193, 0.003)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+🏥 Health check from 192.168.1.30 (Host: 192.168.1.29:5001)
+🌐 [Dynamic] Detected IP via socket connection: 192.168.1.29
+📍 User location updated (AR-enhanced): EE2B3D6B... at (39.247518, -84.909091), AR offset: (0.125, -0.179, 0.005)m
+   Total users in memory: 1
+   User UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+📍 Returning 1 active user locations (out of 1 total)
+   Active device UUIDs: ['EE2B3D6B-418D-40F8-A299-89F0F6875B5C']
+192.168.1.30 - - [29/Nov/2025 13:16:52] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:53] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:53] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:53] "GET /api/players?t=1764440213380 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:53] "GET /api/players?t=1764440213383 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:53] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:54] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:54] "GET /api/players?t=1764440214374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:54] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:54] "GET /api/players?t=1764440214387 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:54] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:55] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:55] "GET /api/players?t=1764440215376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:55] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:55] "GET /api/players?t=1764440215385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:55] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:56] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:56] "GET /api/players?t=1764440216375 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:56] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:56] "GET /api/players?t=1764440216386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:56] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:57] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:57] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:57] "GET /api/players?t=1764440217380 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:57] "GET /api/players?t=1764440217384 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:57] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:58] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:58] "GET /api/players?t=1764440218374 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:58] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:58] "GET /api/players?t=1764440218381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:58] "GET /api/objects?include_found=true HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:58] "GET /api/stats?t=1764440218381 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:58] "GET /api/players?t=1764440218388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:58] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:59] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:59] "GET /api/players?t=1764440219373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:59] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:16:59] "GET /api/players?t=1764440219385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:16:59] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:00] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:00] "GET /api/players?t=1764440220372 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:00] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:00] "GET /api/players?t=1764440220388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:17:00] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:01] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:01] "GET /api/players?t=1764440221373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:01] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:01] "GET /api/players?t=1764440221388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:17:01] "GET /health HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:17:01] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:02] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:02] "GET /api/players?t=1764440222376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:02] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:02] "GET /api/players?t=1764440222390 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:17:02] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:03] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:03] "GET /api/players?t=1764440223371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:03] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:03] "GET /api/players?t=1764440223386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:17:03] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:04] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:04] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:04] "GET /api/players?t=1764440224382 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:04] "GET /api/players?t=1764440224390 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:17:04] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:05] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:05] "GET /api/players?t=1764440225376 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:05] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:05] "GET /api/players?t=1764440225386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:17:05] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:06] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:06] "GET /api/players?t=1764440226378 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:06] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:06] "GET /api/players?t=1764440226391 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:17:06] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:07] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:07] "GET /api/players?t=1764440227373 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:07] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:07] "GET /api/players?t=1764440227385 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:17:07] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:08] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:08] "GET /api/players?t=1764440228371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:08] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:08] "GET /api/players?t=1764440228388 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:17:08] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:09] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:09] "GET /api/players?t=1764440229371 HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:09] "GET /api/users/locations HTTP/1.1" 200 -
+192.168.1.29 - - [29/Nov/2025 13:17:09] "GET /api/players?t=1764440229386 HTTP/1.1" 200 -
+192.168.1.30 - - [29/Nov/2025 13:17:09] "POST /api/users/EE2B3D6B-418D-40F8-A299-89F0F6875B5C/location HTTP/1.1" 200 -
