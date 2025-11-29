@@ -14,6 +14,7 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     private var isSendingInProgress: Bool = false // Prevent concurrent sends
     weak var arCoordinator: ARCoordinator? // Reference to AR coordinator for enhanced location
     private var locationUpdateTimer: Timer? // Timer for automatic periodic location updates
+    private var locationUpdateInterval: TimeInterval = 1.0 // Default 1 second, will be fetched from server
     
     override init() {
         super.init()
@@ -21,6 +22,23 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
         // Use best accuracy for AR precision, but optimize with distance filter
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 10.0 // Update every 10 meters (optimized for battery life)
+        
+        // Listen for location update interval changes via WebSocket
+        WebSocketService.shared.onLocationUpdateIntervalChanged = { [weak self] intervalSeconds in
+            self?.updateLocationInterval(intervalSeconds)
+        }
+    }
+    
+    /// Update location update interval (called when server changes it)
+    private func updateLocationInterval(_ intervalSeconds: Double) {
+        locationUpdateInterval = intervalSeconds
+        print("📍 Location update interval updated via WebSocket: \(intervalSeconds)s")
+        
+        // Restart timer with new interval if it's already running
+        if locationUpdateTimer != nil {
+            stopAutomaticLocationUpdates()
+            startAutomaticLocationUpdates()
+        }
     }
     
     func requestLocationPermission() {
@@ -34,8 +52,29 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
         }
         locationManager.startUpdatingLocation()
         
-        // Start automatic periodic location updates for admin panel (every 5 seconds)
-        startAutomaticLocationUpdates()
+        // Fetch location update interval from server, then start automatic updates
+        Task {
+            await fetchLocationUpdateInterval()
+            await MainActor.run {
+                startAutomaticLocationUpdates()
+            }
+        }
+    }
+    
+    /// Fetch location update interval from server
+    private func fetchLocationUpdateInterval() async {
+        do {
+            let intervalSeconds = try await APIService.shared.getLocationUpdateInterval()
+            await MainActor.run {
+                self.locationUpdateInterval = intervalSeconds
+                print("📍 Location update interval fetched from server: \(intervalSeconds)s")
+            }
+        } catch {
+            print("⚠️ Failed to fetch location update interval from server, using default 1.0s: \(error)")
+            await MainActor.run {
+                self.locationUpdateInterval = 1.0 // Default 1 second
+            }
+        }
     }
     
     func stopUpdatingLocation() {
@@ -48,10 +87,11 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
         // Stop any existing timer
         stopAutomaticLocationUpdates()
         
-        // Send location every 5 seconds automatically (matches admin panel polling interval)
+        // Send location at the configured interval (fetched from server)
         // Run on main thread to ensure UI updates work correctly
         DispatchQueue.main.async { [weak self] in
-            self?.locationUpdateTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.locationUpdateTimer = Timer.scheduledTimer(withTimeInterval: self.locationUpdateInterval, repeats: true) { [weak self] _ in
                 self?.sendCurrentLocationToServer()
             }
             // Add timer to common run loop modes so it works even when scrolling
@@ -68,7 +108,7 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     }
     
     // Send current location to server (for admin map display)
-    // Called automatically every 5 seconds, and also manually when user taps the GPS direction box
+    // Called automatically at the configured interval, and also manually when user taps the GPS direction box
     func sendCurrentLocationToServer() {
         // Prevent concurrent sends
         guard !isSendingInProgress else {

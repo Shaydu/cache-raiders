@@ -738,6 +738,31 @@ class APIService {
     }
     
     /// Update user's current location (for web map display)
+    /// Get the location update interval from the server
+    func getLocationUpdateInterval() async throws -> Double {
+        guard let url = URL(string: "\(baseURL)/api/settings/location-update-interval") else {
+            throw APIError.invalidURL
+        }
+        
+        struct IntervalResponse: Codable {
+            let interval_ms: Int
+            let interval_seconds: Double
+        }
+        
+        let (data, response) = try await URLSession.shared.data(from: url)
+        
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.serverUnreachable
+        }
+        
+        guard httpResponse.statusCode == 200 else {
+            throw APIError.httpError(httpResponse.statusCode)
+        }
+        
+        let intervalResponse = try JSONDecoder().decode(IntervalResponse.self, from: data)
+        return intervalResponse.interval_seconds
+    }
+    
     func updateUserLocation(latitude: Double, longitude: Double, accuracy: Double? = nil, heading: Double? = nil, arOffsetX: Double? = nil, arOffsetY: Double? = nil, arOffsetZ: Double? = nil) async throws {
         guard let url = URL(string: "\(baseURL)/api/users/\(currentUserID)/location") else {
             throw APIError.invalidURL
@@ -812,6 +837,169 @@ class APIService {
         let bodyData = try encoder.encode(body)
 
         let _: UpdateResponse = try await makeRequest(url: url, method: "PUT", body: bodyData)
+    }
+    
+    // MARK: - NPC Management
+    
+    /// NPC data structure
+    struct APINPC: Codable {
+        let id: String
+        let name: String
+        let npc_type: String
+        let latitude: Double
+        let longitude: Double
+        let created_at: String?
+        let created_by: String?
+        let ar_origin_latitude: Double?
+        let ar_origin_longitude: Double?
+        let ar_offset_x: Double?
+        let ar_offset_y: Double?
+        let ar_offset_z: Double?
+        let ar_placement_timestamp: String?
+    }
+    
+    struct CreateNPCRequest: Codable {
+        let id: String
+        let name: String
+        let npc_type: String
+        let latitude: Double
+        let longitude: Double
+        let created_by: String?
+        let ar_origin_latitude: Double?
+        let ar_origin_longitude: Double?
+        let ar_offset_x: Double?
+        let ar_offset_y: Double?
+        let ar_offset_z: Double?
+        let ar_placement_timestamp: String?
+    }
+    
+    /// Get all NPCs
+    func getNPCs() async throws -> [APINPC] {
+        guard let url = URL(string: "\(baseURL)/api/npcs") else {
+            throw APIError.invalidURL
+        }
+        return try await makeRequest(url: url, method: "GET")
+    }
+    
+    /// Get a specific NPC by ID
+    func getNPC(id: String) async throws -> APINPC {
+        guard let url = URL(string: "\(baseURL)/api/npcs/\(id)") else {
+            throw APIError.invalidURL
+        }
+        return try await makeRequest(url: url, method: "GET")
+    }
+    
+    /// Create a new NPC
+    func createNPC(
+        id: String,
+        name: String,
+        npcType: String,
+        latitude: Double,
+        longitude: Double,
+        arOriginLatitude: Double? = nil,
+        arOriginLongitude: Double? = nil,
+        arOffsetX: Double? = nil,
+        arOffsetY: Double? = nil,
+        arOffsetZ: Double? = nil
+    ) async throws -> APINPC {
+        guard let url = URL(string: "\(baseURL)/api/npcs") else {
+            throw APIError.invalidURL
+        }
+        
+        let request = CreateNPCRequest(
+            id: id,
+            name: name,
+            npc_type: npcType,
+            latitude: latitude,
+            longitude: longitude,
+            created_by: currentUserID,
+            ar_origin_latitude: arOriginLatitude,
+            ar_origin_longitude: arOriginLongitude,
+            ar_offset_x: arOffsetX,
+            ar_offset_y: arOffsetY,
+            ar_offset_z: arOffsetZ,
+            ar_placement_timestamp: ISO8601DateFormatter().string(from: Date())
+        )
+        
+        let encoder = JSONEncoder()
+        let bodyData = try encoder.encode(request)
+        
+        struct CreateResponse: Codable {
+            let id: String
+            let message: String?
+        }
+        
+        let response: CreateResponse = try await makeRequest(url: url, method: "POST", body: bodyData)
+        return try await getNPC(id: response.id)
+    }
+    
+    /// Update an NPC
+    func updateNPC(
+        id: String,
+        name: String? = nil,
+        npcType: String? = nil,
+        latitude: Double? = nil,
+        longitude: Double? = nil,
+        arOriginLatitude: Double? = nil,
+        arOriginLongitude: Double? = nil,
+        arOffsetX: Double? = nil,
+        arOffsetY: Double? = nil,
+        arOffsetZ: Double? = nil
+    ) async throws -> APINPC {
+        guard let url = URL(string: "\(baseURL)/api/npcs/\(id)") else {
+            throw APIError.invalidURL
+        }
+        
+        struct UpdateRequest: Codable {
+            let name: String?
+            let npc_type: String?
+            let latitude: Double?
+            let longitude: Double?
+            let ar_origin_latitude: Double?
+            let ar_origin_longitude: Double?
+            let ar_offset_x: Double?
+            let ar_offset_y: Double?
+            let ar_offset_z: Double?
+            let ar_placement_timestamp: String?
+        }
+        
+        let request = UpdateRequest(
+            name: name,
+            npc_type: npcType,
+            latitude: latitude,
+            longitude: longitude,
+            ar_origin_latitude: arOriginLatitude,
+            ar_origin_longitude: arOriginLongitude,
+            ar_offset_x: arOffsetX,
+            ar_offset_y: arOffsetY,
+            ar_offset_z: arOffsetZ,
+            ar_placement_timestamp: ISO8601DateFormatter().string(from: Date())
+        )
+        
+        let encoder = JSONEncoder()
+        let bodyData = try encoder.encode(request)
+        
+        struct UpdateResponse: Codable {
+            let id: String
+            let message: String?
+        }
+        
+        let _: UpdateResponse = try await makeRequest(url: url, method: "PUT", body: bodyData)
+        return try await getNPC(id: id)
+    }
+    
+    /// Delete an NPC
+    func deleteNPC(id: String) async throws {
+        guard let url = URL(string: "\(baseURL)/api/npcs/\(id)") else {
+            throw APIError.invalidURL
+        }
+        
+        struct DeleteResponse: Codable {
+            let npc_id: String
+            let message: String?
+        }
+        
+        let _: DeleteResponse = try await makeRequest(url: url, method: "DELETE")
     }
     
     /// Convert APIObject to LootBoxLocation

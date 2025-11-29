@@ -46,6 +46,9 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'cache_raiders.db')
 # This allows the web map to show where users are currently located
 user_locations: Dict[str, Dict] = {}
 
+# Location update interval setting (in milliseconds, default 1000ms = 1 second)
+location_update_interval_ms: int = 1000
+
 # Track connected WebSocket clients (session_id -> device_uuid)
 # Also track reverse mapping (device_uuid -> set of session_ids) for multiple connections
 connected_clients: Dict[str, str] = {}  # session_id -> device_uuid
@@ -2038,6 +2041,48 @@ def generate_clue():
     except Exception as e:
         return jsonify({'error': f'LLM error: {str(e)}'}), 500
 
+@app.route('/api/settings/location-update-interval', methods=['GET'])
+def get_location_update_interval():
+    """Get the current location update interval in milliseconds."""
+    return jsonify({
+        'interval_ms': location_update_interval_ms,
+        'interval_seconds': location_update_interval_ms / 1000.0
+    })
+
+@app.route('/api/settings/location-update-interval', methods=['POST', 'PUT'])
+def set_location_update_interval():
+    """Set the location update interval in milliseconds."""
+    global location_update_interval_ms
+    
+    data = request.get_json()
+    if not data or 'interval_ms' not in data:
+        return jsonify({'error': 'interval_ms is required'}), 400
+    
+    interval_ms = int(data['interval_ms'])
+    
+    # Validate interval (must be one of the allowed values: 500, 1000, 3000, 5000, 10000, 30000, 60000)
+    allowed_intervals = [500, 1000, 3000, 5000, 10000, 30000, 60000]
+    if interval_ms not in allowed_intervals:
+        return jsonify({
+            'error': f'Invalid interval. Must be one of: {[ms/1000 for ms in allowed_intervals]} seconds'
+        }), 400
+    
+    location_update_interval_ms = interval_ms
+    
+    # Broadcast the new interval to all connected clients via WebSocket
+    socketio.emit('location_update_interval_changed', {
+        'interval_ms': location_update_interval_ms,
+        'interval_seconds': location_update_interval_ms / 1000.0
+    }, broadcast=True)
+    
+    print(f"📍 Location update interval changed to {location_update_interval_ms}ms ({location_update_interval_ms/1000.0}s)")
+    
+    return jsonify({
+        'interval_ms': location_update_interval_ms,
+        'interval_seconds': location_update_interval_ms / 1000.0,
+        'message': f'Location update interval set to {location_update_interval_ms/1000.0} seconds'
+    })
+
 @app.route('/api/npcs/<npc_id>/map-piece', methods=['GET', 'POST'])
 def get_npc_map_piece(npc_id: str):
     """Get a treasure map piece from an NPC (skeleton has first half, corgi has second half)."""
@@ -2132,6 +2177,315 @@ def combine_map_pieces():
     return jsonify({
         'complete_map': combined_map,
         'message': 'Map pieces combined! X marks the spot!'
+    }), 200
+
+# ============================================================================
+# NPC Management Endpoints
+# ============================================================================
+
+@app.route('/api/npcs', methods=['GET'])
+def get_npcs():
+    """Get all NPCs."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                id,
+                name,
+                npc_type,
+                latitude,
+                longitude,
+                created_at,
+                created_by,
+                ar_origin_latitude,
+                ar_origin_longitude,
+                ar_offset_x,
+                ar_offset_y,
+                ar_offset_z,
+                ar_placement_timestamp
+            FROM npcs
+            ORDER BY created_at DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        npcs = [{
+            'id': row['id'],
+            'name': row['name'],
+            'npc_type': row['npc_type'],
+            'latitude': row['latitude'],
+            'longitude': row['longitude'],
+            'created_at': row['created_at'],
+            'created_by': row['created_by'],
+            'ar_origin_latitude': row['ar_origin_latitude'],
+            'ar_origin_longitude': row['ar_origin_longitude'],
+            'ar_offset_x': row['ar_offset_x'],
+            'ar_offset_y': row['ar_offset_y'],
+            'ar_offset_z': row['ar_offset_z'],
+            'ar_placement_timestamp': row['ar_placement_timestamp']
+        } for row in rows]
+        
+        return jsonify(npcs)
+    
+    except Exception as e:
+        return jsonify({'error': str(e), 'type': type(e).__name__}), 500
+
+@app.route('/api/npcs/<npc_id>', methods=['GET'])
+def get_npc(npc_id: str):
+    """Get a specific NPC by ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT 
+            id,
+            name,
+            npc_type,
+            latitude,
+            longitude,
+            created_at,
+            created_by,
+            ar_origin_latitude,
+            ar_origin_longitude,
+            ar_offset_x,
+            ar_offset_y,
+            ar_offset_z,
+            ar_placement_timestamp
+        FROM npcs
+        WHERE id = ?
+    ''', (npc_id,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return jsonify({'error': 'NPC not found'}), 404
+    
+    return jsonify({
+        'id': row['id'],
+        'name': row['name'],
+        'npc_type': row['npc_type'],
+        'latitude': row['latitude'],
+        'longitude': row['longitude'],
+        'created_at': row['created_at'],
+        'created_by': row['created_by'],
+        'ar_origin_latitude': row['ar_origin_latitude'],
+        'ar_origin_longitude': row['ar_origin_longitude'],
+        'ar_offset_x': row['ar_offset_x'],
+        'ar_offset_y': row['ar_offset_y'],
+        'ar_offset_z': row['ar_offset_z'],
+        'ar_placement_timestamp': row['ar_placement_timestamp']
+    })
+
+@app.route('/api/npcs', methods=['POST'])
+def create_npc():
+    """Create a new NPC."""
+    data = request.json
+    
+    required_fields = ['id', 'name', 'npc_type', 'latitude', 'longitude']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO npcs (
+                id, name, npc_type, latitude, longitude, created_at, created_by,
+                ar_origin_latitude, ar_origin_longitude,
+                ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            data['id'],
+            data['name'],
+            data['npc_type'],
+            data['latitude'],
+            data['longitude'],
+            datetime.utcnow().isoformat(),
+            data.get('created_by', 'unknown'),
+            data.get('ar_origin_latitude'),
+            data.get('ar_origin_longitude'),
+            data.get('ar_offset_x'),
+            data.get('ar_offset_y'),
+            data.get('ar_offset_z'),
+            data.get('ar_placement_timestamp', datetime.utcnow().isoformat())
+        ))
+        
+        conn.commit()
+        
+        # Get the created NPC
+        cursor.execute('''
+            SELECT 
+                id, name, npc_type, latitude, longitude, created_at, created_by,
+                ar_origin_latitude, ar_origin_longitude,
+                ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp
+            FROM npcs
+            WHERE id = ?
+        ''', (data['id'],))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return jsonify({'error': 'Failed to retrieve created NPC'}), 500
+        
+        # Broadcast new NPC to all connected clients
+        npc_data = {
+            'id': row['id'],
+            'name': row['name'],
+            'npc_type': row['npc_type'],
+            'latitude': row['latitude'],
+            'longitude': row['longitude'],
+            'created_at': row['created_at'],
+            'created_by': row['created_by'],
+            'ar_origin_latitude': row['ar_origin_latitude'],
+            'ar_origin_longitude': row['ar_origin_longitude'],
+            'ar_offset_x': row['ar_offset_x'],
+            'ar_offset_y': row['ar_offset_y'],
+            'ar_offset_z': row['ar_offset_z'],
+            'ar_placement_timestamp': row['ar_placement_timestamp']
+        }
+        
+        socketio.emit('npc_created', npc_data)
+        
+        return jsonify({
+            'id': data['id'],
+            'message': 'NPC created successfully'
+        }), 201
+        
+    except sqlite3.IntegrityError as e:
+        conn.close()
+        return jsonify({'error': 'NPC with this ID already exists'}), 409
+    except Exception as e:
+        conn.close()
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"❌ Error creating NPC: {str(e)}")
+        print(f"Traceback: {error_trace}")
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
+@app.route('/api/npcs/<npc_id>', methods=['PUT', 'PATCH'])
+def update_npc(npc_id: str):
+    """Update an NPC's location or other properties."""
+    data = request.json
+    
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if NPC exists
+    cursor.execute('SELECT id FROM npcs WHERE id = ?', (npc_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'error': 'NPC not found'}), 404
+    
+    # Build update query dynamically based on provided fields
+    updates = []
+    params = []
+    
+    updateable_fields = [
+        'name', 'npc_type', 'latitude', 'longitude',
+        'ar_origin_latitude', 'ar_origin_longitude',
+        'ar_offset_x', 'ar_offset_y', 'ar_offset_z', 'ar_placement_timestamp'
+    ]
+    
+    for field in updateable_fields:
+        if field in data:
+            updates.append(f'{field} = ?')
+            params.append(data[field])
+    
+    if not updates:
+        conn.close()
+        return jsonify({'error': 'No valid fields to update'}), 400
+    
+    params.append(npc_id)
+    
+    cursor.execute(f'''
+        UPDATE npcs
+        SET {', '.join(updates)}
+        WHERE id = ?
+    ''', params)
+    
+    conn.commit()
+    
+    # Get updated NPC
+    cursor.execute('''
+        SELECT 
+            id, name, npc_type, latitude, longitude, created_at, created_by,
+            ar_origin_latitude, ar_origin_longitude,
+            ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp
+        FROM npcs
+        WHERE id = ?
+    ''', (npc_id,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return jsonify({'error': 'Failed to retrieve updated NPC'}), 500
+    
+    # Broadcast NPC update to all connected clients
+    npc_data = {
+        'id': row['id'],
+        'name': row['name'],
+        'npc_type': row['npc_type'],
+        'latitude': row['latitude'],
+        'longitude': row['longitude'],
+        'created_at': row['created_at'],
+        'created_by': row['created_by'],
+        'ar_origin_latitude': row['ar_origin_latitude'],
+        'ar_origin_longitude': row['ar_origin_longitude'],
+        'ar_offset_x': row['ar_offset_x'],
+        'ar_offset_y': row['ar_offset_y'],
+        'ar_offset_z': row['ar_offset_z'],
+        'ar_placement_timestamp': row['ar_placement_timestamp']
+    }
+    
+    socketio.emit('npc_updated', npc_data)
+    
+    return jsonify({
+        'id': npc_id,
+        'message': 'NPC updated successfully'
+    }), 200
+
+@app.route('/api/npcs/<npc_id>', methods=['DELETE'])
+def delete_npc(npc_id: str):
+    """Delete an NPC."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if NPC exists
+    cursor.execute('SELECT id FROM npcs WHERE id = ?', (npc_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'error': 'NPC not found'}), 404
+    
+    # Delete the NPC
+    cursor.execute('DELETE FROM npcs WHERE id = ?', (npc_id,))
+    deleted = cursor.rowcount
+    
+    conn.commit()
+    conn.close()
+    
+    if deleted == 0:
+        return jsonify({'error': 'Failed to delete NPC'}), 500
+    
+    # Broadcast NPC deletion to all connected clients
+    socketio.emit('npc_deleted', {
+        'npc_id': npc_id
+    })
+    
+    return jsonify({
+        'npc_id': npc_id,
+        'message': 'NPC deleted successfully'
     }), 200
 
 if __name__ == '__main__':

@@ -56,6 +56,10 @@ class WebSocketService: ObservableObject {
     var onObjectUncollected: ((String) -> Void)? // (object_id)
     var onAllFindsReset: (() -> Void)?
     var onConnectionError: ((String) -> Void)? // (error_message)
+    var onNPCCreated: (([String: Any]) -> Void)? // NPC data
+    var onNPCUpdated: (([String: Any]) -> Void)? // NPC data
+    var onNPCDeleted: ((String) -> Void)? // (npc_id)
+    var onLocationUpdateIntervalChanged: ((Double) -> Void)? // (interval_seconds)
     
     var baseURL: String {
         // Use the same validated baseURL as APIService to ensure consistency
@@ -411,6 +415,24 @@ class WebSocketService: ObservableObject {
         case "admin_diagnostic_ping":
             handleAdminDiagnosticPing(eventData)
             
+        case "object_created":
+            handleObjectCreatedEvent(eventData)
+            
+        case "object_deleted":
+            handleObjectDeletedEvent(eventData)
+            
+        case "npc_created":
+            handleNPCCreatedEvent(eventData)
+            
+        case "npc_updated":
+            handleNPCUpdatedEvent(eventData)
+            
+        case "npc_deleted":
+            handleNPCDeletedEvent(eventData)
+            
+        case "location_update_interval_changed":
+            handleLocationUpdateIntervalChangedEvent(eventData)
+            
         default:
             print("📨 Received unhandled Socket.IO event: \(eventName)")
         }
@@ -453,6 +475,94 @@ class WebSocketService: ObservableObject {
         
         DispatchQueue.main.async {
             self.onAllFindsReset?()
+        }
+    }
+    
+    /// Handle object_created event: {"id": "...", "name": "...", ...}
+    private func handleObjectCreatedEvent(_ data: [String: Any]) {
+        print("📦 WebSocket: Object created - ID: \(data["id"] ?? "unknown")")
+        
+        DispatchQueue.main.async {
+            // Pass the full object data to the handler
+            NotificationCenter.default.post(
+                name: NSNotification.Name("WebSocketObjectCreated"),
+                object: nil,
+                userInfo: data
+            )
+        }
+    }
+    
+    /// Handle object_deleted event: {"object_id": "..."}
+    private func handleObjectDeletedEvent(_ data: [String: Any]) {
+        guard let objectId = data["object_id"] as? String else {
+            print("⚠️ object_deleted event missing object_id")
+            return
+        }
+        
+        print("🗑️ WebSocket: Object deleted - ID: \(objectId)")
+        
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: NSNotification.Name("WebSocketObjectDeleted"),
+                object: nil,
+                userInfo: ["object_id": objectId]
+            )
+        }
+    }
+    
+    /// Handle npc_created event: {"id": "...", "name": "...", ...}
+    private func handleNPCCreatedEvent(_ data: [String: Any]) {
+        guard let npcId = data["id"] as? String else {
+            print("⚠️ npc_created event missing id")
+            return
+        }
+        
+        print("💬 WebSocket: NPC created - ID: \(npcId), Name: \(data["name"] ?? "unknown")")
+        
+        DispatchQueue.main.async {
+            self.onNPCCreated?(data)
+        }
+    }
+    
+    /// Handle npc_updated event: {"id": "...", "name": "...", ...}
+    private func handleNPCUpdatedEvent(_ data: [String: Any]) {
+        guard let npcId = data["id"] as? String else {
+            print("⚠️ npc_updated event missing id")
+            return
+        }
+        
+        print("💬 WebSocket: NPC updated - ID: \(npcId), Name: \(data["name"] ?? "unknown")")
+        
+        DispatchQueue.main.async {
+            self.onNPCUpdated?(data)
+        }
+    }
+    
+    /// Handle npc_deleted event: {"npc_id": "..."}
+    private func handleNPCDeletedEvent(_ data: [String: Any]) {
+        guard let npcId = data["npc_id"] as? String else {
+            print("⚠️ npc_deleted event missing npc_id")
+            return
+        }
+        
+        print("💬 WebSocket: NPC deleted - ID: \(npcId)")
+        
+        DispatchQueue.main.async {
+            self.onNPCDeleted?(npcId)
+        }
+    }
+    
+    /// Handle location_update_interval_changed event: {"interval_ms": 1000, "interval_seconds": 1.0}
+    private func handleLocationUpdateIntervalChangedEvent(_ data: [String: Any]) {
+        guard let intervalSeconds = data["interval_seconds"] as? Double else {
+            print("⚠️ location_update_interval_changed event missing interval_seconds")
+            return
+        }
+        
+        print("📍 WebSocket: Location update interval changed to \(intervalSeconds)s")
+        
+        DispatchQueue.main.async {
+            self.onLocationUpdateIntervalChanged?(intervalSeconds)
         }
     }
     

@@ -385,6 +385,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             self?.handleObjectUncollected(objectId: objectId)
         }
         
+        // Set up NPC sync handlers for two-way sync with admin
+        setupNPCSyncHandlers()
+        
         // Store the GPS location when AR starts (this becomes our AR world origin)
         arOriginLocation = userLocationManager.currentLocation
         
@@ -1615,10 +1618,36 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 // Game Mode: Place NPCs based on mode (must be on main thread for AR scene updates)
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self, let arView = self.arView else { return }
+                    
+                    // Check for NPCs in nearby locations that should be placed in AR
+                    // This handles NPCs loaded from the API/map that might not be placed yet
+                    let npcLocations = nearby.filter { $0.id.hasPrefix("npc_") }
+                    for npcLocation in npcLocations {
+                        // Extract NPC type from ID (format: "npc_skeleton-1" or "npc_corgi-1")
+                        let npcIdWithoutPrefix = String(npcLocation.id.dropFirst(4)) // Remove "npc_" prefix
+                        
+                        // Check if this is a skeleton NPC
+                        if npcIdWithoutPrefix == NPCType.skeleton.npcId || npcLocation.name.contains("Captain Bones") || npcLocation.name.contains("skeleton") {
+                            if !self.skeletonPlaced && self.placedNPCs[NPCType.skeleton.npcId] == nil {
+                                Swift.print("💀 Found Captain Bones on map - placing in AR")
+                                self.placeNPC(type: .skeleton, in: arView)
+                            }
+                        }
+                        // Check if this is a corgi NPC
+                        else if npcIdWithoutPrefix == NPCType.corgi.npcId || npcLocation.name.contains("Corgi") {
+                            if !self.corgiPlaced && self.placedNPCs[NPCType.corgi.npcId] == nil {
+                                Swift.print("🐕 Found Corgi Traveller on map - placing in AR")
+                                self.placeNPC(type: .corgi, in: arView)
+                            }
+                        }
+                    }
+                    
                     switch locationManager.gameMode {
                     case .open:
-                        // No NPCs in open mode - remove any existing NPCs
-                        if self.skeletonPlaced {
+                        // In open mode, only place NPCs if they're on the map (handled above)
+                        // Remove NPCs that shouldn't be in open mode (only if not on map)
+                        let hasSkeletonOnMap = nearby.contains { $0.id.hasPrefix("npc_") && ($0.name.contains("Captain Bones") || $0.name.contains("skeleton")) }
+                        if self.skeletonPlaced && !hasSkeletonOnMap {
                             if let skeletonAnchor = self.skeletonAnchor {
                                 skeletonAnchor.removeFromParent()
                                 self.placedNPCs.removeValue(forKey: NPCType.skeleton.npcId)
@@ -1626,7 +1655,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                             self.skeletonPlaced = false
                             self.skeletonAnchor = nil
                         }
-                        if self.corgiPlaced {
+                        let hasCorgiOnMap = nearby.contains { $0.id.hasPrefix("npc_") && $0.name.contains("Corgi") }
+                        if self.corgiPlaced && !hasCorgiOnMap {
                             if let corgiAnchor = self.placedNPCs[NPCType.corgi.npcId] {
                                 corgiAnchor.removeFromParent()
                                 self.placedNPCs.removeValue(forKey: NPCType.corgi.npcId)
@@ -1637,7 +1667,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         
                     case .deadMensSecrets:
                         // Dead Men's Secrets: Only skeleton appears as guide
-                        if !self.skeletonPlaced {
+                        if !self.skeletonPlaced && self.placedNPCs[NPCType.skeleton.npcId] == nil {
+                            Swift.print("💀 Dead Men's Secrets mode - placing Captain Bones")
                             self.placeNPC(type: .skeleton, in: arView)
                         }
                         // Remove corgi if it exists (shouldn't be in this mode)
@@ -1651,7 +1682,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         
                     case .splitLegacy:
                         // The Split Legacy: Skeleton appears first, Corgi appears after talking to skeleton
-                        if !self.skeletonPlaced {
+                        if !self.skeletonPlaced && self.placedNPCs[NPCType.skeleton.npcId] == nil {
+                            Swift.print("💀 Split Legacy mode - placing Captain Bones")
                             self.placeNPC(type: .skeleton, in: arView)
                         }
                         // Corgi only appears if player has talked to skeleton (tracked separately)
@@ -3090,10 +3122,23 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     ///   - type: The type of NPC to place (skeleton, corgi, etc.)
     ///   - arView: The AR view to place the NPC in
     private func placeNPC(type: NPCType, in arView: ARView) {
-        // Check if already placed
-        if placedNPCs[type.npcId] != nil {
-            Swift.print("💬 \(type.defaultName) already placed, skipping")
-            return
+        // Check if already placed - verify the anchor is actually in the scene
+        if let existingAnchor = placedNPCs[type.npcId] {
+            // Verify the anchor is still in the scene (might have been removed)
+            if arView.scene.anchors.contains(existingAnchor) {
+                Swift.print("💬 \(type.defaultName) already placed and in scene, skipping")
+                return
+            } else {
+                // Anchor was removed but not cleaned up - remove from tracking
+                Swift.print("⚠️ \(type.defaultName) anchor was removed but not cleaned up - fixing")
+                placedNPCs.removeValue(forKey: type.npcId)
+                if type == .skeleton {
+                    skeletonPlaced = false
+                    skeletonAnchor = nil
+                } else if type == .corgi {
+                    corgiPlaced = false
+                }
+            }
         }
         
         guard let frame = arView.session.currentFrame else {
@@ -3266,6 +3311,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 let npcGPS = arOrigin.coordinate.coordinate(atDistance: Double(distance), atBearing: normalizedBearing)
                 
                 // Create a special location for the NPC (only in Dead Men's Secrets mode)
+                // Note: This is just for local display - NPCs are synced via NPC API, not object API
                 let npcLocation = LootBoxLocation(
                     id: "npc_\(type.npcId)",
                     name: type.defaultName,
@@ -3274,7 +3320,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     longitude: npcGPS.longitude,
                     radius: 10.0,
                     collected: false,
-                    source: .map // Mark as map source so it syncs to server
+                    source: .arManual // Mark as AR manual to prevent auto-sync as object
                 )
                 
                 // Remove existing NPC location if any, then add new one
@@ -3284,10 +3330,41 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 Swift.print("🗺️ Added \(type.defaultName) to map at GPS: (\(String(format: "%.8f", npcGPS.latitude)), \(String(format: "%.8f", npcGPS.longitude)))")
                 
                 // Send NPC location to server so it appears on admin map
+                // Use the NPC API endpoint instead of object API
                 Task {
                     do {
-                        _ = try await APIService.shared.createObject(npcLocation)
-                        Swift.print("✅ Sent \(type.defaultName) location to server")
+                        // Convert AR position to GPS if we have AR origin
+                        if let arOrigin = arOriginLocation {
+                            let distance = sqrt(npcPosition.x * npcPosition.x + npcPosition.z * npcPosition.z)
+                            let bearing = atan2(Double(npcPosition.x), -Double(npcPosition.z)) * 180.0 / .pi
+                            let normalizedBearing = (bearing + 360.0).truncatingRemainder(dividingBy: 360.0)
+                            let npcGPS = arOrigin.coordinate.coordinate(atDistance: Double(distance), atBearing: normalizedBearing)
+                            
+                            // Create NPC on server with AR coordinates
+                            _ = try await APIService.shared.createNPC(
+                                id: type.npcId,
+                                name: type.defaultName,
+                                npcType: type.npcType,
+                                latitude: npcGPS.latitude,
+                                longitude: npcGPS.longitude,
+                                arOriginLatitude: arOrigin.coordinate.latitude,
+                                arOriginLongitude: arOrigin.coordinate.longitude,
+                                arOffsetX: Double(npcPosition.x),
+                                arOffsetY: Double(npcPosition.y),
+                                arOffsetZ: Double(npcPosition.z)
+                            )
+                            Swift.print("✅ Sent \(type.defaultName) to server via NPC API")
+                        } else {
+                            // No AR origin - use default GPS location
+                            _ = try await APIService.shared.createNPC(
+                                id: type.npcId,
+                                name: type.defaultName,
+                                npcType: type.npcType,
+                                latitude: npcLocation.latitude,
+                                longitude: npcLocation.longitude
+                            )
+                            Swift.print("✅ Sent \(type.defaultName) to server via NPC API (no AR origin)")
+                        }
                     } catch {
                         Swift.print("⚠️ Failed to send \(type.defaultName) to server: \(error.localizedDescription)")
                     }
@@ -3296,6 +3373,160 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             
         } catch {
             Swift.print("❌ Error loading \(type.defaultName) model: \(error)")
+        }
+    }
+    
+    // MARK: - NPC Sync Handlers
+    
+    /// Set up WebSocket handlers for NPC sync (two-way sync with admin)
+    private func setupNPCSyncHandlers() {
+        // Handle NPC created event from admin
+        WebSocketService.shared.onNPCCreated = { [weak self] npcData in
+            guard let self = self, let arView = self.arView else { return }
+            self.handleNPCCreated(npcData: npcData, in: arView)
+        }
+        
+        // Handle NPC updated event from admin
+        WebSocketService.shared.onNPCUpdated = { [weak self] npcData in
+            guard let self = self, let arView = self.arView else { return }
+            self.handleNPCUpdated(npcData: npcData, in: arView)
+        }
+        
+        // Handle NPC deleted event from admin
+        WebSocketService.shared.onNPCDeleted = { [weak self] npcId in
+            guard let self = self else { return }
+            self.handleNPCDeleted(npcId: npcId)
+        }
+    }
+    
+    /// Handle NPC created event - place NPC in AR
+    private func handleNPCCreated(npcData: [String: Any], in arView: ARView) {
+        guard let npcId = npcData["id"] as? String,
+              let npcTypeString = npcData["npc_type"] as? String else {
+            Swift.print("⚠️ NPC created event missing required fields")
+            return
+        }
+        
+        // Convert npc_type string to NPCType enum
+        guard let npcType = NPCType.allCases.first(where: { $0.npcType == npcTypeString || $0.rawValue == npcTypeString }) else {
+            Swift.print("⚠️ Unknown NPC type: \(npcTypeString)")
+            return
+        }
+        
+        // Check if already placed
+        if placedNPCs[npcId] != nil {
+            Swift.print("💬 NPC \(npcId) already placed, skipping")
+            return
+        }
+        
+        Swift.print("💬 Syncing NPC created: \(npcId) (\(npcTypeString))")
+        
+        // If NPC has AR coordinates, use them; otherwise place in front of camera
+        if let arOffsetX = npcData["ar_offset_x"] as? Double,
+           let arOffsetY = npcData["ar_offset_y"] as? Double,
+           let arOffsetZ = npcData["ar_offset_z"] as? Double,
+           let arOriginLat = npcData["ar_origin_latitude"] as? Double,
+           let arOriginLon = npcData["ar_origin_longitude"] as? Double,
+           let userLocation = userLocationManager?.currentLocation {
+            // Use stored AR coordinates
+            let arPosition = SIMD3<Float>(
+                Float(arOffsetX),
+                Float(arOffsetY),
+                Float(arOffsetZ)
+            )
+            
+            // Place NPC at stored AR position
+            placeNPCAtPosition(arPosition, type: npcType, npcId: npcId, in: arView)
+        } else {
+            // No AR coordinates - place in front of camera (default behavior)
+            placeNPC(type: npcType, in: arView)
+        }
+    }
+    
+    /// Handle NPC updated event - update NPC position or properties
+    private func handleNPCUpdated(npcData: [String: Any], in arView: ARView) {
+        guard let npcId = npcData["id"] as? String else {
+            Swift.print("⚠️ NPC updated event missing id")
+            return
+        }
+        
+        Swift.print("💬 Syncing NPC updated: \(npcId)")
+        
+        // Remove existing NPC if placed
+        if let existingAnchor = placedNPCs[npcId] {
+            existingAnchor.removeFromParent()
+            placedNPCs.removeValue(forKey: npcId)
+            tapHandler?.placedNPCs = placedNPCs
+        }
+        
+        // Re-place NPC with updated data
+        handleNPCCreated(npcData: npcData, in: arView)
+    }
+    
+    /// Handle NPC deleted event - remove NPC from AR
+    private func handleNPCDeleted(npcId: String) {
+        Swift.print("💬 Syncing NPC deleted: \(npcId)")
+        
+        if let anchor = placedNPCs[npcId] {
+            anchor.removeFromParent()
+            placedNPCs.removeValue(forKey: npcId)
+            tapHandler?.placedNPCs = placedNPCs
+            
+            // Update tracking flags
+            if npcId == NPCType.skeleton.npcId {
+                skeletonPlaced = false
+                skeletonAnchor = nil
+            } else if npcId == NPCType.corgi.npcId {
+                corgiPlaced = false
+            }
+            
+            Swift.print("✅ Removed NPC \(npcId) from AR scene")
+        }
+    }
+    
+    /// Place NPC at a specific AR position (used for synced NPCs)
+    private func placeNPCAtPosition(_ position: SIMD3<Float>, type: NPCType, npcId: String, in arView: ARView) {
+        // Load and place NPC model at the specified position
+        guard let modelURL = Bundle.main.url(forResource: type.modelName, withExtension: "usdz") else {
+            Swift.print("❌ Could not find \(type.modelName).usdz in bundle")
+            return
+        }
+        
+        do {
+            let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
+            let npcEntity = ModelEntity()
+            npcEntity.addChild(loadedEntity)
+            
+            let npcScale: Float = type == .skeleton ? Self.SKELETON_SCALE : 0.5
+            npcEntity.scale = SIMD3<Float>(repeating: npcScale)
+            
+            let anchor = AnchorEntity(world: position)
+            anchor.name = npcId
+            npcEntity.name = npcId
+            
+            let collisionSize: SIMD3<Float> = type == .skeleton
+                ? Self.SKELETON_COLLISION_SIZE
+                : SIMD3<Float>(0.8, 0.6, 0.8)
+            let collisionShape = ShapeResource.generateBox(size: collisionSize)
+            npcEntity.collision = CollisionComponent(shapes: [collisionShape])
+            npcEntity.components.set(InputTargetComponent())
+            
+            anchor.addChild(npcEntity)
+            arView.scene.addAnchor(anchor)
+            
+            placedNPCs[npcId] = anchor
+            tapHandler?.placedNPCs = placedNPCs
+            
+            if type == .skeleton {
+                skeletonPlaced = true
+                skeletonAnchor = anchor
+            } else if type == .corgi {
+                corgiPlaced = true
+            }
+            
+            Swift.print("✅ Placed synced NPC \(npcId) at position: \(position)")
+        } catch {
+            Swift.print("❌ Error loading NPC model: \(error)")
         }
     }
     

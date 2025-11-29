@@ -119,6 +119,10 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     
     /// Whether this item should sync to API
     var shouldSyncToAPI: Bool {
+        // NPCs should not be synced as objects - they use the NPC API instead
+        if id.starts(with: "npc_") {
+            return false
+        }
         return source.shouldSyncToAPI
     }
     

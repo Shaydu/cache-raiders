@@ -124,10 +124,6 @@ struct SkeletonConversationView: View {
                     .onSubmit {
                         sendMessage()
                     }
-                    .onTapGesture {
-                        // Ensure keyboard appears when tapping the field
-                        isTextFieldFocused = true
-                    }
                 
                 Button(action: sendMessage) {
                     if isSending {
@@ -149,7 +145,7 @@ struct SkeletonConversationView: View {
         .onAppear {
             // Auto-focus the text field when the view appears
             // Use a longer delay to ensure the sheet is fully presented
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 isTextFieldFocused = true
             }
         }
@@ -173,47 +169,48 @@ struct SkeletonConversationView: View {
             // Fetch treasure map from NPC if we have the required services
             if let userLocation = userLocationManager.currentLocation {
                 isSending = true
-                Task {
+                // Use Task with nonisolated context to ensure API call runs off main thread
+                // API calls are already async and non-blocking, but this ensures UI stays responsive
+                Task { @MainActor in
                     do {
-                        // Fetch the treasure map (this will NOT call the LLM API)
-                        try await treasureHuntService.handleMapRequest(
-                            npcId: npcId,
-                            npcName: npcName,
-                            userLocation: userLocation
-                        )
-                        
-                        await MainActor.run {
-                            // Add NPC response about the map (local response, not from LLM)
-                            let npcMsg = ConversationMessage(
-                                text: "Arr! Here be the treasure map, matey! Follow it to find the booty! The X marks the spot where the treasure be buried!",
-                                isFromUser: false
+                        // Perform API call off main thread
+                        let result = try await Task.detached {
+                            try await treasureHuntService.handleMapRequest(
+                                npcId: npcId,
+                                npcName: npcName,
+                                userLocation: userLocation
                             )
-                            messages.append(npcMsg)
-                            
-                            isSending = false
-                            
-                            // Open the treasure map view after a brief delay
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                                onMapMentioned?()
-                            }
+                        }.value
+                        
+                        // Update UI on main thread
+                        // Add NPC response about the map (local response, not from LLM)
+                        let npcMsg = ConversationMessage(
+                            text: "Arr! Here be the treasure map, matey! Follow it to find the booty! The X marks the spot where the treasure be buried!",
+                            isFromUser: false
+                        )
+                        messages.append(npcMsg)
+                        
+                        isSending = false
+                        
+                        // Open the treasure map view after a brief delay
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            onMapMentioned?()
                         }
                     } catch {
-                        await MainActor.run {
-                            // Show error message
-                            if let apiError = error as? APIError {
-                                switch apiError {
-                                case .serverError(let message):
-                                    errorMessage = "Failed to get map: \(message)"
-                                case .serverUnreachable:
-                                    errorMessage = "Cannot reach server. Make sure it's running."
-                                default:
-                                    errorMessage = "Failed to get treasure map: \(apiError.localizedDescription)"
-                                }
-                            } else {
-                                errorMessage = "Failed to get treasure map: \(error.localizedDescription)"
+                        // Show error message
+                        if let apiError = error as? APIError {
+                            switch apiError {
+                            case .serverError(let message):
+                                errorMessage = "Failed to get map: \(message)"
+                            case .serverUnreachable:
+                                errorMessage = "Cannot reach server. Make sure it's running."
+                            default:
+                                errorMessage = "Failed to get treasure map: \(apiError.localizedDescription)"
                             }
-                            isSending = false
+                        } else {
+                            errorMessage = "Failed to get treasure map: \(error.localizedDescription)"
                         }
+                        isSending = false
                     }
                 }
                 return // Don't send to LLM API - we intercepted and handled it
@@ -232,54 +229,56 @@ struct SkeletonConversationView: View {
         isSending = true
         errorMessage = nil
         
-        Task {
+        // Use Task with detached API call to ensure it runs off main thread
+        // This keeps the UI responsive during API calls
+        Task { @MainActor in
             do {
-                let response = try await APIService.shared.interactWithNPC(
-                    npcId: npcId,
-                    message: userMessage,
-                    npcName: npcName,
-                    npcType: "skeleton",
-                    isSkeleton: true
-                )
+                // Perform API call off main thread using Task.detached
+                let response = try await Task.detached {
+                    try await APIService.shared.interactWithNPC(
+                        npcId: npcId,
+                        message: userMessage,
+                        npcName: npcName,
+                        npcType: "skeleton",
+                        isSkeleton: true
+                    )
+                }.value
                 
-                await MainActor.run {
-                    // Add NPC message - it will display with typewriter effect
-                    let npcMsg = ConversationMessage(text: response.response, isFromUser: false)
-                    messages.append(npcMsg)
-                    isSending = false
-                }
+                // Update UI on main thread
+                // Add NPC message - it will display with typewriter effect
+                let npcMsg = ConversationMessage(text: response.response, isFromUser: false)
+                messages.append(npcMsg)
+                isSending = false
             } catch {
-                await MainActor.run {
-                    // Provide user-friendly error messages
-                    if let apiError = error as? APIError {
-                        switch apiError {
-                        case .serverError(let message):
-                            if message.contains("LLM service not available") || message.contains("not available") {
-                                errorMessage = "LLM service not available on server. Check server logs."
-                            } else {
-                                errorMessage = "Server error: \(message)"
-                            }
-                        case .serverUnreachable:
-                            errorMessage = "Cannot reach server. Make sure it's running and on the same network."
-                        case .httpError(let code):
-                            if code == 503 {
-                                errorMessage = "LLM service unavailable. Check if LLM service is running on server."
-                            } else {
-                                errorMessage = "Server error (HTTP \(code))"
-                            }
-                        default:
-                            errorMessage = apiError.localizedDescription
-                        }
-                    } else {
-                        let errorDesc = error.localizedDescription
-                        if errorDesc.contains("not available") || errorDesc.contains("unreachable") {
-                            errorMessage = "Cannot reach server. Make sure it's running."
+                // Provide user-friendly error messages
+                if let apiError = error as? APIError {
+                    switch apiError {
+                    case .serverError(let message):
+                        if message.contains("LLM service not available") || message.contains("not available") {
+                            errorMessage = "LLM service not available on server. Check server logs."
                         } else {
-                            errorMessage = "Error: \(errorDesc)"
+                            errorMessage = "Server error: \(message)"
                         }
+                    case .serverUnreachable:
+                        errorMessage = "Cannot reach server. Make sure it's running and on the same network."
+                    case .httpError(let code):
+                        if code == 503 {
+                            errorMessage = "LLM service unavailable. Check if LLM service is running on server."
+                        } else {
+                            errorMessage = "Server error (HTTP \(code))"
+                        }
+                    default:
+                        errorMessage = apiError.localizedDescription
                     }
-                    isSending = false
+                } else {
+                    let errorDesc = error.localizedDescription
+                    if errorDesc.contains("not available") || errorDesc.contains("unreachable") {
+                        errorMessage = "Cannot reach server. Make sure it's running."
+                    } else {
+                        errorMessage = "Error: \(errorDesc)"
+                    }
                 }
+                isSending = false
             }
         }
     }
