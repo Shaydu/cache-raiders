@@ -318,7 +318,7 @@ class QRCodeScannerViewController: UIViewController {
                     // CRITICAL: Set delegate on main thread BEFORE starting session
                     // The delegate must be set before the session starts to receive callbacks
                     metadataOutput.setMetadataObjectsDelegate(self, queue: DispatchQueue.main)
-                    print("📷 QR Scanner: Delegate set, metadata types: \(metadataOutput.metadataObjectTypes)")
+                    print("📷 QR Scanner: Delegate set, metadata types: \(metadataOutput.metadataObjectTypes ?? [])")
                     
                     // CRITICAL: Ensure rectOfInterest is set to full frame initially
                     // This allows scanning anywhere in the frame, not just a specific region
@@ -333,8 +333,16 @@ class QRCodeScannerViewController: UIViewController {
                     previewLayer.videoGravity = .resizeAspectFill
                     
                     // Configure connection for proper orientation
-                    if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
-                        connection.videoOrientation = .portrait
+                    if let connection = previewLayer.connection {
+                        if #available(iOS 17.0, *) {
+                            if connection.isVideoRotationAngleSupported(90) {
+                                connection.videoRotationAngle = 90
+                            }
+                        } else {
+                            if connection.isVideoOrientationSupported {
+                                connection.videoOrientation = .portrait
+                            }
+                        }
                     }
                     
                     self.previewLayer = previewLayer

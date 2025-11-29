@@ -4,12 +4,14 @@
 const SettingsManager = {
     locationUpdateInterval: null,
     locationUpdateIntervalTimer: null,
+    gameMode: null,
 
     /**
      * Initialize settings manager
      */
     async init() {
         await this.loadLocationUpdateInterval();
+        await this.loadGameMode();
         this.setupWebSocketListener();
     },
 
@@ -132,6 +134,94 @@ const SettingsManager = {
     },
 
     /**
+     * Load game mode from server
+     */
+    async loadGameMode() {
+        try {
+            const response = await fetch(`${Config.API_BASE}/api/settings/game-mode`);
+            if (response.ok) {
+                const data = await response.json();
+                this.gameMode = data.game_mode;
+                
+                // Update dropdown to reflect current value
+                const dropdown = document.getElementById('gameMode');
+                if (dropdown) {
+                    dropdown.value = data.game_mode;
+                }
+                
+                console.log(`🎮 Game mode loaded: ${data.game_mode}`);
+            } else {
+                console.warn('Failed to load game mode, using default');
+                this.gameMode = 'open'; // Default open mode
+            }
+        } catch (error) {
+            console.warn('Error loading game mode:', error);
+            this.gameMode = 'open'; // Default open mode
+        }
+    },
+
+    /**
+     * Update game mode
+     */
+    async updateGameMode() {
+        const dropdown = document.getElementById('gameMode');
+        if (!dropdown) return;
+        
+        const newGameMode = dropdown.value;
+        if (!newGameMode) {
+            console.error('Invalid game mode value');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`${Config.API_BASE}/api/settings/game-mode`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ game_mode: newGameMode })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                this.gameMode = data.game_mode;
+                
+                // Show success message
+                if (window.UIManager && typeof UIManager.showStatusMessage === 'function') {
+                    UIManager.showStatusMessage(
+                        `Game mode set to ${data.game_mode}`,
+                        'success'
+                    );
+                }
+                
+                console.log(`✅ Game mode updated to: ${data.game_mode}`);
+                
+                // Reload objects to update map display (filter based on new game mode)
+                if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
+                    ObjectsManager.loadObjects();
+                }
+            } else {
+                const error = await response.json();
+                console.error('Failed to update game mode:', error);
+                if (window.UIManager && typeof UIManager.showStatusMessage === 'function') {
+                    UIManager.showStatusMessage(
+                        `Failed to update game mode: ${error.error || 'Unknown error'}`,
+                        'error'
+                    );
+                }
+            }
+        } catch (error) {
+            console.error('Error updating game mode:', error);
+            if (window.UIManager && typeof UIManager.showStatusMessage === 'function') {
+                UIManager.showStatusMessage(
+                    'Failed to update game mode: Network error',
+                    'error'
+                );
+            }
+        }
+    },
+
+    /**
      * Setup WebSocket listener for interval changes
      */
     setupWebSocketListener() {
@@ -150,6 +240,23 @@ const SettingsManager = {
                 this.restartLocationPolling();
                 
                 console.log(`📍 Location update interval changed via WebSocket: ${data.interval_ms}ms (${data.interval_seconds}s)`);
+            });
+
+            WebSocketManager.socket.on('game_mode_changed', (data) => {
+                this.gameMode = data.game_mode;
+                
+                // Update dropdown
+                const dropdown = document.getElementById('gameMode');
+                if (dropdown) {
+                    dropdown.value = data.game_mode;
+                }
+                
+                console.log(`🎮 Game mode changed via WebSocket: ${data.game_mode}`);
+                
+                // Reload objects to update map display (filter based on new game mode)
+                if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
+                    ObjectsManager.loadObjects();
+                }
             });
         }
     }

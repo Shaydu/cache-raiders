@@ -13,7 +13,7 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     @Published var lastLocationSentSuccessfully: Date? // Track when location was successfully received by server
     private var isSendingInProgress: Bool = false // Prevent concurrent sends
     weak var arCoordinator: ARCoordinator? // Reference to AR coordinator for enhanced location
-    weak var locationManager: LootBoxLocationManager? // Reference to location manager for game mode checks
+    weak var lootBoxLocationManager: LootBoxLocationManager? // Reference to loot box location manager for game mode checks
     private var locationUpdateTimer: Timer? // Timer for automatic periodic location updates
     private var locationUpdateInterval: TimeInterval = 5.0 // Default 5 seconds, will be fetched from server (admin panel setting)
     

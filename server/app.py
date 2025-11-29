@@ -49,6 +49,9 @@ user_locations: Dict[str, Dict] = {}
 # Location update interval setting (in milliseconds, default 1000ms = 1 second)
 location_update_interval_ms: int = 1000
 
+# Game mode setting (default: "open")
+game_mode: str = "open"
+
 # Track connected WebSocket clients (session_id -> device_uuid)
 # Also track reverse mapping (device_uuid -> set of session_ids) for multiple connections
 connected_clients: Dict[str, str] = {}  # session_id -> device_uuid
@@ -2083,6 +2086,45 @@ def set_location_update_interval():
         'message': f'Location update interval set to {location_update_interval_ms/1000.0} seconds'
     })
 
+@app.route('/api/settings/game-mode', methods=['GET'])
+def get_game_mode():
+    """Get the current game mode."""
+    return jsonify({
+        'game_mode': game_mode
+    })
+
+@app.route('/api/settings/game-mode', methods=['POST', 'PUT'])
+def set_game_mode():
+    """Set the game mode."""
+    global game_mode
+    
+    data = request.get_json()
+    if not data or 'game_mode' not in data:
+        return jsonify({'error': 'game_mode is required'}), 400
+    
+    new_game_mode = str(data['game_mode'])
+    
+    # Validate game mode (must be one of: "open", "dead_mens_secrets")
+    allowed_modes = ["open", "dead_mens_secrets"]
+    if new_game_mode not in allowed_modes:
+        return jsonify({
+            'error': f'Invalid game mode. Must be one of: {allowed_modes}'
+        }), 400
+    
+    game_mode = new_game_mode
+    
+    # Broadcast the new game mode to all connected clients via WebSocket
+    socketio.emit('game_mode_changed', {
+        'game_mode': game_mode
+    }, broadcast=True)
+    
+    print(f"🎮 Game mode changed to: {game_mode}")
+    
+    return jsonify({
+        'game_mode': game_mode,
+        'message': f'Game mode set to {game_mode}'
+    })
+
 @app.route('/api/npcs/<npc_id>/map-piece', methods=['GET', 'POST'])
 def get_npc_map_piece(npc_id: str):
     """Get a treasure map piece from an NPC (skeleton has first half, corgi has second half)."""
@@ -2121,7 +2163,39 @@ def get_npc_map_piece(npc_id: str):
         )
         
         if 'error' in map_piece:
-            return jsonify(map_piece), 400
+            error_msg = map_piece.get('error', 'Unknown error')
+            # Check if it's a resource limit error - these should be handled gracefully
+            error_lower = str(error_msg).lower()
+            if 'too large' in error_lower or 'exceeded' in error_lower or 'maximum' in error_lower or 'resource' in error_lower:
+                # For resource limit errors, return a map piece without landmarks instead of an error
+                print(f"⚠️ Resource limit error caught in endpoint, returning map piece without landmarks")
+                # Generate a basic map piece without landmarks
+                lat = target_location.get('latitude', 37.7749)
+                lon = target_location.get('longitude', -122.4194)
+                import random
+                if piece_number == 1:
+                    approximate_lat = lat + (random.random() - 0.5) * 0.001
+                    approximate_lon = lon + (random.random() - 0.5) * 0.001
+                    map_piece = {
+                        "piece_number": 1,
+                        "hint": "Arr, this be the first half o' the map, matey! The treasure be near these waters!",
+                        "approximate_latitude": approximate_lat,
+                        "approximate_longitude": approximate_lon,
+                        "landmarks": [],
+                        "is_first_half": True
+                    }
+                else:
+                    map_piece = {
+                        "piece_number": 2,
+                        "hint": "Woof! Here's the second half! The treasure is exactly at these coordinates!",
+                        "exact_latitude": lat,
+                        "exact_longitude": lon,
+                        "landmarks": [],
+                        "is_second_half": True
+                    }
+            else:
+                # For other errors, return the error
+                return jsonify(map_piece), 400
         
         return jsonify({
             'npc_id': npc_id,
@@ -2130,7 +2204,42 @@ def get_npc_map_piece(npc_id: str):
             'message': f"Here's piece {piece_number} of the treasure map!"
         }), 200
     except Exception as e:
-        return jsonify({'error': f'LLM error: {str(e)}'}), 500
+        error_msg = str(e).lower()
+        # Check if it's a resource limit error
+        if 'too large' in error_msg or 'exceeded' in error_msg or 'maximum' in error_msg or 'resource' in error_msg:
+            # Return a basic map piece instead of an error
+            print(f"⚠️ Resource limit exception caught in endpoint, returning map piece without landmarks")
+            lat = target_location.get('latitude', 37.7749)
+            lon = target_location.get('longitude', -122.4194)
+            import random
+            if piece_number == 1:
+                approximate_lat = lat + (random.random() - 0.5) * 0.001
+                approximate_lon = lon + (random.random() - 0.5) * 0.001
+                map_piece = {
+                    "piece_number": 1,
+                    "hint": "Arr, this be the first half o' the map, matey! The treasure be near these waters!",
+                    "approximate_latitude": approximate_lat,
+                    "approximate_longitude": approximate_lon,
+                    "landmarks": [],
+                    "is_first_half": True
+                }
+            else:
+                map_piece = {
+                    "piece_number": 2,
+                    "hint": "Woof! Here's the second half! The treasure is exactly at these coordinates!",
+                    "exact_latitude": lat,
+                    "exact_longitude": lon,
+                    "landmarks": [],
+                    "is_second_half": True
+                }
+            return jsonify({
+                'npc_id': npc_id,
+                'npc_type': npc_type,
+                'map_piece': map_piece,
+                'message': f"Here's piece {piece_number} of the treasure map!"
+            }), 200
+        else:
+            return jsonify({'error': f'LLM error: {str(e)}'}), 500
 
 @app.route('/api/map-pieces/combine', methods=['POST'])
 def combine_map_pieces():

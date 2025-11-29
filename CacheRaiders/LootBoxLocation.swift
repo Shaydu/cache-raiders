@@ -6,17 +6,14 @@ import Combine
 /// Represents the game mode
 enum GameMode: String, Codable, CaseIterable {
     case open = "open"                    // Open mode - all treasures appear normally
-    case deadMensSecrets = "dead_mens_secrets"  // Dead Men's Secrets - skeleton guides you to treasure
-    case splitLegacy = "split_legacy"     // The Split Legacy - find both NPCs, get map halves, combine to find treasure
+    case deadMensSecrets = "dead_mens_secrets"  // Story Mode - skeleton guides you to treasure
     
     var displayName: String {
         switch self {
         case .open:
             return "Open"
         case .deadMensSecrets:
-            return "Dead Men's Secrets"
-        case .splitLegacy:
-            return "The Split Legacy"
+            return "Story Mode"
         }
     }
     
@@ -25,11 +22,14 @@ enum GameMode: String, Codable, CaseIterable {
         case .open:
             return "Open mode: All treasures appear normally. Find any treasure you want!"
         case .deadMensSecrets:
-            return "Dead Men's Secrets: Skeleton appears in AR to guide you. Follow the skeleton's clues to find the 200-year-old treasure."
-        case .splitLegacy:
-            return "The Split Legacy: Find the skeleton first, who will help you find the Corgi Traveller. Each NPC holds half of the treasure map. Combine both halves to find the treasure!"
+            return "Story Mode: Skeleton appears in AR to guide you. Follow the skeleton's clues to find the 200-year-old treasure."
         }
     }
+}
+
+// MARK: - Game Mode Response
+struct GameModeResponse: Codable {
+    let game_mode: String
 }
 
 // MARK: - Item Source Enum
@@ -233,10 +233,10 @@ class LootBoxLocationManager: ObservableObject {
     @Published var databaseStats: DatabaseStats? = nil // Database stats for loot box counter
     @Published var showOnlyNextItem: Bool = false // Show only the next unfound item in the list
     @Published var useGenericDoubloonIcons: Bool = false // When enabled, show generic doubloon icons and reveal real objects with animation
-    @Published var gameMode: GameMode = .open { // Game mode: Open, Dead Men's Secrets, or The Split Legacy
+    @Published var gameMode: GameMode = .open { // Game mode: Open or Story Mode
         didSet {
             // STORY MODE: Remove all API objects when entering story mode (only NPCs should remain)
-            if (gameMode == .deadMensSecrets || gameMode == .splitLegacy) && oldValue != gameMode {
+            if gameMode == .deadMensSecrets && oldValue != gameMode {
                 let objectsToRemove = locations.filter { location in
                     // Remove all API-sourced objects (keep AR-manual and AR-randomized for now)
                     return location.source == .api || location.source == .map
@@ -255,7 +255,7 @@ class LootBoxLocationManager: ObservableObject {
             }
             
             // OPEN MODE: Restart API refresh timer when switching back to open mode
-            if gameMode == .open && (oldValue == .deadMensSecrets || oldValue == .splitLegacy) {
+            if gameMode == .open && oldValue == .deadMensSecrets {
                 startAPIRefreshTimer()
                 Swift.print("▶️ Restarted API refresh timer (open mode - API objects enabled)")
             }
@@ -318,6 +318,10 @@ class LootBoxLocationManager: ObservableObject {
         // Auto-connect to WebSocket (only if not in offline mode)
         if !OfflineModeManager.shared.isOfflineMode {
             WebSocketService.shared.connect()
+            // Fetch initial game mode from server
+            Task {
+                await fetchGameModeFromServer()
+            }
         }
         
         // Set up WebSocket event handlers for real-time updates
@@ -399,6 +403,63 @@ class LootBoxLocationManager: ObservableObject {
                     await self.loadLocationsFromAPI(userLocation: userLocation, includeFound: true)
                 }
             }
+        }
+        
+        WebSocketService.shared.onGameModeChanged = { [weak self] gameModeString in
+            guard let self = self else { return }
+            
+            print("🎮 Game mode changed via WebSocket: \(gameModeString)")
+            
+            // Update game mode from server
+            if let newMode = GameMode(rawValue: gameModeString) {
+                Task { @MainActor in
+                    self.gameMode = newMode
+                    // Don't save to UserDefaults - server is the source of truth
+                    print("✅ Game mode updated to: \(newMode.displayName)")
+                }
+            } else {
+                print("⚠️ Invalid game mode received: \(gameModeString)")
+            }
+        }
+    }
+    
+    /// Fetch game mode from server
+    private func fetchGameModeFromServer() async {
+        // Skip if offline mode is enabled
+        if OfflineModeManager.shared.isOfflineMode {
+            print("📴 Offline mode - skipping game mode fetch from server")
+            return
+        }
+        
+        let baseURL = APIService.shared.baseURL
+        guard let url = URL(string: "\(baseURL)/api/settings/game-mode") else {
+            print("⚠️ Invalid URL for game mode endpoint")
+            return
+        }
+        
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            
+            guard let httpResponse = response as? HTTPURLResponse,
+                  httpResponse.statusCode == 200 else {
+                print("⚠️ Failed to fetch game mode: HTTP \(((response as? HTTPURLResponse)?.statusCode ?? 0))")
+                return
+            }
+            
+            let decoder = JSONDecoder()
+            let gameModeResponse = try decoder.decode(GameModeResponse.self, from: data)
+            
+            await MainActor.run {
+                if let newMode = GameMode(rawValue: gameModeResponse.game_mode) {
+                    self.gameMode = newMode
+                    print("✅ Game mode fetched from server: \(newMode.displayName)")
+                } else {
+                    print("⚠️ Invalid game mode from server: \(gameModeResponse.game_mode)")
+                }
+            }
+        } catch {
+            print("⚠️ Error fetching game mode from server: \(error.localizedDescription)")
+            // Fall back to UserDefaults value if server fetch fails
         }
     }
     
@@ -804,7 +865,7 @@ class LootBoxLocationManager: ObservableObject {
 
                 // Story Mode: Only show story-relevant treasures (treasure map, clues, final treasure)
                 // In story modes, filter out regular loot boxes - only NPCs and story items
-                if currentGameMode == .deadMensSecrets || currentGameMode == .splitLegacy {
+                if currentGameMode == .deadMensSecrets {
                     // In story modes, we don't show regular loot boxes from the API
                     // Only NPCs (skeleton, corgi) are shown, and they're placed by ARCoordinator
                     // So we filter out ALL API objects in story modes
@@ -1114,7 +1175,7 @@ class LootBoxLocationManager: ObservableObject {
         }
         
         // Don't start timer in story mode (no API objects needed)
-        if gameMode == .deadMensSecrets || gameMode == .splitLegacy {
+        if gameMode == .deadMensSecrets {
             print("⏭️ Skipping API refresh timer start (story mode - no API objects needed)")
             return
         }
@@ -1133,7 +1194,7 @@ class LootBoxLocationManager: ObservableObject {
             }
             
             // Check game mode in timer callback (in case mode changed while timer was running)
-            if self.gameMode == .deadMensSecrets || self.gameMode == .splitLegacy {
+            if self.gameMode == .deadMensSecrets {
                 print("⏭️ Skipping API refresh (story mode active)")
                 return
             }
@@ -1197,9 +1258,9 @@ class LootBoxLocationManager: ObservableObject {
             return
         }
         
-        // STORY MODE: Skip API calls entirely in story modes (deadMensSecrets, splitLegacy)
-        // Story modes only show NPCs, not API objects, so fetching them wastes bandwidth and performance
-        if gameMode == .deadMensSecrets || gameMode == .splitLegacy {
+        // STORY MODE: Skip API calls entirely in story mode
+        // Story mode only shows NPCs, not API objects, so fetching them wastes bandwidth and performance
+        if gameMode == .deadMensSecrets {
             print("📖 Story mode active (\(gameMode.displayName)) - skipping API fetch (only NPCs shown, no API objects needed)")
             return
         }

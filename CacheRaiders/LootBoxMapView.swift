@@ -83,9 +83,18 @@ struct LootBoxMapView: View {
         
         // Add loot box locations that have valid GPS coordinates
         // Filter by selection: if an item is selected, show only that item; otherwise show ALL items
+        // STORY MODE: Hide all open-world loot (API/map sourced), only show NPCs and story-relevant loot
         let filteredLocations = locationManager.locations.filter { location in
-            // Always show NPCs (Dead Men's Secrets mode)
+            // Always show NPCs (Story Mode)
             let isNPC = location.id.hasPrefix("npc_")
+            
+            // STORY MODE: Filter out API/map sourced loot (only show NPCs and story-relevant items)
+            if locationManager.gameMode == .deadMensSecrets {
+                // In story mode, only show NPCs
+                if !isNPC {
+                    return false // Hide all non-NPC items in story mode
+                }
+            }
             
             // If an item is selected, only show that item (unless it's an NPC, always show NPCs)
             if let selected = selectedId, !isNPC {

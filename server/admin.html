@@ -134,6 +134,14 @@
                 <h2>⚙️ Settings</h2>
             </div>
             <div class="form-group">
+                <label for="gameMode">Game Mode</label>
+                <select id="gameMode" class="loot-type-select" onchange="SettingsManager.updateGameMode()">
+                    <option value="open">Open</option>
+                    <option value="dead_mens_secrets">Story Mode</option>
+                </select>
+                <p style="color: #999; font-size: 11px; margin-top: 5px;">Controls the game mode for all connected players. All players will use the same game mode.</p>
+            </div>
+            <div class="form-group" style="margin-top: 15px;">
                 <label for="locationUpdateInterval">Location Update Frequency</label>
                 <select id="locationUpdateInterval" class="loot-type-select" onchange="SettingsManager.updateLocationInterval()">
                     <option value="500">0.5 seconds</option>

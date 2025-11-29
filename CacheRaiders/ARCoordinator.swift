@@ -72,7 +72,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     private var placedNPCs: [String: AnchorEntity] = [:] // Track all placed NPCs by ID
     private var skeletonPlaced: Bool = false // Track if skeleton has been placed
-    private var corgiPlaced: Bool = false // Track if corgi has been placed (for Split Legacy mode)
+    private var corgiPlaced: Bool = false // Track if corgi has been placed
     private var skeletonAnchor: AnchorEntity? // Reference to skeleton anchor (kept for backward compatibility)
     private let SKELETON_NPC_ID = "skeleton-1" // ID for the skeleton NPC
     
@@ -82,7 +82,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private static let SKELETON_SCALE: Float = 1.4 // Results in approximately 6.5 feet tall skeleton
     private static let SKELETON_COLLISION_SIZE = SIMD3<Float>(0.66, 2.0, 0.66) // Scaled proportionally for 6-7ft skeleton
     private static let SKELETON_HEIGHT_OFFSET: Float = 1.65 // Scaled proportionally
-    private var hasTalkedToSkeleton: Bool = false // Track if player has talked to skeleton (for Split Legacy)
+    private var hasTalkedToSkeleton: Bool = false // Track if player has talked to skeleton
     private var collectedMapPieces: Set<Int> = [] // Track which map pieces player has collected (1 = skeleton, 2 = corgi)
     private var arOriginLocation: CLLocation? // GPS location when AR session started
     private var arOriginSetTime: Date? // When AR origin was set (for degraded mode timeout)
@@ -408,6 +408,20 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             object: nil
         )
         
+        // Listen for sheet presentation notifications to pause/resume AR session
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDialogOpened),
+            name: NSNotification.Name("SheetPresented"),
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleDialogClosed),
+            name: NSNotification.Name("SheetDismissed"),
+            object: nil
+        )
+        
         // Initialize managers
         environmentManager = AREnvironmentManager(arView: arView, locationManager: locationManager)
         // Only initialize object recognizer if enabled (saves battery/processing)
@@ -711,7 +725,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
         // STORY MODE: Remove all findables and prevent new placements
         let gameMode = locationManager?.gameMode ?? .open
-        let isStoryMode = gameMode == .deadMensSecrets || gameMode == .splitLegacy
+        let isStoryMode = gameMode == .deadMensSecrets
         
         if isStoryMode {
             // In story modes, only NPCs are shown - remove all findable objects (loot boxes, turkeys, etc.)
@@ -1685,15 +1699,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                             self.corgiPlaced = false
                         }
                         
-                    case .splitLegacy:
-                        // The Split Legacy: Skeleton appears first, Corgi appears after talking to skeleton
-                        if !self.skeletonPlaced && self.placedNPCs[NPCType.skeleton.npcId] == nil {
-                            Swift.print("💀 Split Legacy mode - placing Captain Bones")
-                            self.placeNPC(type: .skeleton, in: arView)
-                        }
-                        // Corgi only appears if player has talked to skeleton (tracked separately)
-                        // This will be handled in the conversation handler
-                        break
                     }
                 }
                 
@@ -3430,9 +3435,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         if let arOffsetX = npcData["ar_offset_x"] as? Double,
            let arOffsetY = npcData["ar_offset_y"] as? Double,
            let arOffsetZ = npcData["ar_offset_z"] as? Double,
-           let arOriginLat = npcData["ar_origin_latitude"] as? Double,
-           let arOriginLon = npcData["ar_origin_longitude"] as? Double,
-           let userLocation = userLocationManager?.currentLocation {
+           let _ = npcData["ar_origin_latitude"] as? Double,
+           let _ = npcData["ar_origin_longitude"] as? Double,
+           let _ = userLocationManager?.currentLocation {
             // Use stored AR coordinates
             let arPosition = SIMD3<Float>(
                 Float(arOffsetX),
@@ -3591,51 +3596,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // the full-screen SkeletonConversationView (opened above) provides a better UX.
             // The conversation view handles all interactions.
             
-        case .splitLegacy:
-            // Split Legacy: Each NPC gives half the map
-            if type == .skeleton {
-                // Skeleton has first half, also tells you where to find the corgi
-                if !collectedMapPieces.contains(1) {
-                    collectionNotificationBinding?.wrappedValue = "💀 Captain Bones: I have the first half of the map! The Corgi Traveller has the other half. Find them near the old oak tree!"
-                    // Mark piece 1 as collected
-                    collectedMapPieces.insert(1)
-                    
-                    // Spawn corgi after getting first map piece
-                    if !corgiPlaced, let arView = arView {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                            self?.placeNPC(type: .corgi, in: arView)
-                        }
-                    }
-                } else {
-                    collectionNotificationBinding?.wrappedValue = "💀 Captain Bones: Ye already have me half of the map, matey! Find the Corgi for the other half!"
-                }
-            } else if type == .corgi {
-                // Corgi has second half
-                if !collectedMapPieces.contains(2) {
-                    collectionNotificationBinding?.wrappedValue = "🐕 Corgi Traveller: Woof! Here's the second half of the map! Combine both halves to find the treasure!"
-                    // Mark piece 2 as collected
-                    collectedMapPieces.insert(2)
-                    
-                    // If player has both pieces, combine them
-                    if collectedMapPieces.contains(1) && collectedMapPieces.contains(2) {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                            guard let self = self else { return }
-                            self.combineMapPieces()
-                        }
-                    }
-                } else {
-                    collectionNotificationBinding?.wrappedValue = "🐕 Corgi Traveller: You already have my half! Combine both pieces to see where X marks the spot!"
-                }
-            }
-            
-            // Hide notification after 5 seconds
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-                self?.collectionNotificationBinding?.wrappedValue = nil
-            }
         }
     }
     
-    /// Combine map pieces to reveal treasure location (Split Legacy mode)
+    /// Combine map pieces to reveal treasure location
     private func combineMapPieces() {
         Swift.print("🗺️ Combining map pieces - revealing treasure location!")
         
@@ -4815,14 +4779,63 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
     }
     
-    /// Handle dialog opened notification - pause heavy AR processing
+    /// Handle dialog opened notification - pause AR session
     @objc private func handleDialogOpened(_ notification: Notification) {
         isDialogOpen = true
     }
     
-    /// Handle dialog closed notification - resume AR processing
+    /// Handle dialog closed notification - resume AR session
     @objc private func handleDialogClosed(_ notification: Notification) {
         isDialogOpen = false
+    }
+    
+    /// Pause AR session when sheet is shown (saves battery and prevents UI freezes)
+    private func pauseARSession() {
+        guard let arView = arView else {
+            Swift.print("⚠️ Cannot pause AR session: AR view not available")
+            return
+        }
+        
+        // Only pause if session is currently running
+        guard arView.session.configuration != nil else {
+            Swift.print("ℹ️ AR session not running, skipping pause")
+            return
+        }
+        
+        // Save current configuration for resuming
+        if let config = arView.session.configuration as? ARWorldTrackingConfiguration {
+            savedARConfiguration = config
+            Swift.print("⏸️ Pausing AR session (sheet shown)")
+            arView.session.pause()
+        } else {
+            Swift.print("⚠️ Could not save AR configuration for resuming")
+        }
+    }
+    
+    /// Resume AR session when sheet is dismissed
+    private func resumeARSession() {
+        guard let arView = arView else {
+            Swift.print("⚠️ Cannot resume AR session: AR view not available")
+            return
+        }
+        
+        guard let config = savedARConfiguration else {
+            Swift.print("⚠️ Cannot resume AR session: No saved configuration")
+            // Try to create a default configuration
+            let defaultConfig = ARWorldTrackingConfiguration()
+            defaultConfig.planeDetection = [.horizontal, .vertical]
+            if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+                defaultConfig.sceneReconstruction = .mesh
+            }
+            defaultConfig.environmentTexturing = .automatic
+            arView.session.run(defaultConfig, options: [])
+            return
+        }
+        
+        Swift.print("▶️ Resuming AR session (sheet dismissed)")
+        // Resume with saved configuration
+        arView.session.run(config, options: [])
+        savedARConfiguration = nil // Clear saved config after resuming
     }
     
 }

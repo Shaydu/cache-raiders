@@ -1037,7 +1037,7 @@ class APIService {
         return location
     }
     
-    // MARK: - Story Mode API Methods (Dead Men's Secrets & The Split Legacy)
+    // MARK: - Story Mode API Methods
     
     /// Interact with an NPC (skeleton) via LLM conversation
     func interactWithNPC(npcId: String, message: String, npcName: String = "Captain Bones", npcType: String = "skeleton", isSkeleton: Bool = true) async throws -> (npcName: String, response: String) {
@@ -1113,7 +1113,7 @@ class APIService {
         return response.clue
     }
     
-    // MARK: - Split Legacy Map Pieces
+    // MARK: - Map Pieces
     
     // MARK: - Map Piece Types
     

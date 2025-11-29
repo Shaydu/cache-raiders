@@ -60,6 +60,7 @@ class WebSocketService: ObservableObject {
     var onNPCUpdated: (([String: Any]) -> Void)? // NPC data
     var onNPCDeleted: ((String) -> Void)? // (npc_id)
     var onLocationUpdateIntervalChanged: ((Double) -> Void)? // (interval_seconds)
+    var onGameModeChanged: ((String) -> Void)? // (game_mode)
     
     var baseURL: String {
         // Use the same validated baseURL as APIService to ensure consistency
@@ -439,6 +440,9 @@ class WebSocketService: ObservableObject {
         case "location_update_interval_changed":
             handleLocationUpdateIntervalChangedEvent(eventData)
             
+        case "game_mode_changed":
+            handleGameModeChangedEvent(eventData)
+            
         default:
             print("📨 Received unhandled Socket.IO event: \(eventName)")
         }
@@ -569,6 +573,20 @@ class WebSocketService: ObservableObject {
         
         DispatchQueue.main.async {
             self.onLocationUpdateIntervalChanged?(intervalSeconds)
+        }
+    }
+    
+    /// Handle game_mode_changed event: {"game_mode": "open"}
+    private func handleGameModeChangedEvent(_ data: [String: Any]) {
+        guard let gameMode = data["game_mode"] as? String else {
+            print("⚠️ game_mode_changed event missing game_mode")
+            return
+        }
+        
+        print("🎮 WebSocket: Game mode changed to \(gameMode)")
+        
+        DispatchQueue.main.async {
+            self.onGameModeChanged?(gameMode)
         }
     }
     

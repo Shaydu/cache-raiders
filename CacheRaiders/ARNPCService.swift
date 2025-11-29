@@ -271,46 +271,10 @@ class ARNPCService {
                 Swift.print("   ❌ AR sign NOT triggered - conditions not met")
             }
             
-        case .splitLegacy:
-            // Split Legacy: Each NPC gives half the map
-            if type == .skeleton {
-                if !collectedMapPieces.contains(1) {
-                    collectionNotificationBinding?.wrappedValue = "💀 Captain Bones: I have the first half of the map! The Corgi Traveller has the other half. Find them near the old oak tree!"
-                    collectedMapPieces.insert(1)
-                    
-                    // Spawn corgi after getting first map piece
-                    if !corgiPlaced, let arView = arView {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                            self?.placeNPC(type: .corgi, in: arView)
-                        }
-                    }
-                } else {
-                    collectionNotificationBinding?.wrappedValue = "💀 Captain Bones: Ye already have me half of the map, matey! Find the Corgi for the other half!"
-                }
-            } else if type == .corgi {
-                if !collectedMapPieces.contains(2) {
-                    collectionNotificationBinding?.wrappedValue = "🐕 Corgi Traveller: Woof! Here's the second half of the map! Combine both halves to find the treasure!"
-                    collectedMapPieces.insert(2)
-                    
-                    // If player has both pieces, combine them
-                    if collectedMapPieces.contains(1) && collectedMapPieces.contains(2) {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                            self?.combineMapPieces()
-                        }
-                    }
-                } else {
-                    collectionNotificationBinding?.wrappedValue = "🐕 Corgi Traveller: You already have my half! Combine both pieces to see where X marks the spot!"
-                }
-            }
-            
-            // Hide notification after 5 seconds
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-                self?.collectionNotificationBinding?.wrappedValue = nil
-            }
         }
     }
     
-    /// Combine map pieces to reveal treasure location (Split Legacy mode)
+    /// Combine map pieces to reveal treasure location
     func combineMapPieces() {
         Swift.print("🗺️ Combining map pieces - revealing treasure location!")
         

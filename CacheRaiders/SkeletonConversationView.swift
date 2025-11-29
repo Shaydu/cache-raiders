@@ -29,7 +29,7 @@ struct SkeletonConversationView: View {
     @FocusState private var isTextFieldFocused: Bool
     
     // Initial greeting from skeleton
-    private let initialGreeting = "Arr, ye've found me, matey! I be Captain Bones, a skeleton from 200 years ago. I know where the treasure be buried! Ask me anything, and I'll help ye find it!"
+    private let initialGreeting = "Arr, ye've found me, matey! I be Captain Bones, the skeleton of a pirate who died 200 years ago today on this very spot. I know where the treasure be buried! Ask me anything, and I'll help ye find it!"
     
     var body: some View {
         VStack(spacing: 0) {
@@ -147,14 +147,20 @@ struct SkeletonConversationView: View {
             .padding(.vertical, 6)
             .background(.ultraThinMaterial)
         }
-        .background(Color.black.opacity(0.95))
         .onAppear {
             // Auto-focus the text field when the view appears
-            // Use a longer delay to ensure the sheet is fully presented
-            // Use Task to avoid blocking the main thread
+            // Use a longer delay to ensure the sheet is fully presented and interactive
+            // The delay ensures the sheet animation completes and the view is ready for input
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+                // Wait for sheet presentation animation to complete
+                try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
+                // Ensure we're still on the main thread and view is ready
                 isTextFieldFocused = true
+                // If focus didn't work, try again after a brief moment
+                try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
+                if !isTextFieldFocused {
+                    isTextFieldFocused = true
+                }
             }
         }
     }

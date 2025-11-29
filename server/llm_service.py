@@ -33,7 +33,7 @@ class MapFeatureService:
         self,
         latitude: float,
         longitude: float,
-        radius: float = 100.0,  # Reduced to 100m to avoid "resource exceeds maximum size" error (will auto-reduce if needed)
+        radius: float = 25.0,  # Start with 25m to minimize OSM data and avoid "resource exceeds maximum size" error
         return_coordinates: bool = False  # If True, returns dicts with coordinates
     ):
         """Get real map features near a location using OpenStreetMap Overpass API.
@@ -45,21 +45,17 @@ class MapFeatureService:
             print("⚠️ requests not installed. Install with: pip install requests")
             return []
         
-        # Overpass QL query - Get landmarks within 50-100m for crude treasure map
+        # Overpass QL query - Get minimal landmarks within radius for crude treasure map
         # CRITICAL: Use (limit:N) on each query type BEFORE expansion to prevent huge datasets
         # Use "out center" to get ONLY the center point (not all geometry points)
         # This dramatically reduces data size - a large lake with 1000+ points becomes just 1 center point
-        # Get a variety of landmark types for a crude map: water, buildings, trees, paths
-        # Limit each type to 1-2 to keep response small but get 4-6 total landmarks
+        # OPTIMIZATION: Get only 1-2 total landmarks to minimize OSM data and avoid resource limits
+        # Use very small radius (25m) and only query nodes (not ways) to reduce complexity
         query = f"""
-        [out:json][timeout:5][maxsize:1073741824];
+        [out:json][timeout:2][maxsize:268435456];
         (
-          node["natural"="water"](around:{radius},{latitude},{longitude})(limit:1);
-          node["amenity"](around:{radius},{latitude},{longitude})(limit:2);
-          way["natural"="water"](around:{radius},{latitude},{longitude})(limit:1);
-          way["building"](around:{radius},{latitude},{longitude})(limit:2);
-          way["natural"="tree"](around:{radius},{latitude},{longitude})(limit:1);
-          way["highway"](around:{radius},{latitude},{longitude})(limit:1);
+          node["amenity"](around:{radius},{latitude},{longitude})(limit:1);
+          node["natural"](around:{radius},{latitude},{longitude})(limit:1);
         );
         out center;
         """
@@ -186,8 +182,8 @@ class MapFeatureService:
                             features.append(feature_type)
                             seen_names.add(feature_type)
                 
-                # Limit to 6 features total for crude treasure map (need more landmarks for map rendering)
-                if len(features) >= 6:
+                # Limit to 3 features total to minimize OSM data
+                if len(features) >= 3:
                     break
             
             return features
@@ -487,101 +483,110 @@ Return ONLY valid JSON, no other text."""
         Returns:
             Dict with map piece data including partial coordinates and landmarks
         """
+        # Extract coordinates first
+        lat = target_location.get('latitude')
+        lon = target_location.get('longitude')
+        
+        if not lat or not lon:
+            return {"error": "target_location must include latitude and longitude"}
+        
+        # Helper function to create map piece data (used in both success and error cases)
+        def create_map_piece_data(landmarks_list):
+            map_landmarks = []
+            if isinstance(landmarks_list, list):
+                for landmark in landmarks_list:
+                    if isinstance(landmark, dict) and 'latitude' in landmark and 'longitude' in landmark:
+                        map_landmarks.append({
+                            'name': landmark.get('name', landmark.get('type', 'landmark')),
+                            'type': landmark.get('type', 'landmark'),
+                            'latitude': landmark['latitude'],
+                            'longitude': landmark['longitude']
+                        })
+            
+            # Generate partial coordinates (obfuscated slightly for puzzle)
+            if piece_number == 1:
+                approximate_lat = lat + (random.random() - 0.5) * 0.001  # ~100m variation
+                approximate_lon = lon + (random.random() - 0.5) * 0.001
+                return {
+                    "piece_number": 1,
+                    "hint": "Arr, this be the first half o' the map, matey! The treasure be near these waters!",
+                    "approximate_latitude": approximate_lat,
+                    "approximate_longitude": approximate_lon,
+                    "landmarks": map_landmarks,
+                    "is_first_half": True
+                }
+            else:
+                return {
+                    "piece_number": 2,
+                    "hint": "Woof! Here's the second half! The treasure is exactly at these coordinates!",
+                    "exact_latitude": lat,
+                    "exact_longitude": lon,
+                    "landmarks": map_landmarks,
+                    "is_second_half": True
+                }
+        
         try:
-            lat = target_location.get('latitude')
-            lon = target_location.get('longitude')
-            
-            if not lat or not lon:
-                return {"error": "target_location must include latitude and longitude"}
-            
-        # Fetch nearby landmarks (within 50-100m) ONLY for Captain Bones game mode (skeleton NPC)
-        # This is the Dead Men's Secrets game mode that uses crude treasure maps
-        landmarks = []
-        if npc_type.lower() == "skeleton":
-            # Only fetch Overpass landmarks for Captain Bones (skeleton) game mode
-            print(f"🗺️ [Captain Bones Game Mode] Fetching landmarks within 50-100m of {lat}, {lon} for crude treasure map...")
-            try:
-                # Get 4-6 landmarks with coordinates for a crude map
-                # Use 100m radius to get landmarks in the 50-100m range
-                landmarks = self.map_feature_service.get_features_near_location(
-                    latitude=lat,
-                    longitude=lon,
-                    radius=100.0,  # 100 meters - will get landmarks in 50-100m range
-                    return_coordinates=True  # Get coordinates for map display
-                )
-                
-                # Filter landmarks to be within 50-100m range and limit to 5-6 for map
-                filtered_landmarks = []
-                if isinstance(landmarks, list):
+            # Fetch nearby landmarks (within 50m) ONLY for Captain Bones game mode (skeleton NPC)
+            # This is the Dead Men's Secrets game mode that uses crude treasure maps
+            # OPTIMIZATION: Keep OSM data minimal - 50m radius, max 3 landmarks
+            landmarks = []
+            if npc_type.lower() == "skeleton":
+                # Only fetch Overpass landmarks for Captain Bones (skeleton) game mode
+                print(f"🗺️ [Captain Bones Game Mode] Fetching landmarks within 50m of {lat}, {lon} for crude treasure map...")
+                try:
+                    # Get 2-3 landmarks with coordinates for a minimal crude map
+                    # Use 50m radius to keep OSM data to absolute minimum
+                    landmarks = self.map_feature_service.get_features_near_location(
+                        latitude=lat,
+                        longitude=lon,
+                        radius=50.0,  # 50 meters - minimal radius to reduce OSM data
+                        return_coordinates=True  # Get coordinates for map display
+                    )
+
+                    # Ensure landmarks is a list (get_features_near_location should always return a list)
+                    if not isinstance(landmarks, list):
+                        print(f"⚠️ [Captain Bones] get_features_near_location returned non-list: {type(landmarks)}")
+                        landmarks = []
+
+                    # Filter landmarks to be within 50m and limit to 3 for minimal map
+                    filtered_landmarks = []
                     import math
                     for landmark in landmarks:
                         if isinstance(landmark, dict) and 'latitude' in landmark and 'longitude' in landmark:
                             # Calculate distance from treasure location
                             landmark_lat = landmark['latitude']
                             landmark_lon = landmark['longitude']
-                            
+
                             # Simple distance calculation (Haversine approximation for small distances)
                             lat_diff = math.radians(landmark_lat - lat)
                             lon_diff = math.radians(landmark_lon - lon)
                             a = math.sin(lat_diff/2)**2 + math.cos(math.radians(lat)) * math.cos(math.radians(landmark_lat)) * math.sin(lon_diff/2)**2
                             distance_m = 6371000 * 2 * math.asin(math.sqrt(a))  # Earth radius in meters
-                            
-                            # Keep landmarks between 50-100m (or very close, <50m, for context)
-                            if distance_m <= 100.0:
+
+                            # Keep landmarks within 50m only
+                            if distance_m <= 50.0:
                                 filtered_landmarks.append(landmark)
-                                if len(filtered_landmarks) >= 6:  # Max 6 landmarks for map
+                                if len(filtered_landmarks) >= 3:  # Max 3 landmarks for minimal map
                                     break
-                    
+
                     landmarks = filtered_landmarks
-                
-                print(f"   [Captain Bones] Found {len(landmarks) if isinstance(landmarks, list) else 0} landmarks within 50-100m range")
-            except Exception as e:
-                # If landmark fetch fails, continue without landmarks (map still works)
-                print(f"⚠️ [Captain Bones] Could not fetch landmarks: {e}")
-                landmarks = []
-        else:
-            # For other NPCs (like corgi), skip Overpass API calls
-            print(f"ℹ️ Skipping Overpass API for {npc_type} NPC (not Captain Bones game mode)")
-        
-        # Convert landmarks to the format expected by the map piece
-        map_landmarks = []
-        if isinstance(landmarks, list):
-            for landmark in landmarks:
-                if isinstance(landmark, dict) and 'latitude' in landmark and 'longitude' in landmark:
-                    map_landmarks.append({
-                        'name': landmark.get('name', landmark.get('type', 'landmark')),
-                        'type': landmark.get('type', 'landmark'),
-                        'latitude': landmark['latitude'],
-                        'longitude': landmark['longitude']
-                    })
-            
-            # Generate partial coordinates (obfuscated slightly for puzzle)
-            # Piece 1 (skeleton): Shows approximate area but not exact location
-            # Piece 2 (corgi): Shows exact location
-            if piece_number == 1:
-                # First half: approximate location (within 100m)
-                approximate_lat = lat + (random.random() - 0.5) * 0.001  # ~100m variation
-                approximate_lon = lon + (random.random() - 0.5) * 0.001
-                piece_data = {
-                    "piece_number": 1,
-                    "hint": "Arr, this be the first half o' the map, matey! The treasure be near these waters!",
-                    "approximate_latitude": approximate_lat,
-                    "approximate_longitude": approximate_lon,
-                    "landmarks": map_landmarks,  # Include nearby landmarks
-                    "is_first_half": True
-                }
+                    print(f"   [Captain Bones] Found {len(landmarks)} landmarks within 50m range")
+                except Exception as e:
+                    # If landmark fetch fails, continue without landmarks (map still works)
+                    error_msg = str(e).lower()
+                    if 'too large' in error_msg or 'exceeded' in error_msg or 'maximum' in error_msg or 'resource' in error_msg:
+                        print(f"⚠️ [Captain Bones] Overpass API resource limit exceeded: {e}")
+                        print("   Continuing with map piece without landmarks (this is expected and safe)")
+                    else:
+                        print(f"⚠️ [Captain Bones] Could not fetch landmarks: {e}")
+                    landmarks = []
             else:
-                # Second half: exact location
-                piece_data = {
-                    "piece_number": 2,
-                    "hint": "Woof! Here's the second half! The treasure is exactly at these coordinates!",
-                    "exact_latitude": lat,
-                    "exact_longitude": lon,
-                    "landmarks": map_landmarks,  # Include nearby landmarks
-                    "is_second_half": True
-                }
+                # For other NPCs (like corgi), skip Overpass API calls
+                print(f"ℹ️ Skipping Overpass API for {npc_type} NPC (not Captain Bones game mode)")
             
-            return piece_data
+            # Generate and return map piece
+            return create_map_piece_data(landmarks)
+            
         except Exception as e:
             # Catch any errors (including Overpass API errors if somehow called)
             error_msg = str(e).lower()
@@ -590,29 +595,7 @@ Return ONLY valid JSON, no other text."""
                 print("   Returning map piece without features (this is expected and safe)")
                 # Return a valid map piece even if there was an error
                 # This ensures the user gets the map, just without landmark features
-                lat = target_location.get('latitude', 0)
-                lon = target_location.get('longitude', 0)
-                # Return map piece without landmarks if Overpass API fails
-                if piece_number == 1:
-                    approximate_lat = lat + (random.random() - 0.5) * 0.001
-                    approximate_lon = lon + (random.random() - 0.5) * 0.001
-                    return {
-                        "piece_number": 1,
-                        "hint": "Arr, this be the first half o' the map, matey! The treasure be near these waters!",
-                        "approximate_latitude": approximate_lat,
-                        "approximate_longitude": approximate_lon,
-                        "landmarks": [],  # Empty landmarks if fetch failed
-                        "is_first_half": True
-                    }
-                else:
-                    return {
-                        "piece_number": 2,
-                        "hint": "Woof! Here's the second half! The treasure is exactly at these coordinates!",
-                        "exact_latitude": lat,
-                        "exact_longitude": lon,
-                        "landmarks": [],  # Empty landmarks if fetch failed
-                        "is_second_half": True
-                    }
+                return create_map_piece_data([])  # Empty landmarks if fetch failed
             else:
                 # For other errors, return error dict
                 print(f"⚠️ Error in generate_map_piece: {e}")

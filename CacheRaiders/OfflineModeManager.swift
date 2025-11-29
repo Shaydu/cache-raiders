@@ -92,14 +92,11 @@ class OfflineModeManager: ObservableObject {
     
     /// Update pending sync count from Core Data
     private func updatePendingSyncCount() {
-        Task.detached {
+        Task { @MainActor in
             do {
                 let dataService = GameItemDataService.shared
-                let itemsNeedingSync = try await dataService.getItemsNeedingSync()
-                
-                await MainActor.run {
-                    self.pendingSyncCount = itemsNeedingSync.count
-                }
+                let itemsNeedingSync = try dataService.getItemsNeedingSync()
+                self.pendingSyncCount = itemsNeedingSync.count
             } catch {
                 print("⚠️ Error getting pending sync count: \(error)")
             }

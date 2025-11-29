@@ -19,16 +19,29 @@ const ObjectsManager = {
             this.markers = {};
             this.markerData = {};
 
+            // Get current game mode
+            const gameMode = SettingsManager?.gameMode || 'open';
+
+            // STORY MODE: Filter out API/map sourced loot, only show NPCs and story-relevant items
+            let filteredObjects = objects;
+            if (gameMode === 'dead_mens_secrets') {
+                // In story mode, only show NPCs (objects with id starting with 'npc_')
+                filteredObjects = objects.filter(obj => {
+                    return obj.id && obj.id.startsWith('npc_');
+                });
+                console.log(`📖 Story Mode: Filtered ${objects.length} objects to ${filteredObjects.length} NPCs`);
+            }
+
             // Get current zoom level
             const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
 
             // Add markers for each object
-            objects.forEach(obj => {
+            filteredObjects.forEach(obj => {
                 this.addObjectMarker(obj, currentZoom);
             });
 
-            // Update objects list in sidebar
-            this.updateObjectsList(objects);
+            // Update objects list in sidebar (use filtered objects)
+            this.updateObjectsList(filteredObjects);
         } catch (error) {
             console.error('Error loading objects:', error);
             UI.showStatus('Error loading objects: ' + error.message, 'error');
