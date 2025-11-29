@@ -10,6 +10,14 @@ import logging
 import time
 from typing import Optional, Dict, List
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv not available, but that's okay - environment variables might be set another way
+    pass
+
 # Set up file logging for map piece generation
 log_dir = os.path.join(os.path.dirname(__file__), 'logs')
 os.makedirs(log_dir, exist_ok=True)
@@ -33,6 +41,13 @@ except ImportError:
     OPENAI_AVAILABLE = False
     print("⚠️ openai package not installed. Run: pip install openai")
 
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    REQUESTS_AVAILABLE = False
+    print("⚠️ requests package not installed. Run: pip install requests")
+
 # Import MapFeatureService from separate module
 from map_feature_service import MapFeatureService
 
@@ -47,7 +62,17 @@ class LLMService:
         # Ollama configuration
         self.ollama_base_url = os.getenv("LLM_BASE_URL", "http://localhost:11434")
         
+        # Store original API key from environment
+        self._original_api_key = os.getenv("OPENAI_API_KEY")
+        
         # Initialize based on provider
+        self._initialize_provider()
+        
+        # Initialize map feature service (uses OpenStreetMap, no API key needed)
+        self.map_feature_service = MapFeatureService()
+    
+    def _initialize_provider(self):
+        """Initialize client based on current provider setting."""
         if self.provider == "ollama" or self.provider == "local":
             # Ollama doesn't need API key
             self.client = None
@@ -57,7 +82,7 @@ class LLMService:
             print(f"   Base URL: {self.ollama_base_url}")
         else:
             # OpenAI or other cloud providers need API key
-            self.api_key = os.getenv("OPENAI_API_KEY")
+            self.api_key = self._original_api_key
             if not self.api_key:
                 print("⚠️ OPENAI_API_KEY not found in environment variables!")
                 print("   Make sure server/.env file exists with your API key")
@@ -70,9 +95,38 @@ class LLMService:
                 else:
                     print("⚠️ OpenAI package not available")
                     self.client = None
+    
+    def set_provider(self, provider: str, model: str = None):
+        """Switch LLM provider dynamically."""
+        provider = provider.lower()
+        if provider not in ["openai", "ollama", "local"]:
+            return {"error": f"Invalid provider: {provider}. Must be 'openai', 'ollama', or 'local'"}
         
-        # Initialize map feature service (uses OpenStreetMap, no API key needed)
-        self.map_feature_service = MapFeatureService()
+        old_provider = self.provider
+        self.provider = provider
+        
+        if model:
+            self.model = model
+        
+        # Re-initialize client for new provider
+        self._initialize_provider()
+        
+        return {
+            "status": "success",
+            "provider": self.provider,
+            "model": self.model,
+            "previous_provider": old_provider
+        }
+    
+    def get_provider_info(self):
+        """Get current provider configuration."""
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "api_key_configured": bool(self.api_key) if self.provider != "ollama" else None,
+            "client_initialized": self.client is not None if self.provider != "ollama" else None,
+            "ollama_base_url": self.ollama_base_url if self.provider == "ollama" else None
+        }
     
     def _call_llm(self, prompt: str = None, messages: List[Dict] = None, max_tokens: int = None) -> str:
         """Internal method to call the LLM API (supports OpenAI and Ollama)."""

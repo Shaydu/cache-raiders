@@ -3621,13 +3621,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // For skeleton, always open the conversation view
         if type == .skeleton {
             Swift.print("   📱 Opening SkeletonConversationView (full-screen dialog)")
-            // CRITICAL: Set binding synchronously on main thread (we're already on main from handleNPCTap)
-            // The nested DispatchQueue.main.async was causing timing issues
-            self.conversationNPCBinding?.wrappedValue = ConversationNPC(
-                id: type.npcId,
-                name: type.defaultName
-            )
-            Swift.print("   ✅ ConversationNPC binding set: id=\(type.npcId), name=\(type.defaultName)")
+            // CRITICAL: Clear binding first to ensure onChange fires even if it was previously set
+            // This allows re-tapping after the dialog is dismissed
+            self.conversationNPCBinding?.wrappedValue = nil
+            // Small delay to ensure the nil value is processed before setting the new value
+            DispatchQueue.main.async { [weak self] in
+                self?.conversationNPCBinding?.wrappedValue = ConversationNPC(
+                    id: type.npcId,
+                    name: type.defaultName
+                )
+                Swift.print("   ✅ ConversationNPC binding set: id=\(type.npcId), name=\(type.defaultName)")
+            }
         }
 
         // Handle different game modes
@@ -4834,6 +4838,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     /// Handle dialog closed notification - resume AR session
     @objc private func handleDialogClosed(_ notification: Notification) {
         isDialogOpen = false
+        // Clear conversationNPC binding to allow re-tapping
+        DispatchQueue.main.async { [weak self] in
+            self?.conversationNPCBinding?.wrappedValue = nil
+        }
     }
     
     /// Pause AR session when sheet is shown (saves battery and prevents UI freezes)

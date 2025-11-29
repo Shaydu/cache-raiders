@@ -154,6 +154,21 @@
                 </select>
                 <p style="color: #999; font-size: 11px; margin-top: 5px;">Controls how often iOS devices send location updates and admin panel polls for updates</p>
             </div>
+            
+            <div class="form-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #444;">
+                <label for="llmProvider">🤖 LLM Provider</label>
+                <select id="llmProvider" class="loot-type-select" onchange="SettingsManager.updateLLMProvider()">
+                    <option value="openai">OpenAI (Cloud)</option>
+                    <option value="ollama">Ollama (Local)</option>
+                </select>
+                <p style="color: #999; font-size: 11px; margin-top: 5px;" id="llmProviderInfo">
+                    Current: Loading...
+                </p>
+                <div id="llmProviderStatus" style="margin-top: 8px; padding: 8px; border-radius: 4px; font-size: 11px; display: none;"></div>
+                <button onclick="SettingsManager.testLLM()" style="width: 100%; margin-top: 8px; padding: 8px; background: #444; color: #fff; border: 1px solid #666; border-radius: 4px; cursor: pointer; font-size: 12px;" onmouseover="this.style.background='#555'" onmouseout="this.style.background='#444'">
+                    🧪 Test LLM Connection
+                </button>
+            </div>
         </div>
         
         <div class="section">

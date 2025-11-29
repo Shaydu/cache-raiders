@@ -307,7 +307,7 @@ struct ShadowgateMessageBox: View {
     let npcName: String
     
     @StateObject private var typewriterService = TypewriterTextService()
-    @AppStorage("enableTypewriterEffect") private var enableTypewriterEffect: Bool = false
+    @AppStorage("enableTypewriterEffect") private var enableTypewriterEffect: Bool = true
     
     var body: some View {
         HStack {

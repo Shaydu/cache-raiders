@@ -2045,6 +2045,35 @@ def test_llm():
     result = llm_service.test_connection()
     return jsonify(result), 200 if result['status'] == 'success' else 500
 
+@app.route('/api/llm/provider', methods=['GET'])
+def get_llm_provider():
+    """Get current LLM provider configuration."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    info = llm_service.get_provider_info()
+    return jsonify(info), 200
+
+@app.route('/api/llm/provider', methods=['POST'])
+def set_llm_provider():
+    """Switch LLM provider (openai, ollama, or local)."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    data = request.json
+    provider = data.get('provider')
+    model = data.get('model')  # Optional: can specify model for the provider
+    
+    if not provider:
+        return jsonify({'error': 'provider is required'}), 400
+    
+    result = llm_service.set_provider(provider, model)
+    
+    if 'error' in result:
+        return jsonify(result), 400
+    
+    return jsonify(result), 200
+
 @app.route('/api/npcs/<npc_id>/interact', methods=['POST'])
 def interact_with_npc(npc_id: str):
     """Interact with an NPC (including skeletons) via LLM conversation."""

@@ -486,9 +486,14 @@ struct ContentView: View {
                         NotificationCenter.default.post(name: NSNotification.Name("DialogClosed"), object: nil)
                     }
             }
-            .onChange(of: conversationNPC) { _, newNPC in
+            .onChange(of: conversationNPC) { oldNPC, newNPC in
+                // Only open sheet if there's a new NPC and we don't already have that sheet open
                 if let npc = newNPC {
-                    presentedSheet = .skeletonConversation(npcId: npc.id, npcName: npc.name)
+                    // Check if we need to open the sheet (either it's a new NPC or the sheet isn't currently showing)
+                    let shouldOpen = oldNPC?.id != npc.id || presentedSheet == nil
+                    if shouldOpen {
+                        presentedSheet = .skeletonConversation(npcId: npc.id, npcName: npc.name)
+                    }
                 }
             }
             .sheet(isPresented: $showQRScanner) {

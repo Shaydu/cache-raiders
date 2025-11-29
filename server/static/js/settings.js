@@ -12,6 +12,7 @@ const SettingsManager = {
     async init() {
         await this.loadLocationUpdateInterval();
         await this.loadGameMode();
+        await this.loadLLMProvider();
         this.setupWebSocketListener();
     },
 
@@ -264,6 +265,154 @@ const SettingsManager = {
                     });
                 }
             });
+        }
+    },
+
+    /**
+     * Load LLM provider from server
+     */
+    async loadLLMProvider() {
+        try {
+            const response = await fetch(`${Config.API_BASE}/api/llm/provider`);
+            if (response.ok) {
+                const data = await response.json();
+                
+                // Update dropdown
+                const dropdown = document.getElementById('llmProvider');
+                if (dropdown) {
+                    dropdown.value = data.provider;
+                }
+                
+                // Update info text
+                const info = document.getElementById('llmProviderInfo');
+                if (info) {
+                    let statusText = `Current: ${data.provider} (${data.model})`;
+                    if (data.provider === 'openai') {
+                        statusText += data.api_key_configured ? ' ✅ API Key configured' : ' ⚠️ API Key missing';
+                    } else if (data.provider === 'ollama') {
+                        statusText += ` - Base URL: ${data.ollama_base_url || 'http://localhost:11434'}`;
+                    }
+                    info.textContent = statusText;
+                }
+                
+                console.log(`🤖 LLM provider loaded: ${data.provider} (${data.model})`);
+            } else {
+                console.warn('Failed to load LLM provider');
+            }
+        } catch (error) {
+            console.warn('Error loading LLM provider:', error);
+        }
+    },
+
+    /**
+     * Update LLM provider
+     */
+    async updateLLMProvider() {
+        const dropdown = document.getElementById('llmProvider');
+        if (!dropdown) return;
+        
+        const provider = dropdown.value;
+        if (!provider) {
+            console.error('Invalid provider value');
+            return;
+        }
+        
+        // Determine model based on provider
+        let model = 'gpt-4o-mini'; // Default for OpenAI
+        if (provider === 'ollama') {
+            model = 'llama2'; // Default for Ollama
+        }
+        
+        try {
+            const response = await fetch(`${Config.API_BASE}/api/llm/provider`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ provider: provider, model: model })
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                
+                // Update info text
+                const info = document.getElementById('llmProviderInfo');
+                if (info) {
+                    let statusText = `Current: ${data.provider} (${data.model})`;
+                    if (data.provider === 'openai') {
+                        statusText += ' ✅';
+                    } else if (data.provider === 'ollama') {
+                        statusText += ` - Base URL: ${data.ollama_base_url || 'http://localhost:11434'}`;
+                    }
+                    info.textContent = statusText;
+                }
+                
+                // Show success message
+                if (window.UIManager && typeof UIManager.showStatusMessage === 'function') {
+                    UIManager.showStatusMessage(
+                        `LLM provider switched to ${data.provider}`,
+                        'success'
+                    );
+                }
+                
+                console.log(`✅ LLM provider updated to: ${data.provider} (${data.model})`);
+            } else {
+                const error = await response.json();
+                console.error('Failed to update LLM provider:', error);
+                if (window.UIManager && typeof UIManager.showStatusMessage === 'function') {
+                    UIManager.showStatusMessage(
+                        `Failed to update LLM provider: ${error.error || 'Unknown error'}`,
+                        'error'
+                    );
+                }
+            }
+        } catch (error) {
+            console.error('Error updating LLM provider:', error);
+            if (window.UIManager && typeof UIManager.showStatusMessage === 'function') {
+                UIManager.showStatusMessage(
+                    'Failed to update LLM provider: Network error',
+                    'error'
+                );
+            }
+        }
+    },
+
+    /**
+     * Test LLM connection
+     */
+    async testLLM() {
+        const statusDiv = document.getElementById('llmProviderStatus');
+        if (statusDiv) {
+            statusDiv.style.display = 'block';
+            statusDiv.style.background = '#333';
+            statusDiv.style.color = '#ccc';
+            statusDiv.textContent = 'Testing LLM connection...';
+        }
+        
+        try {
+            const response = await fetch(`${Config.API_BASE}/api/llm/test`);
+            const data = await response.json();
+            
+            if (statusDiv) {
+                if (data.status === 'success') {
+                    statusDiv.style.background = '#1a4d1a';
+                    statusDiv.style.color = '#90ee90';
+                    statusDiv.textContent = `✅ Success! Response: "${data.response}" (${data.provider}/${data.model})`;
+                } else {
+                    statusDiv.style.background = '#4d1a1a';
+                    statusDiv.style.color = '#ff6b6b';
+                    statusDiv.textContent = `❌ Error: ${data.error || 'Unknown error'}`;
+                }
+            }
+            
+            console.log('🧪 LLM test result:', data);
+        } catch (error) {
+            if (statusDiv) {
+                statusDiv.style.background = '#4d1a1a';
+                statusDiv.style.color = '#ff6b6b';
+                statusDiv.textContent = `❌ Network error: ${error.message}`;
+            }
+            console.error('Error testing LLM:', error);
         }
     }
 };

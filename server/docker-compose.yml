@@ -22,6 +22,10 @@ services:
       - ./static:/app/static
       # Mount logs directory for debugging (create on host if needed)
       - ./logs:/app/logs
+      # Mount .env file so it's accessible in container
+      - ./.env:/app/.env
+    env_file:
+      - .env  # Load environment variables from .env file
     environment:
       - FLASK_ENV=production
       - PORT=5001
