@@ -446,7 +446,10 @@ const SettingsManager = {
         const providerDropdown = document.getElementById('llmProvider');
         const modelDropdown = document.getElementById('llmModel');
         
-        if (!providerDropdown) return;
+        if (!providerDropdown) {
+            console.error('Provider dropdown not found');
+            return;
+        }
         
         const provider = providerDropdown.value;
         if (!provider) {
@@ -454,13 +457,15 @@ const SettingsManager = {
             return;
         }
         
-        // Get model from dropdown, or use default based on provider
+        // Get model from dropdown - this is REQUIRED to match the selection
         let model = null;
         if (modelDropdown && modelDropdown.value) {
             model = modelDropdown.value;
+            console.log(`📋 Model selected from dropdown: ${model}`);
         } else {
             // Fallback to defaults based on provider
             model = provider === 'ollama' ? 'llama3:8b' : 'gpt-4o-mini';
+            console.warn(`⚠️ No model selected in dropdown, using default: ${model}`);
         }
         
         // Validate model matches provider (prevent sending OpenAI model to Ollama)
@@ -471,7 +476,7 @@ const SettingsManager = {
             if (modelDropdown) {
                 modelDropdown.value = model;
             }
-        } else if (provider === 'openai' && model && !model.startsWith('gpt-')) {
+        } else if (provider === 'openai' && model && !model.startsWith('gpt-') && !model.startsWith('o1-')) {
             console.warn('Invalid model for OpenAI provider, using default');
             model = 'gpt-4o-mini';
             // Update dropdown to reflect correct model
@@ -479,6 +484,8 @@ const SettingsManager = {
                 modelDropdown.value = model;
             }
         }
+        
+        console.log(`🔄 Updating LLM provider: ${provider}, model: ${model}`);
         
         try {
             const response = await fetch(`${Config.API_BASE}/api/llm/provider`, {

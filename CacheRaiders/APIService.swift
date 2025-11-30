@@ -1081,9 +1081,10 @@ class APIService {
         let encoder = JSONEncoder()
         let body = try encoder.encode(request)
         
-        // Use longer timeout for LLM requests (Ollama can be slow, especially on first request)
-        // Server has 120 second timeout, so we use 150 seconds to account for network overhead
-        let response: NPCInteractionResponse = try await makeRequest(url: url, method: "POST", body: body, timeout: 150.0)
+        // Use optimized timeout for LLM requests
+        // Server has 30 second timeout, use 45 seconds to account for network overhead
+        // Model loading happens server-side and is optimized with keep_alive
+        let response: NPCInteractionResponse = try await makeRequest(url: url, method: "POST", body: body, timeout: 45.0)
         
         // Include model name in response if available
         let modelInfo = response.model.map { "(\($0))" } ?? ""

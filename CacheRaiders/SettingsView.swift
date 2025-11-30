@@ -897,7 +897,7 @@ struct SettingsView: View {
             .padding(.vertical, 4)
         }
         .padding(.vertical, 4)
-        .sheet(isPresented: $showQRScanner) {
+        .fullScreenCover(isPresented: $showQRScanner) {
             QRCodeScannerView(scannedURL: $scannedURL)
         }
         .sheet(isPresented: $showNetworkDiagnostics) {

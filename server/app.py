@@ -12,6 +12,9 @@ import socket
 import io
 import qrcode
 import logging
+import threading
+import time
+import requests
 from datetime import datetime
 from typing import Optional, List, Dict
 from dotenv import load_dotenv
@@ -75,41 +78,147 @@ game_mode: str = "open"
 connected_clients: Dict[str, str] = {}  # session_id -> device_uuid
 client_sessions: Dict[str, set] = {}  # device_uuid -> set of session_ids
 
-def get_local_ip_dynamic():
-    """Get the local network IP address dynamically (always detects current IP)."""
-    # Try to get IP from all network interfaces using socket
-    try:
-        import socket
-        # Get hostname to determine local IP
-        hostname = socket.gethostname()
-        # Try to get IP from hostname
+def get_local_ip_dynamic(request_context=None):
+    """Get the local network IP address dynamically (always detects current IP).
+    Works across network changes (WiFi hotspots, network switching, etc.)
+    Filters out Docker internal IPs and localhost.
+    
+    Args:
+        request_context: Optional Flask request object to use request host as hint in Docker
+    """
+    import socket
+    
+    # Helper to check if IP is a Docker/internal network IP
+    def is_docker_or_internal_ip(ip):
+        """Check if IP is Docker internal or not a real network interface."""
+        if not ip or ip.startswith('127.'):
+            return True
+        # Docker bridge networks: 172.16-31.x.x
+        # Filter out common Docker/internal ranges
+        parts = ip.split('.')
+        if len(parts) == 4:
+            try:
+                first_octet = int(parts[0])
+                second_octet = int(parts[1])
+                # Docker bridge: 172.16.0.0 - 172.31.255.255
+                if first_octet == 172 and 16 <= second_octet <= 31:
+                    return True
+                # Docker Desktop on Mac: 192.168.65.x
+                if first_octet == 192 and second_octet == 168 and parts[2] == '65':
+                    return True
+            except ValueError:
+                pass
+        return False
+    
+    # Helper to check if IP is routable (not localhost, not Docker internal)
+    def is_routable_ip(ip):
+        """Check if IP is routable from other devices on the network."""
+        if not ip:
+            return False
+        # Must not be localhost
+        if ip.startswith('127.'):
+            return False
+        # Must not be Docker internal
+        if is_docker_or_internal_ip(ip):
+            return False
+        # Must be a valid IPv4 format
         try:
-            ip = socket.gethostbyname(hostname)
-            if ip and not ip.startswith('127.'):
-                print(f"🌐 [Dynamic] Detected IP from hostname {hostname}: {ip}")
-                return ip
-        except socket.gaierror:
-            pass
-        
-        # Fallback: Connect to a remote address to determine local IP
-        # This doesn't actually send data, just determines the route
+            socket.inet_aton(ip)
+            return True
+        except socket.error:
+            return False
+    
+    # Method 0: If we have a request context and we're in Docker, use the request host as hint
+    # This is especially useful when running in Docker - the request host tells us what IP was used to reach us
+    if request_context:
+        try:
+            host = request_context.host.split(':')[0] if ':' in request_context.host else request_context.host
+            # If host is a valid routable IP (not localhost, not Docker internal), use it
+            if is_routable_ip(host):
+                print(f"🌐 [Dynamic] Using request host as IP (Docker hint): {host}")
+                return host
+            # Also check remote_addr - if it's from the same network, we can infer our IP
+            remote_addr = request_context.remote_addr
+            if remote_addr and is_routable_ip(remote_addr):
+                # Remote addr is the client's IP, but if it's on same network, we might be able to infer
+                # For now, we'll use it as a last resort hint
+                pass
+        except Exception as e:
+            print(f"⚠️ Error using request context: {e}")
+    
+    # Method 1: Connect to external address to determine route (works in Docker and regular)
+    # This method finds the IP that would be used for external connections
+    detected_docker_ip = None
+    try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            # Connect to a public DNS server (doesn't actually connect)
+            # Connect to a public DNS server (doesn't actually connect, just determines route)
             s.connect(('8.8.8.8', 80))
             ip = s.getsockname()[0]
-            if ip and not ip.startswith('127.'):
+            if ip and is_routable_ip(ip):
                 print(f"🌐 [Dynamic] Detected IP via socket connection: {ip}")
                 return ip
-        except Exception:
-            pass
+            # If we got a Docker IP, save it and try alternative methods
+            elif ip and is_docker_or_internal_ip(ip):
+                detected_docker_ip = ip
+                print(f"⚠️ [Dynamic] Socket method returned Docker/internal IP {ip}, trying alternatives...")
+        except Exception as e:
+            print(f"⚠️ Socket connection method error: {e}")
         finally:
             s.close()
     except Exception as e:
-        print(f"⚠️ Error detecting IP dynamically: {e}")
+        print(f"⚠️ Error with socket connection method: {e}")
     
-    # Last resort: return localhost
-    print("⚠️ Could not detect network IP dynamically, using 127.0.0.1")
+    # Method 2: Try netifaces if available (more reliable interface detection)
+    # This can work in Docker if host network interfaces are accessible
+    try:
+        import netifaces
+        interfaces = netifaces.interfaces()
+        # Prioritize common WiFi/Ethernet interfaces
+        priority_interfaces = ['en0', 'en1', 'wlan0', 'eth0', 'wlp']
+        all_interfaces = sorted(interfaces, key=lambda x: (
+            0 if any(x.startswith(prefix) for prefix in priority_interfaces) else 1,
+            x
+        ))
+        
+        for interface in all_interfaces:
+            # Skip loopback and Docker interfaces
+            if interface.startswith('lo') or interface.startswith('docker') or interface.startswith('veth'):
+                continue
+            try:
+                addrs = netifaces.ifaddresses(interface)
+                if netifaces.AF_INET in addrs:
+                    for addr_info in addrs[netifaces.AF_INET]:
+                        ip = addr_info.get('addr')
+                        if ip and is_routable_ip(ip):
+                            print(f"🌐 [Dynamic] Detected IP from interface {interface}: {ip}")
+                            return ip
+            except (ValueError, KeyError):
+                continue
+    except ImportError:
+        # netifaces not available, that's okay
+        pass
+    except Exception as e:
+        print(f"⚠️ Error checking network interfaces: {e}")
+    
+    # Method 3: Try hostname resolution (fallback)
+    try:
+        hostname = socket.gethostname()
+        ip = socket.gethostbyname(hostname)
+        if ip and is_routable_ip(ip):
+            print(f"🌐 [Dynamic] Detected IP from hostname {hostname}: {ip}")
+            return ip
+    except (socket.gaierror, Exception) as e:
+        pass
+    
+    # If we detected a Docker IP but couldn't find a routable one, warn but don't fail
+    if detected_docker_ip:
+        print(f"⚠️ Running in Docker (detected {detected_docker_ip}) but couldn't detect host network IP")
+        print(f"   Try accessing the admin panel via the host machine's IP address")
+        print(f"   Or set HOST_IP environment variable in docker-compose.yml")
+    
+    # Last resort: return localhost (but this won't work from other devices)
+    print("⚠️ Could not detect network IP dynamically, using 127.0.0.1 (not routable from other devices)")
     return '127.0.0.1'
 
 def get_local_ip():
@@ -292,7 +401,7 @@ def health():
     # Log connection attempts for debugging
     print(f"🏥 Health check from {request.remote_addr} (Host: {request.host})")
     try:
-        server_ip = get_local_ip()
+        server_ip = get_local_ip_dynamic()
     except:
         server_ip = 'unknown'
     return jsonify({
@@ -1607,7 +1716,10 @@ def get_server_info():
     print(f"📡 Server info requested from {request.remote_addr} (Host: {request.host})")
     
     port = int(os.environ.get('PORT', 5001))
-    local_ip = get_local_ip()
+    # Use dynamic IP detection to match QR code endpoint behavior
+    # Pass request context to help detect IP in Docker scenarios
+    # This ensures the displayed IP updates when network changes
+    local_ip = get_local_ip_dynamic(request_context=request)
     
     # Get the host from the request to determine what URL was used
     host = request.host.split(':')[0] if ':' in request.host else request.host
@@ -1679,7 +1791,7 @@ def connection_test():
         return interfaces
     
     port = int(os.environ.get('PORT', 5001))
-    local_ip = get_local_ip()
+    local_ip = get_local_ip_dynamic()
     
     return jsonify({
         'status': 'success',
@@ -1749,7 +1861,7 @@ def test_port():
 def test_ports():
     """Test multiple ports for connectivity."""
     ports_str = request.args.get('ports', '5001,5000,8080,3000,8000')
-    host = request.args.get('host', get_local_ip())
+    host = request.args.get('host', get_local_ip_dynamic())
     ports = [int(p.strip()) for p in ports_str.split(',') if p.strip().isdigit()]
     
     results = []
@@ -1854,7 +1966,8 @@ def generate_qrcode():
     
     port = int(os.environ.get('PORT', 5001))
     # Always detect IP dynamically (ignore HOST_IP env var for QR code)
-    local_ip = get_local_ip_dynamic()
+    # Pass request context to help detect IP in Docker scenarios
+    local_ip = get_local_ip_dynamic(request_context=request)
     server_url = f'http://{local_ip}:{port}'
     
     # Generate QR code
@@ -2046,6 +2159,16 @@ def test_llm():
     
     result = llm_service.test_connection()
     return jsonify(result), 200 if result['status'] == 'success' else 500
+
+@app.route('/api/llm/warmup', methods=['POST'])
+def warmup_llm():
+    """Warm up the LLM model (pre-loads into memory for faster responses)."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    result = llm_service.warmup_model()
+    status_code = 200 if result.get('status') == 'success' else 500
+    return jsonify(result), status_code
 
 @app.route('/api/llm/provider', methods=['GET'])
 def get_llm_provider():
@@ -2846,11 +2969,68 @@ def delete_npc(npc_id: str):
         'message': 'NPC deleted successfully'
     }), 200
 
+def ollama_keepalive():
+    """Background thread to keep Ollama model loaded in memory.
+    Sends periodic requests to prevent model from being unloaded."""
+    # Get Ollama base URL from environment or use default
+    ollama_url = os.getenv("LLM_BASE_URL", "http://localhost:11434")
+    if not ollama_url or "localhost" in ollama_url or "127.0.0.1" in ollama_url:
+        # In Docker, use the service name
+        ollama_url = os.getenv("LLM_BASE_URL", "http://ollama:11434")
+    
+    model = os.getenv("LLM_MODEL", "llama3:8b")
+    keepalive_interval = 300  # Ping every 5 minutes to keep model loaded
+    
+    print(f"🔄 Starting Ollama keepalive thread (pinging {ollama_url} every {keepalive_interval}s)...")
+    
+    while True:
+        try:
+            time.sleep(keepalive_interval)
+            
+            # Send a lightweight request to keep the model loaded
+            # Use /api/generate with a minimal prompt
+            keepalive_payload = {
+                "model": model,
+                "prompt": "ping",
+                "stream": False,
+                "options": {
+                    "num_predict": 1  # Only generate 1 token
+                },
+                "keep_alive": -1  # Keep model in memory
+            }
+            
+            try:
+                response = requests.post(
+                    f"{ollama_url}/api/generate",
+                    json=keepalive_payload,
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    print(f"✅ Ollama keepalive: Model '{model}' kept alive")
+                else:
+                    print(f"⚠️ Ollama keepalive: Unexpected status {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                # Don't spam logs if Ollama is temporarily unavailable
+                # Only log if it's been failing for a while
+                pass
+                
+        except Exception as e:
+            # Log errors but continue keepalive loop
+            print(f"❌ Ollama keepalive error: {e}")
+            time.sleep(60)  # Wait 1 minute before retrying on error
+
 if __name__ == '__main__':
     init_db()
     load_game_mode_from_db()  # Load persisted game mode from database
     port = int(os.environ.get('PORT', 5001))  # Use 5001 as default to avoid conflicts
-    local_ip = get_local_ip()
+    local_ip = get_local_ip_dynamic()
+    
+    # Start Ollama keepalive thread if using Ollama provider
+    provider = os.getenv("LLM_PROVIDER", "").lower()
+    if provider in ("ollama", "local") and LLM_AVAILABLE:
+        keepalive_thread = threading.Thread(target=ollama_keepalive, daemon=True)
+        keepalive_thread.start()
+        print("🔄 Ollama keepalive thread started")
     
     print("🚀 Starting CacheRaiders API server...")
     print(f"📁 Database: {DB_PATH}")

@@ -9,13 +9,18 @@ services:
       - ollama_data:/root/.ollama
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      # Use Ollama CLI for health check (available in container)
+      # This checks if Ollama is responding and can list models
+      test: ["CMD", "ollama", "list"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 60s  # Give Ollama 60 seconds to start up before health checks begin
     # Expose Ollama on all interfaces (0.0.0.0) so it's accessible from the API container
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
+      # Keep models in memory for 24 hours to prevent reload delays
+      - OLLAMA_KEEP_ALIVE=24h
 
   api:
     build: .
@@ -46,7 +51,7 @@ services:
     environment:
       - FLASK_ENV=production
       - PORT=5001
-      - HOST_IP=192.168.1.29
+      # HOST_IP removed - using dynamic IP detection that works across network changes
       # LLM settings - these override any .env file values
       - LLM_PROVIDER=ollama
       - LLM_BASE_URL=http://ollama:11434
@@ -55,7 +60,7 @@ services:
       - DOCKER_CONTAINER=true
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:5001/health', timeout=5).raise_for_status()"]
       interval: 30s
       timeout: 10s
       retries: 3

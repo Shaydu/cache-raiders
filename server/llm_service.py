@@ -98,19 +98,28 @@ class LLMService:
         self.provider = os.getenv("LLM_PROVIDER", "openai").lower()
         
         # Set default model based on provider
-        # If LLM_MODEL is explicitly set, use it; otherwise use provider-specific default
-        if os.getenv("LLM_MODEL"):
-            self.model = os.getenv("LLM_MODEL")
-        elif self.provider == "ollama" or self.provider == "local":
-            # Default Ollama model (user should have llama2 or llama3 installed)
-            # Use "llama2:latest" to match the format returned by Ollama
-            self.model = os.getenv("LLM_MODEL", "llama2:latest")
+        # Validate that LLM_MODEL matches the provider, otherwise use provider-specific default
+        env_model = os.getenv("LLM_MODEL")
+        
+        if self.provider == "ollama" or self.provider == "local":
+            # For Ollama, check if env model is valid (not an OpenAI model)
+            if env_model and not env_model.startswith("gpt-") and not env_model.startswith("o1-"):
+                # Valid Ollama model name
+                self.model = env_model
+            else:
+                # Use Ollama default (llama3:8b is common, fallback to llama2:latest)
+                self.model = env_model if env_model and not env_model.startswith("gpt-") else "llama3:8b"
         else:
-            # Default OpenAI model
-            self.model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+            # For OpenAI/other providers, use env model or default
+            if env_model:
+                self.model = env_model
+            else:
+                # Default OpenAI model
+                self.model = "gpt-4o-mini"
         
         self.temperature = 0.7
-        self.max_tokens = 150  # Reduced from 500 to save tokens
+        self.max_tokens = 100  # Optimized for quick responses (conversations are short)
+        self.map_max_tokens = 150  # Slightly more for map generation if needed
         
         # Ollama configuration
         # The Python server connects to Ollama. When running in Docker, use the container name
@@ -159,13 +168,42 @@ class LLMService:
             return {"error": f"Invalid provider: {provider}. Must be 'openai', 'ollama', or 'local'"}
         
         old_provider = self.provider
+        old_model = self.model
         self.provider = provider
         
+        # Set model - validate it matches the provider
         if model:
-            self.model = model
+            print(f"🔄 [LLM Service] Setting model to: {model} (provider: {provider})")
+            # Validate model matches provider
+            if provider in ["ollama", "local"]:
+                # For Ollama, reject OpenAI model names
+                if model.startswith("gpt-") or model.startswith("o1-"):
+                    # Invalid model for Ollama, use default
+                    if provider == "ollama":
+                        self.model = "llama3:8b"  # Default Ollama model
+                        print(f"⚠️ [LLM Service] Invalid model '{model}' for Ollama, using default: {self.model}")
+                    else:
+                        self.model = "llama2:latest"
+                        print(f"⚠️ [LLM Service] Invalid model '{model}' for local, using default: {self.model}")
+                else:
+                    self.model = model
+                    print(f"✅ [LLM Service] Model set to: {self.model}")
+            else:
+                # For OpenAI, accept any model name (could be gpt-4o-mini, gpt-4o, etc.)
+                self.model = model
+                print(f"✅ [LLM Service] Model set to: {self.model}")
+        else:
+            # No model specified - use provider-specific default
+            if provider in ["ollama", "local"]:
+                self.model = "llama3:8b"  # Default Ollama model
+            else:
+                self.model = "gpt-4o-mini"  # Default OpenAI model
+            print(f"ℹ️ [LLM Service] No model specified, using default: {self.model}")
         
         # Re-initialize client for new provider
         self._initialize_provider()
+        
+        print(f"✅ [LLM Service] Provider updated: {old_provider} → {provider}, Model: {old_model} → {self.model}")
         
         return {
             "status": "success",
@@ -215,6 +253,9 @@ class LLMService:
         # Use provided max_tokens or default
         tokens = max_tokens if max_tokens is not None else self.max_tokens
         
+        # Log which model is being used
+        print(f"🤖 [LLM Service] Calling Ollama with model: {self.model}")
+        
         # Ollama API endpoint
         url = f"{self.ollama_base_url}/api/chat"
         
@@ -243,21 +284,30 @@ class LLMService:
             "messages": ollama_messages,
             "options": {
                 "temperature": self.temperature,
-                "num_predict": tokens  # Ollama uses num_predict instead of max_tokens
+                "num_predict": tokens,  # Ollama uses num_predict instead of max_tokens
+                "num_ctx": 2048,  # Reduce context window for faster processing
+                "num_thread": 4,  # Limit threads to prevent CPU overload
             },
-            "stream": False
+            "stream": False,
+            "keep_alive": -1  # Keep model in memory permanently (matches docker-compose OLLAMA_KEEP_ALIVE)
         }
         
         try:
-            # Increased timeout to 120 seconds for Ollama (local models can be slow, especially on first request)
-            response = requests.post(url, json=payload, timeout=120)
+            # Timeout: 60 seconds for initial load, but should be much faster if model is already loaded
+            # The keepalive thread should keep the model warm, so most requests should be <5s
+            import time
+            start_time = time.time()
+            response = requests.post(url, json=payload, timeout=60)
+            elapsed = time.time() - start_time
+            if elapsed > 1.0:
+                print(f"⏱️ Ollama request took {elapsed:.2f}s (model may have loaded)")
             response.raise_for_status()
             data = response.json()
             return data.get("message", {}).get("content", "").strip()
         except requests.exceptions.ConnectionError as e:
             return f"Error: Cannot connect to Ollama at {self.ollama_base_url}. Make sure Ollama is running: ollama serve. Connection error: {str(e)}"
         except requests.exceptions.Timeout:
-            return "Error: Ollama request timed out after 120 seconds. The model might be too slow, not loaded, or the server is overloaded. Try again in a moment."
+            return "Error: Ollama request timed out after 30 seconds. The model might be loading or the server is overloaded. Try again in a moment."
         except requests.exceptions.HTTPError as e:
             # Handle HTTP errors (like 404 for missing model) separately
             if e.response.status_code == 404:
@@ -279,6 +329,9 @@ class LLMService:
         
         if not self.client:
             return "Error: OPENAI_API_KEY not configured or client not initialized"
+        
+        # Log which model is being used
+        print(f"🤖 [LLM Service] Calling OpenAI with model: {self.model}")
         
         try:
             if messages:
@@ -337,17 +390,18 @@ class LLMService:
         #         print(f"⚠️ Could not fetch OSM features: {e}")
         
         # Build system prompt with real map features if available
+        # OPTIMIZED: Shorter prompts for faster processing
         if is_skeleton:
-            base_prompt = f"""Ye be {npc_name}, a SKELETON pirate from 200 years ago. Ye be dead, so ye can speak. Help players find the 200-year-old treasure. Speak ONLY in pirate speak (arr, ye, matey). Keep responses SHORT - 1-2 sentences max."""
+            base_prompt = f"""Ye be {npc_name}, a SKELETON pirate from 200 years ago. Speak ONLY pirate (arr, ye, matey). Responses: 1 sentence max."""
             if map_features:
                 base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:3])}. Use these actual features in your clues so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
         elif npc_type.lower() == "traveller" or "corgi" in npc_name.lower():
             # Corgi Traveller - friendly, helpful, gives hints
-            base_prompt = f"""You are {npc_name}, a friendly Corgi Traveller who loves exploring and helping adventurers. You're cheerful, helpful, and give hints about where to find treasures. Speak in a friendly, enthusiastic way (woof, tail wags, etc.). Keep responses SHORT - 1-2 sentences max."""
+            base_prompt = f"""You are {npc_name}, a friendly Corgi Traveller. Help adventurers. Speak friendly (woof!). Responses: 1 sentence max."""
             if map_features:
                 base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:5])}. Use these actual features in your hints so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
         else:
-            base_prompt = f"""Ye be {npc_name}, a {npc_type} pirate. Help players find treasures. Speak ONLY in pirate speak. Keep responses SHORT - 1-2 sentences max."""
+            base_prompt = f"""Ye be {npc_name}, a {npc_type} pirate. Speak ONLY pirate. Responses: 1 sentence max."""
             if map_features:
                 base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:3])}. Use these actual features in your clues so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
         
@@ -358,7 +412,13 @@ class LLMService:
             {"role": "user", "content": user_message}
         ]
         
-        response_text = self._call_llm(messages=messages)
+        # Use shorter max_tokens for conversations (faster responses)
+        import time
+        start_time = time.time()
+        response_text = self._call_llm(messages=messages, max_tokens=80)  # Very short for quick responses
+        elapsed = time.time() - start_time
+        if elapsed > 2.0:
+            print(f"⏱️ NPC response generation took {elapsed:.2f}s")
         
         result = {
             "response": response_text.strip()
@@ -624,11 +684,36 @@ Keep it SHORT - 1-2 lines only. Riddle:"""
         response = self._call_llm(prompt=prompt, max_tokens=50)  # Limit to 50 tokens
         return response.strip()
     
+    def warmup_model(self) -> Dict:
+        """Warm up the model by making a quick test request (pre-loads model into memory)."""
+        if self.provider != "ollama" and self.provider != "local":
+            return {"status": "skipped", "message": "Warmup only needed for Ollama"}
+        
+        test_prompt = "Hi"  # Minimal prompt
+        try:
+            import time
+            start_time = time.time()
+            response = self._call_llm(prompt=test_prompt, max_tokens=5)  # Minimal response to warm up
+            elapsed = time.time() - start_time
+            return {
+                "status": "success",
+                "message": f"Model warmed up in {elapsed:.2f}s",
+                "elapsed_seconds": elapsed
+            }
+        except Exception as e:
+            return {
+                "status": "error",
+                "error": str(e)
+            }
+    
     def test_connection(self) -> Dict:
         """Test if LLM service is working."""
         test_prompt = "Say 'Ahoy!' in pirate speak."  # Shorter prompt
         try:
+            import time
+            start_time = time.time()
             response = self._call_llm(prompt=test_prompt, max_tokens=10)  # Very short response
+            elapsed = time.time() - start_time
             
             # Check if response indicates an error
             if response.startswith("Error:"):
@@ -645,7 +730,8 @@ Keep it SHORT - 1-2 lines only. Riddle:"""
                 "response": response,
                 "model": self.model,
                 "provider": self.provider,
-                "api_key_configured": bool(self.api_key) if self.provider != "ollama" else None
+                "api_key_configured": bool(self.api_key) if self.provider != "ollama" else None,
+                "elapsed_seconds": elapsed
             }
         except Exception as e:
             return {

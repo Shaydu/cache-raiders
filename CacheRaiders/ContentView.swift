@@ -496,7 +496,7 @@ struct ContentView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showQRScanner) {
+            .fullScreenCover(isPresented: $showQRScanner) {
                 QRCodeScannerView(scannedURL: $scannedURL)
             }
             .onChange(of: showQRScanner) { oldValue, newValue in

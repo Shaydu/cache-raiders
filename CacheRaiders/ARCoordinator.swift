@@ -4940,7 +4940,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     /// Clear all placed objects from AR scene (loot boxes and NPCs)
     /// Called when game mode changes to ensure clean state
     func clearAllARObjects() {
-        guard let arView = arView else { return }
+        guard arView != nil else { return }
         
         Swift.print("🗑️ Clearing all AR objects due to game mode change...")
         
