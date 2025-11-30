@@ -198,14 +198,14 @@ class QRCodeScannerViewController: UIViewController {
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleSessionWasInterrupted),
-            name: .AVCaptureSessionWasInterrupted,
+            name: AVCaptureSession.wasInterruptedNotification,
             object: nil
         )
         
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleSessionInterruptionEnded),
-            name: .AVCaptureSessionInterruptionEnded,
+            name: AVCaptureSession.interruptionEndedNotification,
             object: nil
         )
         
@@ -658,7 +658,7 @@ class QRCodeScannerViewController: UIViewController {
         // Start session on the dedicated session queue
         let capturedSession = session
         sessionQueue.async { [weak self] in
-            guard let self = self else { return }
+            guard self != nil else { return }
             
             print("📷 QR Scanner: Starting preview session...")
             capturedSession.startRunning()
@@ -843,7 +843,7 @@ class QRCodeScannerViewController: UIViewController {
             return
         }
         
-        var reasonString = "unknown"
+        let reasonString: String
         switch reason {
         case .videoDeviceNotAvailableInBackground:
             reasonString = "device not available in background"

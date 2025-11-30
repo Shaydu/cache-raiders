@@ -2,6 +2,12 @@
 Map Feature Service for CacheRaiders
 Handles fetching real-world map features (landmarks) from OpenStreetMap Overpass API
 Used for generating treasure maps with real landmarks (ponds, trees, roads, etc.)
+
+CRITICAL: This service ONLY returns REAL features from OpenStreetMap.
+- All features come from actual OSM data via the Overpass API
+- No fake, placeholder, or imaginary features are ever generated
+- If no features are found, returns empty list (never generates fake ones)
+- All coordinates are validated to ensure they're real OSM data
 """
 import os
 import json
@@ -48,7 +54,10 @@ class MapFeatureService:
         return_coordinates: bool = False,  # If True, returns dicts with coordinates
         request_id: Optional[str] = None  # Request ID for logging correlation
     ) -> List:
-        """Get real map features near a location using OpenStreetMap Overpass API.
+        """Get REAL map features near a location using OpenStreetMap Overpass API.
+        
+        CRITICAL: Only returns REAL features from OpenStreetMap. Never generates fake features.
+        If no features are found in OSM, returns empty list (never creates placeholders).
         
         Returns a list of feature names/descriptions, or dicts with coordinates if return_coordinates=True.
         Uses nodes only (not ways) to avoid geometry complexity and keep data size small.
@@ -56,12 +65,13 @@ class MapFeatureService:
         Args:
             latitude: Center latitude
             longitude: Center longitude
-            radius: Search radius in meters (default 50m)
+            radius: Search radius in meters (default 25m)
             return_coordinates: If True, returns list of dicts with 'name', 'type', 'latitude', 'longitude'
                               If False, returns list of feature name strings
         
         Returns:
-            List of features (strings or dicts depending on return_coordinates)
+            List of REAL features from OSM (strings or dicts depending on return_coordinates).
+            Empty list if no features found (never returns fake/placeholder features).
         """
         req_id = request_id or f"overpass_{int(time.time() * 1000)}"
         
@@ -75,12 +85,12 @@ class MapFeatureService:
         map_logger.info(f"[{req_id}] [Overpass] Return coordinates: {return_coordinates}")
         map_logger.info(f"[{req_id}] [Overpass] URL: {self.overpass_url}")
         
-        # Overpass QL query - Get 2-3 real landmarks (pond, tree, etc.) within radius
-        # CRITICAL: Only query NODES (not ways) to avoid geometry complexity
-        # CRITICAL: Query specific amenity types to avoid matching thousands of nodes
-        # FIX: Use correct Overpass QL syntax - limit must be applied to the result set, not individual queries
+        # Overpass QL query - Get 2-3 real landmarks (pond, tree, roads, buildings, etc.) within radius
+        # Query both NODES (points) and WAYS (roads/buildings) - use center points for ways to avoid geometry complexity
+        # CRITICAL: Query specific amenity types to avoid matching thousands of elements
         # Use small radius (25m) and limit the total results to minimize OSM data
         # maxsize:53687091 = 51MB (reduced from 128MB to stay well under Overpass limits)
+        # Added: parks, bridges, places of worship, roads, and buildings for more map features
         query = f"""
         [out:json][timeout:10][maxsize:53687091];
         (
@@ -89,8 +99,15 @@ class MapFeatureService:
           node["amenity"="fountain"](around:{radius},{latitude},{longitude});
           node["amenity"="bench"](around:{radius},{latitude},{longitude});
           node["amenity"="monument"](around:{radius},{latitude},{longitude});
+          node["leisure"="park"](around:{radius},{latitude},{longitude});
+          node["leisure"="playground"](around:{radius},{latitude},{longitude});
+          node["man_made"="bridge"](around:{radius},{latitude},{longitude});
+          node["bridge"="yes"](around:{radius},{latitude},{longitude});
+          node["amenity"="place_of_worship"](around:{radius},{latitude},{longitude});
+          way["highway"~"^(primary|secondary|tertiary|residential|path|footway|track)$"](around:{radius},{latitude},{longitude});
+          way["building"](around:{radius},{latitude},{longitude});
         );
-        out body;
+        out center;
         """
         
         map_logger.debug(f"[{req_id}] [Overpass] Query: {query[:200]}...")  # Log first 200 chars
@@ -199,37 +216,61 @@ class MapFeatureService:
             features = []
             seen_names = set()
             
+            # CRITICAL: Only use REAL features from OpenStreetMap - never generate fake/placeholder features
+            # All features must come from actual OSM data with valid coordinates
             for element in data.get('elements', []):
                 tags = element.get('tags', {})
                 feature_type = self._classify_feature(element)
                 
-                # Get coordinates from element
-                # Nodes have direct lat/lon
+                # Get coordinates from element - MUST have valid coordinates from OSM
+                # Nodes have direct lat/lon, Ways (roads/buildings) have center points
                 element_lat = None
                 element_lon = None
                 if 'lat' in element and 'lon' in element:
-                    # Node has direct lat/lon
+                    # Node has direct lat/lon from OSM
                     element_lat = element['lat']
                     element_lon = element['lon']
                 elif 'center' in element:
-                    # Way/relation has center (from "out center" query)
+                    # Way (road/building) has center point (from "out center" query)
                     element_lat = element['center'].get('lat')
                     element_lon = element['center'].get('lon')
+                elif element.get('type') == 'way' and 'geometry' in element:
+                    # Fallback: calculate center from way geometry if center not provided
+                    # This shouldn't happen with "out center" but just in case
+                    geometry = element.get('geometry', [])
+                    if geometry:
+                        lats = [point.get('lat') for point in geometry if 'lat' in point]
+                        lons = [point.get('lon') for point in geometry if 'lon' in point]
+                        if lats and lons:
+                            element_lat = sum(lats) / len(lats)
+                            element_lon = sum(lons) / len(lons)
+                
+                # VALIDATION: Only include features with valid coordinates from OSM
+                # Reject any features without coordinates (shouldn't happen, but safety check)
+                if return_coordinates:
+                    if not element_lat or not element_lon:
+                        map_logger.warning(f"[{req_id}] [Overpass] Skipping feature without coordinates: {tags.get('name', feature_type)}")
+                        continue
+                    # Validate coordinates are reasonable (not 0,0 or invalid)
+                    if abs(element_lat) > 90 or abs(element_lon) > 180:
+                        map_logger.warning(f"[{req_id}] [Overpass] Skipping feature with invalid coordinates: {tags.get('name', feature_type)}")
+                        continue
                 
                 # Get feature name or use type
                 name = tags.get('name', '')
                 feature_key = name if name else feature_type
                 
                 if return_coordinates and element_lat and element_lon:
-                    # Return dict with coordinates (center point only)
+                    # Return dict with coordinates (REAL coordinates from OSM only)
                     if feature_key not in seen_names:
                         features.append({
                             'name': name or feature_type,
                             'type': feature_type,
-                            'latitude': element_lat,
-                            'longitude': element_lon
+                            'latitude': element_lat,  # REAL OSM coordinate
+                            'longitude': element_lon  # REAL OSM coordinate
                         })
                         seen_names.add(feature_key)
+                        map_logger.debug(f"[{req_id}] [Overpass] Added REAL feature: {name or feature_type} at ({element_lat}, {element_lon})")
                 else:
                     # Return string (backward compatible)
                     if name and name not in seen_names:
@@ -283,7 +324,7 @@ class MapFeatureService:
             element: OSM element dict with 'tags' field
         
         Returns:
-            Feature type string (water, tree, building, path, landmark, etc.)
+            Feature type string (water, tree, building, path, park, bridge, place_of_worship, landmark, etc.)
         """
         tags = element.get('tags', {})
         
@@ -297,6 +338,16 @@ class MapFeatureService:
             return 'mountain'
         elif 'highway' in tags:
             return 'path'
+        elif tags.get('leisure') == 'park' or tags.get('leisure') == 'playground':
+            return 'park'
+        elif tags.get('man_made') == 'bridge' or tags.get('bridge') == 'yes':
+            return 'bridge'
+        elif tags.get('amenity') == 'place_of_worship':
+            return 'place_of_worship'
+        elif tags.get('amenity') == 'fountain':
+            return 'fountain'
+        elif tags.get('amenity') == 'monument' or tags.get('historic') == 'monument':
+            return 'monument'
         else:
             return 'landmark'
 

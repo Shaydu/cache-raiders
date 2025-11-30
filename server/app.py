@@ -48,6 +48,15 @@ except ImportError as e:
     LLM_AVAILABLE = False
     llm_service = None
 
+# Import Treasure Map service
+try:
+    from treasure_map_service import treasure_map_service
+    TREASURE_MAP_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Treasure Map service not available: {e}")
+    TREASURE_MAP_AVAILABLE = False
+    treasure_map_service = None
+
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)  # Enable CORS for iOS app
 # Use 'threading' instead of 'eventlet' for Python 3.12 compatibility
@@ -2157,7 +2166,15 @@ def test_llm():
     if not LLM_AVAILABLE:
         return jsonify({'error': 'LLM service not available'}), 503
     
+    # Log current provider/model before test
+    provider_info = llm_service.get_provider_info()
+    print(f"🧪 [API] test_llm called - Current provider: {provider_info.get('provider')}, model: {provider_info.get('model')}")
+    
     result = llm_service.test_connection()
+    
+    # Log result
+    print(f"🧪 [API] test_llm result - Provider: {result.get('provider')}, model: {result.get('model')}, status: {result.get('status')}")
+    
     return jsonify(result), 200 if result['status'] == 'success' else 500
 
 @app.route('/api/llm/warmup', methods=['POST'])
@@ -2207,10 +2224,16 @@ def set_llm_provider():
     if not provider:
         return jsonify({'error': 'provider is required'}), 400
     
+    # Log the request for debugging
+    print(f"🔄 [API] Setting LLM provider: {provider}, model: {model}")
+    
     result = llm_service.set_provider(provider, model)
     
     if 'error' in result:
         return jsonify(result), 400
+    
+    # Log the result for debugging
+    print(f"✅ [API] LLM provider set to: {result.get('provider')}, model: {result.get('model')}")
     
     return jsonify(result), 200
 
@@ -2485,10 +2508,10 @@ def get_npc_map_piece(npc_id: str):
     map_logger.info(f"[{request_id}] Final target location: lat={target_location.get('latitude')}, lon={target_location.get('longitude')}")
     
     try:
-        map_logger.info(f"[{request_id}] Calling llm_service.generate_map_piece()...")
+        map_logger.info(f"[{request_id}] Calling treasure_map_service.generate_map_piece()...")
         call_start_time = time.time()
         
-        map_piece = llm_service.generate_map_piece(
+        map_piece = treasure_map_service.generate_map_piece(
             target_location=target_location,
             piece_number=piece_number,
             total_pieces=2,

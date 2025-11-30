@@ -30,9 +30,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var locationManager: LootBoxLocationManager?
     private var userLocationManager: UserLocationManager?
     private var nearbyLocationsBinding: Binding<[LootBoxLocation]>?
-    private var placedBoxes: [String: AnchorEntity] = [:]
-    private var findableObjects: [String: FindableObject] = [:] // Track all findable objects
+    // MEMORY OPTIMIZATION: Consolidated tracking - findableObjects contains the anchor, so no need for separate placedBoxes dictionary
+    private var findableObjects: [String: FindableObject] = [:] // Track all findable objects (contains anchor reference)
     private var objectPlacementTimes: [String: Date] = [:] // Track when objects were placed (for grace period)
+
+    // BACKWARD COMPATIBILITY: Computed property for services that still reference placedBoxes
+    private var placedBoxes: [String: AnchorEntity] {
+        return findableObjects.mapValues { $0.anchor }
+    }
     // MARK: - NPC Types
     enum NPCType: String, CaseIterable {
         case skeleton = "skeleton"
@@ -302,31 +307,32 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         var currentlyVisible: Set<String> = []
         
         // Check visibility for each placed object (limited to prevent freeze)
-        for (locationId, anchor) in placedBoxes {
+        for (locationId, findable) in findableObjects {
+            let anchor = findable.anchor
             // PERFORMANCE: Limit checks per frame
             if checkedCount >= maxChecksPerFrame {
                 break
             }
             checkedCount += 1
-            
+
             // Skip if already found/collected
             if distanceTracker?.foundLootBoxes.contains(locationId) ?? false {
                 continue
             }
-            
+
             // Check if object is in viewport
             if isObjectInViewport(locationId: locationId, anchor: anchor) {
                 currentlyVisible.insert(locationId)
-                
+
                 // If object just entered viewport (wasn't visible before), play chime and log details
                 if !objectsInViewport.contains(locationId) {
                     playViewportChime(for: locationId)
-                    
+
                     // Get object details for logging (cached lookup to avoid expensive search)
                     let location = locationManager?.locations.first(where: { $0.id == locationId })
                     let objectName = location?.name ?? "Unknown"
                     let objectType = location?.type.displayName ?? "Unknown Type"
-                    
+
                     // Calculate distance if user location is available
                     var distanceInfo = ""
                     if let userLocation = userLocationManager?.currentLocation,
@@ -334,7 +340,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         let distance = userLocation.distance(from: location.location)
                         distanceInfo = String(format: " (%.1fm away)", distance)
                     }
-                    
+
                     // Get screen position for additional context
                     let anchorTransform = anchor.transformMatrix(relativeTo: nil)
                     let objectPosition = SIMD3<Float>(
@@ -494,24 +500,23 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     /// Handle when an object is collected by another user - remove it from AR scene
     private func handleObjectCollectedByOtherUser(objectId: String) {
         guard arView != nil else { return }
-        
+
         // Check if this object is currently placed in AR
-        guard let anchor = placedBoxes[objectId] else {
+        guard let anchor = findableObjects[objectId]?.anchor else {
             Swift.print("ℹ️ Object \(objectId) collected by another user but not currently in AR scene")
             return
         }
-        
+
         // Get object name for logging
         let location = locationManager?.locations.first(where: { $0.id == objectId })
         let objectName = location?.name ?? "Unknown"
-        
+
         Swift.print("🗑️ Removing object '\(objectName)' (ID: \(objectId)) from AR - collected by another user")
-        
+
         // Remove from AR scene
         anchor.removeFromParent()
-        
+
         // Remove from tracking dictionaries
-        placedBoxes.removeValue(forKey: objectId)
         findableObjects.removeValue(forKey: objectId)
         objectsInViewport.remove(objectId)
         
@@ -540,9 +545,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         tapHandler?.foundLootBoxes.remove(objectId)
         
         // Remove from AR scene if it's currently placed (so it can be re-placed)
-        if let anchor = placedBoxes[objectId] {
+        if let anchor = findableObjects[objectId]?.anchor {
             anchor.removeFromParent()
-            placedBoxes.removeValue(forKey: objectId)
             findableObjects.removeValue(forKey: objectId)
             objectsInViewport.remove(objectId)
             objectPlacementTimes.removeValue(forKey: objectId)
@@ -574,15 +578,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     func removeAllPlacedObjects() {
         guard arView != nil else { return }
         
-        Swift.print("🔄 Removing all \(placedBoxes.count) placed objects from AR scene...")
+        Swift.print("🔄 Removing all \(findableObjects.count) placed objects from AR scene...")
         
         // Remove all anchors from the scene
-        for (_, anchor) in placedBoxes {
-            anchor.removeFromParent()
+        for (_, findable) in findableObjects {
+            findable.anchor.removeFromParent()
         }
         
         // Clear tracking dictionaries
-        placedBoxes.removeAll()
+        // placedBoxes removed - using findableObjects instead
         findableObjects.removeAll()
         
         // Clear viewport visibility tracking
@@ -616,7 +620,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var groundingTimer: Timer?
 
     /// Track when we last checked grounding for each object (to avoid excessive raycasting)
-    private var lastGroundingCheck: [String: Date] = [:]
+    // MEMORY OPTIMIZATION: Removed unused lastGroundingCheck dictionary
 
     /// Starts periodic grounding checks to ensure objects stay on surfaces
     /// DISABLED: Periodic grounding causes objects to move when camera moves
@@ -626,6 +630,24 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Objects are placed at final positions and never modified
         // This ensures maximum stability and prevents objects from moving when camera moves
         Swift.print("⏸️ Periodic grounding DISABLED - objects stay fixed at placement position for maximum stability")
+    }
+
+    /// MEMORY OPTIMIZATION: Cleans up old placement times for objects that are no longer in the scene
+    /// This prevents the objectPlacementTimes dictionary from growing unbounded
+    private func cleanupOldPlacementTimes() {
+        let cutoffTime = Date().addingTimeInterval(-3600) // 1 hour ago
+        let beforeCount = objectPlacementTimes.count
+
+        // Remove placement times for objects that no longer exist or are older than 1 hour
+        objectPlacementTimes = objectPlacementTimes.filter { (id, placementTime) in
+            // Keep if object still exists in findableObjects AND placement was recent
+            return findableObjects[id] != nil && placementTime > cutoffTime
+        }
+
+        let removedCount = beforeCount - objectPlacementTimes.count
+        if removedCount > 0 {
+            Swift.print("🧹 [Memory] Cleaned up \(removedCount) old placement time entries (\(objectPlacementTimes.count) remaining)")
+        }
     }
 
     /// Stops periodic grounding checks
@@ -707,7 +729,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
 
-        for (_, anchor) in placedBoxes {
+        for (_, findable) in findableObjects {
+            let anchor = findable.anchor
             // Get anchor's current position
             let anchorTransform = anchor.transformMatrix(relativeTo: nil)
             let currentX = anchorTransform.columns.3.x
@@ -736,18 +759,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
             
             // Remove all loot boxes/findables from AR scene in story modes
-            let findablesToRemove = placedBoxes.keys.filter { locationId in
+            let findablesToRemove = findableObjects.keys.filter { locationId in
                 // Keep NPCs (they're tracked in placedNPCs, not placedBoxes)
                 // But remove all findable objects (turkey, chests, etc.)
                 return !(placedNPCs.keys.contains(locationId))
             }
             
             for locationId in findablesToRemove {
-                if let anchor = placedBoxes[locationId] {
+                if let findable = findableObjects[locationId] {
                     let locationName = locationManager?.locations.first(where: { $0.id == locationId })?.name ?? locationId
                     Swift.print("🗑️ Removing findable '\(locationName)' (ID: \(locationId)) from story mode - only NPCs allowed")
-                    anchor.removeFromParent()
-                    placedBoxes.removeValue(forKey: locationId)
+                    findable.anchor.removeFromParent()
                     findableObjects.removeValue(forKey: locationId)
                     objectsInViewport.remove(locationId)
                     objectPlacementTimes.removeValue(forKey: locationId)
@@ -773,7 +795,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
-        Swift.print("🔍 checkAndPlaceBoxes called: \(nearbyLocations.count) nearby, \(placedBoxes.count) already placed")
+        // MEMORY OPTIMIZATION: Periodically clean up old placement times
+        cleanupOldPlacementTimes()
+
+        Swift.print("🔍 checkAndPlaceBoxes called: \(nearbyLocations.count) nearby, \(findableObjects.count) already placed")
         Swift.print("   AR origin set: \(arOriginLocation != nil), Degraded mode: \(isDegradedMode)")
         Swift.print("   Total locations in manager: \(locationManager?.locations.count ?? 0)")
         Swift.print("   Max search distance: \(locationManager?.maxSearchDistance ?? 0)m")
@@ -786,7 +811,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         // Log details about each nearby location
         for (index, loc) in nearbyLocations.enumerated() {
-            let alreadyPlaced = placedBoxes[loc.id] != nil
+            let alreadyPlaced = findableObjects[loc.id] != nil
             Swift.print("   📍 Nearby[\(index)]: '\(loc.name)' (type: \(loc.type.displayName), source: \(loc.source), collected: \(loc.collected), alreadyPlaced: \(alreadyPlaced))")
             if loc.latitude != 0 || loc.longitude != 0 {
                 Swift.print("      GPS: (\(String(format: "%.6f", loc.latitude)), \(String(format: "%.6f", loc.longitude)))")
@@ -904,9 +929,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         // Remove the unselected objects from the scene (but never manually placed ones)
         for locationId in objectsToRemove {
-            if let anchor = placedBoxes[locationId] {
-                anchor.removeFromParent()
-                placedBoxes.removeValue(forKey: locationId)
+            if let findable = findableObjects[locationId] {
+                findable.anchor.removeFromParent()
                 findableObjects.removeValue(forKey: locationId)
                 objectsInViewport.remove(locationId)
                 objectPlacementTimes.removeValue(forKey: locationId) // Clean up placement time
@@ -922,7 +946,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             !loc.collected &&
             !(distanceTracker?.foundLootBoxes.contains(loc.id) ?? false) &&
             !(tapHandler?.foundLootBoxes.contains(loc.id) ?? false) &&
-            placedBoxes[loc.id] == nil &&
+            findableObjects[loc.id] == nil &&
             !(loc.latitude == 0 && loc.longitude == 0) &&
             !((loc.source == .arManual || loc.source == .arRandomized) && 
               (loc.ar_offset_x == nil || loc.ar_offset_y == nil || loc.ar_offset_z == nil))
@@ -931,12 +955,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("📊 Placement analysis:")
         Swift.print("   Total nearby: \(nearbyLocations.count)")
         Swift.print("   Unfound & placeable: \(unfoundLocations.count)")
-        Swift.print("   Already placed: \(placedBoxes.count)")
+        Swift.print("   Already placed: \(findableObjects.count)")
         Swift.print("   Max limit: \(maxObjects)")
-        Swift.print("   Can place: \(maxObjects - placedBoxes.count) more")
+        Swift.print("   Can place: \(maxObjects - findableObjects.count) more")
         
-        if placedBoxes.count >= maxObjects {
-            Swift.print("⏭️ Max object limit reached: \(placedBoxes.count)/\(maxObjects) objects already placed")
+        if findableObjects.count >= maxObjects {
+            Swift.print("⏭️ Max object limit reached: \(findableObjects.count)/\(maxObjects) objects already placed")
             Swift.print("   💡 Increase max object limit in settings or remove some objects to place more")
             if unfoundLocations.count > 0 {
                 Swift.print("   ⚠️ \(unfoundLocations.count) unfound object(s) waiting to be placed: \(unfoundLocations.map { $0.name }.joined(separator: ", "))")
@@ -949,14 +973,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         for location in nearbyLocations {
             // Stop if we've reached the limit
-            guard placedBoxes.count < maxObjects else {
+            guard findableObjects.count < maxObjects else {
                 break
             }
 
             // Skip locations that are already placed (double-check to prevent duplicates)
             // CRITICAL: Never re-place objects that are already placed - they should stay fixed
             // This is especially important for manually placed objects with AR coordinates
-            if placedBoxes[location.id] != nil {
+            if findableObjects[location.id] != nil {
                 continue
             }
 
@@ -1003,7 +1027,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 var offsetApplied = false
                 
                 // First check against already-placed objects
-                for (existingId, _) in placedBoxes {
+                for (existingId, _) in findableObjects {
                     // Find the location for this existing object
                     if let existingLocation = nearbyLocations.first(where: { $0.id == existingId }) {
                         // Check if GPS coordinates are very close (within 1 meter)
@@ -1045,7 +1069,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 if !offsetApplied {
                     for otherLocation in nearbyLocations {
                         // Skip self and already-placed objects (we checked those above)
-                        if otherLocation.id == location.id || placedBoxes[otherLocation.id] != nil {
+                        if otherLocation.id == location.id || findableObjects[otherLocation.id] != nil {
                             continue
                         }
 
@@ -1112,8 +1136,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
         Swift.print("⏱️ [PERF] checkAndPlaceBoxes took \(String(format: "%.1f", elapsed))ms for \(nearbyLocations.count) nearby locations")
-        Swift.print("📊 Final status: \(placedBoxes.count) objects placed in AR scene")
-        Swift.print("   Objects in AR: \(placedBoxes.keys.sorted())")
+        Swift.print("📊 Final status: \(findableObjects.count) objects placed in AR scene")
+        Swift.print("   Objects in AR: \(findableObjects.keys.sorted())")
     }
 
 
@@ -1132,12 +1156,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         sphereModeActive = true
         hasAutoRandomized = true // Mark as having randomized (whether auto or manual)
 
-        print("🗑️ Removing \(placedBoxes.count) existing spheres...")
+        print("🗑️ Removing \(findableObjects.count) existing spheres...")
         // Remove all existing placed boxes
-        for (_, anchor) in placedBoxes {
-            anchor.removeFromParent()
+        for (_, findable) in findableObjects {
+            findable.anchor.removeFromParent()
         }
-        placedBoxes.removeAll()
         findableObjects.removeAll() // Also clear findable objects
 
         // Also remove old randomly-generated AR item locations from locationManager to reset the counter
@@ -1575,7 +1598,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         //
         //             // Apply correction to all placed objects (smooth, not teleport)
         //             // Note: In practice, you might want to animate this over time
-        //             for (_, anchor) in placedBoxes {
+        //             for (_, findable) in findableObjects {
         //                 let currentTransform = anchor.transformMatrix(relativeTo: nil)
         //                 let currentPos = SIMD3<Float>(
         //                     currentTransform.columns.3.x,
@@ -1586,7 +1609,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         //                 anchor.transform.translation = correctedPos
         //             }
         //
-        //             Swift.print("✅ Applied smooth correction to \(placedBoxes.count) object(s)")
+        //             Swift.print("✅ Applied smooth correction to \(findableObjects.count) object(s)")
         //         }
         //     }
         // }
@@ -1630,7 +1653,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 // DEBUG: Log what we found (on background thread to avoid blocking)
                 if Date().timeIntervalSince(self.lastNearbyLogTime) > 3.0 {
                     self.lastNearbyLogTime = Date()
-                    let placedCount = self.stateQueue.sync { self.placedBoxes.count }
+                    let placedCount = self.stateQueue.sync { self.findableObjects.count }
                     let hasOrigin = self.arOriginLocation != nil
                     Swift.print("📱 AR Update: Found \(nearby.count) nearby locations, \(placedCount) placed, AR origin: \(hasOrigin)")
                     if !nearby.isEmpty && placedCount == 0 {
@@ -1814,7 +1837,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         
         // Clean up tap handler's findableObjects - remove any that are no longer placed
-        let placedIds = Set(placedBoxes.keys)
+        let placedIds = Set(findableObjects.keys)
         let tapHandlerIds = Set(tapHandler.findableObjects.keys)
         let orphanedIds = tapHandlerIds.subtracting(placedIds)
         
@@ -1866,22 +1889,21 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // Remove collected objects from AR scene
         for locationId in objectsToRemove {
-            if let anchor = placedBoxes[locationId] {
-                anchor.removeFromParent()
-                placedBoxes.removeValue(forKey: locationId)
+            if let findable = findableObjects[locationId] {
+                findable.anchor.removeFromParent()
                 findableObjects.removeValue(forKey: locationId)
                 objectsInViewport.remove(locationId)
                 objectPlacementTimes.removeValue(forKey: locationId)
-                
+
                 // Also remove from distance tracker if applicable
                 if let textEntity = distanceTracker?.distanceTextEntities[locationId] {
                     textEntity.removeFromParent()
                     distanceTracker?.distanceTextEntities.removeValue(forKey: locationId)
                 }
-                
+
                 // Also remove from distance tracker's foundLootBoxes if it's there
                 distanceTracker?.foundLootBoxes.remove(locationId)
-                
+
                 Swift.print("   ✅ Object removed from AR scene")
             }
         }
@@ -2128,7 +2150,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     func sessionInterruptionEnded(_ session: ARSession) {
         Swift.print("✅ [AR Session] AR Session interruption ended")
-        Swift.print("   Placed objects: \(placedBoxes.count) anchors in placedBoxes dictionary")
+        Swift.print("   Placed objects: \(findableObjects.count) anchors in placedBoxes dictionary")
 
         // CRITICAL: AR session interruption (e.g., from ARPlacementView dismissing) removes all anchors
         // Even though we don't call session.run(), the anchors are gone from the scene
@@ -2160,8 +2182,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             if !anchorsRemoved.isEmpty {
                 Swift.print("🔄 Re-placing \(anchorsRemoved.count) objects that were removed by session interruption")
 
-                // Clear placedBoxes to allow re-placement
-                self.placedBoxes.removeAll()
+                // Clear placedBoxes to allow re-placement (placedBoxes removed - using findableObjects instead)
                 self.findableObjects.removeAll()
 
                 // Get nearby locations and re-place them
@@ -2179,7 +2200,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("🎯 placeLootBoxAtLocation called for: \(location.name) (type: \(location.type.displayName))")
 
         // CRITICAL: Check if already placed to prevent infinite loops
-        if placedBoxes[location.id] != nil {
+        if findableObjects[location.id] != nil {
             Swift.print("   ⏭️ Already placed, skipping")
             return // Already placed, skip silently
         }
@@ -2275,7 +2296,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 Task {
                     try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
                     await MainActor.run {
-                        if let anchor = placedBoxes[location.id] {
+                        if let findable = findableObjects[location.id] {
+                            let anchor = findable.anchor
                             let currentPos = anchor.position
                             let isStillInScene = anchor.parent != nil
                             Swift.print("📍 [Placement] Object '\(location.name)' location after 1 second:")
@@ -2591,7 +2613,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     // Place an AR sphere at a GPS location (for map-added spheres)
     private func placeARSphereAtLocation(_ location: LootBoxLocation, in arView: ARView) {
         // CRITICAL: Check if already placed to prevent infinite loops
-        if placedBoxes[location.id] != nil {
+        if findableObjects[location.id] != nil {
             return // Already placed, skip silently
         }
 
@@ -2672,11 +2694,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 
                 anchor.addChild(sphere)
                 arView.scene.addAnchor(anchor)
-                placedBoxes[location.id] = anchor
                 objectPlacementTimes[location.id] = Date() // Record placement time for grace period
-                
+
                 environmentManager?.applyUniformLuminanceToNewEntity(anchor)
-                
+
                 // If enabled, attach a hidden real object that will be revealed from the generic icon
                 let useGenericIcons = locationManager?.useGenericDoubloonIcons ?? false
                 let isContainerType = location.type != .sphere && location.type != .cube
@@ -2693,7 +2714,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 } else {
                     containerForReveal = nil
                 }
-                
+
                 findableObjects[location.id] = FindableObject(
                     locationId: location.id,
                     anchor: anchor,
@@ -2772,9 +2793,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             sphere.components.set(light)
             anchor.addChild(sphere)
             arView.scene.addAnchor(anchor)
-            placedBoxes[location.id] = anchor
             environmentManager?.applyUniformLuminanceToNewEntity(anchor)
-            
+
             // If enabled, attach a hidden real object that will be revealed from the generic icon
             let useGenericIcons = locationManager?.useGenericDoubloonIcons ?? false
             let isContainerType = location.type != .sphere && location.type != .cube
@@ -2874,7 +2894,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         anchor.addChild(sphere)
 
         arView.scene.addAnchor(anchor)
-        placedBoxes[location.id] = anchor
 
         // Apply uniform luminance if ambient light is disabled
         environmentManager?.applyUniformLuminanceToNewEntity(anchor)
@@ -2925,7 +2944,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     // Helper method to place a randomly selected object at a specific position
     private func placeBoxAtPosition(_ boxPosition: SIMD3<Float>, location: LootBoxLocation, in arView: ARView) {
         // Prevent duplicate placements
-        if placedBoxes[location.id] != nil {
+        if findableObjects[location.id] != nil {
             Swift.print("⚠️ Object with ID \(location.id) already placed - skipping duplicate placement")
             return
         }
@@ -3091,7 +3110,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // Store the anchor and findable object
         arView.scene.addAnchor(anchor)
-        placedBoxes[location.id] = anchor
         objectPlacementTimes[location.id] = Date() // Record placement time for grace period
 
         Swift.print("✅✅✅ ANCHOR ADDED TO SCENE! ✅✅✅")
@@ -3100,7 +3118,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("   Entity isEnabled: \(placedEntity.isEnabled)")
         Swift.print("   Entity isActive: \(placedEntity.isActive)")
         Swift.print("   Total anchors in scene: \(arView.scene.anchors.count)")
-        Swift.print("   Total placed boxes tracked: \(placedBoxes.count)")
+        Swift.print("   Total findable objects tracked: \(findableObjects.count)")
 
         // Apply uniform luminance if ambient light is disabled
         environmentManager?.applyUniformLuminanceToNewEntity(anchor)
@@ -4070,13 +4088,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 }
 
                 // Cleanup after find completes
-                if self.placedBoxes[locationId] != nil {
-                    self.placedBoxes.removeValue(forKey: locationId)
+                if self.findableObjects[locationId] != nil {
                     self.findableObjects.removeValue(forKey: locationId)
                     self.objectsInViewport.remove(locationId) // Also remove from viewport tracking
-                    Swift.print("   ✅ Removed from placedBoxes (\(self.placedBoxes.count) remaining)")
+                    Swift.print("   ✅ Removed from findableObjects (\(self.findableObjects.count) remaining)")
                 } else {
-                    Swift.print("   ℹ️ Already removed from placedBoxes")
+                    Swift.print("   ℹ️ Already removed from findableObjects")
                 }
                 
                 // Also remove from distance tracker if applicable
@@ -4103,7 +4120,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Check if all randomized AR items are found and disable sphere mode
             if let self = self, self.sphereModeActive {
                 // Check for remaining temporary AR items
-                let remainingItems = self.placedBoxes.keys.filter { locationId in
+                let remainingItems = self.findableObjects.keys.filter { locationId in
                     if let location = self.locationManager?.locations.first(where: { $0.id == locationId }) {
                         return location.isTemporary && location.isAROnly
                     }
@@ -4132,7 +4149,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
         
         Swift.print("👆 Tap detected at screen: (\(tapLocation.x), \(tapLocation.y))")
-        Swift.print("   Placed boxes count: \(placedBoxes.count), keys: \(placedBoxes.keys.sorted())")
+        Swift.print("   Placed boxes count: \(findableObjects.count), keys: \(findableObjects.keys.sorted())")
         
         // Get tap world position using raycast
         var tapWorldPosition: SIMD3<Float>? = nil
@@ -4170,7 +4187,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 
                 // Check if this ID matches a placed box (but NOT an NPC)
                 // Double-check it's not an NPC to prevent accidental matching
-                if placedBoxes[idString] != nil && placedNPCs[idString] == nil {
+                if findableObjects[idString] != nil && placedNPCs[idString] == nil {
                     locationId = idString
                     Swift.print("🎯 Found matching placed box ID: \(idString)")
                     break
@@ -4307,7 +4324,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 locationId = closestId
                 Swift.print("🎯 Detected tap on box via screen projection: \(closestId), screen distance: \(String(format: "%.1f", closestScreenDistance))px")
             } else {
-                Swift.print("⚠️ Tap did not hit any box. Tap world pos: \(tapWorldPosition != nil ? "yes" : "no"), boxes checked: \(placedBoxes.count)")
+                Swift.print("⚠️ Tap did not hit any box. Tap world pos: \(tapWorldPosition != nil ? "yes" : "no"), boxes checked: \(findableObjects.count)")
                 // Debug: show where boxes are projected
                 for (boxId, anchor) in placedBoxes {
                     let anchorTransform = anchor.transformMatrix(relativeTo: nil)
@@ -4354,16 +4371,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 return
             }
             
-            // Get the anchor for this object
-            guard let anchor = placedBoxes[idString] else {
+            // Get the findable object
+            guard let findable = findableObjects[idString] else {
                 Swift.print("⚠️ Anchor not found for \(idString)")
                 return
             }
-            
+            let anchor = findable.anchor
+
             // Get camera position
             let cameraTransform = frame.camera.transform
             let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-            
+
             // Find the sphere entity if it exists (for objects with spheres)
             var sphereEntity: ModelEntity? = nil
             for child in anchor.children {
@@ -4373,7 +4391,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     break
                 }
             }
-            
+
             // Use unified findLootBox for ALL objects (spheres, chalices, treasure boxes, etc.)
             // This handles: sound, confetti, animation, increment count, and removal
             Swift.print("🎯 Finding object: \(idString) (type: sphere=\(sphereEntity != nil), has findableObject=\(findableObjects[idString] != nil))")
@@ -4383,7 +4401,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         // If no location-based system or not at a location, allow manual placement
         // Place a test loot box where user taps (for testing without locations)
-        if placedBoxes.count >= 3 {
+        if findableObjects.count >= 3 {
             return
         }
 
@@ -4442,7 +4460,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         // Limit to maximum objects (configurable in settings, default 6)
         let maxObjects = locationManager.maxObjectLimit
-        guard placedBoxes.count < maxObjects else {
+        guard findableObjects.count < maxObjects else {
             return
         }
 
@@ -4524,9 +4542,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         anchor.addChild(sphere)
 
         arView.scene.addAnchor(anchor)
-        placedBoxes[newLocation.id] = anchor
         objectPlacementTimes[newLocation.id] = Date() // Record placement time for grace period
-        
+
         // Apply uniform luminance if ambient light is disabled
         environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
@@ -4575,7 +4592,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
 
         // CRITICAL: Check if this item is already placed to prevent duplicates
-        if placedBoxes[item.id] != nil {
+        if findableObjects[item.id] != nil {
             Swift.print("⚠️ Item \(item.name) (ID: \(item.id)) already placed - skipping duplicate placement")
             return
         }
@@ -4590,7 +4607,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         // Limit to maximum objects (configurable in settings, default 6)
         let maxObjects = locationManager?.maxObjectLimit ?? 6
-        guard placedBoxes.count < maxObjects else {
+        guard findableObjects.count < maxObjects else {
             return
         }
 
@@ -4714,8 +4731,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         anchor.addChild(sphere)
 
         arView.scene.addAnchor(anchor)
-        placedBoxes[item.id] = anchor
-        
+
         // Apply uniform luminance if ambient light is disabled
         environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
@@ -4770,8 +4786,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         anchor.addChild(boxEntity)
 
         arView.scene.addAnchor(anchor)
-        placedBoxes[item.id] = anchor
-        
+
         // Apply uniform luminance if ambient light is disabled
         environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
@@ -4859,19 +4874,95 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     /// Handles notification from ARPlacementView when an object is saved
     /// This triggers immediate placement so the object appears right after placement view dismisses
     @objc private func handleARPlacementObjectSaved(_ notification: Notification) {
-        guard arView != nil,
+        guard let arView = arView,
               let userLocation = userLocationManager?.currentLocation,
-              let nearbyLocations = nearbyLocationsBinding?.wrappedValue else {
-            Swift.print("⚠️ [Placement Notification] Cannot place object: Missing AR view, location, or nearbyLocations")
+              let locationManager = locationManager else {
+            Swift.print("⚠️ [Placement Notification] Cannot place object: Missing AR view, location, or locationManager")
             return
         }
         
         Swift.print("🔔 [Placement Notification] Received object saved notification - triggering immediate placement")
-        Swift.print("   Nearby locations: \(nearbyLocations.count)")
         
-        // Force immediate placement check (bypass throttling)
-        // This ensures the newly placed object appears immediately
-        checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
+        // CRITICAL FIX: Refresh nearbyLocations from locationManager to ensure newly placed object is included
+        // The object was just saved to API and loaded into locationManager.locations, but nearbyLocations
+        // binding might not have been updated yet. Force a refresh before placement check.
+        let refreshedNearbyLocations = locationManager.getNearbyLocations(userLocation: userLocation)
+        
+        // Update the binding so UI reflects the new object
+        if let binding = nearbyLocationsBinding {
+            binding.wrappedValue = refreshedNearbyLocations
+        }
+        
+        Swift.print("   Refreshed nearby locations: \(refreshedNearbyLocations.count) (was: \(nearbyLocationsBinding?.wrappedValue.count ?? 0))")
+        
+        // CRITICAL FIX: Also try to directly place any objects that were just placed via ARPlacementView
+        // These objects have AR coordinates stored in UserDefaults and should be placed immediately
+        // even if they're not in nearbyLocations yet (e.g., if they're outside the search radius)
+        for location in locationManager.locations {
+            // Check if this object was just placed (has AR coordinates in UserDefaults)
+            let arPositionKey = "ARPlacementPosition_\(location.id)"
+            if let arPositionDict = UserDefaults.standard.dictionary(forKey: arPositionKey) as? [String: Float],
+               let arX = arPositionDict["x"],
+               let arY = arPositionDict["y"],
+               let arZ = arPositionDict["z"],
+               findableObjects[location.id] == nil, // Not already placed
+               !location.collected { // Not collected
+                
+                Swift.print("   🎯 Found newly placed object '\(location.name)' with AR coordinates - placing directly")
+                
+                // Check if object has AR offset coordinates from API (preferred)
+                if let offsetX = location.ar_offset_x,
+                   let offsetY = location.ar_offset_y,
+                   let offsetZ = location.ar_offset_z,
+                   let _ = location.ar_origin_latitude,
+                   let _ = location.ar_origin_longitude {
+                    // Use AR coordinates from API
+                    let arPosition = SIMD3<Float>(Float(offsetX), Float(offsetY), Float(offsetZ))
+                    Swift.print("   📍 Using AR coordinates from API: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))")
+                    
+                    // Place directly using AR coordinates
+                    if location.type == .sphere {
+                        placeARSphereAtLocation(location, in: arView)
+                    } else {
+                        placeLootBoxAtLocation(location, in: arView)
+                    }
+                } else {
+                    // Fallback: Use UserDefaults AR coordinates
+                    let arPosition = SIMD3<Float>(arX, arY, arZ)
+                    Swift.print("   📍 Using AR coordinates from UserDefaults: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))")
+                    
+                    // Create a temporary location with AR coordinates for placement
+                    var locationWithAR = location
+                    // Try to get AR origin from UserDefaults
+                    if let originLat = arPositionDict["origin_lat"],
+                       let originLon = arPositionDict["origin_lon"],
+                       originLat != 0, originLon != 0 {
+                        locationWithAR.ar_origin_latitude = Double(originLat)
+                        locationWithAR.ar_origin_longitude = Double(originLon)
+                        locationWithAR.ar_offset_x = Double(arX)
+                        locationWithAR.ar_offset_y = Double(arY)
+                        locationWithAR.ar_offset_z = Double(arZ)
+                    }
+                    
+                    // Place directly using AR coordinates
+                    if locationWithAR.type == .sphere {
+                        placeARSphereAtLocation(locationWithAR, in: arView)
+                    } else {
+                        placeLootBoxAtLocation(locationWithAR, in: arView)
+                    }
+                }
+            }
+        }
+        
+        // Also run the normal placement check to catch any other objects
+        // Temporarily bypass throttling for this critical placement
+        let savedLastCall = lastCheckAndPlaceBoxesCall
+        lastCheckAndPlaceBoxesCall = Date().addingTimeInterval(-minPlacementCheckInterval - 1) // Force bypass
+        
+        checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: refreshedNearbyLocations)
+        
+        // Restore throttling state
+        lastCheckAndPlaceBoxesCall = savedLastCall
     }
     
     /// Handle dialog opened notification - pause AR session
@@ -4945,11 +5036,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("🗑️ Clearing all AR objects due to game mode change...")
         
         // Remove all placed loot boxes
-        let lootBoxCount = placedBoxes.count
-        for (_, anchor) in placedBoxes {
-            anchor.removeFromParent()
+        let lootBoxCount = findableObjects.count
+        for (_, findable) in findableObjects {
+            findable.anchor.removeFromParent()
         }
-        placedBoxes.removeAll()
+        // placedBoxes removed - using findableObjects instead
         findableObjects.removeAll()
         objectPlacementTimes.removeAll()
         

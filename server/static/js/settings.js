@@ -554,6 +554,47 @@ const SettingsManager = {
         }
         
         try {
+            // CRITICAL: First update the provider/model based on current UI selections
+            // This ensures we test with the provider/model the user selected, not what was previously configured
+            const providerDropdown = document.getElementById('llmProvider');
+            const modelDropdown = document.getElementById('llmModel');
+            
+            if (providerDropdown && modelDropdown) {
+                const provider = providerDropdown.value;
+                let model = modelDropdown.value;
+                
+                // If no model selected, use provider-specific default
+                if (!model) {
+                    model = provider === 'ollama' ? 'llama3:8b' : 'gpt-4o-mini';
+                }
+                
+                console.log(`🧪 [Test] Updating provider to ${provider}, model to ${model} before testing...`);
+                
+                // Update provider/model on server first
+                try {
+                    const updateResponse = await fetch(`${Config.API_BASE}/api/llm/provider`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ provider: provider, model: model })
+                    });
+                    
+                    if (updateResponse.ok) {
+                        const updateData = await updateResponse.json();
+                        console.log(`✅ [Test] Provider updated to: ${updateData.provider}, model: ${updateData.model}`);
+                    } else {
+                        const error = await updateResponse.json();
+                        console.warn(`⚠️ [Test] Failed to update provider before test: ${error.error || 'Unknown error'}`);
+                        // Continue with test anyway - might work if provider was already set correctly
+                    }
+                } catch (updateError) {
+                    console.warn(`⚠️ [Test] Error updating provider before test: ${updateError.message}`);
+                    // Continue with test anyway
+                }
+            }
+            
+            // Now test the connection
             const response = await fetch(`${Config.API_BASE}/api/llm/test`);
             const data = await response.json();
             

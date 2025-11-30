@@ -19,18 +19,9 @@ const ObjectsManager = {
             this.markers = {};
             this.markerData = {};
 
-            // Get current game mode
-            const gameMode = SettingsManager?.gameMode || 'open';
-
-            // STORY MODE: Filter out API/map sourced loot, only show NPCs and story-relevant items
-            let filteredObjects = objects;
-            if (gameMode === 'dead_mens_secrets') {
-                // In story mode, only show NPCs (objects with id starting with 'npc_')
-                filteredObjects = objects.filter(obj => {
-                    return obj.id && obj.id.startsWith('npc_');
-                });
-                console.log(`📖 Story Mode: Filtered ${objects.length} objects to ${filteredObjects.length} NPCs`);
-            }
+            // ADMIN PANEL: Always show all objects regardless of game mode
+            // (Story mode filtering only applies to iOS app, not admin panel)
+            const filteredObjects = objects;
 
             // Get current zoom level
             const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;

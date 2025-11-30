@@ -405,7 +405,8 @@ class APIService {
         
         do {
             // Use proper HealthResponse struct for better type safety
-            let healthResponse: HealthResponse = try await makeRequest(url: url)
+            // Use longer timeout for health checks (15 seconds) to handle slow networks
+            let healthResponse: HealthResponse = try await makeRequest(url: url, timeout: 15.0)
             print("✅ [API Health Check] Successfully connected to \(healthURL)")
             print("   Server status: \(healthResponse.status)")
             print("   Server IP: \(healthResponse.server_ip)")
@@ -503,7 +504,8 @@ class APIService {
             }
             
             do {
-                let healthResponse: HealthResponse = try await makeRequest(url: url)
+                // Use longer timeout for health checks (15 seconds) to handle slow networks
+                let healthResponse: HealthResponse = try await makeRequest(url: url, timeout: 15.0)
                 print("✅ [Server Discovery] Successfully connected to discovered server")
                 print("   Server status: \(healthResponse.status)")
                 print("   Server IP: \(healthResponse.server_ip)")

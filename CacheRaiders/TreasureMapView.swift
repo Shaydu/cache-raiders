@@ -26,6 +26,9 @@ enum LandmarkType {
     case building
     case mountain
     case path
+    case park
+    case bridge
+    case placeOfWorship
     
     var iconName: String {
         switch self {
@@ -34,6 +37,9 @@ enum LandmarkType {
         case .building: return "building.2.fill"
         case .mountain: return "mountain.2.fill"
         case .path: return "map.fill"
+        case .park: return "leaf.fill"
+        case .bridge: return "arrow.left.arrow.right"
+        case .placeOfWorship: return "building.columns.fill"
         }
     }
     
@@ -44,6 +50,9 @@ enum LandmarkType {
         case .building: return .brown
         case .mountain: return .gray
         case .path: return .orange
+        case .park: return .green
+        case .bridge: return .cyan
+        case .placeOfWorship: return .purple
         }
     }
 }
@@ -238,7 +247,14 @@ struct TreasureMapView: View {
                             LegendItem(icon: "drop.fill", color: .blue, label: "Water")
                             LegendItem(icon: "tree.fill", color: .green, label: "Tree")
                             LegendItem(icon: "building.2.fill", color: .brown, label: "Building")
+                            LegendItem(icon: "map.fill", color: .orange, label: "Road")
+                        }
+                        
+                        HStack(spacing: 16) {
                             LegendItem(icon: "mountain.2.fill", color: .gray, label: "Mountain")
+                            LegendItem(icon: "leaf.fill", color: .green, label: "Park")
+                            LegendItem(icon: "arrow.left.arrow.right", color: .cyan, label: "Bridge")
+                            LegendItem(icon: "building.columns.fill", color: .purple, label: "Place of Worship")
                         }
                         
                         HStack(spacing: 16) {
@@ -364,6 +380,9 @@ func convertOSMFeaturesToLandmarks(features: [(name: String, type: String, latit
         case "building": landmarkType = .building
         case "mountain": landmarkType = .mountain
         case "path": landmarkType = .path
+        case "park": landmarkType = .park
+        case "bridge": landmarkType = .bridge
+        case "place_of_worship": landmarkType = .placeOfWorship
         default: landmarkType = .building
         }
         
