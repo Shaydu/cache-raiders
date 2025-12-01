@@ -127,12 +127,22 @@ class LLMService:
         # (http://ollama:11434). When running locally, use localhost (http://localhost:11434).
         # The iOS app does NOT connect directly to Ollama - it goes through the Python API server.
         # Check if we're in Docker first, then use environment variable, then default
+        
+        # === DEBUG: Log all relevant env vars at init ===
+        print(f"🔍 [INIT DEBUG] ========== LLM SERVICE INIT ==========")
+        print(f"🔍 [INIT DEBUG] DOCKER_CONTAINER env: '{os.getenv('DOCKER_CONTAINER')}'")
+        print(f"🔍 [INIT DEBUG] LLM_BASE_URL env: '{os.getenv('LLM_BASE_URL')}'")
+        print(f"🔍 [INIT DEBUG] LLM_PROVIDER env: '{os.getenv('LLM_PROVIDER')}'")
+        print(f"🔍 [INIT DEBUG] LLM_MODEL env: '{os.getenv('LLM_MODEL')}'")
+        
         if os.getenv("DOCKER_CONTAINER"):
             # In Docker, default to container service name
             self.ollama_base_url = os.getenv("LLM_BASE_URL", "http://ollama:11434")
+            print(f"🔍 [INIT DEBUG] Running in Docker, ollama_base_url set to: {self.ollama_base_url}")
         else:
             # Running locally, default to localhost
             self.ollama_base_url = os.getenv("LLM_BASE_URL", "http://localhost:11434")
+            print(f"🔍 [INIT DEBUG] Running locally, ollama_base_url set to: {self.ollama_base_url}")
         
         # Store original API key from environment
         self._original_api_key = os.getenv("OPENAI_API_KEY")
@@ -243,7 +253,8 @@ class LLMService:
         return {
             "provider": provider,
             "model": self.model,
-            "api_key_configured": bool(self.api_key) if provider not in ["ollama", "local"] else None,
+            # Check if client is initialized (more reliable than checking api_key since OpenAI SDK can pick up key from env)
+            "api_key_configured": self.client is not None if provider not in ["ollama", "local"] else None,
             "client_initialized": self.client is not None if provider not in ["ollama", "local"] else None,
             "ollama_base_url": self.ollama_base_url if provider in ["ollama", "local"] else None
         }
@@ -295,11 +306,21 @@ class LLMService:
         # Use provided max_tokens or default
         tokens = max_tokens if max_tokens is not None else self.max_tokens
         
+        # === DEBUG LOGGING START ===
+        print(f"🔍 [DEBUG] ========== OLLAMA CALL DEBUG ==========")
+        print(f"🔍 [DEBUG] DOCKER_CONTAINER env: {os.getenv('DOCKER_CONTAINER')}")
+        print(f"🔍 [DEBUG] LLM_BASE_URL env: {os.getenv('LLM_BASE_URL')}")
+        print(f"🔍 [DEBUG] self.ollama_base_url: {self.ollama_base_url}")
+        print(f"🔍 [DEBUG] self.model: {self.model}")
+        print(f"🔍 [DEBUG] self.provider: {self.provider}")
+        # === DEBUG LOGGING END ===
+        
         # Log which model is being used
         print(f"🤖 [LLM Service] Calling Ollama with model: {self.model}")
         
         # Ollama API endpoint
         url = f"{self.ollama_base_url}/api/chat"
+        print(f"🔍 [DEBUG] Full URL being called: {url}")
         
         # Convert messages to Ollama format
         if messages:
@@ -1666,12 +1687,12 @@ Keep it SHORT - 1-2 lines only. Riddle:"""
                 "error": str(e)
             }
     
-    def test_connection(self) -> Dict:
+    def test_connection(self, custom_prompt: str = None) -> Dict:
         """Test if LLM service is working."""
         # CRITICAL: Log current state before test
         print(f"🧪 [LLM Service] test_connection called - Current provider: {self.provider}, model: {self.model}")
         
-        test_prompt = "Say 'Ahoy!' in pirate speak."  # Shorter prompt
+        test_prompt = custom_prompt if custom_prompt else "Say 'Ahoy!' in pirate speak."  # Use custom or default prompt
         try:
             import time
             start_time = time.time()

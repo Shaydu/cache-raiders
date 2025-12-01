@@ -411,7 +411,7 @@ def health():
     # Log connection attempts for debugging
     print(f"🏥 Health check from {request.remote_addr} (Host: {request.host})")
     try:
-        server_ip = get_local_ip_dynamic()
+        server_ip = get_local_ip()
     except:
         server_ip = 'unknown'
     return jsonify({
@@ -1748,24 +1748,12 @@ def get_server_info():
     print(f"📡 Server info requested from {request.remote_addr} (Host: {request.host})")
     
     port = int(os.environ.get('PORT', 5001))
-    # Use dynamic IP detection to match QR code endpoint behavior
-    # Pass request context to help detect IP in Docker scenarios
-    # This ensures the displayed IP updates when network changes
-    local_ip = get_local_ip_dynamic(request_context=request)
+    # Use get_local_ip() which checks HOST_IP env var first for consistency
+    # This ensures QR code and server-info always show the same IP
+    local_ip = get_local_ip()
     
     # Get the host from the request to determine what URL was used
     host = request.host.split(':')[0] if ':' in request.host else request.host
-    
-    # If we got a Docker container IP, try to use the request's host if it's not localhost
-    if local_ip.startswith('172.') or (local_ip.startswith('10.') and local_ip != '127.0.0.1'):
-        # If accessed via a non-localhost address, use that
-        if host not in ['localhost', '127.0.0.1', '0.0.0.0']:
-            # Try to extract IP from host if it's an IP address
-            try:
-                socket.inet_aton(host)  # Validates IP address
-                local_ip = host
-            except:
-                pass
     
     # Always use the network IP for the server URL (not localhost)
     server_url = f'http://{local_ip}:{port}'
@@ -1823,7 +1811,7 @@ def connection_test():
         return interfaces
     
     port = int(os.environ.get('PORT', 5001))
-    local_ip = get_local_ip_dynamic()
+    local_ip = get_local_ip()
     
     return jsonify({
         'status': 'success',
@@ -1997,9 +1985,14 @@ def generate_qrcode():
     """Generate a QR code for the server URL."""
     
     port = int(os.environ.get('PORT', 5001))
-    # Always detect IP dynamically (ignore HOST_IP env var for QR code)
-    # Pass request context to help detect IP in Docker scenarios
-    local_ip = get_local_ip_dynamic(request_context=request)
+    # Use HOST_IP if set (for Docker/Colima where dynamic detection gets VM IP)
+    # Otherwise fall back to dynamic detection
+    host_ip = os.environ.get('HOST_IP')
+    if host_ip:
+        local_ip = host_ip
+        print(f"🌐 [QR Code] Using HOST_IP from environment: {host_ip}")
+    else:
+        local_ip = get_local_ip_dynamic(request_context=request)
     server_url = f'http://{local_ip}:{port}'
     
     # Generate QR code
@@ -2183,17 +2176,22 @@ def handle_get_connected_clients():
 # LLM Integration Endpoints
 # ============================================================================
 
-@app.route('/api/llm/test', methods=['GET'])
+@app.route('/api/llm/test', methods=['GET', 'POST'])
 def test_llm():
-    """Test if LLM service is working."""
+    """Test if LLM service is working. Accepts optional custom prompt via POST."""
     if not LLM_AVAILABLE:
         return jsonify({'error': 'LLM service not available'}), 503
     
+    # Get custom prompt if provided via POST
+    custom_prompt = None
+    if request.method == 'POST' and request.json:
+        custom_prompt = request.json.get('prompt')
+    
     # Log current provider/model before test
     provider_info = llm_service.get_provider_info()
-    print(f"🧪 [API] test_llm called - Current provider: {provider_info.get('provider')}, model: {provider_info.get('model')}")
+    print(f"🧪 [API] test_llm called - Current provider: {provider_info.get('provider')}, model: {provider_info.get('model')}, custom_prompt: {bool(custom_prompt)}")
     
-    result = llm_service.test_connection()
+    result = llm_service.test_connection(custom_prompt=custom_prompt)
     
     # Log result
     print(f"🧪 [API] test_llm result - Provider: {result.get('provider')}, model: {result.get('model')}, status: {result.get('status')}")
@@ -2662,11 +2660,12 @@ def set_location_update_interval():
             # Don't return error - allow in-memory value to be used, but log the issue
         
         # Broadcast the new interval to all connected clients via WebSocket
+        # Note: emit without 'room' or 'to' broadcasts to all (broadcast=True is deprecated)
         try:
             socketio.emit('location_update_interval_changed', {
                 'interval_ms': location_update_interval_ms,
                 'interval_seconds': location_update_interval_ms / 1000.0
-            }, broadcast=True)
+            })
         except Exception as e:
             print(f"⚠️ Error broadcasting location update interval via WebSocket: {e}")
             # Continue anyway - the value is set
@@ -2785,10 +2784,19 @@ def get_game_mode():
 @app.route('/api/settings/game-mode', methods=['POST', 'PUT'])
 def set_game_mode():
     """Set the game mode and persist to database."""
+    import sys
+    # DEBUG: Log every request to this endpoint
+    print(f"🔔 [DEBUG] set_game_mode endpoint called!", flush=True)
+    print(f"   Method: {request.method}", flush=True)
+    print(f"   Remote addr: {request.remote_addr}", flush=True)
+    sys.stdout.flush()
+    
     try:
         global game_mode
         
         data = request.get_json()
+        print(f"   Request data: {data}", flush=True)
+        sys.stdout.flush()
         if not data or 'game_mode' not in data:
             return jsonify({'error': 'game_mode is required'}), 400
         
@@ -2823,17 +2831,26 @@ def set_game_mode():
         
         # Broadcast the new game mode to all connected clients via WebSocket
         try:
-            # Flask-SocketIO: explicitly use broadcast=True to ensure all clients receive the update
-            # Match the pattern used by location_update_interval_changed which works correctly
+            # Flask-SocketIO: emit without 'room' or 'to' broadcasts to all connected clients
+            # Note: 'broadcast=True' was removed as it's deprecated in newer python-socketio versions
             event_data = {
                 'game_mode': game_mode
             }
-            print(f"📡 [Game Mode] Broadcasting game_mode_changed event to all clients")
-            print(f"   Event data: {event_data}")
-            print(f"   Number of connected clients: {len(connected_clients)}")
+            print(f"📡 [Game Mode] Broadcasting game_mode_changed event to all clients", flush=True)
+            print(f"   Event data: {event_data}", flush=True)
+            print(f"   Number of connected clients: {len(connected_clients)}", flush=True)
+            print(f"   WebSocket sessions (connected_clients dict): {list(connected_clients.keys())}", flush=True)
             
-            socketio.emit('game_mode_changed', event_data, broadcast=True, namespace='/')
-            print(f"✅ [Game Mode] Broadcasted game mode change to all connected clients: {game_mode}")
+            # Emit to all connected clients (no room = broadcast to all)
+            # DEBUG: Log the exact emit call
+            print(f"   🔔 Calling socketio.emit('game_mode_changed', {event_data}, namespace='/')", flush=True)
+            socketio.emit('game_mode_changed', event_data, namespace='/')
+            print(f"✅ [Game Mode] Broadcasted game mode change to all connected clients: {game_mode}", flush=True)
+            
+            # Also try emitting without namespace to see if that helps
+            print(f"   🔔 Also trying emit without namespace...", flush=True)
+            socketio.emit('game_mode_changed', event_data)
+            print(f"   ✅ Second emit completed", flush=True)
         except Exception as e:
             print(f"❌ [Game Mode] Error broadcasting game mode change via WebSocket: {e}")
             import traceback

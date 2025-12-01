@@ -653,8 +653,18 @@ const LLMSettingsManager = {
                 }
             }
             
-            // Now test the connection
-            const response = await fetch(`${Config.API_BASE}/api/llm/test`);
+            // Get custom prompt from input field
+            const promptInput = document.getElementById('llmTestPrompt');
+            const customPrompt = promptInput ? promptInput.value.trim() : null;
+            
+            // Now test the connection with custom prompt
+            const response = await fetch(`${Config.API_BASE}/api/llm/test`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ prompt: customPrompt || "Say 'Ahoy!' in pirate speak." })
+            });
             const data = await response.json();
             
             if (statusDiv) {
