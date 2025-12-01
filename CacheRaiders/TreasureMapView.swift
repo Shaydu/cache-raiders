@@ -68,6 +68,26 @@ struct TreasureMapView: View {
     ))
     @State private var hasInitialized = false
     
+    /// Calculate distance from user to treasure
+    private var distanceToTreasure: String {
+        guard let userLocation = userLocationManager.currentLocation else {
+            return "Unknown"
+        }
+        
+        let treasureLocation = CLLocation(
+            latitude: mapData.xMarksTheSpot.latitude,
+            longitude: mapData.xMarksTheSpot.longitude
+        )
+        
+        let distanceMeters = userLocation.distance(from: treasureLocation)
+        
+        if distanceMeters < 1000 {
+            return String(format: "%.0fm", distanceMeters)
+        } else {
+            return String(format: "%.1fkm", distanceMeters / 1000)
+        }
+    }
+    
     var body: some View {
         NavigationView {
             ZStack {
@@ -229,6 +249,17 @@ struct TreasureMapView: View {
                         Text("X Marks The Spot")
                             .font(.custom("Copperplate", size: 16))
                             .foregroundColor(.red)
+                        
+                        // Distance to treasure
+                        HStack(spacing: 4) {
+                            Image(systemName: "location.fill")
+                                .foregroundColor(.blue)
+                            Text("Distance: \(distanceToTreasure)")
+                                .font(.custom("Copperplate", size: 18))
+                                .fontWeight(.semibold)
+                                .foregroundColor(.brown)
+                        }
+                        .padding(.top, 4)
                     }
                     .padding()
                     .background(.ultraThinMaterial)

@@ -82,29 +82,32 @@ struct LootBoxMapView: View {
         }
         
         // Add loot box locations that have valid GPS coordinates
-        // Filter by selection: if an item is selected, show only that item; otherwise show ALL items
-        // STORY MODE: Hide all open-world loot (API/map sourced), only show NPCs and story-relevant loot
+        // Filter by game mode: Open mode shows all items, Story mode shows only NPCs
+        // Also filter by selection: if an item is selected, show only that item
         let filteredLocations = locationManager.locations.filter { location in
-            // Always show NPCs (Story Mode)
             let isNPC = location.id.hasPrefix("npc_")
-            
-            // STORY MODE: Filter out API/map sourced loot (only show NPCs and story-relevant items)
-            if locationManager.gameMode == .deadMensSecrets {
-                // In story mode, only show NPCs
+
+            // Game Mode Filtering
+            switch locationManager.gameMode {
+            case .open:
+                // Open Mode: Show all items (API objects, NPCs, map-added items)
+                break // Continue with other filters
+
+            case .deadMensSecrets:
+                // Story Mode: Only show NPCs (story mode doesn't use API objects)
                 if !isNPC {
                     return false // Hide all non-NPC items in story mode
                 }
             }
-            
-            // If an item is selected, only show that item (unless it's an NPC, always show NPCs)
+
+            // Selection Filtering: if an item is selected, only show that item
+            // (NPCs are always shown regardless of selection)
             if let selected = selectedId, !isNPC {
                 if location.id != selected {
                     return false // Filter out non-selected items
                 }
-                // Selected item: continue with other filters
             }
-            // No selection: show all items (no ID filter)
-            
+
             // NPCs are always shown (never collected, always visible)
             if isNPC {
                 guard !(location.latitude == 0 && location.longitude == 0) else {
@@ -112,29 +115,28 @@ struct LootBoxMapView: View {
                 }
                 return true // Always show NPCs
             }
-            
+
             // If showFoundOnMap is disabled, exclude collected items
             if !showFound && location.collected {
-                // Removed debug print to improve performance
                 return false
             }
-            
-            guard !(location.latitude == 0 && location.longitude == 0) else { 
-                return false // Exclude invalid GPS coordinates
+
+            // Exclude invalid GPS coordinates
+            guard !(location.latitude == 0 && location.longitude == 0) else {
+                return false
             }
-            
+
             // Include items that should show on map
             if !location.shouldShowOnMap {
                 return false
             }
-            
-            // Include map-added spheres
-            if location.type == .sphere && location.source == .map {
-                // Removed debug print to improve performance
+
+            // Include map-added items (spheres, cubes, etc.)
+            if location.source == .map {
                 return true
             }
-            
-            // Include all other items that should show on map
+
+            // Include all other valid items
             return true
         }
         

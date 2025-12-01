@@ -12,14 +12,6 @@ struct ContentView: View {
     @StateObject private var locationManager = LootBoxLocationManager()
     @StateObject private var userLocationManager = UserLocationManager()
     @StateObject private var treasureHuntService = TreasureHuntService()
-    @StateObject private var gridTreasureMapService = GridTreasureMapService()
-    
-    // Grid treasure map modal state (separate from sheets)
-    @State private var showGridTreasureMap = false
-    
-    // QR Scanner state (manually triggered from Settings)
-    @State private var showQRScanner = false
-    @State private var scannedURL: String?
     
     // Use enum-based sheet state to prevent multiple sheets being presented simultaneously
     enum SheetType: Identifiable, Equatable {
@@ -29,6 +21,7 @@ struct ContentView: View {
         case leaderboard
         case skeletonConversation(npcId: String, npcName: String)
         case treasureMap
+        case clueDrawer
         
         var id: String {
             switch self {
@@ -38,6 +31,7 @@ struct ContentView: View {
             case .leaderboard: return "leaderboard"
             case .skeletonConversation(let npcId, _): return "skeletonConversation_\(npcId)"
             case .treasureMap: return "treasureMap"
+            case .clueDrawer: return "clueDrawer"
             }
         }
     }
@@ -97,7 +91,8 @@ struct ContentView: View {
         VStack {
             topToolbarView
             
-            locationDisplayView
+            // Location coordinates removed for cleaner UI
+            // locationDisplayView
             
             Spacer()
             
@@ -133,16 +128,33 @@ struct ContentView: View {
                     .cornerRadius(10)
             }
             
-            Button(action: {
-                // Use async to avoid modifying state during view update
-                Task { @MainActor in
-                    presentedSheet = .arPlacement
+            // In Story Mode: Show clue drawer button instead of + button
+            // In Open Mode: Show + button for AR placement
+            if locationManager.gameMode == .deadMensSecrets {
+                Button(action: {
+                    // Open clue drawer in story mode
+                    Task { @MainActor in
+                        presentedSheet = .clueDrawer
+                    }
+                }) {
+                    Image(systemName: "book.closed.fill")
+                        .foregroundColor(.orange)
+                        .padding()
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(10)
                 }
-            }) {
-                Image(systemName: "plus")
-                    .padding()
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(10)
+            } else {
+                Button(action: {
+                    // Use async to avoid modifying state during view update
+                    Task { @MainActor in
+                        presentedSheet = .arPlacement
+                    }
+                }) {
+                    Image(systemName: "plus")
+                        .padding()
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(10)
+                }
             }
         }
         .padding(.top)
@@ -162,37 +174,9 @@ struct ContentView: View {
             
             if shouldShowNav, let distance = distanceToNearest {
                 Button(action: {
-                    // Toggle grid treasure map (only available after skeleton gives map)
-                    if treasureHuntService.hasMap,
-                       let treasureLocation = treasureHuntService.treasureLocation,
-                       let mapPiece = treasureHuntService.mapPiece {
-                        // Update grid map service with current data
-                        let landmarks = mapPiece.landmarks.map { landmarkData in
-                            let landmarkType: LandmarkType
-                            switch landmarkData.type.lowercased() {
-                            case "water": landmarkType = .water
-                            case "tree": landmarkType = .tree
-                            case "building": landmarkType = .building
-                            case "mountain": landmarkType = .mountain
-                            case "path": landmarkType = .path
-                            default: landmarkType = .building
-                            }
-                            
-                            return LandmarkAnnotation(
-                                id: UUID().uuidString,
-                                coordinate: CLLocationCoordinate2D(latitude: landmarkData.latitude, longitude: landmarkData.longitude),
-                                name: landmarkData.name,
-                                type: landmarkType,
-                                iconName: landmarkType.iconName
-                            )
-                        }
-                        
-                        gridTreasureMapService.updateMapData(
-                            treasureLocation: treasureLocation.coordinate,
-                            landmarks: landmarks,
-                            userLocation: userLocationManager.currentLocation?.coordinate
-                        )
-                        showGridTreasureMap = true
+                    // Open treasure map (only available after skeleton gives map)
+                    if treasureHuntService.hasMap {
+                        presentedSheet = .treasureMap
                     } else {
                         // Manually send location to server (also sent automatically every 5 seconds)
                         userLocationManager.sendCurrentLocationToServer()
@@ -261,17 +245,22 @@ struct ContentView: View {
     
     private var rightButtonsView: some View {
         HStack(spacing: 8) {
-            Button(action: {
-                // Use async to avoid modifying state during view update
-                Task { @MainActor in
-                    presentedSheet = .leaderboard
+            // Treasure map button removed - users can access it from the discoveries log book (ClueDrawerView)
+            
+            // Show leaderboard trophy only in Open mode (not in story mode)
+            if locationManager.gameMode == .open {
+                Button(action: {
+                    // Use async to avoid modifying state during view update
+                    Task { @MainActor in
+                        presentedSheet = .leaderboard
+                    }
+                }) {
+                    Image(systemName: "trophy.fill")
+                        .foregroundColor(.yellow)
+                        .padding()
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(10)
                 }
-            }) {
-                Image(systemName: "trophy.fill")
-                    .foregroundColor(.yellow)
-                    .padding()
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(10)
             }
             
             Button(action: {
@@ -292,17 +281,20 @@ struct ContentView: View {
         .padding(.top)
     }
     
+    // DISABLED: Location coordinates display removed for cleaner UI
+    // To re-enable, uncomment the code below and add locationDisplayView back to topOverlayView
     private var locationDisplayView: some View {
-        Group {
-            if let currentLocation = userLocationManager.currentLocation {
-                Text("📍 Location: \(currentLocation.coordinate.latitude, specifier: "%.8f"), \(currentLocation.coordinate.longitude, specifier: "%.8f")")
-                    .font(.caption)
-                    .padding()
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(10)
-                    .padding(.top)
-            }
-        }
+        EmptyView()
+        // Group {
+        //     if let currentLocation = userLocationManager.currentLocation {
+        //         Text("📍 Location: \(currentLocation.coordinate.latitude, specifier: "%.8f"), \(currentLocation.coordinate.longitude, specifier: "%.8f")")
+        //             .font(.caption)
+        //             .padding()
+        //             .background(.ultraThinMaterial)
+        //             .cornerRadius(10)
+        //             .padding(.top)
+        //     }
+        // }
     }
     
     private var notificationsView: some View {
@@ -401,6 +393,8 @@ struct ContentView: View {
             }
         case .treasureMap:
             treasureMapSheetContent
+        case .clueDrawer:
+            clueDrawerSheetContent
         }
     }
     
@@ -458,6 +452,26 @@ struct ContentView: View {
         }
     }
     
+    // Helper for clue drawer content - Story Mode inventory of collected items and map
+    @ViewBuilder
+    private var clueDrawerSheetContent: some View {
+        ClueDrawerView(
+            treasureHuntService: treasureHuntService,
+            locationManager: locationManager,
+            userLocationManager: userLocationManager,
+            onShowTreasureMap: {
+                // When user taps map in clue drawer, open the detailed treasure map
+                presentedSheet = nil
+                // Small delay to allow clue drawer to close smoothly
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    presentedSheet = .treasureMap
+                }
+            }
+        )
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+    
     var body: some View {
         mainContentView
             .onAppear(perform: handleAppear)
@@ -470,12 +484,6 @@ struct ContentView: View {
                         conversationNPC = nil
                     }
                 }
-            }
-            .onChange(of: showGridTreasureMap) { oldValue, newValue in
-                handleGridMapChange(oldValue: oldValue, newValue: newValue)
-            }
-            .fullScreenCover(isPresented: $showGridTreasureMap) {
-                GridTreasureMapView(mapService: gridTreasureMapService)
             }
             .sheet(item: $presentedSheet) { sheetType in
                 sheetContent(for: sheetType)
@@ -495,15 +503,6 @@ struct ContentView: View {
                         presentedSheet = .skeletonConversation(npcId: npc.id, npcName: npc.name)
                     }
                 }
-            }
-            .fullScreenCover(isPresented: $showQRScanner) {
-                QRCodeScannerView(scannedURL: $scannedURL)
-            }
-            .onChange(of: showQRScanner) { oldValue, newValue in
-                handleQRScannerChange(oldValue: oldValue, newValue: newValue)
-            }
-            .onChange(of: scannedURL) { oldURL, newURL in
-                handleScannedURLChange(oldURL: oldURL, newURL: newURL)
             }
             .onChange(of: userLocationManager.currentLocation) { oldLocation, newLocation in
                 handleLocationChange(oldLocation: oldLocation, newLocation: newLocation)
@@ -536,7 +535,8 @@ struct ContentView: View {
     private func handleAppear() {
         // Set location manager reference in user location manager for game mode checks
         userLocationManager.lootBoxLocationManager = locationManager
-        
+        userLocationManager.treasureHuntService = treasureHuntService
+
         userLocationManager.requestLocationPermission()
 
         // Initialize offline mode manager with location manager reference
@@ -545,6 +545,15 @@ struct ContentView: View {
         // Auto-connect WebSocket on app start (only if not in offline mode)
         if !OfflineModeManager.shared.isOfflineMode {
             WebSocketService.shared.connect()
+            
+            // CRITICAL: Refresh game mode from server on app appear
+            // This ensures we're always in sync with server, even if WebSocket connection fails
+            Task {
+                // Wait a moment for API to be ready
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+                print("🎮 [ContentView] Refreshing game mode on app appear...")
+                await locationManager.refreshGameMode()
+            }
         } else {
             print("📴 Offline mode enabled - skipping WebSocket connection")
         }
@@ -554,8 +563,7 @@ struct ContentView: View {
             APIService.shared.syncSavedUserNameToServer()
         }
         
-        // Note: QR scanner is now only available manually from Settings
-        // Offline mode is supported, so we don't automatically show QR scanner on connection failures
+        // Offline mode is supported for local testing without server connection
     }
     
     private func handleSheetChange(oldSheet: SheetType?, newSheet: SheetType?) {
@@ -569,56 +577,6 @@ struct ContentView: View {
         }
     }
     
-    private func handleGridMapChange(oldValue: Bool, newValue: Bool) {
-        // Handle fullScreenCover presentation
-        if newValue && !oldValue {
-            NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
-        } else if !newValue && oldValue {
-            NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
-        }
-    }
-    
-    private func handleQRScannerChange(oldValue: Bool, newValue: Bool) {
-        // Handle QR scanner sheet presentation
-        if newValue && !oldValue {
-            NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
-        } else if !newValue && oldValue {
-            NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
-        }
-    }
-    
-    private func handleScannedURLChange(oldURL: String?, newURL: String?) {
-        guard let url = newURL, url != oldURL else { return }
-        
-        // Update API URL with scanned QR code
-        DispatchQueue.main.async {
-            // Save the scanned URL
-            UserDefaults.standard.set(url, forKey: "apiBaseURL")
-            
-            // Reset scannedURL after processing to allow scanning again
-            self.scannedURL = nil
-            
-            // Try to reconnect
-            WebSocketService.shared.disconnect()
-            WebSocketService.shared.connect()
-            
-            // Verify connection
-            Task {
-                do {
-                    let isHealthy = try await APIService.shared.checkHealth()
-                    if isHealthy {
-                        // Connection successful - close QR scanner
-                        await MainActor.run {
-                            self.showQRScanner = false
-                        }
-                    }
-                } catch {
-                    // Still failed - keep QR scanner open
-                    print("⚠️ Connection still failed after scanning QR code")
-                }
-            }
-        }
-    }
     
     private func handleLocationChange(oldLocation: CLLocation?, newLocation: CLLocation?) {
         // PERFORMANCE: Debounce location updates to prevent excessive API calls

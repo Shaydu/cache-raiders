@@ -46,16 +46,20 @@ class WebSocketService: ObservableObject {
     private var pingTimer: Timer?
     private var healthCheckTimer: Timer?
     private var connectionTimeoutTimer: Timer?
+    private var errorDialogTimer: Timer? // Timer for delaying error dialogs on reconnection attempts
     private let reconnectInterval: TimeInterval = 5.0
     private let pingInterval: TimeInterval = 30.0
     private let healthCheckInterval: TimeInterval = 10.0
     private let connectionTimeoutInterval: TimeInterval = 30.0 // Increased timeout to 30 seconds for slow networks
-    
+    private let errorDialogDelayInterval: TimeInterval = 3.0 // Delay showing error dialogs to allow for quick reconnection
+    private var pendingErrorMessage: String? // Store error message while waiting for potential reconnection
+
     // Callbacks for WebSocket events
     var onObjectCollected: ((String, String, String) -> Void)? // (object_id, found_by, found_at)
     var onObjectUncollected: ((String) -> Void)? // (object_id)
     var onAllFindsReset: (() -> Void)?
     var onConnectionError: ((String) -> Void)? // (error_message)
+    var onConnected: (() -> Void)? // Called when WebSocket successfully connects
     var onNPCCreated: (([String: Any]) -> Void)? // NPC data
     var onNPCUpdated: (([String: Any]) -> Void)? // NPC data
     var onNPCDeleted: ((String) -> Void)? // (npc_id)
@@ -132,6 +136,7 @@ class WebSocketService: ObservableObject {
         stopPingTimer()
         stopReconnectTimer()
         stopConnectionTimeoutTimer()
+        stopErrorDialogTimer()
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         urlSession = nil
@@ -253,8 +258,21 @@ class WebSocketService: ObservableObject {
                 self.connectionStatus = .connected
                 self.stopConnectionTimeoutTimer()
                 self.stopReconnectTimer()
+
+                // Cancel any pending error dialog since we successfully connected
+                self.stopErrorDialogTimer()
+
                 // Register device with server
                 self.registerDevice()
+
+                // Verify callbacks are set (for debugging)
+                print("🔍 [WebSocket] Connection established - verifying callbacks:")
+                print("   onGameModeChanged: \(self.onGameModeChanged != nil ? "✅ Set" : "❌ Nil")")
+                print("   onObjectCollected: \(self.onObjectCollected != nil ? "✅ Set" : "❌ Nil")")
+                print("   onConnected: \(self.onConnected != nil ? "✅ Set" : "❌ Nil")")
+
+                // Notify that WebSocket is connected
+                self.onConnected?()
                 // Wait a moment before starting ping to ensure connection is fully established
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                     self.startPingTimer()
@@ -267,25 +285,48 @@ class WebSocketService: ObservableObject {
         // Handle Socket.IO event messages: format is "42["event_name", {...}]"
         // Example: 42["object_collected",{"object_id":"abc","found_by":"user123","found_at":"2024-..."}]
         if text.hasPrefix("42[") {
+            // Log all Socket.IO events for debugging (but truncate long ones)
+            let preview = text.count > 200 ? String(text.prefix(200)) + "..." : text
+            print("📨 [WebSocket] Received Socket.IO event: \(preview)")
+            
+            // Special logging for game_mode_changed events
+            if text.contains("game_mode_changed") {
+                print("🎮 [WebSocket] DETECTED game_mode_changed in raw message!")
+                print("   Full message: \(text)")
+            }
+            
             // Check if this is the 'connected' event from the server
             if text.contains("\"connected\"") || text.contains("'connected'") {
                 // Server sent connected event - handshake is complete
                 print("✅ Received Socket.IO 'connected' event from server")
                 if handshakeState != .completed {
-                    handshakeState = .completed
-                    DispatchQueue.main.async {
-                        self.isConnected = true
-                        self.connectionStatus = .connected
-                        self.stopConnectionTimeoutTimer()
-                        self.stopReconnectTimer()
-                        // Register device with server
-                        self.registerDevice()
-                        // Wait a moment before starting ping to ensure connection is fully established
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                            self.startPingTimer()
-                            print("📡 [Ping] Started ping timer (will ping every \(Int(self.pingInterval))s)")
-                        }
-                    }
+            handshakeState = .completed
+            DispatchQueue.main.async {
+                self.isConnected = true
+                self.connectionStatus = .connected
+                self.stopConnectionTimeoutTimer()
+                self.stopReconnectTimer()
+
+                // Cancel any pending error dialog since we successfully connected
+                self.stopErrorDialogTimer()
+
+                // Register device with server
+                self.registerDevice()
+
+                // Verify callbacks are set (for debugging)
+                print("🔍 [WebSocket] Connection established (via connected event) - verifying callbacks:")
+                print("   onGameModeChanged: \(self.onGameModeChanged != nil ? "✅ Set" : "❌ Nil")")
+                print("   onObjectCollected: \(self.onObjectCollected != nil ? "✅ Set" : "❌ Nil")")
+                print("   onConnected: \(self.onConnected != nil ? "✅ Set" : "❌ Nil")")
+
+                // Notify that WebSocket is connected
+                self.onConnected?()
+                // Wait a moment before starting ping to ensure connection is fully established
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                    self.startPingTimer()
+                    print("📡 [Ping] Started ping timer (will ping every \(Int(self.pingInterval))s)")
+                }
+            }
                 }
             }
             parseSocketIOEvent(text)
@@ -325,8 +366,14 @@ class WebSocketService: ObservableObject {
                 self.connectionStatus = .connected
                 self.stopConnectionTimeoutTimer()
                 self.stopReconnectTimer()
+
+                // Cancel any pending error dialog since we successfully connected
+                self.stopErrorDialogTimer()
+
                 // Register device with server
                 self.registerDevice()
+                // Notify that WebSocket is connected
+                self.onConnected?()
                 self.startPingTimer()
             }
             return
@@ -389,24 +436,52 @@ class WebSocketService: ObservableObject {
     
     /// Parse Socket.IO event message format: 42["event_name", {...}]
     private func parseSocketIOEvent(_ text: String) {
-        // Find the opening bracket after "42["
-        guard let startIndex = text.index(text.startIndex, offsetBy: 3, limitedBy: text.endIndex) else { return }
+        // Find the opening bracket - offset by 2 to include the '[' in "42["
+        // "42[" = positions 0,1,2 - we want position 2 (the '[') to be included
+        guard let startIndex = text.index(text.startIndex, offsetBy: 2, limitedBy: text.endIndex) else {
+            print("⚠️ [WebSocket] Failed to find start index for Socket.IO event parsing")
+            return
+        }
         
         // Extract the JSON array part: ["event_name", {...}]
         let jsonPart = String(text[startIndex...])
+        print("🔍 [WebSocket] Parsing Socket.IO event JSON: \(jsonPart.prefix(200))")
         
         // Try to parse as JSON array
-        guard let jsonData = jsonPart.data(using: .utf8),
-              let jsonArray = try? JSONSerialization.jsonObject(with: jsonData) as? [Any],
-              jsonArray.count >= 2,
-              let eventName = jsonArray[0] as? String,
-              let eventData = jsonArray[1] as? [String: Any] else {
+        guard let jsonData = jsonPart.data(using: .utf8) else {
+            print("⚠️ [WebSocket] Failed to convert JSON string to data")
+            return
+        }
+        
+        guard let jsonArray = try? JSONSerialization.jsonObject(with: jsonData) as? [Any] else {
+            print("⚠️ [WebSocket] Failed to parse JSON array from: \(jsonPart.prefix(100))")
             // Fallback: try simple string matching for common events
+            if text.contains("game_mode_changed") {
+                print("⚠️ [WebSocket] Detected game_mode_changed in text but couldn't parse JSON")
+            }
             if text.contains("object_collected") {
                 print("⚠️ Received object_collected event but couldn't parse data")
             }
             return
         }
+        
+        guard jsonArray.count >= 2 else {
+            print("⚠️ [WebSocket] JSON array has insufficient elements: \(jsonArray.count)")
+            return
+        }
+        
+        guard let eventName = jsonArray[0] as? String else {
+            print("⚠️ [WebSocket] Event name is not a string: \(jsonArray[0])")
+            return
+        }
+        
+        guard let eventData = jsonArray[1] as? [String: Any] else {
+            print("⚠️ [WebSocket] Event data is not a dictionary: \(jsonArray[1])")
+            return
+        }
+        
+        print("✅ [WebSocket] Parsed Socket.IO event: \(eventName)")
+        print("   Event data: \(eventData)")
         
         // Handle different event types
         switch eventName {
@@ -441,10 +516,13 @@ class WebSocketService: ObservableObject {
             handleLocationUpdateIntervalChangedEvent(eventData)
             
         case "game_mode_changed":
+            print("🎮 [WebSocket] MATCHED game_mode_changed event in switch statement!")
+            print("   About to call handleGameModeChangedEvent with data: \(eventData)")
             handleGameModeChangedEvent(eventData)
             
         default:
             print("📨 Received unhandled Socket.IO event: \(eventName)")
+            print("   If you expected this event to be handled, check the switch statement above")
         }
     }
     
@@ -578,15 +656,47 @@ class WebSocketService: ObservableObject {
     
     /// Handle game_mode_changed event: {"game_mode": "open"}
     private func handleGameModeChangedEvent(_ data: [String: Any]) {
+        print("🎮 [WebSocket] handleGameModeChangedEvent called")
+        print("   Event data: \(data)")
+        print("   Data type: \(type(of: data))")
+        print("   Data keys: \(data.keys)")
+        
         guard let gameMode = data["game_mode"] as? String else {
-            print("⚠️ game_mode_changed event missing game_mode")
+            print("⚠️ [WebSocket] game_mode_changed event missing game_mode field")
+            print("   Event data: \(data)")
+            print("   Available keys: \(data.keys)")
+            // Try alternative key names
+            if let altMode = data["gameMode"] as? String {
+                print("   Found alternative key 'gameMode': \(altMode)")
+                DispatchQueue.main.async {
+                    self.onGameModeChanged?(altMode)
+                }
+                return
+            }
             return
         }
         
-        print("🎮 WebSocket: Game mode changed to \(gameMode)")
+        print("🎮 [WebSocket] Game mode changed event received: \(gameMode)")
+        print("   Full event data: \(data)")
+        
+        // Check if callback is set
+        if self.onGameModeChanged == nil {
+            print("❌ [WebSocket] ERROR: onGameModeChanged callback is nil! Game mode change will not be processed.")
+            print("   This means setupWebSocketCallbacks() was not called or the callback was cleared.")
+            print("   Stack trace:")
+            Thread.callStackSymbols.forEach { print("     \($0)") }
+        } else {
+            print("✅ [WebSocket] onGameModeChanged callback is set, invoking...")
+        }
         
         DispatchQueue.main.async {
-            self.onGameModeChanged?(gameMode)
+            print("🎮 [WebSocket] Invoking onGameModeChanged callback with: \(gameMode)")
+            if let callback = self.onGameModeChanged {
+                callback(gameMode)
+                print("✅ [WebSocket] onGameModeChanged callback completed")
+            } else {
+                print("❌ [WebSocket] Callback became nil between check and invocation!")
+            }
         }
     }
     
@@ -857,7 +967,11 @@ class WebSocketService: ObservableObject {
             self.isConnected = false
             self.connectionStatus = .error(errorMsg)
             self.handshakeState = .notStarted
-            self.onConnectionError?(errorMsg)
+
+            // Instead of immediately showing error dialog, delay it to allow for quick reconnection
+            // This prevents showing "connection failed" dialogs when the connection actually succeeds after a brief retry
+            self.pendingErrorMessage = errorMsg
+            self.startErrorDialogTimer()
         }
         
         // Attempt to reconnect
@@ -996,6 +1110,33 @@ class WebSocketService: ObservableObject {
     private func stopConnectionTimeoutTimer() {
         connectionTimeoutTimer?.invalidate()
         connectionTimeoutTimer = nil
+    }
+
+    private func stopErrorDialogTimer() {
+        errorDialogTimer?.invalidate()
+        errorDialogTimer = nil
+        pendingErrorMessage = nil // Clear any pending error
+    }
+
+    private func startErrorDialogTimer() {
+        stopErrorDialogTimer() // Cancel any existing timer
+
+        errorDialogTimer = Timer.scheduledTimer(withTimeInterval: errorDialogDelayInterval, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+
+            // Only show the error dialog if we still have a pending error message and we're not connected
+            if let errorMessage = self.pendingErrorMessage, !self.isConnected {
+                print("⏰ [Error Dialog] Showing delayed error dialog after \(Int(self.errorDialogDelayInterval))s wait")
+                DispatchQueue.main.async {
+                    self.onConnectionError?(errorMessage)
+                }
+            } else if self.isConnected {
+                print("✅ [Error Dialog] Connection succeeded before error dialog timeout - not showing error")
+            }
+
+            // Clear the pending error regardless
+            self.pendingErrorMessage = nil
+        }
     }
     
     // MARK: - Connection Test

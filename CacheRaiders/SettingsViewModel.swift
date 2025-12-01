@@ -126,6 +126,12 @@ class SettingsViewModel: ObservableObject {
                     
                     self?.displayAlert(title: "URL Saved", message: "API URL updated to: \(urlString)\n\nReconnecting WebSocket to new server...")
                 }
+                
+                // CRITICAL: Explicitly refresh game mode from server after URL change
+                // This ensures we get the correct game mode immediately, not just when WebSocket connects
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms to let connection settle
+                print("🎮 [SettingsViewModel] Refreshing game mode after URL change...")
+                await self?.locationManager.refreshGameMode()
             }
         } else {
             // Even if API sync is not enabled, we should still try to connect

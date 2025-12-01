@@ -79,6 +79,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var placedNPCs: [String: AnchorEntity] = [:] // Track all placed NPCs by ID
     private var skeletonPlaced: Bool = false // Track if skeleton has been placed
     private var corgiPlaced: Bool = false // Track if corgi has been placed
+    private var treasureXPlaced: Bool = false // Track if treasure X has been placed in AR
     private var skeletonAnchor: AnchorEntity? // Reference to skeleton anchor (kept for backward compatibility)
     private let SKELETON_NPC_ID = "skeleton-1" // ID for the skeleton NPC
     
@@ -397,6 +398,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             self?.handleObjectUncollected(objectId: objectId)
         }
         
+        // Set up callback to clear all objects when game mode changes
+        locationManager.onAllObjectsCleared = { [weak self] in
+            self?.clearAllARObjects()
+        }
+        
         // Set up NPC sync handlers for two-way sync with admin
         setupNPCSyncHandlers()
         
@@ -426,6 +432,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             self,
             selector: #selector(handleDialogClosed),
             name: NSNotification.Name("SheetDismissed"),
+            object: nil
+        )
+        
+        // TESTING: Listen for corgi spawn notification (triggered after getting map)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSpawnCorgiNPC),
+            name: NSNotification.Name("SpawnCorgiNPC"),
             object: nil
         )
         
@@ -613,6 +627,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         distanceTracker?.stopDistanceLogging()
         occlusionManager?.stopOcclusionChecking()
         NotificationCenter.default.removeObserver(self, name: NSNotification.Name("ARPlacementObjectSaved"), object: nil)
+        NotificationCenter.default.removeObserver(self, name: NSNotification.Name("SpawnCorgiNPC"), object: nil)
         stopPeriodicGrounding()
     }
 
@@ -1157,11 +1172,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         hasAutoRandomized = true // Mark as having randomized (whether auto or manual)
 
         print("🗑️ Removing \(findableObjects.count) existing spheres...")
-        // Remove all existing placed boxes
-        for (_, findable) in findableObjects {
-            findable.anchor.removeFromParent()
-        }
-        findableObjects.removeAll() // Also clear findable objects
+        clearAllARObjects()
 
         // Also remove old randomly-generated AR item locations from locationManager to reset the counter
         // Keep GPS-based locations and manually-added map markers
@@ -1345,7 +1356,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("🏠 Indoor position: distance \(String(format: "%.1f", randomDistance))m, angle \(String(format: "%.1f", randomAngle * 180 / .pi))°")
         return (x, z)
     }
-
+    
     // Check if a position is within room boundaries defined by walls
     private func isPositionWithinRoomBounds(x: Float, z: Float, cameraPos: SIMD3<Float>, walls: [ARPlaneAnchor]) -> Bool {
         let testPos = SIMD3<Float>(x, cameraPos.y, z)
@@ -1735,7 +1746,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         
                     }
                 }
-                
+
+                // Place treasure X marker if player has treasure location and is close enough
+                if let arView = self.arView {
+                    self.placeTreasureXIfNeeded(in: arView)
+                }
+
                 // Throttle box placement checks to improve framerate
                 // Only check every 2 seconds instead of every frame (60fps)
                 // Objects don't need frequent re-placement checks
@@ -3680,22 +3696,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         Swift.print("   Current game mode: \(locationManager.gameMode.rawValue)")
 
-        // For skeleton, always open the conversation view
-        if type == .skeleton {
-            Swift.print("   📱 Opening SkeletonConversationView (full-screen dialog)")
-            // CRITICAL: Clear binding first to ensure onChange fires even if it was previously set
-            // This allows re-tapping after the dialog is dismissed
-            self.conversationNPCBinding?.wrappedValue = nil
-            // Small delay to ensure the nil value is processed before setting the new value
-            DispatchQueue.main.async { [weak self] in
-                self?.conversationNPCBinding?.wrappedValue = ConversationNPC(
-                    id: type.npcId,
-                    name: type.defaultName
-                )
-                Swift.print("   ✅ ConversationNPC binding set: id=\(type.npcId), name=\(type.defaultName)")
-            }
-        }
-
         // Handle different game modes
         Swift.print("   🎮 Checking game mode...")
         switch locationManager.gameMode {
@@ -3708,8 +3708,102 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // NOTE: We no longer show the UIAlertController text input here because
             // the full-screen SkeletonConversationView (opened above) provides a better UX.
             // The conversation view handles all interactions.
-            
+
         }
+
+        // For skeleton, check server health first to prevent freezing
+        if type == .skeleton {
+            Swift.print("   🔍 Checking server health before opening conversation...")
+
+            // Quick server health check to prevent freezing when server is down
+            Task {
+                do {
+                    let isHealthy = try await APIService.shared.checkHealth()
+                    if isHealthy {
+                        Swift.print("   ✅ Server is healthy, opening SkeletonConversationView")
+                        await MainActor.run {
+                            self.openSkeletonConversation(type: type)
+                        }
+                    } else {
+                        Swift.print("   ⚠️ Server is not healthy, showing simple alert instead")
+                        await MainActor.run {
+                            self.showServerUnavailableAlert(for: type)
+                        }
+                    }
+                } catch {
+                    Swift.print("   ❌ Server health check failed: \(error.localizedDescription)")
+                    Swift.print("   ⚠️ Showing simple alert instead of full conversation")
+                    await MainActor.run {
+                        self.showServerUnavailableAlert(for: type)
+                    }
+                }
+            }
+        }
+        // For corgi, check server health first (same as skeleton)
+        else if type == .corgi {
+            Swift.print("   🐕 Corgi tapped, checking server health...")
+
+            Task {
+                do {
+                    let isHealthy = try await APIService.shared.checkHealth()
+                    if isHealthy {
+                        Swift.print("   ✅ Server is healthy, opening Corgi conversation view")
+                        await MainActor.run {
+                            self.openCorgiConversation(type: type)
+                        }
+                    } else {
+                        Swift.print("   ⚠️ Server is not healthy, showing simple alert for corgi")
+                        await MainActor.run {
+                            self.showServerUnavailableAlert(for: type)
+                        }
+                    }
+                } catch {
+                    Swift.print("   ❌ Server health check failed for corgi: \(error.localizedDescription)")
+                    await MainActor.run {
+                        self.showServerUnavailableAlert(for: type)
+                    }
+                }
+            }
+        }
+    }
+
+    private func openSkeletonConversation(type: NPCType) {
+        Swift.print("   📱 Opening SkeletonConversationView (full-screen dialog)")
+        // CRITICAL: Clear binding first to ensure onChange fires even if it was previously set
+        // This allows re-tapping after the dialog is dismissed
+        self.conversationNPCBinding?.wrappedValue = nil
+        // Small delay to ensure the nil value is processed before setting the new value
+        DispatchQueue.main.async { [weak self] in
+            self?.conversationNPCBinding?.wrappedValue = ConversationNPC(
+                id: type.npcId,
+                name: type.defaultName
+            )
+            Swift.print("   ✅ ConversationNPC binding set: id=\(type.npcId), name=\(type.defaultName)")
+        }
+    }
+
+    private func showServerUnavailableAlert(for type: NPCType) {
+        Swift.print("   📱 Showing server unavailable alert for \(type.defaultName)")
+
+        // Use a simple alert instead of the full conversation view
+        let alert = UIAlertController(
+            title: "Server Unavailable",
+            message: "The server is not running or unreachable. Please start the server and try again. For testing without a server, you can still find the treasure X and corgi locations that appear nearby.",
+            preferredStyle: .alert
+        )
+
+        alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+
+        // Find the current view controller to present the alert
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let rootViewController = windowScene.windows.first?.rootViewController {
+            var currentVC = rootViewController
+            while let presentedVC = currentVC.presentedViewController {
+                currentVC = presentedVC
+            }
+            currentVC.present(alert, animated: true, completion: nil)
+        }
+    }
     }
     
     /// Combine map pieces to reveal treasure location
@@ -3876,7 +3970,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
     }
-    
+
     // MARK: - Distance Text Overlay (delegated to ARDistanceTracker)
     
     // Fallback: place in front of camera
@@ -4979,6 +5073,157 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
     
+    /// Place treasure X marker in AR when player gets close to treasure location
+    private func placeTreasureXIfNeeded(in arView: ARView) {
+        // Check if we have a treasure location
+        guard let treasureLocation = treasureHuntService?.treasureLocation else {
+            return
+        }
+
+        // Check if already placed
+        guard !treasureXPlaced else {
+            return
+        }
+
+        // Check if user location is available
+        guard let userLocation = userLocationManager?.currentLocation else {
+            return
+        }
+
+        // Check if player is within reasonable distance (50 meters)
+        // For testing, always show when treasure location is available
+        let distanceToTreasure = userLocation.distance(from: treasureLocation)
+        let maxDistance: Double = treasureHuntService?.testingMode == true ? 1000.0 : 50.0 // Much larger range for testing
+        guard distanceToTreasure <= maxDistance else {
+            return // Too far away
+        }
+
+        Swift.print("🎯 Placing treasure X in AR - distance: \(String(format: "%.1f", distanceToTreasure))m")
+
+        // Create a visual red X marker
+        let xEntity = createTreasureXEntity()
+        xEntity.name = "treasure_x_marker"
+
+        // Place it 3 meters in front of the camera (close enough to be visible)
+        guard let frame = arView.session.currentFrame else {
+            Swift.print("⚠️ Cannot place treasure X: No AR frame available")
+            return
+        }
+
+        let cameraTransform = frame.camera.transform
+        let cameraForward = -cameraTransform.columns.2 // Negative Z is forward in AR
+        let forwardDirection = SIMD3<Float>(cameraForward.x, cameraForward.y, cameraForward.z)
+
+        // Place 3 meters in front of camera
+        let placeDistance: Float = 3.0
+        let position = SIMD3<Float>(
+            cameraTransform.columns.3.x + forwardDirection.x * placeDistance,
+            cameraTransform.columns.3.y + forwardDirection.y * placeDistance,
+            cameraTransform.columns.3.z + forwardDirection.z * placeDistance
+        )
+
+        xEntity.position = position
+
+        // Add to scene
+        let anchor = AnchorEntity(world: position)
+        anchor.addChild(xEntity)
+        arView.scene.addAnchor(anchor)
+
+        treasureXPlaced = true
+        Swift.print("✅ Treasure X placed in AR 5m in front of camera")
+    }
+
+    /// Create a visual red X entity for the treasure marker
+    private func createTreasureXEntity() -> ModelEntity {
+        // Create a large red X using geometry
+        let xSize: Float = 3.0 // 3 meters tall/wide for visibility
+        let thickness: Float = 0.2 // 20cm thick
+
+        // Create two crossed boxes for the X shape
+        let box1 = MeshResource.generateBox(width: thickness, height: xSize, depth: thickness)
+        let box2 = MeshResource.generateBox(width: thickness, height: xSize, depth: thickness)
+
+        // Red material
+        var redMaterial = SimpleMaterial()
+        redMaterial.color = .init(tint: .red, texture: nil)
+        redMaterial.metallic = 0.0
+        redMaterial.roughness = 0.8
+
+        // Create entities
+        let entity1 = ModelEntity(mesh: box1, materials: [redMaterial])
+        let entity2 = ModelEntity(mesh: box2, materials: [redMaterial])
+
+        // Position and rotate for X shape
+        entity1.position = SIMD3<Float>(0, 0, 0)
+        entity2.position = SIMD3<Float>(0, 0, 0)
+        entity2.transform.rotation = simd_quatf(angle: .pi/4, axis: SIMD3<Float>(0, 0, 1))
+
+        // Combine into a single entity
+        let xEntity = ModelEntity()
+        xEntity.addChild(entity1)
+        xEntity.addChild(entity2)
+
+        // Add a pulsing animation
+        let pulseAnimation = createPulseAnimation()
+        xEntity.addChild(pulseAnimation)
+
+        return xEntity
+    }
+
+    /// Create a pulsing glow effect for the treasure X
+    private func createPulseAnimation() -> ModelEntity {
+        let glowSize: Float = 3.0
+        let glowMesh = MeshResource.generateSphere(radius: glowSize)
+
+        var glowMaterial = SimpleMaterial()
+        glowMaterial.color = .init(tint: UIColor.red.withAlphaComponent(0.3), texture: nil)
+        glowMaterial.metallic = 0.0
+        glowMaterial.roughness = 1.0
+
+        let glowEntity = ModelEntity(mesh: glowMesh, materials: [glowMaterial])
+
+        // Simple scale animation for pulsing effect
+        let scaleUp = SIMD3<Float>(1.2, 1.2, 1.2)
+        let scaleDown = SIMD3<Float>(0.8, 0.8, 0.8)
+
+        // Note: For simplicity, we'll just set a static glow
+        // A full pulsing animation would require more complex animation setup
+        glowEntity.scale = SIMD3<Float>(1.0, 1.0, 1.0)
+
+        return glowEntity
+    }
+
+    /// TESTING: Handle notification to spawn corgi NPC after getting map
+    /// Simplified: Just directly place the corgi in AR
+    @objc private func handleSpawnCorgiNPC(_ notification: Notification) {
+        Swift.print("🐕 [SpawnCorgiNPC] Received notification - DIRECTLY placing corgi in AR")
+        
+        guard let arView = arView else {
+            Swift.print("⚠️ [SpawnCorgiNPC] Cannot spawn corgi: AR view not available")
+            return
+        }
+        
+        // Reset corgi state to ensure it can spawn fresh
+        Swift.print("🐕 [SpawnCorgiNPC] Resetting corgi state...")
+        if let existingCorgi = placedNPCs[NPCType.corgi.npcId] {
+            Swift.print("🐕 [SpawnCorgiNPC] Removing existing corgi")
+            existingCorgi.removeFromParent()
+            placedNPCs.removeValue(forKey: NPCType.corgi.npcId)
+        }
+        corgiPlaced = false
+        
+        // Directly place the corgi in AR after a short delay
+        Swift.print("🐕 [SpawnCorgiNPC] Scheduling corgi placement in 2 seconds...")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self else {
+                Swift.print("⚠️ [SpawnCorgiNPC] Self is nil, cannot place corgi")
+                return
+            }
+            Swift.print("🐕 [SpawnCorgiNPC] Now calling placeNPC for corgi...")
+            self.placeNPC(type: .corgi, in: arView)
+        }
+    }
+    
     /// Pause AR session when sheet is shown (saves battery and prevents UI freezes)
     private func pauseARSession() {
         guard let arView = arView else {
@@ -5042,6 +5287,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         // placedBoxes removed - using findableObjects instead
         findableObjects.removeAll()
+        objectsInViewport.removeAll()
         objectPlacementTimes.removeAll()
         
         // Remove all placed NPCs
@@ -5053,6 +5299,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         skeletonPlaced = false
         corgiPlaced = false
         skeletonAnchor = nil
+
+        // Remove treasure X marker
+        treasureXPlaced = false
         
         // Clear found loot boxes sets
         distanceTracker?.foundLootBoxes.removeAll()
@@ -5061,7 +5310,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Update tap handler's NPC reference
         tapHandler?.placedNPCs = placedNPCs
         
+        // Set flag to force re-placement when AR tracking is ready
+        // This ensures objects are re-placed after game mode change
+        shouldForceReplacement = true
+        
         Swift.print("✅ Cleared \(lootBoxCount) loot boxes and \(npcCount) NPCs from AR scene")
+        Swift.print("🔄 Force re-placement flag set - objects will be re-placed based on new game mode")
     }
-    
-}

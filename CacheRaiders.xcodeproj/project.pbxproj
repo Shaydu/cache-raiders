@@ -400,17 +400,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8S8GT74S7Q;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_ARKitUsageDescription = "This app uses ARKit to place and interact with virtual loot boxes in your environment.";
-				INFOPLIST_KEY_NSBonjourServices = _http._tcp;
-				INFOPLIST_KEY_NSCameraUsageDescription = "This app requires camera access to display AR loot boxes in augmented reality.";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app connects to a local server to sync loot box data and locations with other players.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "This app uses your location to place loot boxes at specific coordinates in your yard.";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -439,17 +429,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 8S8GT74S7Q;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_ARKitUsageDescription = "This app uses ARKit to place and interact with virtual loot boxes in your environment.";
-				INFOPLIST_KEY_NSBonjourServices = _http._tcp;
-				INFOPLIST_KEY_NSCameraUsageDescription = "This app requires camera access to display AR loot boxes in augmented reality.";
-				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "This app connects to a local server to sync loot box data and locations with other players.";
-				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "This app uses your location to place loot boxes at specific coordinates in your yard.";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_FILE = Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

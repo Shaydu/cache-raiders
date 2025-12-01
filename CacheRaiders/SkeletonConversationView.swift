@@ -358,7 +358,8 @@ struct ShadowgateMessageBox: View {
                                 .padding(.vertical, 6)
                         } else {
                             // NPC messages: use typewriter effect with sound if enabled
-                            if enableTypewriterEffect {
+                            // Skip typewriter for initial greeting or when disabled
+                            if enableTypewriterEffect && !skipTypewriter {
                                 // Show typewriter text (or empty string if not started yet)
                                 Text(typewriterService.displayedText.isEmpty ? "" : typewriterService.displayedText)
                                     .font(.system(.caption, design: .monospaced))
@@ -366,7 +367,7 @@ struct ShadowgateMessageBox: View {
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 6)
                             } else {
-                                // Show full text immediately when typewriter is disabled
+                                // Show full text immediately when typewriter is disabled or skipped
                                 Text(text)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundColor(.yellow.opacity(0.95))

@@ -102,6 +102,9 @@ class APIService {
     private var lastErrorMessage: String = ""
     private let errorLogThrottleInterval: TimeInterval = 30.0 // Only log same error every 30 seconds
     
+    // Flag to prevent spamming "No API URL configured" warning
+    private var hasShownNoURLWarning = false
+    
     // Configure your API base URL here
     // For local development: "http://localhost:5001"
     // For production: "https://your-api-domain.com"
@@ -153,17 +156,20 @@ class APIService {
         }
         // No QR code URL set - user needs to scan QR code or enter URL manually
         // Don't guess IPs - only use what's explicitly set
-        print("⚠️ No API URL configured. Please:")
-        print("   1. Open Settings (gear icon in top right)")
-        print("   2. Go to 'API Server URL' section")
-        print("   3. Scan QR code from server admin panel OR")
-        print("   4. Manually enter server IP (e.g., 192.168.68.53:5001)")
-        print("   💡 Find your server IP: Mac: 'ifconfig | grep inet', Windows: 'ipconfig'")
-        
-        // Try to get device IP as a suggestion (but don't auto-use it)
-        if let deviceIP = ServerDiscoveryService.shared.getDeviceLocalIP() {
-            let suggestedURL = "http://\(deviceIP):5001"
-            print("   💡 Suggested IP based on your network: \(suggestedURL)")
+        if !hasShownNoURLWarning {
+            hasShownNoURLWarning = true
+            print("⚠️ No API URL configured. Please:")
+            print("   1. Open Settings (gear icon in top right)")
+            print("   2. Go to 'API Server URL' section")
+            print("   3. Scan QR code from server admin panel OR")
+            print("   4. Manually enter server IP (e.g., 192.168.68.53:5001)")
+            print("   💡 Find your server IP: Mac: 'ifconfig | grep inet', Windows: 'ipconfig'")
+            
+            // Try to get device IP as a suggestion (but don't auto-use it)
+            if let deviceIP = ServerDiscoveryService.shared.getDeviceLocalIP() {
+                let suggestedURL = "http://\(deviceIP):5001"
+                print("   💡 Suggested IP based on your network: \(suggestedURL)")
+            }
         }
         
         return "http://localhost:5001" // Fallback, but won't work on physical device - user must configure URL
@@ -1095,6 +1101,20 @@ class APIService {
         return (response.npc_name, fullResponse)
     }
     
+    /// Get current game mode from server
+    func getGameMode() async throws -> String {
+        guard let url = URL(string: "\(baseURL)/api/settings/game-mode") else {
+            throw APIError.invalidURL
+        }
+        
+        struct GameModeResponse: Codable {
+            let game_mode: String
+        }
+        
+        let response: GameModeResponse = try await makeRequest(url: url, method: "GET", body: nil, timeout: 10.0)
+        return response.game_mode
+    }
+    
     /// Generate a pirate riddle clue based on location and map features
     func generateClue(targetLocation: CLLocation, mapFeatures: [String]? = nil, fetchRealFeatures: Bool = true) async throws -> String {
         guard let url = URL(string: "\(baseURL)/api/llm/generate-clue") else {
@@ -1209,10 +1229,12 @@ class APIService {
     ///   - npcId: The ID of the NPC (skeleton-1 or corgi-1)
     ///   - targetLocation: Optional target location for the treasure (if not provided, uses default)
     /// - Returns: Map piece data with coordinates and landmarks
+    /// Note: Includes device_uuid so the server can save/restore treasure hunts per user
     func getMapPiece(npcId: String, targetLocation: CLLocation? = nil) async throws -> MapPieceResponse {
         let urlString = "\(baseURL)/api/npcs/\(npcId)/map-piece"
         
         struct MapPieceRequest: Codable {
+            let device_uuid: String
             let target_location: TargetLocation?
             
             struct TargetLocation: Codable {
@@ -1221,17 +1243,25 @@ class APIService {
             }
         }
         
-        var requestBody: Data?
+        // Always include device_uuid for treasure hunt persistence
+        let request: MapPieceRequest
         if let targetLocation = targetLocation {
-            let request = MapPieceRequest(
+            request = MapPieceRequest(
+                device_uuid: currentUserID,
                 target_location: MapPieceRequest.TargetLocation(
                     latitude: targetLocation.coordinate.latitude,
                     longitude: targetLocation.coordinate.longitude
                 )
             )
-            let encoder = JSONEncoder()
-            requestBody = try encoder.encode(request)
+        } else {
+            request = MapPieceRequest(
+                device_uuid: currentUserID,
+                target_location: nil
+            )
         }
+        
+        let encoder = JSONEncoder()
+        let requestBody = try encoder.encode(request)
         
         guard let url = URL(string: urlString) else {
             throw APIError.invalidURL
@@ -1241,6 +1271,91 @@ class APIService {
         // Use longer timeout for map piece requests (Overpass API may take time)
         let response: MapPieceResponse = try await makeRequest(url: url, method: "POST", body: requestBody, timeout: 30.0)
         return response
+    }
+    
+    // MARK: - Treasure Hunt Persistence
+    
+    /// Response for getting an existing treasure hunt
+    struct TreasureHuntResponse: Codable {
+        let has_active_hunt: Bool
+        let treasure_hunt: TreasureHunt?
+        let message: String?
+        
+        struct TreasureHunt: Codable {
+            let id: Int
+            let treasure_latitude: Double
+            let treasure_longitude: Double
+            let origin_latitude: Double
+            let origin_longitude: Double
+            let map_piece_1: MapPiece?
+            let map_piece_2: MapPiece?
+            let status: String
+            let created_at: String
+            let completed_at: String?
+        }
+    }
+    
+    /// Get existing treasure hunt for current user
+    /// Returns nil if no active hunt exists
+    func getTreasureHunt() async throws -> TreasureHuntResponse {
+        guard let url = URL(string: "\(baseURL)/api/treasure-hunts/\(currentUserID)") else {
+            throw APIError.invalidURL
+        }
+        
+        return try await makeRequest(url: url, method: "GET")
+    }
+    
+    /// Reset (cancel) the current treasure hunt to start fresh
+    func resetTreasureHunt() async throws {
+        guard let url = URL(string: "\(baseURL)/api/treasure-hunts/\(currentUserID)") else {
+            throw APIError.invalidURL
+        }
+        
+        struct ResetResponse: Codable {
+            let success: Bool
+            let message: String
+            let hunts_reset: Int
+        }
+        
+        let _: ResetResponse = try await makeRequest(url: url, method: "DELETE")
+    }
+    
+    /// Mark the treasure hunt as completed (user found the treasure)
+    func completeTreasureHunt() async throws {
+        guard let url = URL(string: "\(baseURL)/api/treasure-hunts/\(currentUserID)/complete") else {
+            throw APIError.invalidURL
+        }
+
+        struct CompleteResponse: Codable {
+            let success: Bool
+            let message: String
+            let hunts_completed: Int
+        }
+
+        let _: CompleteResponse = try await makeRequest(url: url, method: "POST")
+    }
+
+    /// Trigger IOU discovery when player arrives at treasure location
+    func discoverIOU(deviceUUID: String, currentLatitude: Double, currentLongitude: Double) async throws {
+        guard let url = URL(string: "\(baseURL)/api/treasure-hunts/\(deviceUUID)/discover-iou") else {
+            throw APIError.invalidURL
+        }
+
+        struct DiscoverIOURequest: Codable {
+            let current_latitude: Double
+            let current_longitude: Double
+        }
+
+        let request = DiscoverIOURequest(
+            current_latitude: currentLatitude,
+            current_longitude: currentLongitude
+        )
+
+        let encoder = JSONEncoder()
+        let bodyData = try encoder.encode(request)
+
+        // The response doesn't need to be decoded - just ensure the request succeeds
+        let _: [String: String] = try await makeRequest(url: url, method: "POST", body: bodyData)
     }
     
     /// Combine two map pieces into a complete treasure map

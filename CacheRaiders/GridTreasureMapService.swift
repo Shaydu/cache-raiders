@@ -10,6 +10,9 @@ class GridTreasureMapService: ObservableObject {
     @Published var treasureLocation: CLLocationCoordinate2D?
     @Published var landmarks: [GridLandmark] = []
     @Published var userLocation: CLLocationCoordinate2D?
+
+    private var userLocationManager: UserLocationManager?
+    private var cancellables = Set<AnyCancellable>()
     
     /// Toggle map visibility
     func toggleMap() {
@@ -27,9 +30,14 @@ class GridTreasureMapService: ObservableObject {
     }
     
     /// Update map data with treasure location and landmarks
-    func updateMapData(treasureLocation: CLLocationCoordinate2D, landmarks: [LandmarkAnnotation], userLocation: CLLocationCoordinate2D?) {
+    func updateMapData(treasureLocation: CLLocationCoordinate2D, landmarks: [LandmarkAnnotation], userLocation: CLLocationCoordinate2D?, userLocationManager: UserLocationManager) {
         self.treasureLocation = treasureLocation
         self.userLocation = userLocation
+
+        // Set up location manager reference and start observing location changes
+        self.userLocationManager = userLocationManager
+        setupLocationObservation()
+
         self.landmarks = landmarks.map { landmark in
             GridLandmark(
                 name: landmark.name,
@@ -37,6 +45,23 @@ class GridTreasureMapService: ObservableObject {
                 type: landmark.type
             )
         }
+    }
+
+    /// Set up observation of user location changes
+    private func setupLocationObservation() {
+        guard let userLocationManager = userLocationManager else { return }
+
+        // Cancel any existing observations
+        cancellables.removeAll()
+
+        // Observe location changes and update userLocation
+        userLocationManager.$currentLocation
+            .compactMap { $0?.coordinate }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] coordinate in
+                self?.userLocation = coordinate
+            }
+            .store(in: &cancellables)
     }
 }
 
