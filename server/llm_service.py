@@ -96,7 +96,7 @@ def get_local_ip():
 class LLMService:
     def __init__(self):
         """Initialize LLM service with configuration from environment."""
-        self.provider = os.getenv("LLM_PROVIDER", "openai").lower()
+        self.provider = os.getenv("LLM_PROVIDER", "ollama").lower()
         
         # Set default model based on provider
         # Validate that LLM_MODEL matches the provider, otherwise use provider-specific default
@@ -108,8 +108,8 @@ class LLMService:
                 # Valid Ollama model name
                 self.model = env_model
             else:
-                # Use Ollama default (llama3:8b is common, fallback to llama2:latest)
-                self.model = env_model if env_model and not env_model.startswith("gpt-") else "llama3:8b"
+                # Use Ollama default (granite4:350m is smallest and fastest, fallback to llama3.2:1b)
+                self.model = env_model if env_model and not env_model.startswith("gpt-") else "granite4:350m"
         else:
             # For OpenAI/other providers, use env model or default
             if env_model:
@@ -126,7 +126,13 @@ class LLMService:
         # The Python server connects to Ollama. When running in Docker, use the container name
         # (http://ollama:11434). When running locally, use localhost (http://localhost:11434).
         # The iOS app does NOT connect directly to Ollama - it goes through the Python API server.
-        self.ollama_base_url = os.getenv("LLM_BASE_URL", "http://localhost:11434")
+        # Check if we're in Docker first, then use environment variable, then default
+        if os.getenv("DOCKER_CONTAINER"):
+            # In Docker, default to container service name
+            self.ollama_base_url = os.getenv("LLM_BASE_URL", "http://ollama:11434")
+        else:
+            # Running locally, default to localhost
+            self.ollama_base_url = os.getenv("LLM_BASE_URL", "http://localhost:11434")
         
         # Store original API key from environment
         self._original_api_key = os.getenv("OPENAI_API_KEY")
@@ -187,7 +193,7 @@ class LLMService:
                 if model.startswith("gpt-") or model.startswith("o1-"):
                     # Invalid model for Ollama, use default
                     if self.provider == "ollama":
-                        self.model = "llama3:8b"  # Default Ollama model
+                        self.model = "granite4:350m"  # Default Ollama model (smallest)
                         print(f"⚠️ [LLM Service] Invalid model '{model}' for Ollama, using default: {self.model}")
                         print(f"🔧 [LLM Service] Provider remains: {self.provider} (unchanged)")
                     else:
@@ -233,7 +239,7 @@ class LLMService:
     def get_provider_info(self):
         """Get current provider configuration."""
         # Normalize provider for consistent output
-        provider = str(self.provider).lower().strip() if self.provider else "openai"
+        provider = str(self.provider).lower().strip() if self.provider else "ollama"
         return {
             "provider": provider,
             "model": self.model,
@@ -256,9 +262,9 @@ class LLMService:
         
         # CRITICAL: Verify provider is valid before routing
         if not self.provider:
-            print(f"❌ [LLM Service] ERROR: Provider is None or empty! Defaulting to OpenAI")
-            self.provider = "openai"
-            self.model = "gpt-4o-mini"
+            print(f"❌ [LLM Service] ERROR: Provider is None or empty! Defaulting to Ollama")
+            self.provider = "ollama"
+            self.model = "llama3:8b"
             self._initialize_provider()
         
         # Route to appropriate provider (normalized comparison)
@@ -329,11 +335,12 @@ class LLMService:
         }
         
         try:
-            # Timeout: 60 seconds for initial load, but should be much faster if model is already loaded
-            # The keepalive thread should keep the model warm, so most requests should be <5s
+            # Timeout: 180 seconds (3 minutes) for initial load of small models
+            # llama3.2:1b should load quickly, but first request may take 30-60s
+            # The keepalive thread should keep the model warm, so subsequent requests should be <5s
             import time
             start_time = time.time()
-            response = requests.post(url, json=payload, timeout=60)
+            response = requests.post(url, json=payload, timeout=180)
             elapsed = time.time() - start_time
             if elapsed > 1.0:
                 print(f"⏱️ Ollama request took {elapsed:.2f}s (model may have loaded)")
@@ -343,7 +350,7 @@ class LLMService:
         except requests.exceptions.ConnectionError as e:
             return f"Error: Cannot connect to Ollama at {self.ollama_base_url}. Make sure Ollama is running: ollama serve. Connection error: {str(e)}"
         except requests.exceptions.Timeout:
-            return "Error: Ollama request timed out after 30 seconds. The model might be loading or the server is overloaded. Try again in a moment."
+            return "Error: Ollama request timed out after 180 seconds. The model might be loading for the first time. Try warming up the model first: curl http://localhost:5001/api/llm/warmup or wait a moment and try again. For granite4:350m, first load should take 10-30 seconds."
         except requests.exceptions.HTTPError as e:
             # Handle HTTP errors (like 404 for missing model) separately
             if e.response.status_code == 404:
@@ -1120,7 +1127,7 @@ Return ONLY valid JSON, no other text."""
         
         try:
             start_time = time.time()
-            response = requests.post(url, json=payload, timeout=120)  # Longer timeout for vision
+            response = requests.post(url, json=payload, timeout=180)  # 3 minutes for vision (longer due to image processing)
             elapsed = time.time() - start_time
             map_logger.info(f"[{request_id}] [Vision] Ollama Vision API call completed in {elapsed:.2f}s")
             
@@ -1157,7 +1164,7 @@ Return ONLY valid JSON, no other text."""
         except requests.exceptions.ConnectionError:
             return {"error": f"Cannot connect to Ollama at {self.ollama_base_url}. Make sure Ollama is running."}
         except requests.exceptions.Timeout:
-            return {"error": "Ollama vision request timed out. The model might be loading."}
+            return {"error": "Ollama vision request timed out after 180 seconds. The model might be loading, processing a large image, or the server is overloaded. Try again in a moment or use a smaller/faster vision model."}
         except json.JSONDecodeError as e:
             map_logger.error(f"[{request_id}] [Vision] Failed to parse JSON response: {str(e)}")
             return {"error": f"Failed to parse LLM response as JSON: {str(e)}"}
@@ -1668,28 +1675,47 @@ Keep it SHORT - 1-2 lines only. Riddle:"""
         try:
             import time
             start_time = time.time()
+            
+            # CRITICAL: Capture provider/model BEFORE the call to ensure we report what was actually attempted
+            attempted_provider = self.provider
+            attempted_model = self.model
+            
+            print(f"🧪 [LLM Service] test_connection - Attempting with provider: '{attempted_provider}', model: '{attempted_model}'")
+            
             response = self._call_llm(prompt=test_prompt, max_tokens=10)  # Very short response
             elapsed = time.time() - start_time
             
-            # CRITICAL: Verify provider/model after call
-            print(f"🧪 [LLM Service] test_connection completed - Provider: {self.provider}, model: {self.model}")
+            # CRITICAL: Verify provider/model after call (should not have changed)
+            actual_provider = self.provider
+            actual_model = self.model
+            print(f"🧪 [LLM Service] test_connection completed - Provider: '{actual_provider}', model: '{actual_model}', response length: {len(response)}")
             
-            # Check if response indicates an error
-            if response.startswith("Error:"):
+            # Check if response indicates an error (Ollama returns error strings)
+            # Check for various error patterns
+            is_error = (response.startswith("Error:") or 
+                       response.startswith("Error calling") or
+                       "timed out" in response.lower() or
+                       "cannot connect" in response.lower() or
+                       "not found" in response.lower() or
+                       "connection error" in response.lower())
+            
+            if is_error:
+                print(f"❌ [LLM Service] test_connection detected error response from {actual_provider}/{actual_model}")
                 return {
                     "status": "error",
                     "error": response,
-                    "model": self.model,
-                    "provider": self.provider,
-                    "api_key_configured": bool(self.api_key) if self.provider != "ollama" else None
+                    "model": actual_model,
+                    "provider": actual_provider,
+                    "api_key_configured": bool(self.api_key) if actual_provider not in ["ollama", "local"] else None
                 }
             
+            print(f"✅ [LLM Service] test_connection success - Provider: '{actual_provider}', model: '{actual_model}'")
             return {
                 "status": "success",
                 "response": response,
-                "model": self.model,
-                "provider": self.provider,
-                "api_key_configured": bool(self.api_key) if self.provider != "ollama" else None,
+                "model": actual_model,
+                "provider": actual_provider,
+                "api_key_configured": bool(self.api_key) if actual_provider not in ["ollama", "local"] else None,
                 "elapsed_seconds": elapsed
             }
         except Exception as e:

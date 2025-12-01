@@ -144,7 +144,7 @@
             </div>
             <div class="form-group">
                 <label for="gameMode">Game Mode</label>
-                <select id="gameMode" class="loot-type-select" onchange="SettingsManager.updateGameMode()">
+                <select id="gameMode" class="loot-type-select">
                     <option value="open">Open</option>
                     <option value="dead_mens_secrets">Story Mode</option>
                 </select>
@@ -152,7 +152,7 @@
             </div>
             <div class="form-group" style="margin-top: 15px;">
                 <label for="locationUpdateInterval">Location Update Frequency</label>
-                <select id="locationUpdateInterval" class="loot-type-select" onchange="SettingsManager.updateLocationInterval()">
+                <select id="locationUpdateInterval" class="loot-type-select">
                     <option value="500">0.5 seconds</option>
                     <option value="1000" selected>1 second</option>
                     <option value="3000">3 seconds</option>
@@ -166,13 +166,13 @@
             
             <div class="form-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #444;">
                 <label for="llmProvider">🤖 LLM Provider</label>
-                <select id="llmProvider" class="loot-type-select" onchange="SettingsManager.onProviderChange()">
+                <select id="llmProvider" class="loot-type-select">
                     <option value="openai">OpenAI (Cloud)</option>
-                    <option value="ollama">Ollama (Local)</option>
+                    <option value="ollama">Ollama</option>
                 </select>
                 
                 <label for="llmModel" style="margin-top: 10px; display: block;">Model</label>
-                <select id="llmModel" class="loot-type-select" onchange="SettingsManager.updateLLMProvider()">
+                <select id="llmModel" class="loot-type-select">
                     <option value="gpt-4o-mini">gpt-4o-mini (OpenAI)</option>
                     <option value="gpt-4o">gpt-4o (OpenAI)</option>
                     <option value="gpt-4-turbo">gpt-4-turbo (OpenAI)</option>
@@ -182,7 +182,7 @@
                     Current: Loading...
                 </p>
                 <div id="llmProviderStatus" style="margin-top: 8px; padding: 8px; border-radius: 4px; font-size: 11px; display: none;"></div>
-                <button onclick="SettingsManager.testLLM()" style="width: 100%; margin-top: 8px; padding: 8px; background: #444; color: #fff; border: 1px solid #666; border-radius: 4px; cursor: pointer; font-size: 12px;" onmouseover="this.style.background='#555'" onmouseout="this.style.background='#444'">
+                <button id="testLLMButton" style="width: 100%; margin-top: 8px; padding: 8px; background: #444; color: #fff; border: 1px solid #666; border-radius: 4px; cursor: pointer; font-size: 12px;" onmouseover="this.style.background='#555'" onmouseout="this.style.background='#444'">
                     🧪 Test LLM Connection
                 </button>
             </div>
@@ -309,13 +309,13 @@
     </div>
     
     <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" onerror="console.error('Failed to load Leaflet library')"></script>
     
     <!-- Google Maps JavaScript API -->
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBFw0Qbyq9zTFTd-tUY6d-s6U4ZUwwQZb8"></script>
     
     <!-- Leaflet Google Mutant Plugin (for Google Maps integration with Leaflet) -->
-    <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@latest/dist/Leaflet.GoogleMutant.js"></script>
+    <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@latest/dist/Leaflet.GoogleMutant.js" onerror="console.error('Failed to load Leaflet Google Mutant plugin')"></script>
     
     <!-- Socket.IO Client -->
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
@@ -327,6 +327,8 @@
     <script src="/static/js/config.js"></script>
     <script src="/static/js/api.js"></script>
     <script src="/static/js/ui.js"></script>
+    <script src="/static/js/game_mode.js"></script>
+    <script src="/static/js/llm_settings.js"></script>
     <script src="/static/js/settings.js"></script>
     <script src="/static/js/map.js"></script>
     <script src="/static/js/websocket.js"></script>

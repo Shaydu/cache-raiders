@@ -653,7 +653,7 @@ class TreasureMapService:
             user_x = width // 4  # Place user at bottom-left
             user_y = 3 * height // 4
             
-            # Draw blue circle for user
+            # Draw blue circle for user (icon only, no text label to avoid duplication)
             user_size = min(width, height) // 25
             draw.ellipse(
                 [user_x - user_size, user_y - user_size,
@@ -685,17 +685,8 @@ class TreasureMapService:
                     fill=arrow_color
                 )
             
-            # Label
-            label = "YOU"
-            try:
-                bbox = draw.textbbox((0, 0), label, font=font_small)
-                label_width = bbox[2] - bbox[0]
-                draw.text(
-                    (user_x - label_width // 2, user_y + user_size + 5),
-                    label, font=font_small, fill=(0, 100, 255)
-                )
-            except:
-                pass
+            # No text label for user location - the blue circle icon is sufficient
+            # This avoids duplication where both icon and text say "YOU"
         
         # Draw arrows from landmarks to treasure
         if landmarks and treasure_x and treasure_y:

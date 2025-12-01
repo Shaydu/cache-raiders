@@ -24,10 +24,6 @@ const App = {
         // Set up event handlers first (these don't modify DOM)
         this.setupFormHandler();
         this.setupModalHandlers();
-        // Initialize admin settings UI (e.g., generic cache icon toggle)
-        if (window.SettingsManager && typeof SettingsManager.init === 'function') {
-            SettingsManager.init();
-        }
 
         // Defer all DOM modifications to next tick
         setTimeout(async () => {

@@ -138,13 +138,13 @@ if [ $? -eq 0 ]; then
         MODELS=$(docker exec cache-raiders-ollama ollama list 2>/dev/null | tail -n +2 | wc -l | tr -d ' ')
         if [ "$MODELS" -eq 0 ] || [ -z "$MODELS" ]; then
             echo "⚠️  No models found in Ollama container"
-            echo "   Pulling default model: llama3:8b"
-            docker exec cache-raiders-ollama ollama pull llama3:8b
+            echo "   Pulling default model: llama3.2:1b (very small and fast)"
+            docker exec cache-raiders-ollama ollama pull llama3.2:1b
             if [ $? -eq 0 ]; then
-                echo "✅ Model llama3:8b pulled successfully!"
+                echo "✅ Model llama3.2:1b pulled successfully!"
             else
                 echo "⚠️  Failed to pull model. You can pull it manually later:"
-                echo "   docker exec -it cache-raiders-ollama ollama pull llama3:8b"
+                echo "   docker exec -it cache-raiders-ollama ollama pull llama3.2:1b"
             fi
         else
             echo "✅ Found $MODELS model(s) in Ollama"

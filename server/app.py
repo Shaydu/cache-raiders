@@ -15,6 +15,7 @@ import logging
 import threading
 import time
 import requests
+import traceback
 from datetime import datetime
 from typing import Optional, List, Dict
 from dotenv import load_dotenv
@@ -1114,35 +1115,57 @@ def get_user_finds(user_id: str):
 @app.route('/api/players', methods=['GET'])
 def get_all_players():
     """Get all players with their find counts."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Get all players with their find counts
-    cursor.execute('''
-        SELECT 
-            p.device_uuid,
-            p.player_name,
-            p.created_at,
-            p.updated_at,
-            COUNT(f.id) as find_count
-        FROM players p
-        LEFT JOIN finds f ON p.device_uuid = f.found_by
-        GROUP BY p.device_uuid, p.player_name, p.created_at, p.updated_at
-        ORDER BY find_count DESC, p.updated_at DESC
-    ''')
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    players = [{
-        'device_uuid': row['device_uuid'],
-        'player_name': row['player_name'],
-        'created_at': row['created_at'],
-        'updated_at': row['updated_at'],
-        'find_count': row['find_count']
-    } for row in rows]
-    
-    return jsonify(players)
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get all players with their find counts
+        cursor.execute('''
+            SELECT 
+                p.device_uuid,
+                p.player_name,
+                p.created_at,
+                p.updated_at,
+                COUNT(f.id) as find_count
+            FROM players p
+            LEFT JOIN finds f ON p.device_uuid = f.found_by
+            GROUP BY p.device_uuid, p.player_name, p.created_at, p.updated_at
+            ORDER BY find_count DESC, p.updated_at DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        
+        players = [{
+            'device_uuid': row['device_uuid'],
+            'player_name': row['player_name'],
+            'created_at': row['created_at'],
+            'updated_at': row['updated_at'],
+            'find_count': row['find_count']
+        } for row in rows]
+        
+        return jsonify(players)
+    except sqlite3.OperationalError as e:
+        error_msg = f"Database error in /api/players: {str(e)}"
+        print(f"❌ {error_msg}")
+        print(traceback.format_exc())
+        return jsonify({'error': 'Database operation failed', 'details': str(e)}), 500
+    except sqlite3.Error as e:
+        error_msg = f"SQLite error in /api/players: {str(e)}"
+        print(f"❌ {error_msg}")
+        print(traceback.format_exc())
+        return jsonify({'error': 'Database error', 'details': str(e)}), 500
+    except Exception as e:
+        error_msg = f"Unexpected error in /api/players: {str(e)}"
+        print(f"❌ {error_msg}")
+        print(traceback.format_exc())
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 @app.route('/api/players/<device_uuid>', methods=['GET'])
 def get_player(device_uuid: str):
@@ -2177,6 +2200,57 @@ def test_llm():
     
     return jsonify(result), 200 if result['status'] == 'success' else 500
 
+@app.route('/api/llm/test-connection', methods=['GET'])
+def test_llm_connection():
+    """Test LLM connection (alias for /api/llm/test for consistency with error messages)."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    # For Ollama, also run diagnostics
+    provider_info = llm_service.get_provider_info()
+    if provider_info.get('provider') in ['ollama', 'local']:
+        # Run the test first
+        test_result = llm_service.test_connection()
+        
+        # Also get diagnostic info
+        diagnose_result = {
+            'ollama_base_url': llm_service.ollama_base_url,
+            'docker_container': bool(os.getenv('DOCKER_CONTAINER')),
+            'connection_test': None,
+            'models_available': [],
+            'error': None
+        }
+        
+        # Try to get models if connection works
+        try:
+            import requests
+            ollama_url = llm_service.ollama_base_url
+            response = requests.get(f"{ollama_url}/api/tags", timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                models = [m.get('name', m.get('model', '')) for m in data.get('models', [])]
+                diagnose_result['connection_test'] = 'success'
+                diagnose_result['models_available'] = models
+        except:
+            diagnose_result['connection_test'] = 'failed'
+        
+        # Merge results
+        combined = {
+            'status': test_result.get('status'),
+            'provider': test_result.get('provider'),
+            'model': test_result.get('model'),
+            'response': test_result.get('response'),
+            'error': test_result.get('error'),
+            'ollama_base_url': diagnose_result.get('ollama_base_url'),
+            'docker_container': diagnose_result.get('docker_container'),
+            'connection_test': diagnose_result.get('connection_test'),
+            'models_available': diagnose_result.get('models_available')
+        }
+        return jsonify(combined), 200 if test_result.get('status') == 'success' else 500
+    else:
+        # For non-Ollama providers, just run the test
+        return test_llm()
+
 @app.route('/api/llm/warmup', methods=['POST'])
 def warmup_llm():
     """Warm up the LLM model (pre-loads into memory for faster responses)."""
@@ -2187,33 +2261,120 @@ def warmup_llm():
     status_code = 200 if result.get('status') == 'success' else 500
     return jsonify(result), status_code
 
+@app.route('/api/llm/ollama/diagnose', methods=['GET'])
+def diagnose_ollama():
+    """Diagnose Ollama connectivity and model availability."""
+    result = {
+        'ollama_base_url': llm_service.ollama_base_url,
+        'docker_container': bool(os.getenv('DOCKER_CONTAINER')),
+        'connection_test': None,
+        'models_available': [],
+        'error': None
+    }
+    
+    try:
+        import requests
+        ollama_url = llm_service.ollama_base_url
+        
+        # Test basic connectivity
+        try:
+            response = requests.get(f"{ollama_url}/api/tags", timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                models = [m.get('name', m.get('model', '')) for m in data.get('models', [])]
+                result['connection_test'] = 'success'
+                result['models_available'] = models
+                result['message'] = f"✅ Connected to Ollama at {ollama_url}. Found {len(models)} model(s)."
+            else:
+                result['connection_test'] = 'failed'
+                result['error'] = f"Ollama returned status {response.status_code}"
+                result['message'] = f"⚠️ Ollama at {ollama_url} returned HTTP {response.status_code}"
+        except requests.exceptions.ConnectionError as e:
+            result['connection_test'] = 'failed'
+            result['error'] = f"Connection error: {str(e)}"
+            is_docker = os.getenv('DOCKER_CONTAINER', '').lower() in ('true', '1', 'yes')
+            if is_docker:
+                result['message'] = f"❌ Cannot connect to Ollama at {ollama_url}. Check if container is running: docker ps | grep ollama. If running, check container logs: docker logs cache-raiders-ollama"
+            else:
+                result['message'] = f"❌ Cannot connect to Ollama at {ollama_url}. Make sure Ollama is running locally: ollama serve (or check if Docker container is running: docker ps | grep ollama)"
+        except requests.exceptions.Timeout:
+            result['connection_test'] = 'failed'
+            result['error'] = "Request timed out"
+            result['message'] = f"⏱️ Ollama at {ollama_url} did not respond within 10 seconds"
+        except Exception as e:
+            result['connection_test'] = 'failed'
+            result['error'] = f"Unexpected error: {str(e)}"
+            result['message'] = f"❌ Error testing Ollama: {str(e)}"
+    except Exception as e:
+        result['connection_test'] = 'error'
+        result['error'] = f"Diagnostic error: {str(e)}"
+        result['message'] = f"❌ Failed to run diagnostic: {str(e)}"
+    
+    return jsonify(result), 200
+
 @app.route('/api/llm/provider', methods=['GET'])
 def get_llm_provider():
     """Get current LLM provider configuration."""
+    print(f"📥 [API] GET /api/llm/provider called")
     if not LLM_AVAILABLE:
         return jsonify({'error': 'LLM service not available'}), 503
     
     info = llm_service.get_provider_info()
+    print(f"📊 [API] Provider info: {info.get('provider')}, model: {info.get('model')}")
+    
+    # Don't modify ollama_base_url - it was already set correctly in __init__
+    # Just log what we're using
+    if info.get('provider') == 'ollama':
+        print(f"🔧 [API] Using Ollama at: {llm_service.ollama_base_url}")
     
     # If Ollama, also fetch available models
     if info.get('provider') == 'ollama':
+        print(f"🔍 [API] Starting to fetch Ollama models...")
         try:
             import requests
-            ollama_url = info.get('ollama_base_url', 'http://localhost:11434')
+            ollama_url = llm_service.ollama_base_url
+            print(f"🔍 Fetching Ollama models from: {ollama_url}/api/tags")
+            # Quick timeout - if Ollama is slow, we'll show an error
             response = requests.get(f"{ollama_url}/api/tags", timeout=5)
             if response.status_code == 200:
                 data = response.json()
                 models = [m.get('name', m.get('model', '')) for m in data.get('models', [])]
                 info['available_models'] = models
+                print(f"✅ Found {len(models)} Ollama models: {', '.join(models) if models else 'none'}")
+            else:
+                info['available_models'] = []
+                error_msg = f"Ollama API returned status {response.status_code}"
+                info['ollama_error'] = error_msg
+                print(f"⚠️ {error_msg}")
+        except requests.exceptions.ConnectionError as e:
+            info['available_models'] = []
+            ollama_url = llm_service.ollama_base_url
+            error_msg = f"Cannot connect to Ollama at {ollama_url}"
+            info['ollama_error'] = error_msg
+            info['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}: {e}")
+        except requests.exceptions.Timeout:
+            info['available_models'] = []
+            ollama_url = llm_service.ollama_base_url
+            error_msg = f"Ollama request timed out after 5s at {ollama_url}"
+            info['ollama_error'] = error_msg
+            info['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}")
         except Exception as e:
             info['available_models'] = []
-            print(f"⚠️ Could not fetch Ollama models: {e}")
+            ollama_url = llm_service.ollama_base_url
+            error_msg = f"Error fetching Ollama models from {ollama_url}: {str(e)}"
+            info['ollama_error'] = error_msg
+            info['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}")
+            import traceback
+            traceback.print_exc()
     
     return jsonify(info), 200
 
 @app.route('/api/llm/provider', methods=['POST'])
 def set_llm_provider():
-    """Switch LLM provider (openai, ollama, or local)."""
+    """Switch LLM provider (openai, ollama, or local) and persist to database."""
     if not LLM_AVAILABLE:
         return jsonify({'error': 'LLM service not available'}), 503
     
@@ -2224,6 +2385,8 @@ def set_llm_provider():
     if not provider:
         return jsonify({'error': 'provider is required'}), 400
     
+    # ollama_base_url was already set correctly in __init__ - don't modify it
+    
     # Log the request for debugging
     print(f"🔄 [API] Setting LLM provider: {provider}, model: {model}")
     
@@ -2231,6 +2394,93 @@ def set_llm_provider():
     
     if 'error' in result:
         return jsonify(result), 400
+    
+    # Persist to database
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Save provider
+        cursor.execute('''
+            INSERT OR REPLACE INTO settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+        ''', ('llm_provider', result.get('provider'), datetime.utcnow().isoformat()))
+        
+        # Save model
+        if result.get('model'):
+            cursor.execute('''
+                INSERT OR REPLACE INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            ''', ('llm_model', result.get('model'), datetime.utcnow().isoformat()))
+        
+        conn.commit()
+        conn.close()
+        print(f"💾 Persisted LLM settings to database: provider={result.get('provider')}, model={result.get('model')}")
+    except Exception as e:
+        print(f"⚠️ Error persisting LLM settings to database: {e}")
+        import traceback
+        traceback.print_exc()
+        # Continue anyway - in-memory value is set
+    
+    # Fetch available models if Ollama (same as GET endpoint)
+    if result.get('provider') == 'ollama':
+        try:
+            import requests
+            ollama_url = llm_service.ollama_base_url
+            print(f"🔍 [API] Fetching Ollama models from {ollama_url}/api/tags after provider change...")
+            response = requests.get(f"{ollama_url}/api/tags", timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                models = [m.get('name', m.get('model', '')) for m in data.get('models', [])]
+                result['available_models'] = models
+                result['ollama_base_url'] = ollama_url
+                print(f"✅ [API] Found {len(models)} Ollama models: {', '.join(models) if models else 'none'}")
+                
+                # Verify the selected model is actually available
+                selected_model = result.get('model')
+                if selected_model and models and selected_model not in models:
+                    # Check if model name matches (with or without tag)
+                    model_found = any(m.startswith(selected_model.split(':')[0]) for m in models)
+                    if not model_found:
+                        print(f"⚠️ [API] Selected model '{selected_model}' not in available models. Available: {models}")
+                        # Use first available model or default
+                        if models:
+                            result['model'] = models[0]
+                            result['model_warning'] = f"Selected model not available, switched to {models[0]}"
+                            print(f"🔄 [API] Switched to available model: {models[0]}")
+            else:
+                result['available_models'] = []
+                result['ollama_error'] = f"Ollama API returned status {response.status_code}"
+                result['ollama_base_url'] = ollama_url
+                print(f"⚠️ [API] Ollama API returned status {response.status_code}")
+        except requests.exceptions.ConnectionError as e:
+            result['available_models'] = []
+            ollama_url = llm_service.ollama_base_url
+            is_docker = os.getenv('DOCKER_CONTAINER', '').lower() in ('true', '1', 'yes')
+            print(f"🔍 [API] Connection error in POST - is_docker={is_docker}, DOCKER_CONTAINER={os.getenv('DOCKER_CONTAINER')}, ollama_url={ollama_url}")
+            if is_docker:
+                error_msg = f"Cannot connect to Ollama at {ollama_url}. Make sure the Ollama container is running: docker ps | grep ollama. If running, check container logs: docker logs cache-raiders-ollama"
+            else:
+                error_msg = f"Cannot connect to Ollama at {ollama_url}. Make sure Ollama is running locally: ollama serve (or check if Docker container is running: docker ps | grep ollama)"
+            result['ollama_error'] = error_msg
+            result['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}: {e}")
+        except requests.exceptions.Timeout:
+            result['available_models'] = []
+            ollama_url = llm_service.ollama_base_url
+            error_msg = f"Ollama request timed out at {ollama_url}. Check if Ollama is healthy."
+            result['ollama_error'] = error_msg
+            result['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}")
+        except Exception as e:
+            result['available_models'] = []
+            ollama_url = llm_service.ollama_base_url
+            error_msg = f"Error fetching Ollama models from {ollama_url}: {str(e)}"
+            result['ollama_error'] = error_msg
+            result['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}")
+            import traceback
+            traceback.print_exc()
     
     # Log the result for debugging
     print(f"✅ [API] LLM provider set to: {result.get('provider')}, model: {result.get('model')}")
@@ -2338,37 +2588,131 @@ def get_location_update_interval():
 
 @app.route('/api/settings/location-update-interval', methods=['POST', 'PUT'])
 def set_location_update_interval():
-    """Set the location update interval in milliseconds."""
+    """Set the location update interval in milliseconds and persist to database."""
     global location_update_interval_ms
     
-    data = request.get_json()
-    if not data or 'interval_ms' not in data:
-        return jsonify({'error': 'interval_ms is required'}), 400
-    
-    interval_ms = int(data['interval_ms'])
-    
-    # Validate interval (must be one of the allowed values: 500, 1000, 3000, 5000, 10000, 30000, 60000)
-    allowed_intervals = [500, 1000, 3000, 5000, 10000, 30000, 60000]
-    if interval_ms not in allowed_intervals:
+    try:
+        data = request.get_json()
+        if not data or 'interval_ms' not in data:
+            return jsonify({'error': 'interval_ms is required'}), 400
+        
+        interval_ms = int(data['interval_ms'])
+        
+        # Validate interval (must be one of the allowed values: 500, 1000, 3000, 5000, 10000, 30000, 60000)
+        allowed_intervals = [500, 1000, 3000, 5000, 10000, 30000, 60000]
+        if interval_ms not in allowed_intervals:
+            return jsonify({
+                'error': f'Invalid interval. Must be one of: {[ms/1000 for ms in allowed_intervals]} seconds'
+            }), 400
+        
+        location_update_interval_ms = interval_ms
+        
+        # Persist to database - verify it was saved
+        db_save_success = False
+        db_error = None
+        try:
+            # Ensure database is initialized
+            if not os.path.exists(DB_PATH):
+                print(f"⚠️ Database file does not exist: {DB_PATH}, initializing...")
+                init_db()
+            
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # Ensure settings table exists
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
+            
+            # Save the value
+            cursor.execute('''
+                INSERT OR REPLACE INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            ''', ('location_update_interval_ms', str(location_update_interval_ms), datetime.utcnow().isoformat()))
+            conn.commit()
+            
+            # Verify the save worked by reading it back
+            cursor.execute('SELECT value FROM settings WHERE key = ?', ('location_update_interval_ms',))
+            row = cursor.fetchone()
+            if row and int(row['value']) == location_update_interval_ms:
+                db_save_success = True
+                print(f"💾 Persisted location update interval to database: {location_update_interval_ms}ms (verified)")
+            else:
+                db_error = "Save verification failed - value mismatch"
+                print(f"⚠️ Warning: Location update interval may not have been saved correctly")
+            conn.close()
+        except sqlite3.OperationalError as e:
+            db_error = f"Database operational error: {str(e)}"
+            print(f"⚠️ Error persisting location update interval to database: {e}")
+            import traceback
+            traceback.print_exc()
+        except Exception as e:
+            db_error = f"Unexpected error: {str(e)}"
+            print(f"⚠️ Error persisting location update interval to database: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # If save failed, return error but still set in-memory value
+        if not db_save_success:
+            print(f"⚠️ Database save failed, but in-memory value is set to {location_update_interval_ms}ms")
+            # Don't return error - allow in-memory value to be used, but log the issue
+        
+        # Broadcast the new interval to all connected clients via WebSocket
+        try:
+            socketio.emit('location_update_interval_changed', {
+                'interval_ms': location_update_interval_ms,
+                'interval_seconds': location_update_interval_ms / 1000.0
+            }, broadcast=True)
+        except Exception as e:
+            print(f"⚠️ Error broadcasting location update interval via WebSocket: {e}")
+            # Continue anyway - the value is set
+        
+        print(f"📍 Location update interval changed to {location_update_interval_ms}ms ({location_update_interval_ms/1000.0}s)")
+        
         return jsonify({
-            'error': f'Invalid interval. Must be one of: {[ms/1000 for ms in allowed_intervals]} seconds'
-        }), 400
-    
-    location_update_interval_ms = interval_ms
-    
-    # Broadcast the new interval to all connected clients via WebSocket
-    socketio.emit('location_update_interval_changed', {
-        'interval_ms': location_update_interval_ms,
-        'interval_seconds': location_update_interval_ms / 1000.0
-    }, broadcast=True)
-    
-    print(f"📍 Location update interval changed to {location_update_interval_ms}ms ({location_update_interval_ms/1000.0}s)")
-    
-    return jsonify({
-        'interval_ms': location_update_interval_ms,
-        'interval_seconds': location_update_interval_ms / 1000.0,
-        'message': f'Location update interval set to {location_update_interval_ms/1000.0} seconds'
-    })
+            'interval_ms': location_update_interval_ms,
+            'interval_seconds': location_update_interval_ms / 1000.0,
+            'message': f'Location update interval set to {location_update_interval_ms/1000.0} seconds'
+        })
+    except ValueError as e:
+        print(f"⚠️ Invalid value for location update interval: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Invalid value: {str(e)}'}), 400
+    except Exception as e:
+        print(f"⚠️ Error setting location update interval: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
+def load_location_update_interval_from_db():
+    """Load location update interval from database on startup."""
+    global location_update_interval_ms
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT value FROM settings WHERE key = ?', ('location_update_interval_ms',))
+        row = cursor.fetchone()
+        if row:
+            location_update_interval_ms = int(row['value'])
+            print(f"📍 Loaded location update interval from database: {location_update_interval_ms}ms")
+        else:
+            # Initialize with default if not found
+            cursor.execute('''
+                INSERT INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            ''', ('location_update_interval_ms', '1000', datetime.utcnow().isoformat()))
+            conn.commit()
+            location_update_interval_ms = 1000
+            print(f"📍 Initialized location update interval to default: {location_update_interval_ms}ms")
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Error loading location update interval from database: {e}, using default: 1000ms")
+        location_update_interval_ms = 1000
 
 def load_game_mode_from_db():
     """Load game mode from database on startup."""
@@ -2395,6 +2739,42 @@ def load_game_mode_from_db():
         print(f"⚠️ Error loading game mode from database: {e}, using default: open")
         game_mode = 'open'
 
+def load_llm_settings_from_db():
+    """Load LLM provider and model from database on startup."""
+    if not LLM_AVAILABLE:
+        return
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Load provider
+        cursor.execute('SELECT value FROM settings WHERE key = ?', ('llm_provider',))
+        row = cursor.fetchone()
+        provider = row['value'] if row else None
+        
+        # Load model
+        cursor.execute('SELECT value FROM settings WHERE key = ?', ('llm_model',))
+        row = cursor.fetchone()
+        model = row['value'] if row else None
+        
+        conn.close()
+        
+        # Apply settings if found
+        if provider:
+            print(f"🤖 Loading LLM settings from database: provider={provider}, model={model or 'default'}")
+            result = llm_service.set_provider(provider, model)
+            if 'error' not in result:
+                print(f"✅ Loaded LLM settings: provider={result.get('provider')}, model={result.get('model')}")
+            else:
+                print(f"⚠️ Error loading LLM settings: {result.get('error')}")
+        else:
+            print(f"ℹ️ No LLM settings found in database, using defaults from environment")
+    except Exception as e:
+        print(f"⚠️ Error loading LLM settings from database: {e}, using defaults")
+        import traceback
+        traceback.print_exc()
+
 @app.route('/api/settings/game-mode', methods=['GET'])
 def get_game_mode():
     """Get the current game mode."""
@@ -2405,50 +2785,74 @@ def get_game_mode():
 @app.route('/api/settings/game-mode', methods=['POST', 'PUT'])
 def set_game_mode():
     """Set the game mode and persist to database."""
-    global game_mode
-    
-    data = request.get_json()
-    if not data or 'game_mode' not in data:
-        return jsonify({'error': 'game_mode is required'}), 400
-    
-    new_game_mode = str(data['game_mode'])
-    
-    # Validate game mode (must be one of: "open", "dead_mens_secrets")
-    allowed_modes = ["open", "dead_mens_secrets"]
-    if new_game_mode not in allowed_modes:
-        return jsonify({
-            'error': f'Invalid game mode. Must be one of: {allowed_modes}'
-        }), 400
-    
-    # Update in-memory variable
-    game_mode = new_game_mode
-    
-    # Persist to database
     try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO settings (key, value, updated_at)
-            VALUES (?, ?, ?)
-        ''', ('game_mode', game_mode, datetime.utcnow().isoformat()))
-        conn.commit()
-        conn.close()
-        print(f"💾 Persisted game mode to database: {game_mode}")
+        global game_mode
+        
+        data = request.get_json()
+        if not data or 'game_mode' not in data:
+            return jsonify({'error': 'game_mode is required'}), 400
+        
+        new_game_mode = str(data['game_mode'])
+        
+        # Validate game mode (must be one of: "open", "dead_mens_secrets")
+        allowed_modes = ["open", "dead_mens_secrets"]
+        if new_game_mode not in allowed_modes:
+            return jsonify({
+                'error': f'Invalid game mode. Must be one of: {allowed_modes}'
+            }), 400
+        
+        # Update in-memory variable
+        game_mode = new_game_mode
+        
+        # Persist to database
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            ''', ('game_mode', game_mode, datetime.utcnow().isoformat()))
+            conn.commit()
+            conn.close()
+            print(f"💾 Persisted game mode to database: {game_mode}")
+        except Exception as e:
+            print(f"⚠️ Error persisting game mode to database: {e}")
+            import traceback
+            traceback.print_exc()
+            # Continue anyway - in-memory value is set
+        
+        # Broadcast the new game mode to all connected clients via WebSocket
+        try:
+            # Flask-SocketIO: explicitly use broadcast=True to ensure all clients receive the update
+            # Match the pattern used by location_update_interval_changed which works correctly
+            event_data = {
+                'game_mode': game_mode
+            }
+            print(f"📡 [Game Mode] Broadcasting game_mode_changed event to all clients")
+            print(f"   Event data: {event_data}")
+            print(f"   Number of connected clients: {len(connected_clients)}")
+            
+            socketio.emit('game_mode_changed', event_data, broadcast=True, namespace='/')
+            print(f"✅ [Game Mode] Broadcasted game mode change to all connected clients: {game_mode}")
+        except Exception as e:
+            print(f"❌ [Game Mode] Error broadcasting game mode change via WebSocket: {e}")
+            import traceback
+            traceback.print_exc()
+            # Continue anyway - game mode is still set
+        
+        print(f"🎮 Game mode changed to: {game_mode}")
+        
+        return jsonify({
+            'game_mode': game_mode,
+            'message': f'Game mode set to {game_mode}'
+        })
     except Exception as e:
-        print(f"⚠️ Error persisting game mode to database: {e}")
-        # Continue anyway - in-memory value is set
-    
-    # Broadcast the new game mode to all connected clients via WebSocket
-    socketio.emit('game_mode_changed', {
-        'game_mode': game_mode
-    }, broadcast=True)
-    
-    print(f"🎮 Game mode changed to: {game_mode}")
-    
-    return jsonify({
-        'game_mode': game_mode,
-        'message': f'Game mode set to {game_mode}'
-    })
+        print(f"❌ Error in set_game_mode endpoint: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': f'Internal server error: {str(e)}'
+        }), 500
 
 @app.route('/api/npcs/<npc_id>/map-piece', methods=['GET', 'POST'])
 def get_npc_map_piece(npc_id: str):
@@ -3044,12 +3448,15 @@ def ollama_keepalive():
 
 if __name__ == '__main__':
     init_db()
+    load_location_update_interval_from_db()  # Load persisted location update interval from database
     load_game_mode_from_db()  # Load persisted game mode from database
+    load_llm_settings_from_db()  # Load persisted LLM provider/model from database
     port = int(os.environ.get('PORT', 5001))  # Use 5001 as default to avoid conflicts
     local_ip = get_local_ip_dynamic()
     
     # Start Ollama keepalive thread if using Ollama provider
-    provider = os.getenv("LLM_PROVIDER", "").lower()
+    # Check actual provider from llm_service (which may have been loaded from database)
+    provider = llm_service.provider.lower() if LLM_AVAILABLE else os.getenv("LLM_PROVIDER", "").lower()
     if provider in ("ollama", "local") and LLM_AVAILABLE:
         keepalive_thread = threading.Thread(target=ollama_keepalive, daemon=True)
         keepalive_thread.start()

@@ -24,9 +24,42 @@ const MapManager = {
     },
 
     /**
+     * Wait for Leaflet library to be loaded
+     */
+    async waitForLeaflet(maxWaitMs = 10000) {
+        const startTime = Date.now();
+        let checkCount = 0;
+        
+        while (typeof L === 'undefined' && (Date.now() - startTime) < maxWaitMs) {
+            checkCount++;
+            if (checkCount % 10 === 0) {
+                console.log(`⏳ Waiting for Leaflet library to load... (${Math.round((Date.now() - startTime) / 1000)}s)`);
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        
+        if (typeof L === 'undefined') {
+            const errorMsg = `❌ Leaflet library (L) not loaded after ${maxWaitMs/1000}s. Please check your network connection and ensure the Leaflet script is included in the HTML before map.js.`;
+            console.error(errorMsg);
+            throw new Error(errorMsg);
+        }
+        
+        console.log(`✅ Leaflet library loaded successfully`);
+        return L;
+    },
+
+    /**
      * Initialize the map
      */
     async init() {
+        // CRITICAL: Wait for Leaflet to be loaded before using it
+        try {
+            await this.waitForLeaflet();
+        } catch (error) {
+            console.error('❌ Failed to load Leaflet library:', error);
+            return null;
+        }
+
         const mapElement = document.getElementById('map');
         if (!mapElement) {
             console.error('Map element not found');
@@ -145,6 +178,11 @@ const MapManager = {
     setMapStyle(style, savePreference = true) {
         if (!this.map) {
             console.warn('Map not initialized yet');
+            return;
+        }
+        
+        if (typeof L === 'undefined') {
+            console.error('Leaflet library (L) not loaded');
             return;
         }
 
