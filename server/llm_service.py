@@ -56,6 +56,10 @@ except ImportError:
 # Import MapFeatureService from separate module
 from map_feature_service import MapFeatureService
 
+# Import NPC character definitions
+from npc_captain_bones import CaptainBones
+from npc_corgi_traveller import CorgiTraveller, TreasureHuntStage2
+
 def get_local_ip():
     """Get the local network IP address (same logic as app.py)."""
     import socket
@@ -453,23 +457,26 @@ class LLMService:
         #     except Exception as e:
         #         print(f"⚠️ Could not fetch OSM features: {e}")
         
-        # Build system prompt with real map features if available
-        # OPTIMIZED: Shorter prompts for faster processing
+        # Build system prompt using NPC character classes
+        # These provide rich backstories and consistent personality
         if is_skeleton:
-            base_prompt = f"""Ye be {npc_name}, a SKELETON pirate from 200 years ago. Speak ONLY pirate (arr, ye, matey). Responses: 1 sentence max."""
-            if map_features:
-                base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:3])}. Use these actual features in your clues so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
+            # Use Captain Bones character class
+            system_prompt = CaptainBones.get_system_prompt(
+                context="default",
+                landmarks=map_features[:3] if map_features else None
+            )
         elif npc_type.lower() == "traveller" or "corgi" in npc_name.lower():
-            # Corgi Traveller - friendly, helpful, gives hints
-            base_prompt = f"""You are {npc_name}, a friendly Corgi Traveller. Help adventurers. Speak friendly (woof!). Responses: 1 sentence max."""
-            if map_features:
-                base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:5])}. Use these actual features in your hints so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
+            # Use Corgi Traveller character class
+            system_prompt = CorgiTraveller.get_system_prompt(
+                context="default",
+                landmarks=map_features[:3] if map_features else None
+            )
         else:
+            # Fallback for other NPC types
             base_prompt = f"""Ye be {npc_name}, a {npc_type} pirate. Speak ONLY pirate. Responses: 1 sentence max."""
             if map_features:
-                base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:3])}. Use these actual features in your clues so the treasure is findable. The treasure must be within 100 meters of the player's current location."""
-        
-        system_prompt = base_prompt
+                base_prompt += f"\n\nIMPORTANT: Reference REAL landmarks near the player: {', '.join(map_features[:3])}. Use these actual features in your clues so the treasure is findable. The treasure must be within 100 meters of the player's current location."
+            system_prompt = base_prompt
         
         messages = [
             {"role": "system", "content": system_prompt},
