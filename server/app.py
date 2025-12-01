@@ -58,6 +58,15 @@ except ImportError as e:
     TREASURE_MAP_AVAILABLE = False
     treasure_map_service = None
 
+# Import Treasure Hunt Stages (Stage 2: IOU/Corgi storyline)
+try:
+    from treasure_hunt_stages import register_stages_blueprint
+    STAGES_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Treasure Hunt Stages not available: {e}")
+    STAGES_AVAILABLE = False
+    register_stages_blueprint = None
+
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)  # Enable CORS for iOS app
 # Use 'threading' instead of 'eventlet' for Python 3.12 compatibility
@@ -69,6 +78,10 @@ socketio = SocketIO(
     ping_interval=25,  # Server sends ping every 25 seconds
     ping_timeout=30    # Increased to 30 seconds for slow networks
 )  # Enable WebSocket support
+
+# Register Treasure Hunt Stages blueprint (Stage 2: IOU/Corgi storyline)
+if STAGES_AVAILABLE and register_stages_blueprint:
+    register_stages_blueprint(app)
 
 # Database file path
 DB_PATH = os.path.join(os.path.dirname(__file__), 'cache_raiders.db')
@@ -394,6 +407,30 @@ def init_db():
             value TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
+    ''')
+    
+    # Treasure hunts table - stores generated treasure locations per user
+    # This ensures the X location and clues are generated ONCE and persist across requests
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS treasure_hunts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_uuid TEXT NOT NULL,
+            treasure_latitude REAL NOT NULL,
+            treasure_longitude REAL NOT NULL,
+            origin_latitude REAL NOT NULL,
+            origin_longitude REAL NOT NULL,
+            map_piece_1_json TEXT,
+            map_piece_2_json TEXT,
+            status TEXT DEFAULT 'active',
+            created_at TEXT NOT NULL,
+            completed_at TEXT
+        )
+    ''')
+    
+    # Create index for faster lookups by device_uuid and status
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_treasure_hunts_device_status 
+        ON treasure_hunts (device_uuid, status)
     ''')
     
     # Initialize default game mode if not exists
@@ -2877,8 +2914,13 @@ def set_game_mode():
 
 @app.route('/api/npcs/<npc_id>/map-piece', methods=['GET', 'POST'])
 def get_npc_map_piece(npc_id: str):
-    """Get a treasure map piece from an NPC (skeleton has first half, corgi has second half)."""
+    """Get a treasure map piece from an NPC (skeleton has first half, corgi has second half).
+    
+    IMPORTANT: Treasure location (X marks the spot) is generated ONCE and saved to database.
+    Subsequent requests return the same treasure location for the user.
+    """
     import time
+    import random
     request_start_time = time.time()
     request_id = f"{npc_id}_{int(time.time() * 1000)}"
     
@@ -2895,6 +2937,15 @@ def get_npc_map_piece(npc_id: str):
     npc_type = "skeleton" if "skeleton" in npc_id.lower() else "corgi"
     piece_number = 1 if npc_type == "skeleton" else 2
     map_logger.info(f"[{request_id}] NPC Type: {npc_type}, Piece Number: {piece_number}")
+    
+    # Get device_uuid from request (required for treasure hunt persistence)
+    device_uuid = None
+    if request.json and 'device_uuid' in request.json:
+        device_uuid = request.json.get('device_uuid')
+    elif request.args.get('device_uuid'):
+        device_uuid = request.args.get('device_uuid')
+    
+    map_logger.info(f"[{request_id}] Device UUID: {device_uuid}")
     
     # Get target location from request (JSON body or query params)
     target_location = {}
@@ -2929,6 +2980,71 @@ def get_npc_map_piece(npc_id: str):
             'longitude': -122.4194
         }
         map_logger.warning(f"[{request_id}] No target location provided, using default: {target_location}")
+    
+    # Check if user has an existing active treasure hunt
+    existing_hunt = None
+    if device_uuid:
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, treasure_latitude, treasure_longitude, origin_latitude, origin_longitude,
+                       map_piece_1_json, map_piece_2_json, created_at
+                FROM treasure_hunts 
+                WHERE device_uuid = ? AND status = 'active'
+                ORDER BY created_at DESC
+                LIMIT 1
+            ''', (device_uuid,))
+            row = cursor.fetchone()
+            if row:
+                existing_hunt = {
+                    'id': row[0],
+                    'treasure_latitude': row[1],
+                    'treasure_longitude': row[2],
+                    'origin_latitude': row[3],
+                    'origin_longitude': row[4],
+                    'map_piece_1_json': row[5],
+                    'map_piece_2_json': row[6],
+                    'created_at': row[7]
+                }
+                map_logger.info(f"[{request_id}] Found existing treasure hunt: id={existing_hunt['id']}, treasure=({existing_hunt['treasure_latitude']}, {existing_hunt['treasure_longitude']})")
+            conn.close()
+        except Exception as e:
+            map_logger.error(f"[{request_id}] Error checking existing treasure hunt: {e}")
+    
+    # If existing hunt found, return the saved map piece
+    if existing_hunt:
+        map_piece_key = f'map_piece_{piece_number}_json'
+        saved_piece_json = existing_hunt.get(map_piece_key)
+        
+        if saved_piece_json:
+            try:
+                import json
+                saved_piece = json.loads(saved_piece_json)
+                map_logger.info(f"[{request_id}] Returning saved map piece {piece_number} from database")
+                
+                total_duration = time.time() - request_start_time
+                map_logger.info(f"[{request_id}] ========== MAP REQUEST SUCCESS (CACHED) ==========")
+                map_logger.info(f"[{request_id}] Total duration: {total_duration:.2f}s")
+                
+                return jsonify({
+                    'npc_id': npc_id,
+                    'npc_type': npc_type,
+                    'map_piece': saved_piece,
+                    'message': f"Here's piece {piece_number} of the treasure map!",
+                    'from_cache': True,
+                    'treasure_hunt_id': existing_hunt['id']
+                }), 200
+            except json.JSONDecodeError as e:
+                map_logger.warning(f"[{request_id}] Failed to parse saved map piece: {e}")
+                # Continue to generate new piece
+        
+        # If we have an existing hunt but no saved piece for this NPC, use the saved treasure location
+        target_location = {
+            'latitude': existing_hunt['treasure_latitude'],
+            'longitude': existing_hunt['treasure_longitude']
+        }
+        map_logger.info(f"[{request_id}] Using existing treasure location: {target_location}")
     
     map_logger.info(f"[{request_id}] Final target location: lat={target_location.get('latitude')}, lon={target_location.get('longitude')}")
     
@@ -3010,11 +3126,90 @@ def get_npc_map_piece(npc_id: str):
                     }
                 map_logger.info(f"[{request_id}] Generated fallback map piece (piece {piece_number}) without landmarks")
         
+        # Save treasure hunt to database if we have a device_uuid
+        treasure_hunt_id = existing_hunt['id'] if existing_hunt else None
+        
+        if device_uuid and not existing_hunt:
+            # This is a NEW treasure hunt - save it to the database
+            try:
+                import json as json_module
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                # Get the actual treasure coordinates from the map piece
+                treasure_lat = map_piece.get('exact_latitude') or map_piece.get('approximate_latitude')
+                treasure_lon = map_piece.get('exact_longitude') or map_piece.get('approximate_longitude')
+                
+                # If piece 1, the treasure location is the target (with slight offset added by generate_map_piece)
+                # Store the exact target as the treasure location
+                if piece_number == 1:
+                    treasure_lat = target_location.get('latitude')
+                    treasure_lon = target_location.get('longitude')
+                
+                # Prepare map piece JSON
+                map_piece_json = json_module.dumps(map_piece)
+                map_piece_1_json = map_piece_json if piece_number == 1 else None
+                map_piece_2_json = map_piece_json if piece_number == 2 else None
+                
+                cursor.execute('''
+                    INSERT INTO treasure_hunts (
+                        device_uuid, treasure_latitude, treasure_longitude,
+                        origin_latitude, origin_longitude,
+                        map_piece_1_json, map_piece_2_json,
+                        status, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
+                ''', (
+                    device_uuid,
+                    treasure_lat,
+                    treasure_lon,
+                    target_location.get('latitude'),
+                    target_location.get('longitude'),
+                    map_piece_1_json,
+                    map_piece_2_json,
+                    datetime.utcnow().isoformat()
+                ))
+                
+                treasure_hunt_id = cursor.lastrowid
+                conn.commit()
+                conn.close()
+                
+                map_logger.info(f"[{request_id}] Saved new treasure hunt: id={treasure_hunt_id}, device={device_uuid}, treasure=({treasure_lat}, {treasure_lon})")
+                print(f"🗺️ Created new treasure hunt #{treasure_hunt_id} for device {device_uuid[:8]}...")
+                
+            except Exception as e:
+                map_logger.error(f"[{request_id}] Error saving treasure hunt: {e}")
+                print(f"⚠️ Error saving treasure hunt: {e}")
+        
+        elif device_uuid and existing_hunt and not existing_hunt.get(f'map_piece_{piece_number}_json'):
+            # We have an existing hunt but this piece wasn't saved yet - update it
+            try:
+                import json as json_module
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                map_piece_json = json_module.dumps(map_piece)
+                column_name = f'map_piece_{piece_number}_json'
+                
+                cursor.execute(f'''
+                    UPDATE treasure_hunts 
+                    SET {column_name} = ?
+                    WHERE id = ?
+                ''', (map_piece_json, existing_hunt['id']))
+                
+                conn.commit()
+                conn.close()
+                
+                map_logger.info(f"[{request_id}] Updated treasure hunt #{existing_hunt['id']} with piece {piece_number}")
+                
+            except Exception as e:
+                map_logger.error(f"[{request_id}] Error updating treasure hunt: {e}")
+        
         response_data = {
             'npc_id': npc_id,
             'npc_type': npc_type,
             'map_piece': map_piece,
-            'message': f"Here's piece {piece_number} of the treasure map!"
+            'message': f"Here's piece {piece_number} of the treasure map!",
+            'treasure_hunt_id': treasure_hunt_id
         }
         
         total_duration = time.time() - request_start_time
@@ -3107,6 +3302,155 @@ def combine_map_pieces():
         'complete_map': combined_map,
         'message': 'Map pieces combined! X marks the spot!'
     }), 200
+
+# ============================================================================
+# Treasure Hunt Endpoints
+# ============================================================================
+
+@app.route('/api/treasure-hunts/<device_uuid>', methods=['GET'])
+def get_treasure_hunt(device_uuid: str):
+    """Get the active treasure hunt for a device/user.
+    
+    Returns the saved treasure location and map pieces so the iOS app
+    can restore the treasure hunt state without regenerating.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, treasure_latitude, treasure_longitude, 
+                   origin_latitude, origin_longitude,
+                   map_piece_1_json, map_piece_2_json,
+                   status, created_at, completed_at
+            FROM treasure_hunts 
+            WHERE device_uuid = ? AND status = 'active'
+            ORDER BY created_at DESC
+            LIMIT 1
+        ''', (device_uuid,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return jsonify({
+                'has_active_hunt': False,
+                'message': 'No active treasure hunt found for this device'
+            }), 200
+        
+        # Parse map pieces from JSON
+        import json
+        map_piece_1 = None
+        map_piece_2 = None
+        
+        if row[5]:  # map_piece_1_json
+            try:
+                map_piece_1 = json.loads(row[5])
+            except json.JSONDecodeError:
+                pass
+        
+        if row[6]:  # map_piece_2_json
+            try:
+                map_piece_2 = json.loads(row[6])
+            except json.JSONDecodeError:
+                pass
+        
+        return jsonify({
+            'has_active_hunt': True,
+            'treasure_hunt': {
+                'id': row[0],
+                'treasure_latitude': row[1],
+                'treasure_longitude': row[2],
+                'origin_latitude': row[3],
+                'origin_longitude': row[4],
+                'map_piece_1': map_piece_1,
+                'map_piece_2': map_piece_2,
+                'status': row[7],
+                'created_at': row[8],
+                'completed_at': row[9]
+            }
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error fetching treasure hunt: {e}")
+        return jsonify({'error': f'Failed to fetch treasure hunt: {str(e)}'}), 500
+
+
+@app.route('/api/treasure-hunts/<device_uuid>', methods=['DELETE'])
+def reset_treasure_hunt(device_uuid: str):
+    """Reset/delete the active treasure hunt for a device/user.
+    
+    This allows the user to start a new treasure hunt.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Mark existing active hunts as cancelled (soft delete)
+        cursor.execute('''
+            UPDATE treasure_hunts 
+            SET status = 'cancelled', completed_at = ?
+            WHERE device_uuid = ? AND status = 'active'
+        ''', (datetime.utcnow().isoformat(), device_uuid))
+        
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if affected > 0:
+            print(f"🗑️ Reset {affected} treasure hunt(s) for device {device_uuid[:8]}...")
+            return jsonify({
+                'success': True,
+                'message': f'Reset {affected} active treasure hunt(s)',
+                'hunts_reset': affected
+            }), 200
+        else:
+            return jsonify({
+                'success': True,
+                'message': 'No active treasure hunts to reset',
+                'hunts_reset': 0
+            }), 200
+        
+    except Exception as e:
+        print(f"❌ Error resetting treasure hunt: {e}")
+        return jsonify({'error': f'Failed to reset treasure hunt: {str(e)}'}), 500
+
+
+@app.route('/api/treasure-hunts/<device_uuid>/complete', methods=['POST'])
+def complete_treasure_hunt(device_uuid: str):
+    """Mark the active treasure hunt as completed (user found the treasure)."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE treasure_hunts 
+            SET status = 'completed', completed_at = ?
+            WHERE device_uuid = ? AND status = 'active'
+        ''', (datetime.utcnow().isoformat(), device_uuid))
+        
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if affected > 0:
+            print(f"🎉 Completed treasure hunt for device {device_uuid[:8]}!")
+            return jsonify({
+                'success': True,
+                'message': 'Congratulations! Treasure hunt completed!',
+                'hunts_completed': affected
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'No active treasure hunt to complete',
+                'hunts_completed': 0
+            }), 404
+        
+    except Exception as e:
+        print(f"❌ Error completing treasure hunt: {e}")
+        return jsonify({'error': f'Failed to complete treasure hunt: {str(e)}'}), 500
+
 
 # ============================================================================
 # NPC Management Endpoints

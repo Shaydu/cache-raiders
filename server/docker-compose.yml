@@ -57,8 +57,8 @@ services:
       - FLASK_ENV=production
       - PORT=5001
       # HOST_IP: Your Mac's Wi-Fi IP address (for iOS devices to connect)
-      # Update this if your IP changes (run: ipconfig getifaddr en0)
-      - HOST_IP=192.168.68.50
+      # This is set dynamically by start-server.sh at runtime
+      - HOST_IP=${HOST_IP:-localhost}
       # LLM settings - these override any .env file values
       - LLM_PROVIDER=ollama
       - LLM_BASE_URL=http://ollama:11434

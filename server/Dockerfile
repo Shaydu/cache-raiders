@@ -11,6 +11,7 @@ COPY app.py .
 COPY admin.html .
 COPY llm_service.py .
 COPY map_feature_service.py .
+COPY treasure_map_service.py .
 COPY static ./static
 
 # Create directory for database (will be persisted via volume)
