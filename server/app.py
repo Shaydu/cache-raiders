@@ -232,9 +232,13 @@ def get_local_ip_dynamic(request_context=None):
     return '127.0.0.1'
 
 def get_local_ip():
-    """Get the local network IP address."""
+    """Get the local network IP address.
+    
+    All endpoints should use this function to ensure consistent IP display.
+    Checks HOST_IP environment variable first (set in docker-compose.yml),
+    then falls back to dynamic detection.
+    """
     # First, check if HOST_IP environment variable is set (useful for Docker)
-    # But for QR code, we use get_local_ip_dynamic() instead
     host_ip = os.environ.get('HOST_IP')
     if host_ip:
         print(f"🌐 Using HOST_IP from environment: {host_ip}")
@@ -1881,7 +1885,7 @@ def test_port():
 def test_ports():
     """Test multiple ports for connectivity."""
     ports_str = request.args.get('ports', '5001,5000,8080,3000,8000')
-    host = request.args.get('host', get_local_ip_dynamic())
+    host = request.args.get('host', get_local_ip())
     ports = [int(p.strip()) for p in ports_str.split(',') if p.strip().isdigit()]
     
     results = []
@@ -3469,7 +3473,8 @@ if __name__ == '__main__':
     load_game_mode_from_db()  # Load persisted game mode from database
     load_llm_settings_from_db()  # Load persisted LLM provider/model from database
     port = int(os.environ.get('PORT', 5001))  # Use 5001 as default to avoid conflicts
-    local_ip = get_local_ip_dynamic()
+    # Use get_local_ip() which checks HOST_IP env var first for consistency
+    local_ip = get_local_ip()
     
     # Start Ollama keepalive thread if using Ollama provider
     # Check actual provider from llm_service (which may have been loaded from database)
