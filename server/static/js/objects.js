@@ -4,6 +4,7 @@
 const ObjectsManager = {
     markers: {},
     markerData: {}, // Store marker data for resizing
+    storyMarkers: {}, // Store story mode markers separately
 
     /**
      * Load all objects and display on map
@@ -319,6 +320,169 @@ const ObjectsManager = {
         } catch (error) {
             UI.showStatus('Error marking object as unfound: ' + error.message, 'error');
         }
+    },
+
+    // ============================================================================
+    // Story Mode Elements (for Dead Men's Secrets mode)
+    // ============================================================================
+
+    /**
+     * Load and display story mode elements on the map
+     */
+    async loadStoryElements() {
+        try {
+            const response = await ApiService.storyElements.getAll();
+            const elements = response.story_elements || [];
+
+            // Clear existing story markers
+            this.clearStoryMarkers();
+
+            if (elements.length === 0) {
+                console.log('📖 No active story mode elements to display');
+                return;
+            }
+
+            // Get current zoom level
+            const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
+
+            // Add markers for each story element
+            elements.forEach(element => {
+                this.addStoryMarker(element, currentZoom);
+            });
+
+            console.log(`📖 Loaded ${elements.length} story mode elements on map`);
+        } catch (error) {
+            console.error('Error loading story elements:', error);
+        }
+    },
+
+    /**
+     * Clear all story mode markers from the map
+     */
+    clearStoryMarkers() {
+        Object.values(this.storyMarkers).forEach(marker => {
+            if (MapManager.getMap()) {
+                MapManager.getMap().removeLayer(marker);
+            }
+        });
+        this.storyMarkers = {};
+    },
+
+    /**
+     * Add a story mode marker to the map
+     */
+    addStoryMarker(element, zoom = 15) {
+        const markerSize = this.calculateStoryMarkerSize(zoom, element.type);
+        const icon = this.createStoryMarkerIcon(element, markerSize);
+
+        const marker = L.marker([element.latitude, element.longitude], { icon })
+            .addTo(MapManager.getMap())
+            .bindPopup(`
+                <strong>${element.name}</strong><br>
+                <em>${element.description}</em><br>
+                <span style="color: #666; font-size: 11px;">
+                    Type: ${element.type}<br>
+                    Location: ${element.latitude.toFixed(6)}, ${element.longitude.toFixed(6)}
+                </span>
+            `);
+
+        this.storyMarkers[element.id] = marker;
+    },
+
+    /**
+     * Calculate story marker size based on zoom and type
+     */
+    calculateStoryMarkerSize(zoom, type) {
+        const baseSize = 28;
+        const zoomFactor = Math.pow(1.15, zoom - 15);
+        return Math.max(18, Math.min(40, baseSize * zoomFactor));
+    },
+
+    /**
+     * Create story marker icon based on element type
+     */
+    createStoryMarkerIcon(element, size) {
+        let bgColor, borderColor, iconEmoji;
+
+        switch (element.type) {
+            case 'skeleton':
+                bgColor = '#ffd700';     // Gold
+                borderColor = '#b8860b';
+                iconEmoji = '💀';
+                break;
+            case 'corgi':
+                bgColor = '#ff8c00';     // Dark orange
+                borderColor = '#cc7000';
+                iconEmoji = '🐕';
+                break;
+            case 'treasure':
+                bgColor = '#ff0000';     // Red
+                borderColor = '#cc0000';
+                iconEmoji = '❌';
+                break;
+            case 'bandit':
+                bgColor = '#8b0000';     // Dark red
+                borderColor = '#5c0000';
+                iconEmoji = '🏴‍☠️';
+                break;
+            default:
+                bgColor = '#9932cc';     // Purple
+                borderColor = '#7a28a3';
+                iconEmoji = '❓';
+        }
+
+        const borderWidth = Math.max(2, Math.min(4, size / 8));
+        const fontSize = size * 0.6;
+
+        const iconHtml = `
+            <div style="
+                background: ${bgColor};
+                width: ${size}px;
+                height: ${size}px;
+                border-radius: 50%;
+                border: ${borderWidth}px solid ${borderColor};
+                box-shadow: 0 0 ${size/2}px rgba(0, 0, 0, 0.4);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: ${fontSize}px;
+            ">${iconEmoji}</div>
+        `;
+
+        return L.divIcon({
+            className: 'story-marker',
+            html: iconHtml,
+            iconSize: [size, size],
+            iconAnchor: [size / 2, size / 2]
+        });
+    },
+
+    /**
+     * Update story marker sizes based on zoom level
+     */
+    updateStoryMarkerSizes(zoom) {
+        // This would need to store element data like markerData
+        // For now, we can reload story elements on zoom change
+        // which is less efficient but simpler
+    },
+
+    /**
+     * Refresh the map based on current game mode
+     * Called when game mode changes
+     */
+    async refreshForGameMode(gameMode) {
+        if (gameMode === 'dead_mens_secrets') {
+            // Story mode: Load story elements
+            await this.loadStoryElements();
+            console.log('📖 Story mode: Refreshed map with story elements');
+        } else {
+            // Open mode: Clear story markers
+            this.clearStoryMarkers();
+            console.log('🗺️ Open mode: Cleared story markers');
+        }
+        
+        // Always reload regular objects
+        await this.loadObjects();
     }
 };
 

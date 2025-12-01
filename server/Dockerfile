@@ -12,7 +12,14 @@ COPY admin.html .
 COPY llm_service.py .
 COPY map_feature_service.py .
 COPY treasure_map_service.py .
+COPY treasure_hunt_stages.py .
 COPY static ./static
+
+# Copy NPC modules
+COPY npcs ./npcs
+
+# Copy migrations
+COPY migrations ./migrations
 
 # Create directory for database (will be persisted via volume)
 RUN mkdir -p /app/data

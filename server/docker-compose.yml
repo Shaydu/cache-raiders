@@ -46,6 +46,10 @@ services:
       - ./llm_service.py:/app/llm_service.py
       # Mount map_feature_service.py for live editing
       - ./map_feature_service.py:/app/map_feature_service.py
+      # Mount treasure_hunt_stages.py for live editing
+      - ./treasure_hunt_stages.py:/app/treasure_hunt_stages.py
+      # Mount NPC modules for live editing
+      - ./npcs:/app/npcs
       # Mount static files for live editing
       - ./static:/app/static
       # Mount logs directory for debugging (create on host if needed)

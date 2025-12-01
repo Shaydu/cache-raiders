@@ -134,7 +134,7 @@ class TreasureMapService:
                 approximate_lon = lon + (random.random() - 0.5) * 0.001
                 return {
                     "piece_number": 1,
-                    "hint": "Arr, this be the first half o' the map, matey! The treasure be near these waters!",
+                    "hint": "Arr, here be the treasure map, matey! X marks the spot where me gold be buried!",
                     "approximate_latitude": approximate_lat,
                     "approximate_longitude": approximate_lon,
                     "landmarks": map_landmarks,

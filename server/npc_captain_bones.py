@@ -83,8 +83,8 @@ Speak in angry pirate tongue. Keep response to 2-3 sentences."""
     }
     
     # Map piece generation
-    MAP_PIECE_NUMBER = 1  # Captain Bones gives the FIRST map piece
-    MAP_PIECE_HINT = "Arr, this be the first half o' the map, matey! The treasure be near these waters, but ye'll need the second piece to find the exact spot!"
+    MAP_PIECE_NUMBER = 1  # Captain Bones gives the treasure map
+    MAP_PIECE_HINT = "Arr, here be the treasure map, matey! X marks the spot where me gold be buried!"
     
     @classmethod
     def get_system_prompt(cls, context: str = "default", landmarks: list = None) -> str:

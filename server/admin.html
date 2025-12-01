@@ -280,26 +280,6 @@
             </div>
         </div>
 
-        <div class="section">
-            <h2>⚙️ Map Settings</h2>
-            <div class="form-group">
-                <label style="display: block; margin-bottom: 8px; color: #ccc; font-size: 14px;">Map Style</label>
-                <div style="display: flex; flex-direction: column; gap: 8px;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; background: #1a1a1a; border-radius: 4px; transition: background 0.2s;" 
-                           onmouseover="this.style.background='#2a2a2a'" 
-                           onmouseout="this.style.background='#1a1a1a'">
-                        <input type="radio" name="mapStyle" value="standard" id="mapStyleStandard" checked onchange="MapManager.setMapStyle('standard')">
-                        <span>🗺️ Standard (Google Maps style)</span>
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; background: #1a1a1a; border-radius: 4px; transition: background 0.2s;" 
-                           onmouseover="this.style.background='#2a2a2a'" 
-                           onmouseout="this.style.background='#1a1a1a'">
-                        <input type="radio" name="mapStyle" value="pirate" id="mapStylePirate" onchange="MapManager.setMapStyle('pirate')">
-                        <span>🏴‍☠️ Pirate Map (Treasure Map style)</span>
-                    </label>
-                </div>
-            </div>
-        </div>
     </div>
     
     <div id="map"></div>
