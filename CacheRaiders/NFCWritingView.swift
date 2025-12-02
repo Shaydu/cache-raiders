@@ -1,31 +1,31 @@
 import SwiftUI
+import CoreNFC
 import ARKit
 import RealityKit
 import CoreLocation
-import CoreNFC
 
-// MARK: - Open Game NFC Scanner View
-/// Handles NFC scanning in open game mode to create new objects with high-precision AR coordinates
-struct OpenGameNFCScannerView: View {
+// MARK: - NFC Writing View
+/// Allows users to select a loot box type and write it to an NFC token
+struct NFCWritingView: View {
     @Environment(\.dismiss) var dismiss
     private let nfcService = NFCService.shared
     @StateObject private var precisePositioning = PreciseARPositioningService.shared
     @StateObject private var arIntegrationService = NFCARIntegrationService.shared
 
-    @State private var isScanning = false
-    @State private var scanResult: NFCService.NFCResult?
-    @State private var assignedObjectType: LootBoxType?
-    @State private var isCreatingObject = false
+    @State private var selectedLootType: LootBoxType? = nil
+    @State private var isWriting = false
+    @State private var writeResult: NFCService.NFCResult?
+    @State private var isPositioning = false
     @State private var createdObject: LootBoxLocation?
     @State private var errorMessage: String?
-    @State private var currentStep: ScanningStep = .ready
+    @State private var currentStep: WritingStep = .selecting
     @State private var arView: ARView?
     @State private var userLocation: CLLocation?
 
-    enum ScanningStep {
-        case ready          // Ready to scan
-        case scanning       // NFC scanning in progress
-        case analyzing      // Analyzing NFC data and assigning type
+    enum WritingStep {
+        case selecting      // User selecting loot type
+        case writing        // Writing to NFC token
+        case written        // Successfully written, showing result
         case positioning    // Capturing AR position
         case creating       // Creating object via API
         case success        // Object created successfully
@@ -34,20 +34,32 @@ struct OpenGameNFCScannerView: View {
 
     private var stepDescription: String {
         switch currentStep {
-        case .ready:
-            return "Tap to start scanning an NFC token"
-        case .scanning:
-            return "Hold your iPhone near an NFC tag to read it"
-        case .analyzing:
-            return "Analyzing token data and assigning object type..."
+        case .selecting:
+            return "Select the treasure type to write to your NFC token"
+        case .writing:
+            return "Hold your iPhone near the NFC tag to write treasure data"
+        case .written:
+            return "Successfully wrote treasure data to NFC tag!"
         case .positioning:
-            return "Capturing precise AR coordinates..."
+            return "Capturing precise AR coordinates for your treasure..."
         case .creating:
-            return "Creating new treasure object..."
+            return "Creating your treasure object..."
         case .success:
-            return "Treasure object created successfully!"
+            return "Treasure object created! Other players can now find it!"
         case .error:
             return "An error occurred"
+        }
+    }
+
+    private var stepColor: Color {
+        switch currentStep {
+        case .selecting: return .blue
+        case .writing: return .orange
+        case .written: return .green
+        case .positioning: return .purple
+        case .creating: return .green
+        case .success: return .green
+        case .error: return .red
         }
     }
 
@@ -65,7 +77,7 @@ struct OpenGameNFCScannerView: View {
                             .font(.system(size: 60))
                             .foregroundColor(stepColor)
 
-                        Text("NFC Treasure Scanner")
+                        Text("NFC Treasure Writer")
                             .font(.title)
                             .fontWeight(.bold)
 
@@ -86,15 +98,15 @@ struct OpenGameNFCScannerView: View {
 
                     Spacer()
 
-                    // Scanning animation or results
+                    // Main content based on current step
                     ZStack {
                         switch currentStep {
-                        case .ready:
-                            readyView
-                        case .scanning:
-                            scanningView
-                        case .analyzing:
-                            analyzingView
+                        case .selecting:
+                            lootTypeSelectionView
+                        case .writing:
+                            writingView
+                        case .written:
+                            writtenView
                         case .positioning:
                             positioningView
                         case .creating:
@@ -108,12 +120,12 @@ struct OpenGameNFCScannerView: View {
 
                     Spacer()
 
-                    // Action button
-                    if currentStep == .ready || currentStep == .error {
-                        Button(action: startScanning) {
+                    // Action buttons
+                    if currentStep == .selecting || currentStep == .written || currentStep == .error {
+                        Button(action: handlePrimaryAction) {
                             HStack {
-                                Image(systemName: "wave.3.right")
-                                Text(currentStep == .ready ? "Start Scanning" : "Try Again")
+                                Image(systemName: primaryButtonIcon)
+                                Text(primaryButtonText)
                             }
                             .font(.headline)
                             .foregroundColor(.white)
@@ -124,6 +136,7 @@ struct OpenGameNFCScannerView: View {
                             .shadow(color: stepColor.opacity(0.3), radius: 8, x: 0, y: 4)
                         }
                         .padding(.bottom, 40)
+                        .disabled(currentStep == .selecting && selectedLootType == nil)
                     }
                 }
                 .padding(.horizontal, 20)
@@ -131,7 +144,7 @@ struct OpenGameNFCScannerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
+                    Button("Cancel") {
                         dismiss()
                     }
                     .foregroundColor(.blue)
@@ -139,7 +152,6 @@ struct OpenGameNFCScannerView: View {
             }
             .onAppear {
                 setupARView()
-                checkNFCAvailability()
             }
             .onDisappear {
                 cleanup()
@@ -147,66 +159,91 @@ struct OpenGameNFCScannerView: View {
         }
     }
 
-    private var stepColor: Color {
+    private var primaryButtonText: String {
         switch currentStep {
-        case .ready: return .blue
-        case .scanning: return .blue
-        case .analyzing: return .orange
-        case .positioning: return .purple
-        case .creating: return .green
-        case .success: return .green
-        case .error: return .red
+        case .selecting: return "Write to NFC Token"
+        case .written: return "Place Treasure"
+        case .error: return "Try Again"
+        default: return ""
         }
     }
 
-    private var readyView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "wave.3.right.circle")
-                .font(.system(size: 80))
-                .foregroundColor(.blue.opacity(0.5))
-
-            Text("Ready to scan NFC tokens and create new treasures!")
-                .font(.body)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
+    private var primaryButtonIcon: String {
+        switch currentStep {
+        case .selecting: return "wave.3.right"
+        case .written: return "arkit"
+        case .error: return "arrow.clockwise"
+        default: return ""
         }
     }
 
-    private var scanningView: some View {
+    private var lootTypeSelectionView: some View {
+        VStack(spacing: 20) {
+            Text("Choose Your Treasure")
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            // Grid of loot types
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                ForEach(LootBoxType.allCases.filter { $0 != .turkey }, id: \.self) { lootType in
+                    LootTypeCard(
+                        lootType: lootType,
+                        isSelected: selectedLootType == lootType,
+                        action: { selectedLootType = lootType }
+                    )
+                }
+            }
+            .padding(.horizontal)
+
+            if selectedLootType == nil {
+                Text("Select a treasure type above")
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .italic()
+            }
+        }
+    }
+
+    private var writingView: some View {
         VStack(spacing: 16) {
             ZStack {
                 Circle()
-                    .stroke(Color.blue.opacity(0.3), lineWidth: 4)
+                    .stroke(Color.orange.opacity(0.3), lineWidth: 4)
                     .frame(width: 120, height: 120)
 
                 Circle()
-                    .stroke(Color.blue, lineWidth: 4)
+                    .stroke(Color.orange, lineWidth: 4)
                     .frame(width: 120, height: 120)
                     .scaleEffect(1.2)
                     .opacity(0.0)
-                    .animation(.easeInOut(duration: 1.5).repeatForever(), value: isScanning)
+                    .animation(.easeInOut(duration: 1.5).repeatForever(), value: isWriting)
 
                 Image(systemName: "wave.3.right")
                     .font(.system(size: 40))
-                    .foregroundColor(.blue)
+                    .foregroundColor(.orange)
             }
 
-            Text("Scanning...")
+            Text("Writing...")
                 .font(.headline)
-                .foregroundColor(.blue)
+                .foregroundColor(.orange)
+
+            if let type = selectedLootType {
+                Text("Writing: \(type.displayName)")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
         }
     }
 
-    private var analyzingView: some View {
+    private var writtenView: some View {
         VStack(spacing: 16) {
-            if let result = scanResult {
+            if let result = writeResult {
                 VStack(spacing: 16) {
                     Image(systemName: "checkmark.circle.fill")
                         .font(.system(size: 60))
                         .foregroundColor(.green)
 
-                    Text("NFC Tag Read!")
+                    Text("NFC Tag Written!")
                         .font(.title2)
                         .fontWeight(.semibold)
                         .foregroundColor(.green)
@@ -215,25 +252,18 @@ struct OpenGameNFCScannerView: View {
                         HStack {
                             Text("Tag ID:")
                                 .fontWeight(.semibold)
-                            Text(result.tagId)
+                            Text(result.tagId.prefix(12) + "...")
                                 .font(.system(.body, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
 
-                        if let payload = result.payload {
-                            HStack(alignment: .top) {
-                                Text("Data:")
+                        if let type = selectedLootType {
+                            HStack {
+                                Text("Treasure:")
                                     .fontWeight(.semibold)
-                                Text(payload)
-                                    .font(.system(.body, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(nil)
+                                Text(type.displayName)
+                                    .foregroundColor(.primary)
                             }
-                        } else {
-                            Text("No data found - will assign random object type")
-                                .font(.body)
-                                .foregroundColor(.orange)
-                                .italic()
                         }
                     }
                     .padding()
@@ -243,9 +273,6 @@ struct OpenGameNFCScannerView: View {
                 }
                 .padding(.horizontal)
                 .transition(.scale.combined(with: .opacity))
-            } else {
-                ProgressView()
-                    .scaleEffect(1.5)
             }
         }
     }
@@ -273,8 +300,8 @@ struct OpenGameNFCScannerView: View {
                 .font(.headline)
                 .foregroundColor(.purple)
 
-            if let objectType = assignedObjectType {
-                Text("Creating: \(objectType.displayName)")
+            if let type = selectedLootType {
+                Text("Creating: \(type.displayName)")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -344,7 +371,7 @@ struct OpenGameNFCScannerView: View {
                 .font(.system(size: 60))
                 .foregroundColor(.red)
 
-            Text("Scan Failed")
+            Text("Write Failed")
                 .font(.title2)
                 .fontWeight(.semibold)
                 .foregroundColor(.red)
@@ -368,134 +395,55 @@ struct OpenGameNFCScannerView: View {
         }
     }
 
-    private func checkNFCAvailability() {
-        print("🔍 NFC Availability Debug:")
-        print("   - NFCNDEFReaderSession.readingAvailable: \(NFCNDEFReaderSession.readingAvailable)")
-
-        // Check device capabilities
-        #if targetEnvironment(simulator)
-        print("   - Running on simulator: true")
-        #else
-        print("   - Running on simulator: false")
-        #endif
-
-        // Check iOS version
-        let iOSVersion = UIDevice.current.systemVersion
-        print("   - iOS Version: \(iOSVersion)")
-
-        // Check device model
-        let deviceModel = UIDevice.current.model
-        let deviceName = UIDevice.current.name
-        print("   - Device Model: \(deviceModel)")
-        print("   - Device Name: \(deviceName)")
-
-        if !NFCNDEFReaderSession.readingAvailable {
-            var errorDetails = "NFC capability not enabled in app."
-
-            #if targetEnvironment(simulator)
-            errorDetails += " (Running on Simulator - NFC not available in simulator)"
-            #else
-            errorDetails += "\n\nThis usually means the NFC capability needs to be enabled in Xcode:"
-            errorDetails += "\n• Go to Xcode → Your Target → Signing & Capabilities"
-            errorDetails += "\n• Click '+' → Add 'Near Field Communication Tag Reading'"
-            errorDetails += "\n• Rebuild and run the app"
-            #endif
-
-            errorMessage = errorDetails
-            currentStep = .error
-            print("❌ NFC capability not enabled: \(errorDetails)")
-        } else {
-            print("✅ NFC is available on this device")
+    private func handlePrimaryAction() {
+        switch currentStep {
+        case .selecting:
+            startWriting()
+        case .written:
+            startPositioning()
+        case .error:
+            resetToSelecting()
+        default:
+            break
         }
     }
 
-    private func startScanning() {
-        // TEMPORARY WORKAROUND: Skip availability check for debugging
-        // guard NFCNDEFReaderSession.readingAvailable else {
-        //     errorMessage = "NFC is not available on this device"
-        //     currentStep = .error
-        //     return
-        // }
+    private func startWriting() {
+        guard let lootType = selectedLootType else { return }
 
-        // For debugging: Log availability status
-        print("🚀 Starting NFC scan - readingAvailable: \(NFCNDEFReaderSession.readingAvailable)")
-        print("📱 Device info: \(UIDevice.current.model) - iOS \(UIDevice.current.systemVersion)")
-
-        currentStep = .scanning
+        currentStep = .writing
+        isWriting = true
         errorMessage = nil
-        scanResult = nil
-        assignedObjectType = nil
-        createdObject = nil
 
-        print("🎯 OpenGameNFCScannerView: Set currentStep to .scanning")
+        // Create the message to write
+        let message = createTreasureMessage(for: lootType)
 
-        print("🔄 OpenGameNFCScannerView: Calling nfcService.scanNFC")
-        nfcService.scanNFC { result in
-            print("📡 OpenGameNFCScannerView: Received NFC result: \(result)")
+        print("🔧 Starting NFC write for \(lootType.displayName)")
+        nfcService.writeNFC(message: message) { result in
             DispatchQueue.main.async {
-                self.isScanning = false
+                self.isWriting = false
 
                 switch result {
                 case .success(let nfcResult):
-                    print("✅ OpenGameNFCScannerView: NFC scan successful")
-                    self.handleNFCSuccess(nfcResult)
+                    print("✅ NFC write successful")
+                    self.writeResult = nfcResult
+                    self.currentStep = .written
                 case .failure(let error):
-                    print("❌ OpenGameNFCScannerView: NFC scan failed with error: \(error)")
-                    self.handleNFCError(error)
+                    print("❌ NFC write failed: \(error)")
+                    self.errorMessage = error.localizedDescription
+                    self.currentStep = .error
                 }
             }
         }
-    }
-
-    private func handleNFCSuccess(_ nfcResult: NFCService.NFCResult) {
-        scanResult = nfcResult
-        currentStep = .analyzing
-
-        // Analyze NFC data and assign object type
-        assignedObjectType = assignObjectType(from: nfcResult)
-
-        // Move to positioning after a brief delay to show the analysis
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            self.startPositioning()
-        }
-    }
-
-    private func handleNFCError(_ error: NFCService.NFCError) {
-        errorMessage = error.localizedDescription
-        currentStep = .error
-    }
-
-    private func assignObjectType(from nfcResult: NFCService.NFCResult) -> LootBoxType {
-        // Check if NFC token contains pre-programmed object type
-        if let payload = nfcResult.payload?.trimmingCharacters(in: .whitespacesAndNewlines) {
-            // Try to parse object type from payload
-            if let type = LootBoxType(rawValue: payload) {
-                return type
-            }
-
-            // Check for common variations or abbreviations
-            let lowerPayload = payload.lowercased()
-            for type in LootBoxType.allCases {
-                if lowerPayload.contains(type.rawValue.lowercased()) ||
-                   lowerPayload.contains(type.rawValue.lowercased().replacingOccurrences(of: " ", with: "")) {
-                    return type
-                }
-            }
-        }
-
-        // If no pre-programmed type or invalid, assign random type from available types
-        // Exclude turkey as it's seasonal and less common for random assignment
-        let availableTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .lootChest, .lootCart, .sphere, .cube]
-        return availableTypes.randomElement() ?? .treasureChest
     }
 
     private func startPositioning() {
         currentStep = .positioning
 
-        // Get current user location for initial GPS coordinates
+        // Get current user location
         userLocation = CLLocationManager().location
 
-        // Start AR positioning to get high-precision coordinates
+        // Start AR positioning
         Task {
             do {
                 try await captureARPosition()
@@ -508,81 +456,93 @@ struct OpenGameNFCScannerView: View {
         }
     }
 
-    private func captureARPosition() async throws {
-        guard let userLocation = userLocation,
-              let objectType = assignedObjectType,
-              let nfcResult = scanResult else {
-            throw NSError(domain: "OpenGameNFCScanner", code: -1, userInfo: [NSLocalizedDescriptionKey: "Missing location, object type, or NFC result"])
-        }
-
-        // Create a unique object ID based on NFC tag and timestamp
-        let objectId = "nfc_\(nfcResult.tagId)_\(Int(Date().timeIntervalSince1970))"
-
-        // Start with GPS coordinates as fallback
-        var latitude = userLocation.coordinate.latitude
-        var longitude = userLocation.coordinate.longitude
-
-        // Try to get high-precision AR coordinates
-        do {
-            // Create a temporary NFCTaggedObject for AR positioning
-            let tempObject = PreciseARPositioningService.NFCTaggedObject(
-                tagID: nfcResult.tagId,
-                objectID: objectId,
-                worldTransform: matrix_identity_float4x4,
-                latitude: latitude,
-                longitude: longitude,
-                altitude: userLocation.altitude,
-                createdAt: Date(),
-                refinedTransform: nil,
-                visualAnchorData: nil
-            )
-
-            // Attempt to place with AR precision (this may take a few seconds)
-            try await precisePositioning.placePreciseARObject(object: tempObject)
-
-            // If successful, get the refined coordinates from AR anchor
-            if let anchor = precisePositioning.getActiveAnchor(for: objectId),
-               let geoAnchor = anchor as? ARGeoAnchor {
-                // Use AR-refined coordinates
-                latitude = geoAnchor.coordinate.latitude
-                longitude = geoAnchor.coordinate.longitude
-
-                print("🎯 Used AR-refined coordinates: \(latitude), \(longitude)")
-            } else {
-                print("📍 Using GPS coordinates (AR refinement not available)")
-            }
-        } catch {
-            print("⚠️ AR positioning failed, using GPS coordinates: \(error)")
-            // Continue with GPS coordinates
-        }
-
-        // Create the object via API
-        await createObject(id: objectId, type: objectType, latitude: latitude, longitude: longitude)
+    private func resetToSelecting() {
+        currentStep = .selecting
+        selectedLootType = nil
+        writeResult = nil
+        errorMessage = nil
     }
 
-    private func createObject(id: String, type: LootBoxType, latitude: Double, longitude: Double) async {
+    private func createTreasureMessage(for lootType: LootBoxType) -> String {
+        let treasureData: [String: Any] = [
+            "version": "1.0",
+            "type": "cache_raiders_treasure",
+            "lootType": lootType.rawValue,
+            "timestamp": Date().timeIntervalSince1970,
+            "tagId": UUID().uuidString
+        ]
+
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: treasureData)
+            return String(data: jsonData, encoding: .utf8) ?? "{}"
+        } catch {
+            print("❌ Failed to create JSON message: \(error)")
+            return "{}"
+        }
+    }
+
+    private func captureARPosition() async throws {
+        guard let userLocation = userLocation,
+              let objectType = selectedLootType,
+              let nfcResult = writeResult else {
+            throw NSError(domain: "NFCWriting", code: -1,
+                         userInfo: [NSLocalizedDescriptionKey: "Missing location or NFC result"])
+        }
+
+        // Create unique object ID
+        let objectId = "nfc_\(nfcResult.tagId)_\(Int(Date().timeIntervalSince1970))"
+
+        // Start with GPS coordinates
+        var latitude = userLocation.coordinate.latitude
+        var longitude = userLocation.coordinate.longitude
+        var altitude = userLocation.altitude
+
+        // Try AR precision refinement
+        do {
+            let preciseCoords = try await precisePositioning.getSubCentimeterPosition(
+                for: nfcResult.tagId,
+                objectId: objectId,
+                initialLocation: userLocation
+            )
+
+            latitude = preciseCoords.latitude
+            longitude = preciseCoords.longitude
+            altitude = preciseCoords.altitude
+
+            print("🎯 Achieved sub-centimeter precision: \(latitude), \(longitude)")
+        } catch {
+            print("⚠️ AR precision failed, using GPS coordinates: \(error)")
+        }
+
+        // Create the object
+        await createObject(id: objectId, type: objectType,
+                          latitude: latitude, longitude: longitude, altitude: altitude)
+    }
+
+    private func createObject(id: String, type: LootBoxType, latitude: Double, longitude: Double, altitude: Double) async {
         currentStep = .creating
 
         do {
-            // Create the object data
             let objectData: [String: Any] = [
                 "id": id,
                 "name": "\(type.displayName) (NFC)",
                 "type": type.rawValue,
                 "latitude": latitude,
                 "longitude": longitude,
-                "radius": 10.0, // 10 meter radius
-                "created_by": "nfc_scanner",
-                "grounding_height": 0.0
+                "altitude": altitude,
+                "radius": 10.0,
+                "created_by": "nfc_writer",
+                "grounding_height": 0.0,
+                "nfc_tag_id": writeResult?.tagId ?? "",
+                "nfc_write_timestamp": Date().timeIntervalSince1970
             ]
 
-            // Convert to JSON
             let jsonData = try JSONSerialization.data(withJSONObject: objectData)
 
-            // Create URL request
             let baseURL = APIService.shared.baseURL
             guard let url = URL(string: "\(baseURL)/api/objects") else {
-                throw NSError(domain: "OpenGameNFCScanner", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+                throw NSError(domain: "NFCWriting", code: -1,
+                             userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
             }
 
             var request = URLRequest(url: url)
@@ -590,15 +550,14 @@ struct OpenGameNFCScannerView: View {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = jsonData
 
-            // Send request
             let (_, response) = try await URLSession.shared.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                throw NSError(domain: "OpenGameNFCScanner", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+                throw NSError(domain: "NFCWriting", code: -1,
+                             userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
             }
 
             if httpResponse.statusCode == 200 {
-                // Success - create local object representation
                 let object = LootBoxLocation(
                     id: id,
                     name: "\(type.displayName) (NFC)",
@@ -614,14 +573,15 @@ struct OpenGameNFCScannerView: View {
                     self.createdObject = object
                     self.currentStep = .success
 
-                    // Notify other parts of the app that a new NFC object was created
+                    // Notify other parts of the app
                     NotificationCenter.default.post(
                         name: NSNotification.Name("NFCObjectCreated"),
                         object: object
                     )
                 }
             } else {
-                throw NSError(domain: "OpenGameNFCScanner", code: -1, userInfo: [NSLocalizedDescriptionKey: "Server returned error: \(httpResponse.statusCode)"])
+                throw NSError(domain: "NFCWriting", code: -1,
+                             userInfo: [NSLocalizedDescriptionKey: "Server returned error: \(httpResponse.statusCode)"])
             }
 
         } catch {
@@ -639,9 +599,69 @@ struct OpenGameNFCScannerView: View {
     }
 }
 
+// MARK: - Loot Type Card
+struct LootTypeCard: View {
+    let lootType: LootBoxType
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 12) {
+                // Icon representation
+                ZStack {
+                    Circle()
+                        .fill(Color(lootType.color).opacity(0.2))
+                        .frame(width: 60, height: 60)
+
+                    Circle()
+                        .stroke(Color(lootType.color), lineWidth: isSelected ? 3 : 1)
+                        .frame(width: 60, height: 60)
+
+                    Image(systemName: iconForLootType(lootType))
+                        .font(.system(size: 24))
+                        .foregroundColor(Color(lootType.color))
+                }
+
+                Text(lootType.displayName)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.primary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isSelected ? Color(lootType.color).opacity(0.1) : Color(.secondarySystemBackground))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(isSelected ? Color(lootType.color) : Color.clear, lineWidth: 2)
+                    )
+            )
+            .shadow(color: isSelected ? Color(lootType.color).opacity(0.3) : Color.clear, radius: 4, x: 0, y: 2)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private func iconForLootType(_ type: LootBoxType) -> String {
+        switch type {
+        case .chalice: return "cup.and.saucer.fill"
+        case .templeRelic: return "building.columns.fill"
+        case .treasureChest: return "shippingbox.fill"
+        case .lootChest: return "archivebox.fill"
+        case .lootCart: return "cart.fill"
+        case .sphere: return "circle.fill"
+        case .cube: return "square.fill"
+        case .turkey: return "bird.fill"
+        }
+    }
+}
+
 // MARK: - Preview
-struct OpenGameNFCScannerView_Previews: PreviewProvider {
+struct NFCWritingView_Previews: PreviewProvider {
     static var previews: some View {
-        OpenGameNFCScannerView()
+        NFCWritingView()
     }
 }

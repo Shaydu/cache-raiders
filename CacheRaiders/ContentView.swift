@@ -30,6 +30,8 @@ struct ContentView: View {
         case locationConfig
         case arPlacement
         case nfcScanner
+        case nfcWriting
+        case simpleNFCScanner
         case inventory
         case settings
         case leaderboard
@@ -41,6 +43,8 @@ struct ContentView: View {
             case .locationConfig: return "locationConfig"
             case .arPlacement: return "arPlacement"
             case .nfcScanner: return "nfcScanner"
+            case .nfcWriting: return "nfcWriting"
+            case .simpleNFCScanner: return "simpleNFCScanner"
             case .inventory: return "inventory"
             case .settings: return "settings"
             case .leaderboard: return "leaderboard"
@@ -158,6 +162,11 @@ struct ContentView: View {
                         .default(Text("Place AR Object")) {
                             Task { @MainActor in
                                 presentedSheet = .arPlacement
+                            }
+                        },
+                        .default(Text("Place NFC Token")) {
+                            Task { @MainActor in
+                                presentedSheet = .nfcWriting
                             }
                         },
                         .default(Text("Scan NFC Token")) {
@@ -326,6 +335,19 @@ struct ContentView: View {
             Button(action: {
                 // Use async to avoid modifying state during view update
                 Task { @MainActor in
+                    presentedSheet = .simpleNFCScanner
+                }
+            }) {
+                Image(systemName: "wave.3.right.circle")
+                    .foregroundColor(.cyan)
+                    .padding()
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(10)
+            }
+
+            Button(action: {
+                // Use async to avoid modifying state during view update
+                Task { @MainActor in
                     presentedSheet = .settings
                 }
             }) {
@@ -414,6 +436,10 @@ struct ContentView: View {
             ARPlacementView(locationManager: locationManager, userLocationManager: userLocationManager)
         case .nfcScanner:
             OpenGameNFCScannerView()
+        case .nfcWriting:
+            NFCWritingView()
+        case .simpleNFCScanner:
+            SimpleNFCScannerView()
         case .inventory:
             NavigationView {
                 InventoryView(inventoryService: inventoryService)
