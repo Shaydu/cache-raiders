@@ -1,6 +1,8 @@
 import RealityKit
 import ARKit
 import CoreLocation
+import AudioToolbox
+import UIKit
 
 // MARK: - AR Object Placer
 class ARObjectPlacer {
@@ -16,7 +18,7 @@ class ARObjectPlacer {
 
     // MARK: - Loot Box Placement
 
-    /// Place a loot box at a specific location in AR space
+    /// Place a loot box at a specific location in AR space with tiered accuracy
     func placeLootBoxAtLocation(_ location: LootBoxLocation, in arView: ARView) {
         Swift.print("🎯 placeLootBoxAtLocation called for: \(location.name) (type: \(location.type.displayName))")
 
@@ -38,8 +40,18 @@ class ARObjectPlacer {
             return
         }
 
+        // Calculate distance to object
+        let objectLocation = location.location
+        let distanceToObject = userLocation.distance(from: objectLocation)
+
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+
+        Swift.print("   📏 Distance to object: \(String(format: "%.2f", distanceToObject))m")
+
+        // TIERED ACCURACY: Use AR anchor when nearby for centimeter-level precision
+        // Note: AR anchor support requires server-side metadata (not yet implemented)
+        // For now, this is a placeholder for future implementation
 
         // Determine placement strategy based on available AR coordinates
         if let arOriginLat = location.ar_origin_latitude,
@@ -48,10 +60,12 @@ class ARObjectPlacer {
            let arOffsetY = location.ar_offset_y,
            let arOffsetZ = location.ar_offset_z {
 
+            Swift.print("   ℹ️ Using AR room coordinates")
             placeUsingARCoordinates(location, arOriginLat: arOriginLat, arOriginLon: arOriginLon,
                                   arOffsetX: arOffsetX, arOffsetY: arOffsetY, arOffsetZ: arOffsetZ,
                                   userLocation: userLocation, in: arView)
         } else {
+            Swift.print("   📍 Using GPS coordinates")
             placeUsingGPSCoordinates(location, userLocation: userLocation, cameraPos: cameraPos, in: arView)
         }
     }
@@ -149,6 +163,28 @@ class ARObjectPlacer {
         Swift.print("   Anchor children count: \(anchor.children.count)")
         Swift.print("   Anchor enabled: \(anchor.isEnabled)")
         Swift.print("   Entity enabled: \(entity.isEnabled)")
+
+        // Play haptic and sound feedback when object appears in AR
+        playObjectPlacedFeedback(for: location)
+    }
+
+    /// Play haptic and audio feedback when an object is placed in AR
+    private func playObjectPlacedFeedback(for location: LootBoxLocation) {
+        // Play viewport entry chirp sound (system sound 1103 - soft notification chime)
+        AudioServicesPlaySystemSound(1103)
+        Swift.print("🔔 SOUND: Object placed chirp (system sound 1103)")
+
+        // Haptic feedback - medium impact when object appears
+        DispatchQueue.main.async {
+            let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
+            impactFeedback.prepare()
+            impactFeedback.impactOccurred()
+            Swift.print("📳 HAPTIC: Object placed feedback")
+        }
+
+        Swift.print("   Trigger: Object placed in AR")
+        Swift.print("   Object: \(location.name) (\(location.type.displayName))")
+        Swift.print("   Location ID: \(location.id)")
     }
 
     // MARK: - Sphere Placement
