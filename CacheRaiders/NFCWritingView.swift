@@ -8,6 +8,7 @@ import CoreLocation
 /// Allows users to select a loot box type and write it to an NFC token
 struct NFCWritingView: View {
     @Environment(\.dismiss) var dismiss
+    @ObservedObject var locationManager: LootBoxLocationManager
     private let nfcService = NFCService.shared
     @StateObject private var precisePositioning = PreciseARPositioningService.shared
     @StateObject private var arIntegrationService = NFCARIntegrationService.shared
@@ -21,6 +22,7 @@ struct NFCWritingView: View {
     @State private var currentStep: WritingStep = .selecting
     @State private var arView: ARView?
     @State private var userLocation: CLLocation?
+    @State private var clLocationManager: CLLocationManager?
 
     enum WritingStep {
         case selecting      // User selecting loot type
@@ -35,17 +37,17 @@ struct NFCWritingView: View {
     private var stepDescription: String {
         switch currentStep {
         case .selecting:
-            return "Select the treasure type to write to your NFC token"
+            return "Select the loot type to place"
         case .writing:
-            return "Hold your iPhone near the NFC tag to write treasure data"
+            return "Hold your iPhone near the NFC tag to write"
         case .written:
-            return "Successfully wrote treasure data to NFC tag!"
+            return "NFC tag written successfully!"
         case .positioning:
-            return "Capturing precise AR coordinates for your treasure..."
+            return "Placing loot at this location..."
         case .creating:
-            return "Creating your treasure object..."
+            return "Saving to database..."
         case .success:
-            return "Treasure object created! Other players can now find it!"
+            return "Loot placed! All players can now find it!"
         case .error:
             return "An error occurred"
         }
@@ -77,11 +79,11 @@ struct NFCWritingView: View {
                             .font(.system(size: 60))
                             .foregroundColor(stepColor)
 
-                        Text("NFC Treasure Writer")
+                        Text("NFC Loot Writer")
                             .font(.title)
                             .fontWeight(.bold)
 
-                        Text("Open Game Mode")
+                        Text("Place Loot in the World")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                     }
@@ -120,23 +122,40 @@ struct NFCWritingView: View {
 
                     Spacer()
 
-                    // Action buttons
-                    if currentStep == .selecting || currentStep == .written || currentStep == .error {
+                    // Action buttons (only for error state)
+                    if currentStep == .error {
                         Button(action: handlePrimaryAction) {
                             HStack {
-                                Image(systemName: primaryButtonIcon)
-                                Text(primaryButtonText)
+                                Image(systemName: "arrow.clockwise")
+                                Text("Try Again")
                             }
                             .font(.headline)
                             .foregroundColor(.white)
                             .padding(.horizontal, 32)
                             .padding(.vertical, 16)
-                            .background(stepColor)
+                            .background(Color.red)
                             .cornerRadius(12)
-                            .shadow(color: stepColor.opacity(0.3), radius: 8, x: 0, y: 4)
+                            .shadow(color: Color.red.opacity(0.3), radius: 8, x: 0, y: 4)
                         }
                         .padding(.bottom, 40)
-                        .disabled(currentStep == .selecting && selectedLootType == nil)
+                    }
+
+                    // Success: Dismiss button
+                    if currentStep == .success {
+                        Button(action: { dismiss() }) {
+                            HStack {
+                                Image(systemName: "checkmark.circle")
+                                Text("Done")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 32)
+                            .padding(.vertical, 16)
+                            .background(Color.green)
+                            .cornerRadius(12)
+                            .shadow(color: Color.green.opacity(0.3), radius: 8, x: 0, y: 4)
+                        }
+                        .padding(.bottom, 40)
                     }
                 }
                 .padding(.horizontal, 20)
@@ -159,27 +178,10 @@ struct NFCWritingView: View {
         }
     }
 
-    private var primaryButtonText: String {
-        switch currentStep {
-        case .selecting: return "Write to NFC Token"
-        case .written: return "Place Treasure"
-        case .error: return "Try Again"
-        default: return ""
-        }
-    }
-
-    private var primaryButtonIcon: String {
-        switch currentStep {
-        case .selecting: return "wave.3.right"
-        case .written: return "arkit"
-        case .error: return "arrow.clockwise"
-        default: return ""
-        }
-    }
 
     private var lootTypeSelectionView: some View {
         VStack(spacing: 20) {
-            Text("Choose Your Treasure")
+            Text("Choose Your Loot")
                 .font(.title2)
                 .fontWeight(.semibold)
 
@@ -189,14 +191,19 @@ struct NFCWritingView: View {
                     LootTypeCard(
                         lootType: lootType,
                         isSelected: selectedLootType == lootType,
-                        action: { selectedLootType = lootType }
+                        action: {
+                            print("🎯 LootTypeCard selected: \(lootType.displayName)")
+                            selectedLootType = lootType
+                            // Immediately start NFC writing when loot type is selected
+                            startWriting()
+                        }
                     )
                 }
             }
             .padding(.horizontal)
 
             if selectedLootType == nil {
-                Text("Select a treasure type above")
+                Text("Select a loot type above")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .italic()
@@ -259,7 +266,7 @@ struct NFCWritingView: View {
 
                         if let type = selectedLootType {
                             HStack {
-                                Text("Treasure:")
+                                Text("Loot Type:")
                                     .fontWeight(.semibold)
                                 Text(type.displayName)
                                     .foregroundColor(.primary)
@@ -327,7 +334,7 @@ struct NFCWritingView: View {
                         .font(.system(size: 60))
                         .foregroundColor(.green)
 
-                    Text("Treasure Created!")
+                    Text("Loot Created!")
                         .font(.title2)
                         .fontWeight(.semibold)
                         .foregroundColor(.green)
@@ -354,7 +361,7 @@ struct NFCWritingView: View {
                     .cornerRadius(12)
                     .frame(maxWidth: .infinity)
 
-                    Text("Other players can now find this treasure!")
+                    Text("Other players can now find this loot!")
                         .font(.body)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -388,23 +395,23 @@ struct NFCWritingView: View {
     }
 
     private func setupARView() {
-        arView = ARView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
-        if let arView = arView {
-            arIntegrationService.setup(with: arView)
-            precisePositioning.setup(with: arView)
-        }
+        // Don't create AR view here - we don't need it for the NFC writing flow
+        // The AR positioning service will use the main AR session when needed
+
+        // Setup location manager to get current location
+        clLocationManager = CLLocationManager()
+        clLocationManager?.desiredAccuracy = kCLLocationAccuracyBest
+        clLocationManager?.requestWhenInUseAuthorization()
+        clLocationManager?.startUpdatingLocation()
+
+        // Get initial location
+        userLocation = clLocationManager?.location
     }
 
     private func handlePrimaryAction() {
-        switch currentStep {
-        case .selecting:
-            startWriting()
-        case .written:
-            startPositioning()
-        case .error:
+        print("🎯 NFCWritingView.handlePrimaryAction: currentStep = \(currentStep)")
+        if currentStep == .error {
             resetToSelecting()
-        default:
-            break
         }
     }
 
@@ -416,7 +423,7 @@ struct NFCWritingView: View {
         errorMessage = nil
 
         // Create the message to write
-        let message = createTreasureMessage(for: lootType)
+        let message = createLootMessage(for: lootType)
 
         print("🔧 Starting NFC write for \(lootType.displayName)")
         nfcService.writeNFC(message: message) { result in
@@ -427,7 +434,8 @@ struct NFCWritingView: View {
                 case .success(let nfcResult):
                     print("✅ NFC write successful")
                     self.writeResult = nfcResult
-                    self.currentStep = .written
+                    // Automatically proceed to place the loot at current location
+                    self.startPositioning()
                 case .failure(let error):
                     print("❌ NFC write failed: \(error)")
                     self.errorMessage = error.localizedDescription
@@ -440,8 +448,23 @@ struct NFCWritingView: View {
     private func startPositioning() {
         currentStep = .positioning
 
-        // Get current user location
-        userLocation = CLLocationManager().location
+        // Get current user location (refresh from location manager)
+        if let freshLocation = clLocationManager?.location {
+            userLocation = freshLocation
+            print("📍 Got fresh location: lat=\(freshLocation.coordinate.latitude), lon=\(freshLocation.coordinate.longitude)")
+        } else {
+            print("⚠️ Location manager has no location yet")
+        }
+
+        // Ensure we have a location
+        guard let location = userLocation else {
+            print("❌ No user location available")
+            errorMessage = "Unable to get current location. Please ensure location services are enabled."
+            currentStep = .error
+            return
+        }
+
+        print("📍 Using location: lat=\(location.coordinate.latitude), lon=\(location.coordinate.longitude), alt=\(location.altitude)")
 
         // Start AR positioning
         Task {
@@ -463,17 +486,17 @@ struct NFCWritingView: View {
         errorMessage = nil
     }
 
-    private func createTreasureMessage(for lootType: LootBoxType) -> String {
-        let treasureData: [String: Any] = [
+    private func createLootMessage(for lootType: LootBoxType) -> String {
+        let lootData: [String: Any] = [
             "version": "1.0",
-            "type": "cache_raiders_treasure",
+            "type": "cache_raiders_loot",
             "lootType": lootType.rawValue,
             "timestamp": Date().timeIntervalSince1970,
             "tagId": UUID().uuidString
         ]
 
         do {
-            let jsonData = try JSONSerialization.data(withJSONObject: treasureData)
+            let jsonData = try JSONSerialization.data(withJSONObject: lootData)
             return String(data: jsonData, encoding: .utf8) ?? "{}"
         } catch {
             print("❌ Failed to create JSON message: \(error)")
@@ -485,6 +508,10 @@ struct NFCWritingView: View {
         guard let userLocation = userLocation,
               let objectType = selectedLootType,
               let nfcResult = writeResult else {
+            print("❌ Missing required data for AR position capture")
+            print("   userLocation: \(userLocation != nil ? "✓" : "✗")")
+            print("   objectType: \(selectedLootType != nil ? "✓" : "✗")")
+            print("   nfcResult: \(writeResult != nil ? "✓" : "✗")")
             throw NSError(domain: "NFCWriting", code: -1,
                          userInfo: [NSLocalizedDescriptionKey: "Missing location or NFC result"])
         }
@@ -497,23 +524,17 @@ struct NFCWritingView: View {
         var longitude = userLocation.coordinate.longitude
         var altitude = userLocation.altitude
 
-        // Try AR precision refinement
-        do {
-            let positioningService = PreciseARPositioningService.shared
-            let preciseCoords = try await positioningService.getSubCentimeterPosition(
-                for: nfcResult.tagId,
-                objectId: objectId,
-                initialLocation: userLocation
-            )
+        print("📍 Initial GPS coordinates:")
+        print("   Latitude: \(latitude)")
+        print("   Longitude: \(longitude)")
+        print("   Altitude: \(altitude)")
 
-            latitude = preciseCoords.latitude
-            longitude = preciseCoords.longitude
-            altitude = preciseCoords.altitude
+        // Skip AR precision refinement for now to avoid camera freeze
+        // The object is placed at GPS coordinates, which is accurate enough
+        // AR precision can be added later when the user is in AR mode
+        print("ℹ️ Using GPS coordinates (AR refinement skipped to prevent camera freeze)")
 
-            print("🎯 Achieved sub-centimeter precision: \(latitude), \(longitude)")
-        } catch {
-            print("⚠️ AR precision failed, using GPS coordinates: \(error)")
-        }
+        print("📤 Creating object with final coordinates: lat=\(latitude), lon=\(longitude), alt=\(altitude)")
 
         // Create the object
         await createObject(id: objectId, type: objectType,
@@ -524,19 +545,45 @@ struct NFCWritingView: View {
         currentStep = .creating
 
         do {
+            // Get current user device ID or username
+            let deviceUUID = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
+            let username = UserDefaults.standard.string(forKey: "username") ?? "Player"
+
+            // Store both GPS coordinates and AR-refined coordinates
             let objectData: [String: Any] = [
                 "id": id,
-                "name": "\(type.displayName) (NFC)",
+                "name": "\(type.displayName)",
                 "type": type.rawValue,
+                // GPS coordinates
                 "latitude": latitude,
                 "longitude": longitude,
                 "altitude": altitude,
-                "radius": 10.0,
-                "created_by": "nfc_writer",
+                // AR positioning metadata
+                "ar_precision": true,
+                "ar_latitude": latitude,  // These are AR-refined coordinates
+                "ar_longitude": longitude,
+                "ar_altitude": altitude,
+                // Object properties
+                "radius": 3.0,  // Smaller radius for NFC objects since they're precise
                 "grounding_height": 0.0,
+                // NFC metadata
                 "nfc_tag_id": writeResult?.tagId ?? "",
-                "nfc_write_timestamp": Date().timeIntervalSince1970
+                "nfc_write_timestamp": Date().timeIntervalSince1970,
+                "is_nfc_object": true,
+                // Creator information
+                "created_by": username,
+                "creator_device_id": deviceUUID,
+                "created_at": Date().timeIntervalSince1970,
+                // Discovery tracking
+                "times_found": 0,
+                "first_finder": NSNull(),
+                "last_found_at": NSNull(),
+                // Visibility
+                "visible_to_all": true,
+                "active": true
             ]
+
+            print("📤 Creating NFC loot object: \(objectData)")
 
             let jsonData = try JSONSerialization.data(withJSONObject: objectData)
 
@@ -551,21 +598,26 @@ struct NFCWritingView: View {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = jsonData
 
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 throw NSError(domain: "NFCWriting", code: -1,
                              userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
             }
 
-            if httpResponse.statusCode == 200 {
+            print("📥 Server response: \(httpResponse.statusCode)")
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("   Response body: \(responseString)")
+            }
+
+            if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
                 let object = LootBoxLocation(
                     id: id,
-                    name: "\(type.displayName) (NFC)",
+                    name: "\(type.displayName)",
                     type: type,
                     latitude: latitude,
                     longitude: longitude,
-                    radius: 10.0,
+                    radius: 3.0,  // Match the reduced radius
                     collected: false,
                     source: .map
                 )
@@ -574,11 +626,23 @@ struct NFCWritingView: View {
                     self.createdObject = object
                     self.currentStep = .success
 
-                    // Notify other parts of the app
+                    // Add object to location manager immediately so it appears in AR
+                    self.locationManager.locations.append(object)
+                    print("✅ Added object to locationManager.locations (\(self.locationManager.locations.count) total)")
+
+                    // Notify other parts of the app to refresh
                     NotificationCenter.default.post(
                         name: NSNotification.Name("NFCObjectCreated"),
                         object: object
                     )
+
+                    // Also trigger a location manager refresh
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("RefreshLootBoxes"),
+                        object: nil
+                    )
+
+                    print("✅ NFC loot object created successfully, added to AR, and notifications sent")
                 }
             } else {
                 throw NSError(domain: "NFCWriting", code: -1,
@@ -586,6 +650,7 @@ struct NFCWritingView: View {
             }
 
         } catch {
+            print("❌ Failed to create object: \(error)")
             DispatchQueue.main.async {
                 self.errorMessage = "Failed to create object: \(error.localizedDescription)"
                 self.currentStep = .error
@@ -595,8 +660,8 @@ struct NFCWritingView: View {
 
     private func cleanup() {
         nfcService.stopScanning()
-        arView?.session.pause()
-        arView = nil
+        clLocationManager?.stopUpdatingLocation()
+        clLocationManager = nil
     }
 }
 
@@ -606,22 +671,30 @@ struct LootTypeCard: View {
     let isSelected: Bool
     let action: () -> Void
 
+    // Convert UIColor to SwiftUI Color
+    private var color: Color {
+        Color(uiColor: lootType.color)
+    }
+
     var body: some View {
-        Button(action: action) {
+        Button(action: {
+            print("🎯 LootTypeCard tapped: \(lootType.displayName)")
+            action()
+        }) {
             VStack(spacing: 12) {
                 // Icon representation
                 ZStack {
                     Circle()
-                        .fill(Color(lootType.color).opacity(0.2))
+                        .fill(color.opacity(0.2))
                         .frame(width: 60, height: 60)
 
                     Circle()
-                        .stroke(Color(lootType.color), lineWidth: isSelected ? 3 : 1)
+                        .stroke(color, lineWidth: isSelected ? 3 : 1)
                         .frame(width: 60, height: 60)
 
                     Image(systemName: iconForLootType(lootType))
                         .font(.system(size: 24))
-                        .foregroundColor(Color(lootType.color))
+                        .foregroundColor(color)
                 }
 
                 Text(lootType.displayName)
@@ -633,17 +706,19 @@ struct LootTypeCard: View {
                     .minimumScaleFactor(0.8)
             }
             .padding()
+            .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(isSelected ? Color(lootType.color).opacity(0.1) : Color(.secondarySystemBackground))
+                    .fill(isSelected ? color.opacity(0.1) : Color(.secondarySystemBackground))
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(isSelected ? Color(lootType.color) : Color.clear, lineWidth: 2)
+                            .stroke(isSelected ? color : Color.clear, lineWidth: 2)
                     )
             )
-            .shadow(color: isSelected ? Color(lootType.color).opacity(0.3) : Color.clear, radius: 4, x: 0, y: 2)
+            .shadow(color: isSelected ? color.opacity(0.3) : Color.clear, radius: 4, x: 0, y: 2)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(.plain)
     }
 
     private func iconForLootType(_ type: LootBoxType) -> String {
@@ -663,6 +738,6 @@ struct LootTypeCard: View {
 // MARK: - Preview
 struct NFCWritingView_Previews: PreviewProvider {
     static var previews: some View {
-        NFCWritingView()
+        NFCWritingView(locationManager: LootBoxLocationManager())
     }
 }

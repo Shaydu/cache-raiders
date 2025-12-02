@@ -437,7 +437,7 @@ struct ContentView: View {
         case .nfcScanner:
             OpenGameNFCScannerView()
         case .nfcWriting:
-            NFCWritingView()
+            NFCWritingView(locationManager: locationManager)
         case .simpleNFCScanner:
             SimpleNFCScannerView()
         case .inventory:
