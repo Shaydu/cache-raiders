@@ -25,10 +25,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var geospatialService: ARGeospatialService? // New ENU-based geospatial service
     private var treasureHuntService: TreasureHuntService? // Treasure hunt game mode service
     private var npcService: ARNPCService? // NPC management service
+    var stateManager: ARStateManager? // State management for throttling and coordination
 
     weak var arView: ARView?
     private var locationManager: LootBoxLocationManager?
-    private var userLocationManager: UserLocationManager?
+    var userLocationManager: UserLocationManager?
     private var nearbyLocationsBinding: Binding<[LootBoxLocation]>?
     private var placedBoxes: [String: AnchorEntity] = [:]
     private var findableObjects: [String: FindableObject] = [:] // Track all findable objects
@@ -439,6 +440,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         groundingService = ARGroundingService(arView: arView)
         precisionPositioningService = ARPrecisionPositioningService(arView: arView) // Legacy
         geospatialService = ARGeospatialService() // New ENU-based service
+        stateManager = ARStateManager() // State management for throttling and coordination
 
         // Configure environment lighting for proper shading and colors
         // Increase intensity to ensure objects are well-lit and colors are visible

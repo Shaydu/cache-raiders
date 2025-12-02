@@ -262,7 +262,7 @@ class ARObjectPlacer {
     /// Check and place boxes based on nearby locations
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
         guard let arCoordinator = arCoordinator else { return }
-        guard (arCoordinator as? ARCoordinator)?.shouldPerformNearbyCheck() ?? true else { return }
+        guard (arCoordinator as? ARCoordinator)?.stateManager?.shouldPerformNearbyCheck() ?? true else { return }
 
         let nearbyLocationIds = Set(nearbyLocations.map { $0.id })
         let locationMap = Dictionary(uniqueKeysWithValues:

@@ -170,7 +170,7 @@ class ARNPCManager {
         // The player should be able to ask for treasure maps multiple times
         uiManager?.showSkeletonTextInput(for: skeletonAnchor, in: arView, npcId: npcId, npcName: "Captain Bones",
                                        treasureHuntService: arCoordinator?.treasureHuntService,
-                                       userLocationManager: (arCoordinator as? ARCoordinator)?.userLocationManager ?? arCoordinator?.userLocationManager)
+                                       userLocationManager: arCoordinator?.userLocationManager)
 
         // Mark as talked to (for other game logic if needed)
         arCoordinator?.hasTalkedToSkeleton = true

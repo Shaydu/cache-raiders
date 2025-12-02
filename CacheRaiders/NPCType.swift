@@ -38,3 +38,4 @@ enum NPCType: String, CaseIterable {
         return self == .skeleton
     }
 }
+
