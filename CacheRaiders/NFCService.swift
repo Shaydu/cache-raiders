@@ -51,11 +51,14 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate {
     func scanNFC(completion: @escaping (Result<NFCResult, NFCError>) -> Void) {
         self.readCompletion = completion
 
+        // TEMPORARY WORKAROUND: Skip availability check for debugging
         // Check if NFC is available
-        guard NFCNDEFReaderSession.readingAvailable else {
-            completion(.failure(.notSupported))
-            return
-        }
+        // guard NFCNDEFReaderSession.readingAvailable else {
+        //     completion(.failure(.notSupported))
+        //     return
+        // }
+
+        print("🔧 NFCService.scanNFC: Starting scan (availability check bypassed)")
 
         // Invalidate any existing sessions
         invalidateSessions()
@@ -71,11 +74,14 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate {
     func writeNFC(message: String, completion: @escaping (Result<String, NFCError>) -> Void) {
         self.writeCompletion = completion
 
+        // TEMPORARY WORKAROUND: Skip availability check for debugging
         // Check if NFC is available
-        guard NFCNDEFReaderSession.readingAvailable else {
-            completion(.failure(.notSupported))
-            return
-        }
+        // guard NFCNDEFReaderSession.readingAvailable else {
+        //     completion(.failure(.notSupported))
+        //     return
+        // }
+
+        print("🔧 NFCService.writeNFC: Starting write (availability check bypassed)")
 
         // Invalidate any existing sessions
         invalidateSessions()

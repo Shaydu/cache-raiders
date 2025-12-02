@@ -369,18 +369,57 @@ struct OpenGameNFCScannerView: View {
     }
 
     private func checkNFCAvailability() {
+        print("🔍 NFC Availability Debug:")
+        print("   - NFCNDEFReaderSession.readingAvailable: \(NFCNDEFReaderSession.readingAvailable)")
+
+        // Check device capabilities
+        #if targetEnvironment(simulator)
+        print("   - Running on simulator: true")
+        #else
+        print("   - Running on simulator: false")
+        #endif
+
+        // Check iOS version
+        let iOSVersion = UIDevice.current.systemVersion
+        print("   - iOS Version: \(iOSVersion)")
+
+        // Check device model
+        let deviceModel = UIDevice.current.model
+        let deviceName = UIDevice.current.name
+        print("   - Device Model: \(deviceModel)")
+        print("   - Device Name: \(deviceName)")
+
         if !NFCNDEFReaderSession.readingAvailable {
-            errorMessage = "NFC is not available on this device. NFC requires an iPhone 7 or later."
+            var errorDetails = "NFC is not available on this device."
+
+            #if targetEnvironment(simulator)
+            errorDetails += " (Running on Simulator - NFC not available in simulator)"
+            #else
+            if #available(iOS 11.0, *) {
+                errorDetails += " (Device should support NFC - iOS 11+ required)"
+            } else {
+                errorDetails += " (iOS 11+ required for NFC)"
+            }
+            #endif
+
+            errorMessage = errorDetails
             currentStep = .error
+            print("❌ NFC not available: \(errorDetails)")
+        } else {
+            print("✅ NFC is available on this device")
         }
     }
 
     private func startScanning() {
-        guard NFCNDEFReaderSession.readingAvailable else {
-            errorMessage = "NFC is not available on this device"
-            currentStep = .error
-            return
-        }
+        // TEMPORARY WORKAROUND: Skip availability check for debugging
+        // guard NFCNDEFReaderSession.readingAvailable else {
+        //     errorMessage = "NFC is not available on this device"
+        //     currentStep = .error
+        //     return
+        // }
+
+        // For debugging: Log availability status
+        print("🚀 Starting NFC scan - readingAvailable: \(NFCNDEFReaderSession.readingAvailable)")
 
         currentStep = .scanning
         errorMessage = nil

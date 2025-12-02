@@ -13,6 +13,7 @@ struct ContentView: View {
     @StateObject private var userLocationManager = UserLocationManager()
     @StateObject private var treasureHuntService = TreasureHuntService()
     @StateObject private var gridTreasureMapService = GridTreasureMapService()
+    @StateObject private var inventoryService = InventoryService()
     
     // Grid treasure map modal state (separate from sheets)
     @State private var showGridTreasureMap = false
@@ -20,20 +21,27 @@ struct ContentView: View {
     // QR Scanner state (manually triggered from Settings)
     @State private var showQRScanner = false
     @State private var scannedURL: String?
+
+    // Action sheet state for + menu
+    @State private var showPlusMenu = false
     
     // Use enum-based sheet state to prevent multiple sheets being presented simultaneously
     enum SheetType: Identifiable, Equatable {
         case locationConfig
         case arPlacement
+        case nfcScanner
+        case inventory
         case settings
         case leaderboard
         case skeletonConversation(npcId: String, npcName: String)
         case treasureMap
-        
+
         var id: String {
             switch self {
             case .locationConfig: return "locationConfig"
             case .arPlacement: return "arPlacement"
+            case .nfcScanner: return "nfcScanner"
+            case .inventory: return "inventory"
             case .settings: return "settings"
             case .leaderboard: return "leaderboard"
             case .skeletonConversation(let npcId, _): return "skeletonConversation_\(npcId)"
@@ -134,15 +142,32 @@ struct ContentView: View {
             }
             
             Button(action: {
-                // Use async to avoid modifying state during view update
-                Task { @MainActor in
-                    presentedSheet = .arPlacement
-                }
+                // Show action sheet with + menu options
+                showPlusMenu = true
             }) {
                 Image(systemName: "plus")
                     .padding()
                     .background(.ultraThinMaterial)
                     .cornerRadius(10)
+            }
+            .actionSheet(isPresented: $showPlusMenu) {
+                ActionSheet(
+                    title: Text("Create"),
+                    message: Text("Choose what to create"),
+                    buttons: [
+                        .default(Text("Place AR Object")) {
+                            Task { @MainActor in
+                                presentedSheet = .arPlacement
+                            }
+                        },
+                        .default(Text("Scan NFC Token")) {
+                            Task { @MainActor in
+                                presentedSheet = .nfcScanner
+                            }
+                        },
+                        .cancel()
+                    ]
+                )
             }
         }
         .padding(.top)
@@ -274,7 +299,30 @@ struct ContentView: View {
                     .background(.ultraThinMaterial)
                     .cornerRadius(10)
             }
-            
+
+            Button(action: {
+                // Use async to avoid modifying state during view update
+                Task { @MainActor in
+                    presentedSheet = .inventory
+                }
+            }) {
+                ZStack {
+                    Image(systemName: "backpack.fill")
+                        .foregroundColor(.orange)
+                        .padding()
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(10)
+
+                    // Show notification dot if there are new items
+                    if inventoryService.hasNewItems {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 8, height: 8)
+                            .offset(x: 8, y: -8)
+                    }
+                }
+            }
+
             Button(action: {
                 // Use async to avoid modifying state during view update
                 Task { @MainActor in
@@ -364,6 +412,21 @@ struct ContentView: View {
             LocationConfigView(locationManager: locationManager)
         case .arPlacement:
             ARPlacementView(locationManager: locationManager, userLocationManager: userLocationManager)
+        case .nfcScanner:
+            OpenGameNFCScannerView()
+        case .inventory:
+            NavigationView {
+                InventoryView(inventoryService: inventoryService)
+                    .navigationTitle("Inventory")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button("Done") {
+                                presentedSheet = nil
+                            }
+                        }
+                    }
+            }
         case .settings:
             SettingsView(locationManager: locationManager, userLocationManager: userLocationManager)
         case .leaderboard:
