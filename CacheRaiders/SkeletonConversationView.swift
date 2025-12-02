@@ -26,19 +26,6 @@ struct SkeletonConversationView: View {
     @State private var inputText: String = ""
     @State private var isSending: Bool = false
     @State private var errorMessage: String?
-
-    // Initialize with Captain Bones greeting
-    init(npcName: String, npcId: String, onMapMentioned: (() -> Void)? = nil, treasureHuntService: TreasureHuntService, userLocationManager: UserLocationManager) {
-        self.npcName = npcName
-        self.npcId = npcId
-        self.onMapMentioned = onMapMentioned
-        self._treasureHuntService = ObservedObject(wrappedValue: treasureHuntService)
-        self._userLocationManager = ObservedObject(wrappedValue: userLocationManager)
-
-        // Add initial greeting as a message
-        let greetingMessage = ConversationMessage(text: initialGreeting, isFromUser: false)
-        _messages = State(initialValue: [greetingMessage])
-    }
     @FocusState private var isTextFieldFocused: Bool
     
     // Initial greeting from skeleton
@@ -65,7 +52,18 @@ struct SkeletonConversationView: View {
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 8) {
-                        // Conversation messages (including initial greeting)
+                        // Initial greeting (compact) - show immediately without typewriter effect
+                        if messages.isEmpty {
+                            ShadowgateMessageBox(
+                                text: initialGreeting,
+                                isFromUser: false,
+                                npcName: npcName,
+                                skipTypewriter: true // Skip typewriter for initial greeting to prevent freezing
+                            )
+                            .id("greeting")
+                        }
+
+                        // Conversation messages
                         ForEach(messages) { message in
                             ShadowgateMessageBox(
                                 text: message.text,
@@ -184,7 +182,7 @@ struct SkeletonConversationView: View {
             if let userLocation = userLocationManager.currentLocation {
                 isSending = true
                 // Perform API call off main thread to prevent UI blocking
-                Task.detached(priority: .userInitiated) { [npcId, npcName, userLocation] in
+                Task.detached(priority: .userInitiated) { [treasureHuntService, npcId, npcName, userLocation] in
                     do {
                         // Perform API call on background thread
                         try await treasureHuntService.handleMapRequest(

@@ -63,26 +63,52 @@ struct ContentView: View {
         return (found: foundCount, total: totalCount)
     }
 
-    // Helper function to convert meters to feet and inches
-    private func formatDistanceInFeetInches(_ meters: Double) -> String {
-        let totalInches = meters * 39.3701 // Convert meters to inches
-        let feet = Int(totalInches / 12)
-        let inches = Int(totalInches.truncatingRemainder(dividingBy: 12))
-        
-        if feet > 0 {
-            return "\(feet)'\(inches)\""
+    // Helper function to format distance in meters
+    private func formatDistance(_ meters: Double) -> String {
+        if meters < 1.0 {
+            // Show centimeters for very close distances
+            return String(format: "%.0fcm", meters * 100)
+        } else if meters < 100 {
+            // Show one decimal place for distances under 100m
+            return String(format: "%.1fm", meters)
         } else {
-            return "\(inches)\""
+            // Show whole meters for larger distances
+            return String(format: "%.0fm", meters)
         }
     }
+
+    // Helper function to convert bearing to compass direction
+    private func bearingToCompassDirection(_ bearing: Double) -> String {
+        let directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
+        let index = Int((bearing + 22.5) / 45.0) % 8
+        return directions[index]
+    }
     
-    // Computed property to determine GPS connection status
-    private var isGPSConnected: Bool {
+    // GPS connection quality levels
+    private enum GPSQuality {
+        case disconnected  // No location at all
+        case degraded      // Location available but poor accuracy (> 50m)
+        case good          // Good accuracy (≤ 50m)
+    }
+
+    // Computed property to determine GPS connection quality
+    private var gpsQuality: GPSQuality {
         guard let location = userLocationManager.currentLocation else {
-            return false
+            return .disconnected
         }
-        // GPS is connected if we have a valid location with good accuracy
-        return location.horizontalAccuracy >= 0 && location.horizontalAccuracy < 100
+        // Check horizontal accuracy to determine quality
+        if location.horizontalAccuracy < 0 {
+            return .disconnected  // Invalid accuracy means disconnected
+        } else if location.horizontalAccuracy <= 50 {
+            return .good  // ≤ 50m is good accuracy
+        } else {
+            return .degraded  // > 50m is degraded accuracy
+        }
+    }
+
+    // Legacy property for backward compatibility
+    private var isGPSConnected: Bool {
+        return gpsQuality != .disconnected
     }
     
     // MARK: - View Components
@@ -173,7 +199,7 @@ struct ContentView: View {
             }()
 
             if shouldShowNav, let distance = distanceToNearest {
-                VStack(spacing: 2) {
+                VStack(spacing: 1) {
                     Button(action: {
                         // Open treasure map (only available after skeleton gives map)
                         if treasureHuntService.hasMap {
@@ -183,30 +209,32 @@ struct ContentView: View {
                             userLocationManager.sendCurrentLocationToServer()
                         }
                     }) {
-                        VStack(alignment: .center, spacing: 2) {
+                        HStack(spacing: 4) {
                             directionArrowView
 
-                            if let temperature = temperatureStatus {
-                                Text(temperature)
-                                    .font(.caption2)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.white)
-                            }
+                            // Distance in meters
+                            Text(formatDistance(distance))
+                                .font(.caption)
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
                         }
                         .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(8)
                         .overlay(directionIndicatorBorder)
                     }
                     .buttonStyle(PlainButtonStyle())
 
-                    // Direction text below the box
-                    Text(formatDistanceInFeetInches(distance))
-                        .font(.caption2)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.white)
-                        .padding(.top, 2)
+                    // Directional clue text below the GPS box
+                    if let direction = nearestObjectDirection {
+                        Text("Head \(bearingToCompassDirection(direction)) to find treasure")
+                            .font(.caption2)
+                            .foregroundColor(.white.opacity(0.9))
+                            .padding(.top, 2)
+                    }
                 }
-                .padding(.top)
+                .padding(.top, 8)
             }
         }
     }
@@ -215,12 +243,12 @@ struct ContentView: View {
         Group {
             if let direction = nearestObjectDirection {
                 Image(systemName: "location.north.line.fill")
-                    .font(.caption)
+                    .font(.system(size: 16))
                     .foregroundColor(.white)
                     .rotationEffect(.degrees(direction))
             } else {
                 Image(systemName: "location.north.line.fill")
-                    .font(.caption)
+                    .font(.system(size: 16))
                     .foregroundColor(.white)
             }
         }
@@ -232,13 +260,14 @@ struct ContentView: View {
     }
     
     private var directionIndicatorBorderColor: Color {
-        if userLocationManager.isSendingLocation || isRecentlySent {
-            return .green // Green when actively sending/updating location
-        }
-        if isGPSConnected {
-            return .green // Green when GPS is connected
-        } else {
-            return .orange // Amber when GPS is disconnected (changed from red)
+        // Show GPS quality via border color (2px border)
+        switch gpsQuality {
+        case .good:
+            return .green      // Green: Full GPS connectivity (≤ 50m accuracy)
+        case .degraded:
+            return .orange     // Amber: Degraded GPS (> 50m accuracy)
+        case .disconnected:
+            return .red        // Red: Disconnected (no location)
         }
     }
     
