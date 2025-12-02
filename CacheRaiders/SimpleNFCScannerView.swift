@@ -180,21 +180,18 @@ struct SimpleNFCScannerView: View {
         print("✅ SimpleNFCScannerView: session?.begin() called")
 
         // Check if session actually started
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak session] in
-            if let currentSession = session {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            if session != nil {
                 print("🔍 Session status check:")
-                print("   - isReady: \(currentSession.isReady)")
-                if #available(iOS 13.0, *) {
-                    print("   - isInvalidated: \(currentSession.isInvalidated)")
-                }
+                print("   - Session exists: true")
             } else {
                 print("❌ Session is nil after begin() call")
             }
         }
 
         // Add a timeout to help debug if session never detects anything
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak session] in
-            if let currentSession = session, currentSession.isReady {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+            if session != nil {
                 print("⏰ NFC Session still active after 30 seconds - no tag detected")
                 print("   This suggests the tag is not NDEF-compatible or session failed silently")
                 // Don't invalidate here, let user cancel manually

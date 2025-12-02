@@ -294,13 +294,13 @@ struct NFCScannerView: View {
                 self.isWriting = false
 
                 switch result {
-                case .success(let message):
-                    self.writeResult = message
+                case .success(let nfcResult):
+                    self.writeResult = nfcResult.tagId
                     self.errorMessage = nil
                     self.showSuccess = true
 
                     // Call the callback if provided
-                    self.onTagWritten?(message)
+                    self.onTagWritten?(nfcResult.tagId)
 
                     // Vibrate for success
                     let impact = UIImpactFeedbackGenerator(style: .medium)

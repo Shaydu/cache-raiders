@@ -10,7 +10,7 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate {
     private var readerSession: NFCNDEFReaderSession?
     private var writerSession: NFCNDEFReaderSession?
     private var readCompletion: ((Result<NFCResult, NFCError>) -> Void)?
-    private var writeCompletion: ((Result<String, NFCError>) -> Void)?
+    private var writeCompletion: ((Result<NFCResult, NFCError>) -> Void)?
     private var writeMessage: String?
 
     // MARK: - NFC Result
@@ -86,7 +86,7 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate {
         }
     }
 
-    func writeNFC(message: String, completion: @escaping (Result<String, NFCError>) -> Void) {
+    func writeNFC(message: String, completion: @escaping (Result<NFCResult, NFCError>) -> Void) {
         self.writeCompletion = completion
         self.writeMessage = message
 
@@ -256,7 +256,7 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate {
             )
 
             print("✅ NFC write simulation completed - Tag ID: \(tagId)")
-            self.writeCompletion?(.success(tagId))
+            self.writeCompletion?(.success(result))
             self.writerSession = nil
             self.writeCompletion = nil
             self.writeMessage = nil
@@ -270,6 +270,24 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate {
             return "ndef_\(payload.hashValue)"
         }
         return "ndef_unknown_\(Date().timeIntervalSince1970)"
+    }
+
+    private func createNDEFMessage(from jsonString: String) -> NFCNDEFMessage? {
+        // Create a text record containing the JSON treasure data
+        guard let jsonData = jsonString.data(using: .utf8) else {
+            print("❌ Failed to convert JSON string to data")
+            return nil
+        }
+
+        // Create NDEF text record (TNF = NFC Well Known, Type = "T")
+        let textRecord = NFCNDEFPayload(
+            format: .nfcWellKnown,
+            type: "T".data(using: .utf8)!,
+            identifier: Data(),
+            payload: jsonData
+        )
+
+        return NFCNDEFMessage(records: [textRecord])
     }
 
     private func createWriteMessage() -> NFCNDEFMessage? {

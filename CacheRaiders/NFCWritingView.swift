@@ -499,7 +499,8 @@ struct NFCWritingView: View {
 
         // Try AR precision refinement
         do {
-            let preciseCoords = try await precisePositioning.getSubCentimeterPosition(
+            let positioningService = PreciseARPositioningService.shared
+            let preciseCoords = try await positioningService.getSubCentimeterPosition(
                 for: nfcResult.tagId,
                 objectId: objectId,
                 initialLocation: userLocation
