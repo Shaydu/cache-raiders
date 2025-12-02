@@ -11,12 +11,25 @@ PORT="5001"
 echo "🚀 Starting CacheRaiders Server..."
 
 # 1. Detect Mac's WiFi IP address for iOS devices to connect
-export HOST_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "localhost")
-if [ "$HOST_IP" = "localhost" ] || [ -z "$HOST_IP" ]; then
+export HOST_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "")
+if [ -z "$HOST_IP" ]; then
     # Try en1 as fallback (some Macs use this for WiFi)
-    HOST_IP=$(ipconfig getifaddr en1 2>/dev/null || echo "localhost")
+    HOST_IP=$(ipconfig getifaddr en1 2>/dev/null || echo "")
 fi
+
+if [ -z "$HOST_IP" ]; then
+    echo "❌ ERROR: Could not detect your Mac's IP address!"
+    echo "   Make sure you're connected to Wi-Fi."
+    echo "   You can manually set HOST_IP:"
+    echo "   export HOST_IP=192.168.1.XXX  # Replace with your actual IP"
+    echo "   Then run: docker compose up -d"
+    exit 1
+fi
+
 echo "📱 Host IP for iOS: $HOST_IP"
+
+# Save the detected IP for future reference
+echo "$HOST_IP" > "$SCRIPT_DIR/.last_host_ip"
 
 # 2. Check if Colima is running
 if ! colima status &>/dev/null; then
@@ -34,14 +47,28 @@ if [ -z "$COLIMA_IP" ]; then
 fi
 echo "📍 Colima IP: $COLIMA_IP"
 
-# 3. Start Docker containers (HOST_IP is exported and will be used by docker-compose.yml)
-echo "🐳 Starting Docker containers..."
+# 3. Check if HOST_IP has changed and restart containers if needed
+echo "🐳 Checking Docker containers..."
 cd "$SCRIPT_DIR"
-docker compose up -d
 
-# Wait for containers to be healthy
-echo "⏳ Waiting for containers to start..."
-sleep 10
+# Check if containers are running and if HOST_IP matches
+CURRENT_HOST_IP=$(docker inspect server-api-1 2>/dev/null | grep -o '"HOST_IP=[^"]*"' | cut -d= -f2 | tr -d '"' || echo "")
+
+if [ -n "$CURRENT_HOST_IP" ] && [ "$CURRENT_HOST_IP" != "$HOST_IP" ]; then
+    echo "⚠️  HOST_IP changed from $CURRENT_HOST_IP to $HOST_IP"
+    echo "🔄 Restarting containers with new IP..."
+    docker compose down
+    docker compose up -d
+    echo "⏳ Waiting for containers to start..."
+    sleep 10
+elif docker compose ps 2>/dev/null | grep -q "Up"; then
+    echo "✅ Containers already running with correct HOST_IP: $HOST_IP"
+else
+    echo "🚀 Starting Docker containers..."
+    docker compose up -d
+    echo "⏳ Waiting for containers to start..."
+    sleep 10
+fi
 
 # 4. Set up port forwarding with socat
 echo "🔌 Setting up port forwarding..."

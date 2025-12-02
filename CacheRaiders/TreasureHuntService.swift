@@ -19,7 +19,7 @@ class TreasureHuntService: ObservableObject {
     // MARK: - Published State
 
     @Published var hasMap: Bool = false
-    @Published var mapPiece: APIService.MapPiece?
+    @Published var mapPiece: MapPiece?
     @Published var treasureLocation: CLLocation?
     @Published var showMapModal: Bool = false
     @Published var isLoadingFromServer: Bool = false
@@ -128,33 +128,6 @@ class TreasureHuntService: ObservableObject {
 
     // MARK: - Map Trigger Detection
 
-    /// Check if user message is requesting directions/map
-    /// Detects phrases like: "give me the map", "where is the treasure?", "show me the way", "instructions", "guidance", "info"
-    func isMapRequest(_ message: String) -> Bool {
-        let lowercased = message.lowercased()
-        let mapTriggers = [
-            "map",
-            "treasure",
-            "where",
-            "direction",
-            "way",
-            "go",
-            "find",
-            "location",
-            "show me",
-            "guide",
-            "help me find",
-            "give me",
-            "instruction",  // "instruction" or "instructions"
-            "guidance",      // "guidance" or "guide me"
-            "info",          // "info" or "information"
-            "tell me",       // "tell me where"
-            "how do",        // "how do I find"
-            "what do",       // "what do I do"
-            "help"           // "help" or "help me"
-        ]
-        return mapTriggers.contains { lowercased.contains($0) }
-    }
 
     // MARK: - Map Request Handling
 
@@ -178,9 +151,10 @@ class TreasureHuntService: ObservableObject {
             self.hasMap = true
 
             // Extract treasure location from map piece
-            if let lat = mapResponse.map_piece.approximate_latitude,
-               let lon = mapResponse.map_piece.approximate_longitude {
-                
+            if let mapPiece = mapResponse.map_piece {
+                let lat = mapPiece.approximate_latitude
+                let lon = mapPiece.approximate_longitude
+
                 // TESTING: Auto-place treasure X for easier testing
                 if self.testingMode {
                     let distanceMeters = self.testingDistanceFeet * 0.3048 // Convert feet to meters
@@ -209,7 +183,7 @@ class TreasureHuntService: ObservableObject {
 
             // Save state
             self.saveState()
-            
+
             // TESTING: Add corgi NPC location close to the PLAYER (for immediate testing)
             // Normal game flow: Corgi appears near the treasure X location after arriving there
             if self.testingMode {
@@ -242,21 +216,6 @@ class TreasureHuntService: ObservableObject {
                         object: nil,
                         userInfo: ["latitude": corgiLat, "longitude": corgiLon]
                     )
-                }
-            }
-
-            // Show Captain Bones response
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-                self?.conversationManager?.showMessage(
-                    npcName: npcName,
-                    message: "Arr! Here be the treasure map, matey! Follow it to find the booty!",
-                    isUserMessage: false,
-                    duration: 3.0
-                )
-
-                // Show the map modal after brief delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-                    self?.showMapModal = true
                 }
             }
         }
@@ -324,7 +283,7 @@ class TreasureHuntService: ObservableObject {
         hasMap = UserDefaults.standard.bool(forKey: hasMapKey)
 
         if let data = UserDefaults.standard.data(forKey: mapPieceKey),
-           let decoded = try? JSONDecoder().decode(APIService.MapPiece.self, from: data) {
+           let decoded = try? JSONDecoder().decode(MapPiece.self, from: data) {
             mapPiece = decoded
         }
 
@@ -437,6 +396,108 @@ class TreasureHuntService: ObservableObject {
         hasLoadedFromServer = false
         Task {
             await loadFromServer()
+        }
+    }
+
+    // MARK: - Map Request Detection
+
+    /// Detect if user message is requesting a treasure map
+    /// Used by SkeletonConversationView to trigger special map-giving behavior
+    func isMapRequest(_ message: String) -> Bool {
+        let lowerMessage = message.lowercased()
+
+        // Keywords that indicate user wants the treasure map
+        let mapKeywords = [
+            "treasure", "map", "where", "find", "location", "directions",
+            "guide", "show me", "tell me", "give me", "booty", "gold",
+            "buried", "x marks", "marks the spot", "dig", "hunt"
+        ]
+
+        // Check if message contains any map-related keywords
+        for keyword in mapKeywords {
+            if lowerMessage.contains(keyword) {
+                print("🗺️ Map request detected: keyword '\(keyword)' found in '\(message)'")
+                return true
+            }
+        }
+
+        // Special phrases that definitely indicate map requests
+        let mapPhrases = [
+            "where is the treasure",
+            "where's the treasure",
+            "show me the map",
+            "give me the map",
+            "i need the map",
+            "can i have the map",
+            "tell me where",
+            "guide me",
+            "take me to",
+            "lead me to"
+        ]
+
+        for phrase in mapPhrases {
+            if lowerMessage.contains(phrase) {
+                print("🗺️ Map request detected: phrase '\(phrase)' found in '\(message)'")
+                return true
+            }
+        }
+
+        return false
+    }
+
+    // MARK: - Map Piece Acquisition
+
+    /// Request a treasure map piece from Captain Bones
+    /// This should be called when the user asks for the map during conversation
+    func requestMapPieceFromCaptainBones(userLocation: CLLocation?) async throws {
+        print("🗺️ Requesting treasure map piece from Captain Bones...")
+
+        // Use the provided user location
+        guard let userLocation = userLocation else {
+            throw NSError(domain: "TreasureHuntService", code: 1, userInfo: [NSLocalizedDescriptionKey: "User location not available"])
+        }
+
+        do {
+            // Call the NPC interaction API with include_map_piece=true
+            let response = try await APIService.shared.interactWithNPC(
+                npcId: "captain_bones",
+                message: "Give me the treasure map!",
+                npcName: "Captain Bones",
+                npcType: "skeleton",
+                isSkeleton: true,
+                includeMapPiece: true
+            )
+
+            // Check if the response includes a map piece
+            if let mapPiece = response.map_piece {
+                print("✅ Received map piece from Captain Bones!")
+                print("   Piece \(mapPiece.piece_number)/\(mapPiece.total_pieces)")
+                print("   Hint: \(mapPiece.hint)")
+
+                // Store the map piece
+                self.mapPiece = mapPiece
+                self.hasMap = true
+
+                // Save to UserDefaults
+                saveState()
+
+                // Notify that we have a map now
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("TreasureMapAcquired"),
+                    object: nil,
+                    userInfo: ["mapPiece": mapPiece]
+                )
+
+                print("🗺️ Treasure map piece stored and notifications sent")
+            } else {
+                print("⚠️ Captain Bones response didn't include a map piece")
+                throw NSError(domain: "TreasureHuntService", code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: "No map piece received from Captain Bones"])
+            }
+
+        } catch {
+            print("❌ Failed to get map piece from Captain Bones: \(error.localizedDescription)")
+            throw error
         }
     }
 }

@@ -29,7 +29,11 @@ class ARTapHandler {
     var onNPCTap: ((String) -> Void)?
     
     // Reference to placed NPCs for tap detection
-    var placedNPCs: [String: AnchorEntity] = [:]
+    var placedNPCs: [String: AnchorEntity] = [:] {
+        didSet {
+            Swift.print("🎯 ARTapHandler.placedNPCs updated: \(placedNPCs.count) NPCs - \(placedNPCs.keys.sorted())")
+        }
+    }
     
     init(arView: ARView?, locationManager: LootBoxLocationManager?) {
         self.arView = arView

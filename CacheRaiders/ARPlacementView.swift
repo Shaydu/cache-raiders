@@ -194,11 +194,8 @@ struct ARPlacementView: View {
     private func updateObjectLocation(objectId: String, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async {
         do {
             // Update GPS location
-            try await APIService.shared.updateObjectLocation(
-                objectId: objectId,
-                latitude: coordinate.latitude,
-                longitude: coordinate.longitude
-            )
+            let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+            try await APIService.shared.updateObjectLocation(objectId: objectId, location: location)
 
             // CRITICAL: Save AR offset coordinates so the main AR view can place the object
             // The AR position is relative to the AR origin (0,0,0), so it IS the offset

@@ -26,6 +26,19 @@ struct SkeletonConversationView: View {
     @State private var inputText: String = ""
     @State private var isSending: Bool = false
     @State private var errorMessage: String?
+
+    // Initialize with Captain Bones greeting
+    init(npcName: String, npcId: String, onMapMentioned: (() -> Void)? = nil, treasureHuntService: TreasureHuntService, userLocationManager: UserLocationManager) {
+        self.npcName = npcName
+        self.npcId = npcId
+        self.onMapMentioned = onMapMentioned
+        self._treasureHuntService = ObservedObject(wrappedValue: treasureHuntService)
+        self._userLocationManager = ObservedObject(wrappedValue: userLocationManager)
+
+        // Add initial greeting as a message
+        let greetingMessage = ConversationMessage(text: initialGreeting, isFromUser: false)
+        _messages = State(initialValue: [greetingMessage])
+    }
     @FocusState private var isTextFieldFocused: Bool
     
     // Initial greeting from skeleton
@@ -47,23 +60,12 @@ struct SkeletonConversationView: View {
             .padding(.horizontal)
             .padding(.vertical, 8)
             .background(.ultraThinMaterial)
-            
+
             // Messages list (scrollable)
             ScrollViewReader { proxy in
                 ScrollView(.vertical, showsIndicators: true) {
                     VStack(alignment: .leading, spacing: 8) {
-                        // Initial greeting (compact) - show immediately without typewriter effect
-                        if messages.isEmpty {
-                            ShadowgateMessageBox(
-                                text: initialGreeting,
-                                isFromUser: false,
-                                npcName: npcName,
-                                skipTypewriter: true // Skip typewriter for initial greeting to prevent freezing
-                            )
-                            .id("greeting")
-                        }
-                        
-                        // Conversation messages
+                        // Conversation messages (including initial greeting)
                         ForEach(messages) { message in
                             ShadowgateMessageBox(
                                 text: message.text,
@@ -72,19 +74,19 @@ struct SkeletonConversationView: View {
                             )
                             .id(message.id)
                         }
-                        
+
                         // Loading indicator
                         if isSending {
                             HStack {
                                 ProgressView()
                                     .scaleEffect(0.7)
                                 Text("Thinking...")
-                                    .font(.caption2)
+                                    .font(.caption)
                                     .foregroundColor(.secondary)
                                 Spacer()
                             }
                             .padding(.horizontal)
-                            .padding(.vertical, 4)
+                            .padding(.vertical, 8)
                         }
                     }
                     .padding(.horizontal, 8)
@@ -94,9 +96,8 @@ struct SkeletonConversationView: View {
                 .onChange(of: messages.count) { oldCount, newCount in
                     // Only scroll if a new message was actually added (not removed)
                     guard newCount > oldCount else { return }
-                    
+
                     // Scroll to bottom when new message arrives
-                    // Use async to avoid blocking during view updates
                     Task { @MainActor in
                         if let lastMessage = messages.last {
                             withAnimation(.easeInOut(duration: 0.3)) {
@@ -110,16 +111,16 @@ struct SkeletonConversationView: View {
                     }
                 }
             }
-            
+
             // Error message
             if let error = errorMessage {
                 Text(error)
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundColor(.red)
                     .padding(.horizontal)
                     .padding(.vertical, 2)
             }
-            
+
             // Input area (compact)
             HStack(spacing: 8) {
                 TextField("Ask...", text: $inputText)
@@ -131,7 +132,7 @@ struct SkeletonConversationView: View {
                     .onSubmit {
                         sendMessage()
                     }
-                
+
                 Button(action: sendMessage) {
                     if isSending {
                         ProgressView()
@@ -150,22 +151,20 @@ struct SkeletonConversationView: View {
         }
         .onAppear {
             // Auto-focus the text field when the view appears
-            // Use a longer delay to ensure the sheet is fully presented and interactive
-            // The delay ensures the sheet animation completes and the view is ready for input
             Task { @MainActor in
-                // Wait for sheet presentation animation to complete
                 try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
-                // Ensure we're still on the main thread and view is ready
                 isTextFieldFocused = true
-                // If focus didn't work, try again after a brief moment
                 try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
                 if !isTextFieldFocused {
                     isTextFieldFocused = true
                 }
             }
         }
+        .background(drawerBackground)
     }
     
+
+    // MARK: - Actions
     private func sendMessage() {
         guard !inputText.isEmpty, !isSending else { return }
         
@@ -176,11 +175,11 @@ struct SkeletonConversationView: View {
         if treasureHuntService.isMapRequest(userMessage) {
             // Play happy jig sound
             LootBoxAnimation.playOpeningSound()
-            
+
             // Add user message to conversation
             let userMsg = ConversationMessage(text: userMessage, isFromUser: true)
             messages.append(userMsg)
-            
+
             // Fetch treasure map from NPC if we have the required services
             if let userLocation = userLocationManager.currentLocation {
                 isSending = true
@@ -193,7 +192,7 @@ struct SkeletonConversationView: View {
                             npcName: npcName,
                             userLocation: userLocation
                         )
-                        
+
                         // Update UI on main thread
                         await MainActor.run {
                             // Add NPC response about the map (local response, not from LLM)
@@ -203,7 +202,7 @@ struct SkeletonConversationView: View {
                             )
                             messages.append(npcMsg)
                             isSending = false
-                            
+
                             // Open the treasure map view after a brief delay
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                                 onMapMentioned?()
@@ -239,11 +238,11 @@ struct SkeletonConversationView: View {
         // Add user message to conversation
         let userMsg = ConversationMessage(text: userMessage, isFromUser: true)
         messages.append(userMsg)
-        
+
         // Send to LLM API (only if not a map request)
         isSending = true
         errorMessage = nil
-        
+
         // Perform API call off main thread to prevent UI blocking
         // Use Task.detached to run on background thread, then update UI on main actor
         Task.detached(priority: .userInitiated) { [npcId, userMessage, npcName] in
@@ -256,7 +255,7 @@ struct SkeletonConversationView: View {
                     npcType: "skeleton",
                     isSkeleton: true
                 )
-                
+
                 // Update UI on main thread
                 await MainActor.run {
                     // Add NPC message - it will display with typewriter effect
@@ -298,6 +297,23 @@ struct SkeletonConversationView: View {
                 }
             }
         }
+    }
+    
+    // MARK: - Background
+    private var drawerBackground: some View {
+        Color(.systemBackground)
+            .overlay(
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color.yellow.opacity(0.1),
+                        Color.orange.opacity(0.05),
+                        Color.clear
+                    ]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .ignoresSafeArea()
     }
 }
 
@@ -360,14 +376,12 @@ struct ShadowgateMessageBox: View {
                             // NPC messages: use typewriter effect with sound if enabled
                             // Skip typewriter for initial greeting or when disabled
                             if enableTypewriterEffect && !skipTypewriter {
-                                // Show typewriter text (or empty string if not started yet)
                                 Text(typewriterService.displayedText.isEmpty ? "" : typewriterService.displayedText)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundColor(.yellow.opacity(0.95))
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 6)
                             } else {
-                                // Show full text immediately when typewriter is disabled or skipped
                                 Text(text)
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundColor(.yellow.opacity(0.95))
@@ -386,7 +400,6 @@ struct ShadowgateMessageBox: View {
         }
         .onAppear {
             // Start typewriter effect for NPC messages if enabled and not skipped
-            // Use async to prevent blocking the main thread
             if !isFromUser && enableTypewriterEffect && !skipTypewriter {
                 // Configure typewriter service with same settings as ARConversationOverlay
                 typewriterService.charactersPerSecond = 30.0
@@ -396,13 +409,10 @@ struct ShadowgateMessageBox: View {
                 typewriterService.randomVariation = 0.3
                 typewriterService.punctuationPauseMultiplier = 3.0
                 
-                // Start revealing text with typewriter effect (non-blocking)
-                // Use Task to ensure it doesn't block the main thread during view rendering
                 Task { @MainActor [text, typewriterService] in
                     typewriterService.startReveal(text: text)
                 }
             }
-            // If disabled, do nothing - text will display immediately via the Text(text) path
         }
         .onDisappear {
             // Cancel typewriter effect when view disappears
@@ -411,7 +421,7 @@ struct ShadowgateMessageBox: View {
             }
         }
         .onChange(of: text) { oldText, newText in
-            // Restart typewriter effect if text changes (for new messages) and enabled and not skipped
+            // Restart typewriter effect if text changes and enabled and not skipped
             if !isFromUser && newText != oldText && enableTypewriterEffect && !skipTypewriter {
                 Task { @MainActor in
                     typewriterService.startReveal(text: newText)
@@ -419,11 +429,10 @@ struct ShadowgateMessageBox: View {
             }
         }
         .onChange(of: enableTypewriterEffect) { oldValue, newValue in
-            // Handle toggle change (non-blocking)
+            // Handle toggle change
             if !isFromUser {
                 Task { @MainActor in
                     if newValue {
-                        // Enable: start typewriter effect
                         typewriterService.charactersPerSecond = 30.0
                         typewriterService.audioToneID = 1104
                         typewriterService.playAudioForSpaces = false
@@ -432,7 +441,6 @@ struct ShadowgateMessageBox: View {
                         typewriterService.punctuationPauseMultiplier = 3.0
                         typewriterService.startReveal(text: text)
                     } else {
-                        // Disable: cancel and show full text immediately
                         typewriterService.cancel()
                     }
                 }
@@ -440,5 +448,3 @@ struct ShadowgateMessageBox: View {
         }
     }
 }
-
-

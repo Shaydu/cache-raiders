@@ -179,6 +179,46 @@ class CaptainBonesNPC:
         if include_map_piece:
             result["map_piece_intro"] = self.get_map_piece_intro()
             result["should_give_map_piece"] = True
+
+            # Generate actual map piece data if we have treasure hunt context
+            # For now, we'll generate a map piece with placeholder location
+            # The client should have the treasure location from the active hunt
+            try:
+                # Get treasure hunt location from database
+                import sqlite3
+                import os
+                DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'cache_raiders.db')
+                conn = sqlite3.connect(DB_PATH)
+                cursor = conn.cursor()
+
+                cursor.execute('''
+                    SELECT treasure_latitude, treasure_longitude
+                    FROM treasure_hunts
+                    WHERE device_uuid = ? AND status = 'active'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                ''', (device_uuid,))
+
+                hunt = cursor.fetchone()
+                conn.close()
+
+                if hunt and hunt[0] and hunt[1]:
+                    # Generate map piece with actual treasure location
+                    map_piece_data = self.get_map_piece_data(
+                        target_location={
+                            'latitude': hunt[0],
+                            'longitude': hunt[1]
+                        }
+                    )
+                    result["map_piece"] = map_piece_data
+                    logger.info(f"[{request_id}] Generated map piece for device {device_uuid[:8]}")
+                else:
+                    logger.warning(f"[{request_id}] No active treasure hunt found for map piece request")
+                    result["error"] = "No active treasure hunt found"
+
+            except Exception as e:
+                logger.error(f"[{request_id}] Failed to generate map piece: {e}")
+                result["error"] = f"Failed to generate map piece: {str(e)}"
         
         return result
     

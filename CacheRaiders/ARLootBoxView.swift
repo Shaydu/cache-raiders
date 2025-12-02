@@ -250,12 +250,12 @@ struct ARViewContainer: UIViewRepresentable {
         
         // Throttle updateUIView to prevent excessive calls and freezing
         let now = Date()
-        let timeSinceLastUpdate = now.timeIntervalSince(coordinator.lastViewUpdateTime)
-        let shouldUpdate = timeSinceLastUpdate >= coordinator.viewUpdateThrottleInterval
+        let timeSinceLastUpdate = now.timeIntervalSince(context.coordinator.stateManager?.lastViewUpdateTime ?? Date())
+        let shouldUpdate = timeSinceLastUpdate >= (context.coordinator.stateManager?.viewUpdateThrottleInterval ?? 0.1)
         
         // Always handle critical updates (lens changes, location changes)
         let currentLocationsCount = locationManager.locations.count
-        let locationsChanged = currentLocationsCount != coordinator.lastLocationsCount
+        let locationsChanged = currentLocationsCount != (context.coordinator.stateManager?.lastLocationsCount ?? 0)
         let currentLensId = locationManager.selectedARLens
         // Only update lens if the ID actually changed (not just video format object comparison)
         // Use coordinator's persistent property instead of @State which wasn't working
@@ -267,7 +267,7 @@ struct ARViewContainer: UIViewRepresentable {
             return // Skip this update to prevent excessive calls
         }
         
-        coordinator.lastViewUpdateTime = now
+        context.coordinator.stateManager?.lastViewUpdateTime = now
         
         // Check if lens has changed and update AR configuration if needed
         // Ensure AR session is running or update if lens changed
@@ -309,7 +309,7 @@ struct ARViewContainer: UIViewRepresentable {
         
         // Check if locations have changed (new object added)
         if locationsChanged {
-            coordinator.lastLocationsCount = currentLocationsCount
+            context.coordinator.stateManager?.lastLocationsCount = currentLocationsCount
             // PERFORMANCE: Logging disabled - runs frequently
         }
 

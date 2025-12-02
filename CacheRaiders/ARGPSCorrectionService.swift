@@ -54,8 +54,7 @@ class ARGPSCorrectionService {
             do {
                 try await APIService.shared.updateObjectLocation(
                     objectId: location.id,
-                    latitude: correctedCoordinate.latitude,
-                    longitude: correctedCoordinate.longitude
+                    location: CLLocation(latitude: correctedCoordinate.latitude, longitude: correctedCoordinate.longitude)
                 )
                 Swift.print("   ✅ GPS coordinates corrected and saved to API")
 

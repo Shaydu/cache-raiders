@@ -101,7 +101,7 @@ class SettingsViewModel: ObservableObject {
                 WebSocketService.shared.disconnect()
 
                 // Wait briefly for disconnect to complete
-                try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
+                try? await Task.sleep(for: .milliseconds(300)) // 300ms
 
                 await MainActor.run {
                     // Verify the URL was actually updated
@@ -116,7 +116,7 @@ class SettingsViewModel: ObservableObject {
                 }
                 
                 // Wait a bit more if still connected
-                try? await Task.sleep(nanoseconds: 200_000_000)
+                try? await Task.sleep(for: .milliseconds(200))
                 
                 await MainActor.run {
                     WebSocketService.shared.connect()
@@ -129,7 +129,7 @@ class SettingsViewModel: ObservableObject {
                 
                 // CRITICAL: Explicitly refresh game mode from server after URL change
                 // This ensures we get the correct game mode immediately, not just when WebSocket connects
-                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms to let connection settle
+                try? await Task.sleep(for: .milliseconds(500)) // 500ms to let connection settle
                 print("🎮 [SettingsViewModel] Refreshing game mode after URL change...")
                 await self?.locationManager.refreshGameMode()
             }
@@ -155,7 +155,7 @@ class SettingsViewModel: ObservableObject {
             // Reconnect on background thread with proper async/await
             Task(priority: .userInitiated) {
                 // Wait 500ms for disconnect to complete
-                try? await Task.sleep(nanoseconds: 500_000_000)
+                try? await Task.sleep(for: .milliseconds(500))
 
                 await MainActor.run {
                     WebSocketService.shared.connect()
@@ -319,7 +319,7 @@ class SettingsViewModel: ObservableObject {
         } else {
             Task {
                 do {
-                    try await APIService.shared.markFound(objectId: obj.id, foundBy: APIService.shared.currentUserID)
+                    try await APIService.shared.markFound(objectId: obj.id)
                     // Update the object's collected status directly
                     databaseObjects[index].collected = true
                     databaseObjects[index].found_by = APIService.shared.currentUserID

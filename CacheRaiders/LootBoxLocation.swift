@@ -250,10 +250,19 @@ class LootBoxLocationManager: ObservableObject {
                     Swift.print("🗑️ Story mode activated: Removed \(objectsToRemove.count) API/map objects (only NPCs will be shown)")
                     saveLocations() // Persist the change
                 }
-                
+
                 // Stop API refresh timer in story mode (no API objects needed)
                 stopAPIRefreshTimer()
                 Swift.print("⏹️ Stopped API refresh timer (story mode - no API objects needed)")
+
+                // STORY MODE: Automatically spawn Captain Bones (skeleton NPC) when entering story mode
+                // This allows players to start the treasure hunt by talking to him
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    // Post notification to spawn skeleton NPC after a short delay
+                    Swift.print("📢 Posting SpawnSkeletonNPC notification...")
+                    NotificationCenter.default.post(name: NSNotification.Name("SpawnSkeletonNPC"), object: nil)
+                    Swift.print("💀 Story mode activated: Automatically spawning Captain Bones (skeleton NPC)")
+                }
             }
             
             // OPEN MODE: Restart API refresh timer when switching back to open mode
@@ -264,6 +273,9 @@ class LootBoxLocationManager: ObservableObject {
             
             // Notify that game mode changed (for UI updates)
             objectWillChange.send()
+
+            // Post notification for ARCoordinator to handle NPC spawning
+            NotificationCenter.default.post(name: NSNotification.Name("GameModeChanged"), object: nil)
         }
     }
     var onSizeChanged: (() -> Void)? // Callback when size settings change
@@ -1837,7 +1849,7 @@ class LootBoxLocationManager: ObservableObject {
                 if !stats.top_finders.isEmpty {
                     print("   Top finders:")
                     for finder in stats.top_finders {
-                        print("      - \(finder.user): \(finder.count) finds")
+                        print("      - \(finder.display_name ?? finder.user_id): \(finder.find_count) finds")
                     }
                 }
             } catch {
@@ -1850,6 +1862,15 @@ class LootBoxLocationManager: ObservableObject {
                 print("   API Error details: \(apiError)")
             }
         }
+    }
+
+    /// Clear collected status for all loot boxes (reset found state)
+    func clearCollectedLootBoxes() {
+        for index in locations.indices {
+            locations[index].collected = false
+        }
+        print("🧹 Cleared collected status for all \(locations.count) loot boxes")
+        saveLocations() // Persist the changes
     }
 }
 

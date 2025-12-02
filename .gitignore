@@ -42,5 +42,8 @@ xcdebugger/
 *.tmp
 *.bak
 
+# Server runtime files
+server/.last_host_ip
+
 
 

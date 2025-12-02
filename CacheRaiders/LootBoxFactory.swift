@@ -141,7 +141,7 @@ struct ChaliceFactory: LootBoxFactory {
     }
     
     func playFindSound() {
-        LootBoxAnimation.playOpeningSound()
+        LootBoxAnimation.playOpeningSoundWithHaptics()
     }
     
     private func openChalice(container: LootBoxContainer, onComplete: @escaping () -> Void) {
@@ -273,7 +273,7 @@ struct TreasureChestFactory: LootBoxFactory {
     }
     
     func playFindSound() {
-        LootBoxAnimation.playOpeningSound()
+        LootBoxAnimation.playOpeningSoundWithHaptics()
     }
     
     private func openBox(container: LootBoxContainer, onComplete: @escaping () -> Void) {
@@ -436,7 +436,7 @@ struct LootChestFactory: LootBoxFactory {
     }
     
     func playFindSound() {
-        LootBoxAnimation.playOpeningSound()
+        LootBoxAnimation.playOpeningSoundWithHaptics()
     }
     
     private func openBox(container: LootBoxContainer, onComplete: @escaping () -> Void) {
@@ -599,7 +599,7 @@ struct LootCartFactory: LootBoxFactory {
     }
     
     func playFindSound() {
-        LootBoxAnimation.playOpeningSound()
+        LootBoxAnimation.playOpeningSoundWithHaptics()
     }
     
     private func openCart(container: LootBoxContainer, onComplete: @escaping () -> Void) {
@@ -760,7 +760,7 @@ struct TempleRelicFactory: LootBoxFactory {
     }
     
     func playFindSound() {
-        LootBoxAnimation.playOpeningSound()
+        LootBoxAnimation.playOpeningSoundWithHaptics()
     }
     
     private func openBox(container: LootBoxContainer, onComplete: @escaping () -> Void) {
@@ -925,7 +925,7 @@ struct SphereFactory: LootBoxFactory {
     }
     
     func playFindSound() {
-        LootBoxAnimation.playOpeningSound()
+        LootBoxAnimation.playOpeningSoundWithHaptics()
     }
     
     private func animateSphereFind(orb: ModelEntity, onComplete: @escaping () -> Void) {
@@ -1126,7 +1126,7 @@ struct CubeFactory: LootBoxFactory {
     }
     
     func playFindSound() {
-        LootBoxAnimation.playOpeningSound()
+        LootBoxAnimation.playOpeningSoundWithHaptics()
     }
 }
 
@@ -1298,7 +1298,7 @@ struct TurkeyFactory: LootBoxFactory {
     }
     
     func playFindSound() {
-        LootBoxAnimation.playOpeningSound()
+        LootBoxAnimation.playOpeningSoundWithHaptics()
     }
     
     private func openTurkey(container: LootBoxContainer, onComplete: @escaping () -> Void) {

@@ -12,3 +12,4 @@ from .corgi_npc import CorgiNPC
 
 __all__ = ['CaptainBonesNPC', 'CorgiNPC']
 
+

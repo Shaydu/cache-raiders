@@ -533,54 +533,67 @@ struct SettingsView: View {
     
     var leaderboardSection: some View {
         Section("Leaderboard") {
-            NavigationLink(destination: LeaderboardView()) {
-                HStack {
-                    Image(systemName: "trophy.fill")
-                        .foregroundColor(.yellow)
-                    Text("View Leaderboard")
-                    Spacer()
-                    if !viewModel.leaderboard.isEmpty {
-                        Text("\(viewModel.leaderboard.count) players")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            
-            if !viewModel.leaderboard.isEmpty {
-                ForEach(Array(viewModel.leaderboard.prefix(3).enumerated()), id: \.offset) { index, finder in
-                    HStack {
-                        ZStack {
-                            Circle()
-                                .fill(index < 3 ? Color.yellow.opacity(0.3) : Color.gray.opacity(0.3))
-                                .frame(width: 28, height: 28)
-                            
-                            if index == 0 {
-                                Image(systemName: "crown.fill")
-                                    .foregroundColor(.yellow)
-                                    .font(.caption2)
-                            } else {
-                                Text("\(index + 1)")
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(index < 3 ? .black : .primary)
-                            }
-                        }
-                        
-                        Text(finder.user)
-                            .font(.caption)
-                        
-                        Spacer()
-                        
-                        Text("\(finder.count)")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.green)
-                    }
-                    .padding(.vertical, 2)
+            leaderboardNavigationLink
+            leaderboardTopPlayersView
+        }
+    }
+
+    private var leaderboardNavigationLink: some View {
+        NavigationLink(destination: LeaderboardView()) {
+            HStack {
+                Image(systemName: "trophy.fill")
+                    .foregroundColor(.yellow)
+                Text("View Leaderboard")
+                Spacer()
+                if !viewModel.leaderboard.isEmpty {
+                    Text("\(viewModel.leaderboard.count) players")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
         }
+    }
+
+    private var leaderboardTopPlayersView: some View {
+        Group {
+            if !viewModel.leaderboard.isEmpty {
+                ForEach(Array(viewModel.leaderboard.prefix(3).enumerated()), id: \.offset) { index, finder in
+                    leaderboardRowView(index: index, finder: finder)
+                }
+            }
+        }
+    }
+
+    private func leaderboardRowView(index: Int, finder: TopFinder) -> some View {
+        HStack {
+            ZStack {
+                Circle()
+                    .fill(index < 3 ? Color.yellow.opacity(0.3) : Color.gray.opacity(0.3))
+                    .frame(width: 28, height: 28)
+
+                if index == 0 {
+                    Image(systemName: "crown.fill")
+                        .foregroundColor(.yellow)
+                        .font(.caption2)
+                } else {
+                    Text("\(index + 1)")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(index < 3 ? .black : .primary)
+                }
+            }
+
+            Text(finder.display_name ?? finder.user_id)
+                .font(.caption)
+
+            Spacer()
+
+            Text("\(finder.find_count)")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(.green)
+        }
+        .padding(.vertical, 2)
     }
     
     private var apiSyncSection: some View {
@@ -908,6 +921,14 @@ struct SettingsView: View {
         .onChange(of: scannedURL) { _, newValue in
             if let url = newValue {
                 viewModel.apiURL = url
+
+                // Auto-enable API Sync when QR code is scanned
+                // User intent is clear: they want to connect to this server
+                if !locationManager.useAPISync {
+                    print("📷 QR code scanned - auto-enabling API Sync")
+                    locationManager.useAPISync = true
+                }
+
                 _ = viewModel.saveAPIURL()
                 scannedURL = nil // Reset for next scan
             }

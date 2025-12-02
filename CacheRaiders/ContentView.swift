@@ -171,39 +171,41 @@ struct ContentView: View {
                     return distanceToNearest != nil
                 }
             }()
-            
+
             if shouldShowNav, let distance = distanceToNearest {
-                Button(action: {
-                    // Open treasure map (only available after skeleton gives map)
-                    if treasureHuntService.hasMap {
-                        presentedSheet = .treasureMap
-                    } else {
-                        // Manually send location to server (also sent automatically every 5 seconds)
-                        userLocationManager.sendCurrentLocationToServer()
-                    }
-                }) {
-                    VStack(alignment: .center, spacing: 4) {
-                        directionArrowView
-                        
-                        if let temperature = temperatureStatus {
-                            Text(temperature)
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
+                VStack(spacing: 2) {
+                    Button(action: {
+                        // Open treasure map (only available after skeleton gives map)
+                        if treasureHuntService.hasMap {
+                            presentedSheet = .treasureMap
+                        } else {
+                            // Manually send location to server (also sent automatically every 5 seconds)
+                            userLocationManager.sendCurrentLocationToServer()
                         }
-                        
-                        Text(formatDistanceInFeetInches(distance))
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
+                    }) {
+                        VStack(alignment: .center, spacing: 2) {
+                            directionArrowView
+
+                            if let temperature = temperatureStatus {
+                                Text(temperature)
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .overlay(directionIndicatorBorder)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(8)
-                    .overlay(directionIndicatorBorder)
+                    .buttonStyle(PlainButtonStyle())
+
+                    // Direction text below the box
+                    Text(formatDistanceInFeetInches(distance))
+                        .font(.caption2)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.white)
+                        .padding(.top, 2)
                 }
-                .buttonStyle(PlainButtonStyle())
                 .padding(.top)
             }
         }
@@ -231,9 +233,13 @@ struct ContentView: View {
     
     private var directionIndicatorBorderColor: Color {
         if userLocationManager.isSendingLocation || isRecentlySent {
-            return .blue
+            return .green // Green when actively sending/updating location
         }
-        return isGPSConnected ? .green : .red
+        if isGPSConnected {
+            return .green // Green when GPS is connected
+        } else {
+            return .orange // Amber when GPS is disconnected (changed from red)
+        }
     }
     
     private var isRecentlySent: Bool {
@@ -262,7 +268,20 @@ struct ContentView: View {
                         .cornerRadius(10)
                 }
             }
-            
+
+            // NFC-AR Demo button
+            Button(action: {
+                Task { @MainActor in
+                    NFCARIntegrationService.shared.runDemoWorkflow()
+                }
+            }) {
+                Image(systemName: "wave.3.right.circle")
+                    .foregroundColor(.blue)
+                    .padding()
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(10)
+            }
+
             Button(action: {
                 // Use async to avoid modifying state during view update
                 Task { @MainActor in
@@ -375,19 +394,21 @@ struct ContentView: View {
                 npcName: npcName,
                 npcId: npcId,
                 onMapMentioned: {
+                    Swift.print("🗺️ ContentView: onMapMentioned callback triggered - opening treasure map")
                     // Close conversation and open treasure map
                     presentedSheet = nil
                     // Small delay to allow conversation to close smoothly
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         presentedSheet = .treasureMap
+                        Swift.print("🗺️ ContentView: Treasure map sheet opened")
                     }
                 },
                 treasureHuntService: treasureHuntService,
                 userLocationManager: userLocationManager
             )
-            .presentationDetents([.medium, .large])
+            .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
-            .presentationBackgroundInteraction(.enabled)
+            .presentationBackground(.clear)
             .presentationBackground {
                 Color.black.opacity(0.95)
             }
@@ -404,21 +425,40 @@ struct ContentView: View {
         if let mapPiece = treasureHuntService.mapPiece,
            let treasureLocation = treasureHuntService.treasureLocation {
             // Create treasure map data from map piece
-            let landmarks = mapPiece.landmarks.map { landmarkData in
+            let landmarks = (mapPiece.landmarks ?? []).map { landmarkData in
+                // Derive landmark type from a known field; fallback to .building
                 let landmarkType: LandmarkType
-                switch landmarkData.type.lowercased() {
-                case "water": landmarkType = .water
-                case "tree": landmarkType = .tree
-                case "building": landmarkType = .building
-                case "mountain": landmarkType = .mountain
-                case "path": landmarkType = .path
-                default: landmarkType = .building
+                if let icon = (landmarkData as AnyObject).value(forKey: "iconName") as? String {
+                    switch icon.lowercased() {
+                    case "water", "drop", "wave": landmarkType = .water
+                    case "tree", "leaf": landmarkType = .tree
+                    case "building", "house": landmarkType = .building
+                    case "mountain", "mountain.2": landmarkType = .mountain
+                    case "path", "road": landmarkType = .path
+                    default: landmarkType = .building
+                    }
+                } else if let name = (landmarkData as AnyObject).value(forKey: "name") as? String {
+                    // Heuristic based on name if no icon is available
+                    switch name.lowercased() {
+                    case _ where name.lowercased().contains("water"): landmarkType = .water
+                    case _ where name.lowercased().contains("tree"): landmarkType = .tree
+                    case _ where name.lowercased().contains("mountain"): landmarkType = .mountain
+                    case _ where name.lowercased().contains("path"): landmarkType = .path
+                    default: landmarkType = .building
+                    }
+                } else {
+                    landmarkType = .building
                 }
-                
+
+                // Safely extract fields with KVC to avoid compile-time dependency on a specific model
+                let latitude = (landmarkData as AnyObject).value(forKey: "latitude") as? Double ?? 0
+                let longitude = (landmarkData as AnyObject).value(forKey: "longitude") as? Double ?? 0
+                let name = (landmarkData as AnyObject).value(forKey: "name") as? String ?? ""
+
                 return LandmarkAnnotation(
                     id: UUID().uuidString,
-                    coordinate: CLLocationCoordinate2D(latitude: landmarkData.latitude, longitude: landmarkData.longitude),
-                    name: landmarkData.name,
+                    coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+                    name: name,
                     type: landmarkType,
                     iconName: landmarkType.iconName
                 )
@@ -524,10 +564,13 @@ struct ContentView: View {
                 treasureHuntService: treasureHuntService
             )
             .ignoresSafeArea()
-            
+
             topOverlayView
-            
+
             bottomCounterView
+
+            // Precise positioning overlay (shows GPS → NFC → AR transition)
+            PrecisePositioningOverlay()
         }
     }
     

@@ -3,43 +3,7 @@ import RealityKit
 import ARKit
 import UIKit
 
-// MARK: - NPC Types
-enum NPCType: String, CaseIterable {
-    case skeleton = "skeleton"
-    case corgi = "corgi"
-    
-    var modelName: String {
-        switch self {
-        case .skeleton: return "Curious_skeleton"
-        case .corgi: return "Corgi_Traveller"
-        }
-    }
-    
-    var npcId: String {
-        switch self {
-        case .skeleton: return "skeleton-1"
-        case .corgi: return "corgi-1"
-        }
-    }
-    
-    var defaultName: String {
-        switch self {
-        case .skeleton: return "Captain Bones"
-        case .corgi: return "Corgi Traveller"
-        }
-    }
-    
-    var npcType: String {
-        switch self {
-        case .skeleton: return "skeleton"
-        case .corgi: return "traveller"
-        }
-    }
-    
-    var isSkeleton: Bool {
-        return self == .skeleton
-    }
-}
+// NPCType is now defined in NPCType.swift
 
 // MARK: - NPC Size Constants
 struct ARNPCConstants {
@@ -69,16 +33,22 @@ class ARNPCService {
     var conversationNPCBinding: Binding<ConversationNPC?>?
     var collectionNotificationBinding: Binding<String?>?
     
-    init(arView: ARView?,
+    weak var arCoordinator: ARCoordinatorCore?
+
+    init(arCoordinator: ARCoordinatorCore?,
+         arView: ARView?,
          locationManager: LootBoxLocationManager?,
          groundingService: ARGroundingService?,
          tapHandler: ARTapHandler?,
-         conversationManager: ARConversationManager?) {
+         conversationManager: ARConversationManager?,
+         conversationNPCBinding: Binding<ConversationNPC?>?) {
+        self.arCoordinator = arCoordinator
         self.arView = arView
         self.locationManager = locationManager
         self.groundingService = groundingService
         self.tapHandler = tapHandler
         self.conversationManager = conversationManager
+        self.conversationNPCBinding = conversationNPCBinding
     }
     
     /// Place an NPC in the AR scene
@@ -94,9 +64,13 @@ class ARNPCService {
             return
         }
         
-        Swift.print("💬 Placing \(type.defaultName) NPC for story mode...")
+        Swift.print("💬 ========== PLACING NPC ==========")
+        Swift.print("   NPC Type: \(type.rawValue)")
+        Swift.print("   NPC Name: \(type.defaultName)")
+        Swift.print("   NPC ID: \(type.npcId)")
         Swift.print("   Game mode: \(locationManager?.gameMode.displayName ?? "unknown")")
         Swift.print("   Model: \(type.modelName).usdz")
+        Swift.print("   Already placed? \(placedNPCs[type.npcId] != nil)")
         
         // Load the NPC model
         guard let modelURL = Bundle.main.url(forResource: type.modelName, withExtension: "usdz") else {
@@ -242,7 +216,13 @@ class ARNPCService {
 
             // Track NPC
             placedNPCs[type.npcId] = anchor
+            Swift.print("📝 Added \(type.npcId) to local placedNPCs dictionary")
             tapHandler?.placedNPCs = placedNPCs
+            Swift.print("🎯 Updated tap handler with \(placedNPCs.count) NPCs: \(placedNPCs.keys.sorted())")
+
+            // Also update the main ARCoordinatorCore placedNPCs dictionary
+            arCoordinator?.placedNPCs[type.npcId] = anchor
+            Swift.print("📝 Added \(type.npcId) to ARCoordinatorCore placedNPCs dictionary")
             
             if type == .skeleton {
                 skeletonAnchor = anchor
@@ -265,6 +245,7 @@ class ARNPCService {
         Swift.print("   NPC Type: \(type.rawValue)")
         Swift.print("   NPC Name: \(type.defaultName)")
         Swift.print("   NPC ID: \(type.npcId)")
+        Swift.print("   conversationNPCBinding: \(conversationNPCBinding != nil ? "SET" : "NIL")")
 
         DispatchQueue.main.async { [weak self] in
             Swift.print("   📞 Calling showNPCConversation on main thread")
@@ -287,12 +268,18 @@ class ARNPCService {
         // For skeleton, always open the conversation view
         if type == .skeleton {
             Swift.print("   📱 Opening SkeletonConversationView (full-screen dialog)")
+            Swift.print("   conversationNPCBinding exists: \(conversationNPCBinding != nil)")
             DispatchQueue.main.async { [weak self] in
-                self?.conversationNPCBinding?.wrappedValue = ConversationNPC(
+                guard let binding = self?.conversationNPCBinding else {
+                    Swift.print("   ❌ conversationNPCBinding is nil!")
+                    return
+                }
+                let npc = ConversationNPC(
                     id: type.npcId,
                     name: type.defaultName
                 )
-                Swift.print("   ✅ ConversationNPC binding set")
+                binding.wrappedValue = npc
+                Swift.print("   ✅ ConversationNPC binding set: \(npc.id) - \(npc.name)")
             }
         }
         // For corgi, open the same full-screen conversation view as skeleton

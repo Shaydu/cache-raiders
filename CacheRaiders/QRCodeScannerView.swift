@@ -586,3 +586,4 @@ extension QRCodeScannerViewController: AVCaptureMetadataOutputObjectsDelegate {
     }
 }
 
+

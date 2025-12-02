@@ -72,8 +72,8 @@ CORS(app)  # Enable CORS for iOS app
 # Use 'threading' instead of 'eventlet' for Python 3.12 compatibility
 # Configure Socket.IO with explicit ping/pong settings for better compatibility
 socketio = SocketIO(
-    app, 
-    cors_allowed_origins="*", 
+    app,
+    cors_allowed_origins="*",
     async_mode='threading',
     ping_interval=25,  # Server sends ping every 25 seconds
     ping_timeout=30    # Increased to 30 seconds for slow networks
@@ -246,19 +246,29 @@ def get_local_ip_dynamic(request_context=None):
 
 def get_local_ip():
     """Get the local network IP address.
-    
-    All endpoints should use this function to ensure consistent IP display.
-    Checks HOST_IP environment variable first (set in docker-compose.yml),
-    then falls back to dynamic detection.
+
+    Requires HOST_IP environment variable to be set explicitly.
+    No fallback detection - if HOST_IP is not set, raises an error.
     """
-    # First, check if HOST_IP environment variable is set (useful for Docker)
+    # Check if HOST_IP environment variable is set (required)
     host_ip = os.environ.get('HOST_IP')
     if host_ip:
         print(f"🌐 Using HOST_IP from environment: {host_ip}")
         return host_ip
-    
-    # Fall back to dynamic detection
-    return get_local_ip_dynamic()
+
+    # No fallback - raise error if HOST_IP is not set
+    error_msg = (
+        "❌ HOST_IP environment variable is not set!\n"
+        "The server cannot determine the network IP address for iOS devices to connect.\n\n"
+        "To fix this:\n"
+        "1. If using Docker, set HOST_IP in docker-compose.yml or environment\n"
+        "2. If running directly, set HOST_IP environment variable\n"
+        "3. Use start-server.sh which automatically detects and sets HOST_IP\n\n"
+        "Example: export HOST_IP=192.168.1.100\n"
+        "Find your IP with: ipconfig getifaddr en0 (on Mac)"
+    )
+    print(error_msg)
+    raise RuntimeError("HOST_IP environment variable must be set")
 
 def get_db_connection():
     """Get a database connection with timeout for handling concurrent access."""
@@ -1787,18 +1797,25 @@ def get_server_info():
     """Get server network information including IP address."""
     # Log access for debugging
     print(f"📡 Server info requested from {request.remote_addr} (Host: {request.host})")
-    
+
     port = int(os.environ.get('PORT', 5001))
     # Use get_local_ip() which checks HOST_IP env var first for consistency
     # This ensures QR code and server-info always show the same IP
-    local_ip = get_local_ip()
-    
+    try:
+        local_ip = get_local_ip()
+    except RuntimeError as e:
+        return jsonify({
+            'error': str(e),
+            'status': 'error',
+            'message': 'HOST_IP environment variable is required for server operation'
+        }), 500
+
     # Get the host from the request to determine what URL was used
     host = request.host.split(':')[0] if ':' in request.host else request.host
-    
+
     # Always use the network IP for the server URL (not localhost)
     server_url = f'http://{local_ip}:{port}'
-    
+
     return jsonify({
         'local_ip': local_ip,
         'host': host,
@@ -1852,8 +1869,27 @@ def connection_test():
         return interfaces
     
     port = int(os.environ.get('PORT', 5001))
-    local_ip = get_local_ip()
-    
+    try:
+        local_ip = get_local_ip()
+    except RuntimeError as e:
+        return jsonify({
+            'status': 'error',
+            'message': 'Connection test failed - HOST_IP not configured',
+            'error': str(e),
+            'server_info': {
+                'detected_ip': None,
+                'port': port,
+                'host': request.host,
+                'remote_addr': request.remote_addr,
+                'user_agent': request.headers.get('User-Agent', 'Unknown'),
+                'server_url': None,
+                'platform': platform.system(),
+                'python_version': platform.python_version()
+            },
+            'network_interfaces': get_all_network_interfaces(),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
     return jsonify({
         'status': 'success',
         'message': 'Connection test successful!',
@@ -1922,7 +1958,15 @@ def test_port():
 def test_ports():
     """Test multiple ports for connectivity."""
     ports_str = request.args.get('ports', '5001,5000,8080,3000,8000')
-    host = request.args.get('host', get_local_ip())
+    try:
+        default_host = get_local_ip()
+    except RuntimeError as e:
+        return jsonify({
+            'error': str(e),
+            'message': 'Cannot test ports - HOST_IP not configured'
+        }), 500
+
+    host = request.args.get('host', default_host)
     ports = [int(p.strip()) for p in ports_str.split(',') if p.strip().isdigit()]
     
     results = []
@@ -2024,18 +2068,39 @@ def network_info():
 @app.route('/api/qrcode', methods=['GET'])
 def generate_qrcode():
     """Generate a QR code for the server URL."""
-    
+
     port = int(os.environ.get('PORT', 5001))
-    # Use HOST_IP if set (for Docker/Colima where dynamic detection gets VM IP)
-    # Otherwise fall back to dynamic detection
-    host_ip = os.environ.get('HOST_IP')
-    if host_ip:
-        local_ip = host_ip
-        print(f"🌐 [QR Code] Using HOST_IP from environment: {host_ip}")
-    else:
-        local_ip = get_local_ip_dynamic(request_context=request)
+
+    # Try to get IP: first check HOST_IP, then auto-detect
+    try:
+        # If HOST_IP is explicitly set, use it
+        if os.environ.get('HOST_IP'):
+            local_ip = get_local_ip()  # This will use the explicitly set HOST_IP
+        else:
+            # Auto-detect IP address for convenience
+            local_ip = get_local_ip_dynamic()
+            print(f"🌐 Auto-detected IP for QR code: {local_ip}")
+    except RuntimeError as e:
+        # Return error image instead of crashing
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.new('RGB', (300, 150), color='white')
+        draw = ImageDraw.Draw(img)
+        # Try to use a default font, fall back to basic if not available
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 16)
+        except:
+            font = ImageFont.load_default()
+
+        error_text = "Could not detect network IP!\nCheck Wi-Fi connection."
+        draw.text((10, 10), error_text, fill='red', font=font)
+
+        img_io = io.BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        return Response(img_io.getvalue(), mimetype='image/png')
+
     server_url = f'http://{local_ip}:{port}'
-    
+
     # Generate QR code
     qr = qrcode.QRCode(
         version=1,
@@ -2045,15 +2110,15 @@ def generate_qrcode():
     )
     qr.add_data(server_url)
     qr.make(fit=True)
-    
+
     # Create image
     img = qr.make_image(fill_color="black", back_color="white")
-    
+
     # Convert to bytes
     img_io = io.BytesIO()
     img.save(img_io, 'PNG')
     img_io.seek(0)
-    
+
     return Response(img_io.getvalue(), mimetype='image/png')
 
 # WebSocket event handlers

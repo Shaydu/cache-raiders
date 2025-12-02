@@ -41,6 +41,13 @@
 	</array>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Cache Raiders may use the microphone for AR audio features.</string>
+	<key>NFCReaderUsageDescription</key>
+	<string>This app uses NFC to read treasure tags and interact with NFC-enabled loot boxes.</string>
+	<key>com.apple.developer.nfc.readersession.formats</key>
+	<array>
+		<string>NDEF</string>
+		<string>TAG</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

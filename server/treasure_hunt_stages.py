@@ -557,3 +557,4 @@ def register_stages_blueprint(app):
     app.register_blueprint(stages_bp)
     print("✅ Treasure hunt stages endpoints registered")
 
+
