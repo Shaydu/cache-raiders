@@ -437,7 +437,7 @@ struct ContentView: View {
         case .nfcScanner:
             OpenGameNFCScannerView()
         case .nfcWriting:
-            NFCWritingView(locationManager: locationManager, userLocationManager: userLocationManager)
+            NFCWritingView(locationManager: locationManager)
         case .simpleNFCScanner:
             SimpleNFCScannerView()
         case .inventory:
@@ -538,10 +538,8 @@ struct ContentView: View {
                 npcLocation: npcLocation
             )
             
-            TreasureMapView(
-                mapData: mapData,
-                userLocationManager: userLocationManager
-            )
+            TreasureMapView(mapData: mapData, userLocationManager: userLocationManager)
+                .environmentObject(userLocationManager)
         } else {
             // Show general treasure map with all loot boxes when no specific treasure hunt
             generalTreasureMapContent
@@ -579,10 +577,8 @@ struct ContentView: View {
             npcLocation: npcLocation
         )
 
-        TreasureMapView(
-            mapData: mapData,
-            userLocationManager: userLocationManager
-        )
+        TreasureMapView(mapData: mapData, userLocationManager: userLocationManager)
+            .environmentObject(userLocationManager)
     }
     
     var body: some View {

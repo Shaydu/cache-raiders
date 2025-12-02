@@ -7,11 +7,13 @@ import AudioToolbox
 import UIKit
 import Combine
 
+
 // MARK: - NFC Writing View
 /// Allows users to select a loot box type and write it to an NFC token
 struct NFCWritingView: View {
     @Environment(\.dismiss) var dismiss
     @ObservedObject var locationManager: LootBoxLocationManager
+    @ObservedObject var userLocationManager: UserLocationManager
     private let nfcService = NFCService.shared
     @StateObject private var precisePositioning = PreciseARPositioningService.shared
     @StateObject private var arIntegrationService = NFCARIntegrationService.shared
@@ -24,8 +26,7 @@ struct NFCWritingView: View {
     @State private var errorMessage: String?
     @State private var currentStep: WritingStep = .selecting
     @State private var arView: ARView?
-    @State private var userLocation: CLLocation?
-    @State private var clLocationManager: CLLocationManager?
+    @State private var showARPlacement = false
 
     enum WritingStep {
         case selecting      // User selecting loot type
@@ -45,10 +46,8 @@ struct NFCWritingView: View {
             return "Hold your iPhone near the NFC tag to write"
         case .written:
             return "NFC tag written successfully!"
-        case .arPlacement:
-            return "Use crosshairs to place loot precisely"
         case .positioning:
-            return "Placing loot at this location..."
+            return "Use crosshairs to place loot precisely"
         case .creating:
             return "Saving to database..."
         case .success:
@@ -400,14 +399,8 @@ struct NFCWritingView: View {
     }
 
     private func setupARView() {
-        // Setup location manager to get current location
-        clLocationManager = CLLocationManager()
-        clLocationManager?.desiredAccuracy = kCLLocationAccuracyBest
-        clLocationManager?.requestWhenInUseAuthorization()
-        clLocationManager?.startUpdatingLocation()
-
-        // Get initial location
-        userLocation = clLocationManager?.location
+        // Use the existing user location manager instead of creating a new one
+        userLocation = userLocationManager.currentLocation
 
         print("📍 Initial location acquired: \(userLocation != nil ? "✓" : "waiting...")")
     }
@@ -854,8 +847,8 @@ struct NFCWritingView: View {
 
     private func cleanup() {
         nfcService.stopScanning()
-        clLocationManager?.stopUpdatingLocation()
-        clLocationManager = nil
+        arView?.session.pause()
+        arView = nil
     }
 }
 
@@ -932,6 +925,7 @@ struct LootTypeCard: View {
 // MARK: - Preview
 struct NFCWritingView_Previews: PreviewProvider {
     static var previews: some View {
-        NFCWritingView(locationManager: LootBoxLocationManager(), userLocationManager: UserLocationManager())
+        NFCWritingView(locationManager: LootBoxLocationManager())
     }
 }
+
