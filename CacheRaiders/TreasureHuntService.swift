@@ -137,26 +137,35 @@ class TreasureHuntService: ObservableObject {
     ///   - npcName: Display name (Captain Bones)
     ///   - userLocation: Current player location (used to generate treasure location nearby)
     func handleMapRequest(npcId: String, npcName: String, userLocation: CLLocation) async throws {
-        print("🗺️ TreasureHuntService: Fetching treasure map from \(npcName)")
+        print("🗺️ [TreasureHuntService] handleMapRequest called")
+        print("🗺️ [TreasureHuntService] NPC: \(npcName) (ID: \(npcId))")
+        print("🗺️ [TreasureHuntService] User location: (\(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude))")
+        print("🗺️ [TreasureHuntService] Fetching treasure map from server...")
 
         // Fetch map piece from API
         let mapResponse = try await APIService.shared.getMapPiece(
             npcId: npcId,
             targetLocation: userLocation
         )
+        print("✅ [TreasureHuntService] API call returned successfully")
+        print("🗺️ [TreasureHuntService] Map piece received: \(mapResponse.map_piece != nil ? "YES" : "NO")")
 
         await MainActor.run {
+            print("💾 [TreasureHuntService] Storing map piece in service...")
             // Store the map piece
             self.mapPiece = mapResponse.map_piece
             self.hasMap = true
+            print("✅ [TreasureHuntService] Map piece stored, hasMap = true")
 
             // Extract treasure location from map piece
             if let mapPiece = mapResponse.map_piece {
                 let lat = mapPiece.approximate_latitude
                 let lon = mapPiece.approximate_longitude
+                print("📍 [TreasureHuntService] Treasure location from server: (\(lat), \(lon))")
 
                 // TESTING: Auto-place treasure X for easier testing
                 if self.testingMode {
+                    print("🧪 [TreasureHuntService] TESTING MODE ENABLED - auto-placing treasure nearby")
                     let distanceMeters = self.testingDistanceFeet * 0.3048 // Convert feet to meters
                     // Place treasure in a random direction from player
                     let randomBearing = Double.random(in: 0...360) * .pi / 180.0
@@ -404,6 +413,7 @@ class TreasureHuntService: ObservableObject {
     /// Detect if user message is requesting a treasure map
     /// Used by SkeletonConversationView to trigger special map-giving behavior
     func isMapRequest(_ message: String) -> Bool {
+        print("🔍 [TreasureHuntService] Checking if message is map request: '\(message)'")
         let lowerMessage = message.lowercased()
 
         // Keywords that indicate user wants the treasure map
@@ -416,10 +426,11 @@ class TreasureHuntService: ObservableObject {
         // Check if message contains any map-related keywords
         for keyword in mapKeywords {
             if lowerMessage.contains(keyword) {
-                print("🗺️ Map request detected: keyword '\(keyword)' found in '\(message)'")
+                print("✅ [TreasureHuntService] MAP REQUEST DETECTED - keyword '\(keyword)' found in '\(message)'")
                 return true
             }
         }
+        print("⏭️ [TreasureHuntService] No keywords matched, checking phrases...")
 
         // Special phrases that definitely indicate map requests
         let mapPhrases = [
@@ -437,11 +448,12 @@ class TreasureHuntService: ObservableObject {
 
         for phrase in mapPhrases {
             if lowerMessage.contains(phrase) {
-                print("🗺️ Map request detected: phrase '\(phrase)' found in '\(message)'")
+                print("✅ [TreasureHuntService] MAP REQUEST DETECTED - phrase '\(phrase)' found in '\(message)'")
                 return true
             }
         }
 
+        print("❌ [TreasureHuntService] Not a map request - no phrases matched either")
         return false
     }
 

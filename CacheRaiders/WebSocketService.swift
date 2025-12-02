@@ -519,7 +519,13 @@ class WebSocketService: ObservableObject {
             print("🎮 [WebSocket] MATCHED game_mode_changed event in switch statement!")
             print("   About to call handleGameModeChangedEvent with data: \(eventData)")
             handleGameModeChangedEvent(eventData)
-            
+
+        case "user_location_updated":
+            // User location updates are broadcast for admin panel tracking.
+            // iOS clients don't need to handle these events as they don't display
+            // other users on a multiplayer map. Just acknowledge and ignore.
+            print("📍 [WebSocket] Received user_location_updated event (admin tracking only)")
+
         default:
             print("📨 Received unhandled Socket.IO event: \(eventName)")
             print("   If you expected this event to be handled, check the switch statement above")

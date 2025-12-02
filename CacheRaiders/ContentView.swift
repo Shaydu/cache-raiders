@@ -12,6 +12,7 @@ struct ContentView: View {
     @StateObject private var locationManager = LootBoxLocationManager()
     @StateObject private var userLocationManager = UserLocationManager()
     @StateObject private var treasureHuntService = TreasureHuntService()
+    @StateObject private var inventoryService = InventoryService()
     
     // Use enum-based sheet state to prevent multiple sheets being presented simultaneously
     enum SheetType: Identifiable, Equatable {
@@ -22,7 +23,9 @@ struct ContentView: View {
         case skeletonConversation(npcId: String, npcName: String)
         case treasureMap
         case clueDrawer
-        
+        case inventory
+        case nfcScanner
+
         var id: String {
             switch self {
             case .locationConfig: return "locationConfig"
@@ -32,6 +35,8 @@ struct ContentView: View {
             case .skeletonConversation(let npcId, _): return "skeletonConversation_\(npcId)"
             case .treasureMap: return "treasureMap"
             case .clueDrawer: return "clueDrawer"
+            case .inventory: return "inventory"
+            case .nfcScanner: return "nfcScanner"
             }
         }
     }
@@ -42,6 +47,7 @@ struct ContentView: View {
     @State private var distanceToNearest: Double?
     @State private var temperatureStatus: String?
     @State private var collectionNotification: String?
+    @State private var inventoryNotification: String?
     @State private var nearestObjectDirection: Double?
     
     // PERFORMANCE: Task for debouncing location updates to prevent excessive API calls
@@ -199,7 +205,7 @@ struct ContentView: View {
             }()
 
             if shouldShowNav, let distance = distanceToNearest {
-                VStack(spacing: 1) {
+                VStack(spacing: 2) {
                     Button(action: {
                         // Open treasure map (only available after skeleton gives map)
                         if treasureHuntService.hasMap {
@@ -209,32 +215,39 @@ struct ContentView: View {
                             userLocationManager.sendCurrentLocationToServer()
                         }
                     }) {
-                        HStack(spacing: 4) {
-                            directionArrowView
+                        HStack(spacing: 2) {
+                            Image(systemName: "location.north.line.fill")
+                                .font(.system(size: 12))
+                                .foregroundColor(.white)
+                                .rotationEffect(.degrees(nearestObjectDirection ?? 0))
 
-                            // Distance in meters
+                            Text("GPS")
+                                .font(.system(size: 10))
+                                .fontWeight(.bold)
+                                .foregroundColor(.white)
+
                             Text(formatDistance(distance))
-                                .font(.caption)
+                                .font(.system(size: 10))
                                 .fontWeight(.bold)
                                 .foregroundColor(.white)
                         }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
                         .background(.ultraThinMaterial)
-                        .cornerRadius(8)
+                        .cornerRadius(6)
                         .overlay(directionIndicatorBorder)
                     }
                     .buttonStyle(PlainButtonStyle())
 
                     // Directional clue text below the GPS box
                     if let direction = nearestObjectDirection {
-                        Text("Head \(bearingToCompassDirection(direction)) to find treasure")
+                        Text("Head \(bearingToCompassDirection(direction)) to find the treasure")
                             .font(.caption2)
-                            .foregroundColor(.white.opacity(0.9))
-                            .padding(.top, 2)
+                            .foregroundColor(.white.opacity(0.8))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
                     }
                 }
-                .padding(.top, 8)
             }
         }
     }
@@ -281,7 +294,31 @@ struct ContentView: View {
     private var rightButtonsView: some View {
         HStack(spacing: 8) {
             // Treasure map button removed - users can access it from the discoveries log book (ClueDrawerView)
-            
+
+            // Inventory button
+            Button(action: {
+                // Use async to avoid modifying state during view update
+                Task { @MainActor in
+                    presentedSheet = .inventory
+                }
+            }) {
+                ZStack {
+                    Image(systemName: "backpack.fill")
+                        .foregroundColor(.brown)
+                        .padding()
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(10)
+
+                    // New items badge
+                    if inventoryService.hasNewItems {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 8, height: 8)
+                            .offset(x: 10, y: -10)
+                    }
+                }
+            }
+
             // Show leaderboard trophy only in Open mode (not in story mode)
             if locationManager.gameMode == .open {
                 Button(action: {
@@ -298,17 +335,20 @@ struct ContentView: View {
                 }
             }
 
-            // NFC-AR Demo button
-            Button(action: {
-                Task { @MainActor in
-                    NFCARIntegrationService.shared.runDemoWorkflow()
+            // NFC Scanner button (Open Game Mode)
+            if locationManager.gameMode == .open {
+                Button(action: {
+                    // Use async to avoid modifying state during view update
+                    Task { @MainActor in
+                        presentedSheet = .nfcScanner
+                    }
+                }) {
+                    Image(systemName: "wave.3.right.circle")
+                        .foregroundColor(.blue)
+                        .padding()
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(10)
                 }
-            }) {
-                Image(systemName: "wave.3.right.circle")
-                    .foregroundColor(.blue)
-                    .padding()
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(10)
             }
 
             Button(action: {
@@ -356,7 +396,27 @@ struct ContentView: View {
                     .cornerRadius(10)
                     .offset(y: -54)
             }
-            
+
+            // Inventory notification
+            if let notification = inventoryNotification {
+                Text(notification)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+                    .padding()
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(15)
+                    .shadow(radius: 10)
+                    .onAppear {
+                        // Auto-dismiss after 3 seconds
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                            withAnimation {
+                                inventoryNotification = nil
+                            }
+                        }
+                    }
+            }
+
             if let notification = collectionNotification {
                 Text(notification)
                     .font(.title2)
@@ -433,7 +493,8 @@ struct ContentView: View {
                     }
                 },
                 treasureHuntService: treasureHuntService,
-                userLocationManager: userLocationManager
+                userLocationManager: userLocationManager,
+                inventoryService: inventoryService
             )
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
@@ -445,6 +506,10 @@ struct ContentView: View {
             treasureMapSheetContent
         case .clueDrawer:
             clueDrawerSheetContent
+        case .inventory:
+            InventoryView(inventoryService: inventoryService)
+        case .nfcScanner:
+            OpenGameNFCScannerView()
         }
     }
     
@@ -573,6 +638,16 @@ struct ContentView: View {
                     }
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TreasureMapMentioned"))) { _ in
+                Swift.print("🗺️ ContentView: TreasureMapMentioned notification received - opening treasure map")
+                // Close any current sheet and open treasure map (like onMapMentioned callback)
+                presentedSheet = nil
+                // Small delay to allow sheet to close smoothly
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    presentedSheet = .treasureMap
+                    Swift.print("🗺️ ContentView: Treasure map sheet opened via notification")
+                }
+            }
             .onChange(of: userLocationManager.currentLocation) { oldLocation, newLocation in
                 handleLocationChange(oldLocation: oldLocation, newLocation: newLocation)
             }
@@ -636,8 +711,51 @@ struct ContentView: View {
         }
         
         // Offline mode is supported for local testing without server connection
+
+        // Set up inventory notification listener
+        setupInventoryNotifications()
+
+        // Set up NFC object creation listener
+        setupNFCNotifications()
     }
-    
+
+    private func setupInventoryNotifications() {
+        // Listen for inventory item additions
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("InventoryItemAdded"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            if let item = notification.userInfo?["item"] as? InventoryItem {
+                self?.inventoryNotification = "📦 \(item.name) added to inventory!"
+            }
+        }
+    }
+
+    private func setupNFCNotifications() {
+        // Listen for NFC object creation
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("NFCObjectCreated"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            if let object = notification.object as? LootBoxLocation {
+                // Show success notification
+                self?.collectionNotification = "🎯 New \(object.type.displayName) created via NFC!"
+
+                // Refresh locations to show the new object on map
+                Task {
+                    await self?.locationManager.refreshLocations()
+                }
+
+                // Clear notification after 3 seconds
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    self?.collectionNotification = nil
+                }
+            }
+        }
+    }
+
     private func handleSheetChange(oldSheet: SheetType?, newSheet: SheetType?) {
         // Notify AR coordinator when sheets are presented/dismissed
         if newSheet != nil && oldSheet == nil {

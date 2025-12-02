@@ -2883,9 +2883,13 @@ def load_llm_settings_from_db():
 @app.route('/api/settings/game-mode', methods=['GET'])
 def get_game_mode():
     """Get the current game mode."""
-    return jsonify({
+    print(f"🎮 [DEBUG] get_game_mode() called from {request.remote_addr}", flush=True)
+    print(f"   Current game_mode value: '{game_mode}'", flush=True)
+    response_data = {
         'game_mode': game_mode
-    })
+    }
+    print(f"   Returning: {response_data}", flush=True)
+    return jsonify(response_data)
 
 @app.route('/api/settings/game-mode', methods=['POST', 'PUT'])
 def set_game_mode():

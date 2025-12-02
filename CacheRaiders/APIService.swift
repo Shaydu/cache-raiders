@@ -23,7 +23,7 @@ struct MapPiece: Codable {
     let clue: String
 }
 
-struct Landmark: Codable {
+struct Landmark: Codable, Equatable {
     let name: String
     let type: String
     let latitude: Double
@@ -121,8 +121,6 @@ struct HealthResponse: Codable {
     let timestamp: String
 }
 
-
-
 enum APIError: Error {
     case serverError(String)
     case serverUnreachable
@@ -140,8 +138,10 @@ class APIService {
         get {
             // Load from UserDefaults if available, otherwise use localhost for development
             if let savedURL = UserDefaults.standard.string(forKey: "apiBaseURL"), !savedURL.isEmpty {
+                print("🔗 [APIService] Using saved baseURL: \(savedURL)")
                 return savedURL
             } else {
+                print("🔗 [APIService] Using default baseURL: http://localhost:5001")
                 return "http://localhost:5001"
             }
         }
@@ -219,15 +219,31 @@ class APIService {
     // MARK: - Health Check
     func checkHealth() async throws -> Bool {
         let url = URL(string: "\(baseURL)/health")!
+        print("🏥 [APIService] Checking health at: \(url.absoluteString)")
         let (data, response) = try await session.data(from: url)
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            print("❌ [APIService] Health check failed: Invalid response type")
             return false
         }
 
-        let healthResponse = try decoder.decode(HealthResponse.self, from: data)
-        return healthResponse.status == "healthy"
+        print("📡 [APIService] Health check HTTP status: \(httpResponse.statusCode)")
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            print("❌ [APIService] Health check failed: HTTP \(httpResponse.statusCode)")
+            print("   Response data: \(String(data: data, encoding: .utf8) ?? "unable to decode")")
+            return false
+        }
+
+        do {
+            let healthResponse = try decoder.decode(HealthResponse.self, from: data)
+            print("✅ [APIService] Health check successful: \(healthResponse.status)")
+            return healthResponse.status == "healthy"
+        } catch {
+            print("❌ [APIService] Health check JSON decode failed: \(error)")
+            print("   Raw response: \(String(data: data, encoding: .utf8) ?? "unable to decode")")
+            throw error
+        }
     }
 
 
@@ -397,10 +413,71 @@ class APIService {
 
     // MARK: - Game Mode
     func getGameMode() async throws -> String {
-        let url = URL(string: "\(baseURL)/api/game-mode")!
-        let (data, _) = try await session.data(from: url)
-        let response = try decoder.decode(GameModeResponse.self, from: data)
-        return response.game_mode
+        let url = URL(string: "\(baseURL)/api/settings/game-mode")!
+        print("🔄 [APIService] Fetching game mode from: \(url.absoluteString)")
+        let (data, response) = try await session.data(from: url)
+
+        if let httpResponse = response as? HTTPURLResponse {
+            print("📡 [APIService] Game mode HTTP status: \(httpResponse.statusCode)")
+            if httpResponse.statusCode != 200 {
+                print("❌ [APIService] Non-200 response, data: \(String(data: data, encoding: .utf8) ?? "unable to decode")")
+            }
+        }
+
+        // Debug: Log raw response data
+        let rawResponse = String(data: data, encoding: .utf8) ?? "unable to decode"
+        print("🔍 [APIService] Raw game mode response: '\(rawResponse)'")
+        print("🔍 [APIService] Response data length: \(data.count) bytes")
+
+        // Check if data is empty
+        if data.isEmpty {
+            print("❌ [APIService] Response data is EMPTY!")
+            throw APIError.decodingError("Server returned empty response for game mode")
+        }
+
+        do {
+            let decodedResponse = try decoder.decode(GameModeResponse.self, from: data)
+            print("✅ [APIService] Decoded game mode: \(decodedResponse.gameMode)")
+            return decodedResponse.gameMode
+        } catch let decodingError as DecodingError {
+            print("❌ [APIService] JSON DecodingError: \(decodingError)")
+            print("❌ [APIService] Error details: \(decodingError.localizedDescription)")
+
+            // Handle specific decoding errors
+            switch decodingError {
+            case .keyNotFound(let key, _):
+                print("❌ [APIService] Missing key: \(key.stringValue)")
+            case .valueNotFound(_, let context):
+                print("❌ [APIService] Missing value at: \(context.codingPath)")
+            case .typeMismatch(_, let context):
+                print("❌ [APIService] Type mismatch at: \(context.codingPath)")
+            case .dataCorrupted(let context):
+                print("❌ [APIService] Data corrupted at: \(context.codingPath)")
+                if context.codingPath.isEmpty {
+                    print("❌ [APIService] Root level data corruption - data may be empty or invalid")
+                }
+            @unknown default:
+                print("❌ [APIService] Unknown decoding error")
+            }
+
+            // Try to decode as generic JSON to see what we actually got
+            if let jsonObject = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] {
+                print("🔍 [APIService] Actual JSON received: \(jsonObject)")
+                print("🔍 [APIService] JSON keys: \(jsonObject.keys.sorted())")
+            } else {
+                print("🔍 [APIService] Could not parse as JSON at all")
+                print("🔍 [APIService] Raw data length: \(data.count) bytes")
+                if let rawString = String(data: data, encoding: .utf8) {
+                    print("🔍 [APIService] Raw data as string: '\(rawString)'")
+                } else {
+                    print("🔍 [APIService] Raw data is not valid UTF-8")
+                }
+            }
+            throw decodingError
+        } catch {
+            print("❌ [APIService] Non-decoding error: \(error)")
+            throw error
+        }
     }
 
     // MARK: - Treasure Hunt
@@ -425,7 +502,8 @@ class APIService {
     }
 
     func getMapPiece(npcId: String, targetLocation: CLLocation) async throws -> NPCInteractionResponse {
-        return try await interactWithNPC(
+        print("🗺️ [APIService] getMapPiece called for npcId: \(npcId), location: (\(targetLocation.coordinate.latitude), \(targetLocation.coordinate.longitude))")
+        let result = try await interactWithNPC(
             npcId: npcId,
             message: "Give me the treasure map!",
             npcName: "Captain Bones",
@@ -433,6 +511,8 @@ class APIService {
             isSkeleton: true,
             includeMapPiece: true
         )
+        print("✅ [APIService] getMapPiece completed successfully")
+        return result
     }
 
     // MARK: - Location Update Interval

@@ -29,7 +29,7 @@ enum GameMode: String, Codable, CaseIterable {
 
 // MARK: - Game Mode Response
 struct GameModeResponse: Codable {
-    let game_mode: String
+    let gameMode: String
 }
 
 // MARK: - Item Source Enum

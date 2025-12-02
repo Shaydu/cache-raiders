@@ -81,11 +81,23 @@ class ARCoordinator: ARCoordinatorCore {
     }
 
     private func checkAndSpawnInitialNPCs() {
+        Swift.print("🔍 [ARCoordinator] checkAndSpawnInitialNPCs called")
+        Swift.print("   Current game mode: \(locationManager?.gameMode.rawValue ?? "nil")")
+        Swift.print("   skeleton-1 already placed: \(placedNPCs["skeleton-1"] != nil)")
+
         // If we're in story mode and no skeleton is placed, spawn Captain Bones
         if locationManager?.gameMode == .deadMensSecrets && placedNPCs["skeleton-1"] == nil {
             Swift.print("🎭 ARCoordinator initialized in story mode - spawning Captain Bones")
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                 self?.placeNPC(type: .skeleton)
+            }
+        } else {
+            Swift.print("❌ [ARCoordinator] NOT spawning Captain Bones:")
+            if locationManager?.gameMode != .deadMensSecrets {
+                Swift.print("   Reason: Game mode is \(locationManager?.gameMode.rawValue ?? "nil"), not deadMensSecrets")
+            }
+            if placedNPCs["skeleton-1"] != nil {
+                Swift.print("   Reason: skeleton-1 already placed")
             }
         }
     }
@@ -450,22 +462,14 @@ class ARCoordinator: ARCoordinatorCore {
     }
 
     private func handleRegularNPCTap(_ npcId: String) {
-        // Convert npcId string back to NPCType
-        let npcType: NPCType?
-        if npcId.hasPrefix("skeleton") {
-            npcType = .skeleton
-        } else if npcId.hasPrefix("corgi") {
-            npcType = .corgi
+        Swift.print("🎯 Handling NPC tap for \(npcId) using npcManager")
+        Swift.print("🎯 npcManager exists: \(self.npcManager != nil)")
+        Swift.print("🎯 arView exists: \(self.arView != nil)")
+
+        if let arView = self.arView {
+            self.npcManager?.handleNPCTap(npcId: npcId, in: arView)
         } else {
-            Swift.print("⚠️ Unknown NPC ID: \(npcId)")
-            return
-        }
-
-        Swift.print("🎯 Converted to NPCType: \(npcType?.rawValue ?? "nil")")
-        Swift.print("🎯 npcService exists: \(self.npcService != nil)")
-
-        if let npcType = npcType {
-            self.npcService?.handleNPCTap(type: npcType)
+            Swift.print("⚠️ Cannot handle NPC tap: arView is nil")
         }
     }
 }

@@ -166,19 +166,14 @@ class ARNPCManager {
     private func handleSkeletonInteraction(in arView: ARView, npcId: String) {
         guard let skeletonAnchor = arCoordinator?.placedNPCs[npcId] else { return }
 
-        // Check if player has talked to skeleton before
-        let hasTalked = arCoordinator?.hasTalkedToSkeleton ?? false
+        // Always allow interaction with Captain Bones for treasure hunt gameplay
+        // The player should be able to ask for treasure maps multiple times
+        uiManager?.showSkeletonTextInput(for: skeletonAnchor, in: arView, npcId: npcId, npcName: "Captain Bones",
+                                       treasureHuntService: arCoordinator?.treasureHuntService,
+                                       userLocationManager: (arCoordinator as? ARCoordinator)?.userLocationManager ?? arCoordinator?.userLocationManager)
 
-        if !hasTalked {
-            // First interaction - show text input
-            uiManager?.showSkeletonTextInput(for: skeletonAnchor, in: arView, npcId: npcId, npcName: "Captain Bones",
-                                           treasureHuntService: arCoordinator?.treasureHuntService,
-                                           userLocationManager: (arCoordinator as? ARCoordinator)?.userLocationManager ?? arCoordinator?.userLocationManager)
-            arCoordinator?.hasTalkedToSkeleton = true
-        } else {
-            // Subsequent interactions - show server unavailable alert
-            uiManager?.showServerUnavailableAlert(for: NPCType.skeleton)
-        }
+        // Mark as talked to (for other game logic if needed)
+        arCoordinator?.hasTalkedToSkeleton = true
     }
 
     private func handleCorgiInteraction(in arView: ARView, npcId: String) {

@@ -143,6 +143,7 @@ class QRCodeScannerViewController: UIViewController {
     private var instructionLabel: UILabel?
     private var lastScanTime: Date = Date.distantPast
     private let scanDebounceInterval: TimeInterval = 0.1 // Prevent duplicate scans within 100ms
+    private var isProcessingScan = false // Prevent concurrent scan processing
     private var sessionStartAttempts = 0
     private let maxSessionStartAttempts = 5
     
@@ -500,11 +501,15 @@ class QRCodeScannerViewController: UIViewController {
     private func stopSession() {
         let session = captureSession
         if let session = session, session.isRunning {
-            print("📷 QR Scanner: Stopping session")
-            sessionQueue.async {
-                session.stopRunning()
-                print("📷 QR Scanner: Session stopped")
+        print("📷 QR Scanner: Stopping session")
+        sessionQueue.async { [weak self] in
+            session.stopRunning()
+            print("📷 QR Scanner: Session stopped")
+            // Reset processing flag when session stops
+            DispatchQueue.main.async {
+                self?.isProcessingScan = false
             }
+        }
         }
     }
     
@@ -562,26 +567,40 @@ extension QRCodeScannerViewController: AVCaptureMetadataOutputObjectsDelegate {
             
             let capturedString = stringValue
             let currentTime = Date()
-            
-            // Debounce duplicate scans
-            guard currentTime.timeIntervalSince(self.lastScanTime) >= self.scanDebounceInterval else {
+
+            // Prevent concurrent scan processing
+            guard !self.isProcessingScan else {
+                print("📷 QR Scanner: Ignoring scan - already processing one")
                 return
             }
-            
+
+            // Debounce duplicate scans
+            guard currentTime.timeIntervalSince(self.lastScanTime) >= self.scanDebounceInterval else {
+                print("📷 QR Scanner: Ignoring scan - within debounce interval")
+                return
+            }
+
+            // Mark as processing
+            self.isProcessingScan = true
             self.lastScanTime = currentTime
             
             print("✅ QR Scanner: Processing valid QR code: \(capturedString)")
             
             // Stop session after successful scan
             self.stopSession()
-            
+
             // Play haptic feedback
             let generator = UINotificationFeedbackGenerator()
             generator.prepare()
             generator.notificationOccurred(.success)
-            
+
             // Notify delegate
             self.delegate?.didScanQRCode(capturedString)
+
+            // Reset processing flag after a delay to allow delegate processing
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.isProcessingScan = false
+            }
         }
     }
 }

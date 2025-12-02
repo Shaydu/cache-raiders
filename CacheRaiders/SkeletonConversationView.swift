@@ -1,4 +1,5 @@
 import SwiftUI
+import CoreLocation
 
 // MARK: - Conversation Message
 struct ConversationMessage: Identifiable {
@@ -21,6 +22,7 @@ struct SkeletonConversationView: View {
     var onMapMentioned: (() -> Void)? = nil // Callback when user mentions the map
     @ObservedObject var treasureHuntService: TreasureHuntService
     @ObservedObject var userLocationManager: UserLocationManager
+    @ObservedObject var inventoryService: InventoryService
     @Environment(\.dismiss) var dismiss
     @State private var messages: [ConversationMessage] = []
     @State private var inputText: String = ""
@@ -29,7 +31,7 @@ struct SkeletonConversationView: View {
     @FocusState private var isTextFieldFocused: Bool
     
     // Initial greeting from skeleton
-    private let initialGreeting = "Arr, ye've found me, matey! I be Captain Bones, the skeleton of a pirate who died 200 years ago today on this very spot. I know where the treasure be buried! Ask me anything, and I'll help ye find it!"
+    private let initialGreeting = "Arr, ye've found me, matey! I be Captain Bones, the skeleton of a pirate who died 200 years ago today on this very spot. I know where the treasure be buried! Ask me anything, and I'll help ye find it! [v2.0]"
     
     var body: some View {
         VStack(spacing: 0) {
@@ -165,14 +167,21 @@ struct SkeletonConversationView: View {
     // MARK: - Actions
     private func sendMessage() {
         guard !inputText.isEmpty, !isSending else { return }
-        
+
         let userMessage = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         inputText = ""
-        
+
+        print("🗣️ [SkeletonConversation] User sent message: '\(userMessage)'")
+
         // Check if user is asking for map/treasure/directions using TreasureHuntService detection
-        if treasureHuntService.isMapRequest(userMessage) {
+        let isMapRequest = treasureHuntService.isMapRequest(userMessage)
+        print("🗺️ [SkeletonConversation] isMapRequest check result: \(isMapRequest)")
+
+        if isMapRequest {
+            print("🎵 [SkeletonConversation] MAP REQUEST DETECTED - Playing jig sound...")
             // Play happy jig sound
             LootBoxAnimation.playOpeningSound()
+            print("🎵 [SkeletonConversation] Jig sound call completed")
 
             // Add user message to conversation
             let userMsg = ConversationMessage(text: userMessage, isFromUser: true)
@@ -180,19 +189,34 @@ struct SkeletonConversationView: View {
 
             // Fetch treasure map from NPC if we have the required services
             if let userLocation = userLocationManager.currentLocation {
+                print("📍 [SkeletonConversation] User location available: (\(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude))")
+                print("📡 [SkeletonConversation] Starting API call to get treasure map...")
                 isSending = true
+
                 // Perform API call off main thread to prevent UI blocking
-                Task.detached(priority: .userInitiated) { [treasureHuntService, npcId, npcName, userLocation] in
+                Task.detached(priority: .userInitiated) { [treasureHuntService, npcId, npcName, userLocation, inventoryService] in
                     do {
+                        print("📡 [SkeletonConversation] Task.detached started - calling handleMapRequest...")
                         // Perform API call on background thread
                         try await treasureHuntService.handleMapRequest(
                             npcId: npcId,
                             npcName: npcName,
                             userLocation: userLocation
                         )
+                        print("✅ [SkeletonConversation] handleMapRequest completed successfully")
+
+                        // Add map piece to inventory if we received one
+                        if let mapPiece = treasureHuntService.mapPiece {
+                            print("📦 [SkeletonConversation] Adding map piece to inventory...")
+                            await MainActor.run {
+                                inventoryService.addMapPiece(mapPiece, sourceNPC: npcName)
+                            }
+                            print("📦 [SkeletonConversation] Map piece added to inventory")
+                        }
 
                         // Update UI on main thread
                         await MainActor.run {
+                            print("💬 [SkeletonConversation] Adding Captain Bones response message...")
                             // Add NPC response about the map (local response, not from LLM)
                             let npcMsg = ConversationMessage(
                                 text: "Arr! Here be the treasure map, matey! Follow it to find the booty! The X marks the spot where the treasure be buried!",
@@ -200,38 +224,54 @@ struct SkeletonConversationView: View {
                             )
                             messages.append(npcMsg)
                             isSending = false
+                            print("💬 [SkeletonConversation] Response message added to messages array")
 
                             // Open the treasure map view after a brief delay
+                            print("⏱️ [SkeletonConversation] Scheduling map opening in 1 second...")
                             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                print("🗺️ [SkeletonConversation] Calling onMapMentioned callback...")
                                 onMapMentioned?()
+                                print("🗺️ [SkeletonConversation] onMapMentioned callback completed")
                             }
                         }
                     } catch {
+                        print("❌ [SkeletonConversation] ERROR in handleMapRequest: \(error)")
+                        print("❌ [SkeletonConversation] Error type: \(type(of: error))")
                         // Show error message on main thread
                         await MainActor.run {
                             if let apiError = error as? APIError {
+                                print("❌ [SkeletonConversation] APIError detected: \(apiError)")
                                 switch apiError {
                                 case .serverError(let message):
                                     errorMessage = "Failed to get map: \(message)"
+                                    print("❌ [SkeletonConversation] Server error: \(message)")
                                 case .serverUnreachable:
                                     errorMessage = "Cannot reach server. Make sure it's running."
+                                    print("❌ [SkeletonConversation] Server unreachable")
                                 default:
                                     errorMessage = "Failed to get treasure map: \(apiError.localizedDescription)"
+                                    print("❌ [SkeletonConversation] Other API error: \(apiError)")
                                 }
                             } else {
                                 errorMessage = "Failed to get treasure map: \(error.localizedDescription)"
+                                print("❌ [SkeletonConversation] Non-API error: \(error.localizedDescription)")
                             }
                             isSending = false
                         }
                     }
                 }
+                print("✋ [SkeletonConversation] Returning early - map request handled, not sending to LLM")
                 return // Don't send to LLM API - we intercepted and handled it
             } else {
+                print("⚠️ [SkeletonConversation] No user location available - using fallback")
                 // Fallback: just open the map view if services aren't available
                 onMapMentioned?()
+                print("✋ [SkeletonConversation] Fallback map opening triggered")
                 return // Don't send to LLM API
             }
         }
+
+        print("📤 [SkeletonConversation] Not a map request - continuing to regular LLM conversation...")
         
         // Add user message to conversation
         let userMsg = ConversationMessage(text: userMessage, isFromUser: true)

@@ -94,20 +94,55 @@ class ARUIManager {
                 Swift.print("💬 User: \(message)")
 
                 // Check if this is a map/direction request
+                Swift.print("🔍 [ARUIManager] Checking message for map request: '\(message)'")
+                Swift.print("🔍 [ARUIManager] treasureHuntService exists: \(treasureHuntService != nil)")
                 let isMapRequest = treasureHuntService?.isMapRequest(message) ?? false
+                Swift.print("🔍 [ARUIManager] isMapRequest result: \(isMapRequest)")
+
+                Swift.print("📍 [ARUIManager] userLocationManager exists: \(userLocationManager != nil)")
+                Swift.print("📍 [ARUIManager] currentLocation exists: \(userLocationManager?.currentLocation != nil)")
 
                 // Get response from API
                 Task {
                     do {
                         if isMapRequest, let userLocation = userLocationManager?.currentLocation {
-                            // User is asking for the map - fetch and show treasure map via service
+                            Swift.print("✅ [ARUIManager] MAP REQUEST DETECTED - proceeding with map fetch")
+                            // User is asking for the map - play jig sound and fetch treasure map
                             Swift.print("🗺️ Map request detected in message: '\(message)'")
+                            Swift.print("🎵 Playing jig sound for map request...")
+                            LootBoxAnimation.playOpeningSound()
+                            Swift.print("🎵 Jig sound call completed")
+
                             try await treasureHuntService?.handleMapRequest(
                                 npcId: npcId,
                                 npcName: npcName,
                                 userLocation: userLocation
                             )
+
+                            // Show success message and open map (like SkeletonConversationView does)
+                            await MainActor.run {
+                                // Show NPC response about the map
+                                self.showConversationMessage(
+                                    npcName: npcName,
+                                    message: "Arr! Here be the treasure map, matey! Follow it to find the booty! The X marks the spot where the treasure be buried!",
+                                    isUserMessage: false,
+                                    duration: 4.0
+                                )
+
+                                // Open the treasure map view after a brief delay (like SkeletonConversationView)
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                                    Swift.print("🗺️ [ARUIManager] Triggering map opening via notification...")
+                                    NotificationCenter.default.post(
+                                        name: NSNotification.Name("TreasureMapMentioned"),
+                                        object: nil
+                                    )
+                                    Swift.print("🗺️ [ARUIManager] Treasure map opening notification sent")
+                                }
+                            }
                         } else {
+                            Swift.print("⚠️ [ARUIManager] Not a map request or missing location - falling back to regular conversation")
+                            Swift.print("   isMapRequest: \(isMapRequest)")
+                            Swift.print("   hasLocation: \(userLocationManager?.currentLocation != nil)")
                             // Regular conversation
                             let response = try await APIService.shared.interactWithNPC(
                                 npcId: npcId,
@@ -250,3 +285,4 @@ class ARUIManager {
         Swift.print("\u{1F4AC} \(prefix): \(message)")
     }
 }
+
