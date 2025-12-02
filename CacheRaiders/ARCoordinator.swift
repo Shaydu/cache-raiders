@@ -4930,5 +4930,33 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         
         Swift.print("✅ Cleared \(lootBoxCount) loot boxes and \(npcCount) NPCs from AR scene")
     }
-    
+
+    // MARK: - Debug Methods
+
+    /// Debug method to print current AR scene state information
+    func debugARSceneState() {
+        Swift.print("🔍 AR Scene State Debug:")
+        Swift.print("   📦 Placed loot boxes: \(placedBoxes.count)")
+        Swift.print("   👥 Placed NPCs: \(placedNPCs.count)")
+        Swift.print("   👁️ Objects in viewport: \(objectsInViewport.count)")
+
+        if let arView = arView {
+            let trackingState = arView.session.currentFrame?.camera.trackingState ?? .notAvailable
+            Swift.print("   📱 AR View session state: \(String(describing: trackingState))")
+            Swift.print("   🎯 Camera tracking state: \(String(describing: trackingState))")
+        }
+
+        if let userLocation = userLocationManager?.currentLocation {
+            Swift.print("   📍 User location: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+        }
+
+        if let gameMode = locationManager?.gameMode {
+            Swift.print("   🎮 Game mode: \(gameMode.displayName)")
+        }
+
+        Swift.print("   🔄 Force replacement: \(shouldForceReplacement)")
+        Swift.print("   💀 Skeleton placed: \(skeletonPlaced)")
+        Swift.print("   🐕 Corgi placed: \(corgiPlaced)")
+    }
+
 }

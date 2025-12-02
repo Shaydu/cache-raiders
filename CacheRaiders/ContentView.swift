@@ -167,7 +167,7 @@ struct ContentView: View {
                        let treasureLocation = treasureHuntService.treasureLocation,
                        let mapPiece = treasureHuntService.mapPiece {
                         // Update grid map service with current data
-                        let landmarks = mapPiece.landmarks.map { landmarkData in
+                        let landmarks: [LandmarkAnnotation] = (mapPiece.landmarks ?? []).map { landmarkData in
                             let landmarkType: LandmarkType
                             switch landmarkData.type.lowercased() {
                             case "water": landmarkType = .water
@@ -190,7 +190,8 @@ struct ContentView: View {
                         gridTreasureMapService.updateMapData(
                             treasureLocation: treasureLocation.coordinate,
                             landmarks: landmarks,
-                            userLocation: userLocationManager.currentLocation?.coordinate
+                            userLocation: userLocationManager.currentLocation?.coordinate,
+                            userLocationManager: userLocationManager
                         )
                         showGridTreasureMap = true
                     } else {
@@ -410,7 +411,7 @@ struct ContentView: View {
         if let mapPiece = treasureHuntService.mapPiece,
            let treasureLocation = treasureHuntService.treasureLocation {
             // Create treasure map data from map piece
-            let landmarks = mapPiece.landmarks.map { landmarkData in
+            let landmarks: [LandmarkAnnotation] = (mapPiece.landmarks ?? []).map { landmarkData in
                 let landmarkType: LandmarkType
                 switch landmarkData.type.lowercased() {
                 case "water": landmarkType = .water
@@ -549,22 +550,22 @@ struct ContentView: View {
     
     // Break up body into smaller computed properties
     private var mainContentView: some View {
-        ZStack {
-            ARLootBoxView(
-                locationManager: locationManager,
-                userLocationManager: userLocationManager,
-                nearbyLocations: $nearbyLocations,
-                distanceToNearest: $distanceToNearest,
-                temperatureStatus: $temperatureStatus,
-                collectionNotification: $collectionNotification,
-                nearestObjectDirection: $nearestObjectDirection,
-                conversationNPC: $conversationNPC,
-                treasureHuntService: treasureHuntService
-            )
-            .ignoresSafeArea()
-            
+        let arView = ARLootBoxView(
+            locationManager: locationManager,
+            userLocationManager: userLocationManager,
+            nearbyLocations: $nearbyLocations,
+            distanceToNearest: $distanceToNearest,
+            temperatureStatus: $temperatureStatus,
+            collectionNotification: $collectionNotification,
+            nearestObjectDirection: $nearestObjectDirection,
+            conversationNPC: $conversationNPC,
+            treasureHuntService: treasureHuntService
+        )
+        .ignoresSafeArea()
+
+        return ZStack {
+            arView
             topOverlayView
-            
             bottomCounterView
         }
     }

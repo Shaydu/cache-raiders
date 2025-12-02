@@ -82,6 +82,22 @@ struct APIObject: Codable {
     var found_at: String?
 }
 
+struct NPCResponse: Codable {
+    let id: String
+    let name: String
+    let npc_type: String
+    let latitude: Double
+    let longitude: Double
+    let created_at: String?
+    let created_by: String?
+    let ar_origin_latitude: Double?
+    let ar_origin_longitude: Double?
+    let ar_offset_x: Double?
+    let ar_offset_y: Double?
+    let ar_offset_z: Double?
+    let ar_placement_timestamp: String?
+}
+
 struct CreateObjectRequest: Codable {
     let id: String
     let name: String
@@ -216,6 +232,57 @@ class APIService {
         }
     }
 
+    func createNPC(id: String, name: String, npcType: String, latitude: Double, longitude: Double, arOriginLatitude: Double? = nil, arOriginLongitude: Double? = nil, arOffsetX: Double? = nil, arOffsetY: Double? = nil, arOffsetZ: Double? = nil) async throws -> NPCResponse {
+        let url = URL(string: "\(baseURL)/api/npcs")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        var body: [String: Any] = [
+            "id": id,
+            "name": name,
+            "npc_type": npcType,
+            "latitude": latitude,
+            "longitude": longitude,
+            "created_by": currentUserID
+        ]
+
+        // Add optional AR positioning data
+        if let arOriginLatitude = arOriginLatitude {
+            body["ar_origin_latitude"] = arOriginLatitude
+        }
+        if let arOriginLongitude = arOriginLongitude {
+            body["ar_origin_longitude"] = arOriginLongitude
+        }
+        if let arOffsetX = arOffsetX {
+            body["ar_offset_x"] = arOffsetX
+        }
+        if let arOffsetY = arOffsetY {
+            body["ar_offset_y"] = arOffsetY
+        }
+        if let arOffsetZ = arOffsetZ {
+            body["ar_offset_z"] = arOffsetZ
+        }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError("Invalid response")
+        }
+
+        if !(200...299).contains(httpResponse.statusCode) {
+            throw APIError.httpError(httpResponse.statusCode)
+        }
+
+        do {
+            return try decoder.decode(NPCResponse.self, from: data)
+        } catch {
+            throw APIError.decodingError("Failed to decode NPC creation response: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Health Check
     func checkHealth() async throws -> Bool {
         let url = URL(string: "\(baseURL)/health")!
@@ -286,6 +353,30 @@ class APIService {
         request.httpBody = try JSONEncoder().encode(body)
 
         let _ = try await session.data(for: request)
+    }
+
+    func updateObjectLocation(objectId: String, latitude: Double, longitude: Double) async throws {
+        let url = URL(string: "\(baseURL)/api/objects/\(objectId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "latitude": latitude,
+            "longitude": longitude
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError("Invalid response")
+        }
+
+        if !(200...299).contains(httpResponse.statusCode) {
+            throw APIError.httpError(httpResponse.statusCode)
+        }
     }
 
     // Helper method to convert APIObject to LootBoxLocation
