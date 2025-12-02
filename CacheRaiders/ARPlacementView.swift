@@ -125,22 +125,32 @@ struct ARPlacementView: View {
                                     print("✅ [Placement] New object created successfully")
                                 }
 
-                                // Reload locations so main ARCoordinator picks up the new/updated object
-                                // This ensures the object persists when we dismiss this placement view
-                                print("🔄 [Placement] Reloading locations so object persists in main AR view...")
-                                await locationManager.loadLocationsFromAPI(userLocation: userLocationManager.currentLocation)
-                                print("✅ [Placement] Locations reloaded")
+                                // CRITICAL FIX: Instead of reloading and hoping AR offsets are saved,
+                                // directly notify the main AR view with the placement data
+                                // This ensures immediate placement without waiting for API roundtrip
+                                let objectId = selectedObject?.id ?? UUID().uuidString
+                                let placementData: [String: Any] = [
+                                    "objectId": objectId,
+                                    "gpsCoordinate": CLLocationCoordinate2D(latitude: gpsCoordinate.latitude, longitude: gpsCoordinate.longitude),
+                                    "arPosition": [arPosition.x, arPosition.y, arPosition.z],
+                                    "arOrigin": [arOrigin!.coordinate.latitude, arOrigin!.coordinate.longitude],
+                                    "groundingHeight": groundingHeight,
+                                    "scale": scale
+                                ]
 
-                                // CRITICAL: Post notification to trigger immediate placement in main AR view
-                                // The main AR view will listen for this and call checkAndPlaceBoxes immediately
-                                let objectId = selectedObject?.id ?? "new"
                                 await MainActor.run {
                                     NotificationCenter.default.post(
                                         name: NSNotification.Name("ARPlacementObjectSaved"),
                                         object: nil,
-                                        userInfo: ["objectId": objectId]
+                                        userInfo: placementData
                                     )
-                                    print("📢 [Placement] Posted notification for immediate placement")
+                                    print("📢 [Placement] Posted notification with direct placement data")
+                                }
+
+                                // Now reload locations in background (for persistence)
+                                Task {
+                                    await locationManager.loadLocationsFromAPI(userLocation: userLocationManager.currentLocation)
+                                    print("✅ [Placement] Locations reloaded for persistence")
                                 }
 
                                 // Longer delay to ensure the main AR view has time to:

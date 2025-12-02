@@ -101,8 +101,11 @@ class PreciseARPositioningService: ObservableObject {
         locationManager?.pausesLocationUpdatesAutomatically = false // Keep updating even when stationary
 
         // Disable background location updates - not needed for AR positioning during active use
-        locationManager?.allowsBackgroundLocationUpdates = false
-        locationManager?.showsBackgroundLocationIndicator = true
+        // Only set this if the app has background location permission to avoid assertion failures
+        if CLLocationManager.authorizationStatus() == .authorizedAlways {
+            locationManager?.allowsBackgroundLocationUpdates = false
+            locationManager?.showsBackgroundLocationIndicator = false
+        }
 
         locationManager?.requestWhenInUseAuthorization()
         locationManager?.startUpdatingLocation()
@@ -122,33 +125,11 @@ class PreciseARPositioningService: ObservableObject {
     private func configureARSession() {
         guard let arView = arView else { return }
 
-        // Configure for maximum precision
-        if #available(iOS 17.0, *), ARGeoTrackingConfiguration.isSupported {
-            // Use GeoTracking for highest precision (iOS 17+)
-            let geoConfig = ARGeoTrackingConfiguration()
+        // Use standard AR configuration to avoid background location issues
+        let config = ARWorldTrackingConfiguration()
+        config.worldAlignment = .gravityAndHeading
 
-            // Enable plane detection for better ground plane anchoring
-            geoConfig.planeDetection = [.horizontal, .vertical]
-
-            // Set environment texturing for better visual tracking
-            geoConfig.environmentTexturing = .automatic
-
-            arView.session.run(geoConfig)
-            print("🎯 Using ARGeoTrackingConfiguration for maximum precision")
-
-        } else if #available(iOS 14.0, *), ARGeoTrackingConfiguration.isSupported {
-            // Fallback to GeoTracking (iOS 14-16)
-            let geoConfig = ARGeoTrackingConfiguration()
-
-            arView.session.run(geoConfig)
-            print("🎯 Using ARGeoTrackingConfiguration")
-
-        } else {
-            // Fallback to standard world tracking with maximum precision settings
-            let config = ARWorldTrackingConfiguration()
-            config.worldAlignment = .gravityAndHeading
-
-            // Enable all available features for best precision
+        // Enable all available features for best precision
             if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
                 config.sceneReconstruction = .mesh
             }
@@ -163,13 +144,12 @@ class PreciseARPositioningService: ObservableObject {
 
             arView.session.run(config)
             print("🎯 Using enhanced ARWorldTrackingConfiguration")
-        }
 
-        // Configure session for continuous high-precision tracking
-        arView.session.delegate = arSessionDelegate
-        arView.renderOptions = [.disableMotionBlur, .disableDepthOfField] // Maximum precision rendering
+            // Configure session for continuous high-precision tracking
+            arView.session.delegate = arSessionDelegate
+            arView.renderOptions = [.disableMotionBlur, .disableDepthOfField] // Maximum precision rendering
+        }
     }
-}
 
 // MARK: - Macro Positioning (GPS + Map Anchors)
 extension PreciseARPositioningService {

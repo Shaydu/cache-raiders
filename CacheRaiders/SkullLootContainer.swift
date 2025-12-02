@@ -31,7 +31,12 @@ class SkullLootContainer {
         container.addChild(skullBase)
         container.addChild(lid)
         container.addChild(prize)
-        
+
+        // CRITICAL: Add collision component to container for tap detection
+        // The container entity needs collision so arView.entity(at:) can detect taps
+        let collisionSize: Float = baseSize * 1.2 // Slightly larger than model for easier tapping
+        container.collision = CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(collisionSize, collisionSize, collisionSize))])
+
         return LootBoxContainer(
             container: container,
             box: skullBase,

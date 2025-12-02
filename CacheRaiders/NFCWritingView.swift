@@ -399,10 +399,8 @@ struct NFCWritingView: View {
     }
 
     private func setupARView() {
-        // Use the existing user location manager instead of creating a new one
-        userLocation = userLocationManager.currentLocation
-
-        print("📍 Initial location acquired: \(userLocation != nil ? "✓" : "waiting...")")
+        // Location will be accessed directly from userLocationManager when needed
+        print("📍 Location manager ready: \(userLocationManager.currentLocation != nil ? "✓" : "waiting...")")
     }
 
     private func handlePrimaryAction() {
@@ -449,16 +447,15 @@ struct NFCWritingView: View {
     private func startPositioning() {
         currentStep = .positioning
 
-        // Get current user location (refresh from location manager)
-        if let freshLocation = clLocationManager?.location {
-            userLocation = freshLocation
-            print("📍 Got fresh location: lat=\(freshLocation.coordinate.latitude), lon=\(freshLocation.coordinate.longitude)")
+        // Get current user location from the existing location manager
+        if let location = userLocationManager.currentLocation {
+            print("📍 Got fresh location: lat=\(location.coordinate.latitude), lon=\(location.coordinate.longitude)")
         } else {
             print("⚠️ Location manager has no location yet")
         }
 
         // Ensure we have a location
-        guard let location = userLocation else {
+        guard let location = userLocationManager.currentLocation else {
             print("❌ No user location available")
             errorMessage = "Unable to get current location. Please ensure location services are enabled."
             currentStep = .error
@@ -506,11 +503,11 @@ struct NFCWritingView: View {
     }
 
     private func captureARPosition() async throws {
-        guard let userLocation = userLocation,
+        guard let userLocation = userLocationManager.currentLocation,
               let objectType = selectedLootType,
               let nfcResult = writeResult else {
             print("❌ Missing required data for AR position capture")
-            print("   userLocation: \(userLocation != nil ? "✓" : "✗")")
+            print("   userLocation: \(userLocationManager.currentLocation != nil ? "✓" : "✗")")
             print("   objectType: \(selectedLootType != nil ? "✓" : "✗")")
             print("   nfcResult: \(writeResult != nil ? "✓" : "✗")")
             throw NSError(domain: "NFCWriting", code: -1,
@@ -925,7 +922,7 @@ struct LootTypeCard: View {
 // MARK: - Preview
 struct NFCWritingView_Previews: PreviewProvider {
     static var previews: some View {
-        NFCWritingView(locationManager: LootBoxLocationManager())
+        NFCWritingView(locationManager: LootBoxLocationManager(), userLocationManager: UserLocationManager())
     }
 }
 

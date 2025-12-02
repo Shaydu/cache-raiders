@@ -597,7 +597,7 @@ struct OpenGameNFCScannerView: View {
                 throw NSError(domain: "OpenGameNFCScanner", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
             }
 
-            if httpResponse.statusCode == 200 {
+            if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
                 // Success - create local object representation
                 let object = LootBoxLocation(
                     id: id,

@@ -109,6 +109,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     // Viewport visibility tracking for chime sounds
     private var objectsInViewport: Set<String> = [] // Track which objects are currently visible
+    private var manuallyPlacedObjectIds: Set<String> = [] // Track manually placed objects to prevent auto-removal
     private var lastViewportCheck: Date = Date() // Throttle viewport checks to improve framerate
     
     // Throttling for object recognition and placement checks
@@ -4818,20 +4819,118 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     /// This triggers immediate placement so the object appears right after placement view dismisses
     @objc private func handleARPlacementObjectSaved(_ notification: Notification) {
         guard arView != nil,
-              let userLocation = userLocationManager?.currentLocation,
-              let nearbyLocations = nearbyLocationsBinding?.wrappedValue else {
-            Swift.print("⚠️ [Placement Notification] Cannot place object: Missing AR view, location, or nearbyLocations")
+              let userLocation = userLocationManager?.currentLocation else {
+            Swift.print("⚠️ [Placement Notification] Cannot place object: Missing AR view or location")
             return
         }
-        
-        Swift.print("🔔 [Placement Notification] Received object saved notification - triggering immediate placement")
-        Swift.print("   Nearby locations: \(nearbyLocations.count)")
-        
-        // Force immediate placement check (bypass throttling)
-        // This ensures the newly placed object appears immediately
-        checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
+
+        // Check if we have direct placement data (new format)
+        if let placementData = notification.userInfo,
+           let objectId = placementData["objectId"] as? String,
+           let gpsCoordinate = placementData["gpsCoordinate"] as? CLLocationCoordinate2D,
+           let arPositionArray = placementData["arPosition"] as? [Float], arPositionArray.count >= 3,
+           let arOriginArray = placementData["arOrigin"] as? [Double], arOriginArray.count >= 2,
+           let groundingHeight = placementData["groundingHeight"] as? Double,
+           let scale = placementData["scale"] as? Float {
+
+            // Direct placement with provided AR coordinates
+            let arPosition = SIMD3<Float>(arPositionArray[0], arPositionArray[1], arPositionArray[2])
+            let arOrigin = CLLocation(latitude: arOriginArray[0], longitude: arOriginArray[1])
+
+            Swift.print("🔔 [Placement Notification] Direct placement for object: \(objectId)")
+            Swift.print("   AR Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))")
+
+            // Create temporary location for immediate placement
+            var tempLocation = LootBoxLocation(
+                id: objectId,
+                name: "New AR Object", // Will be updated when locations reload
+                type: .chalice, // Will be updated when locations reload
+                latitude: gpsCoordinate.latitude,
+                longitude: gpsCoordinate.longitude,
+                radius: 5.0,
+                grounding_height: groundingHeight,
+                source: .arManual
+            )
+
+            // Set AR offset properties after initialization
+            tempLocation.ar_offset_x = Double(arPosition.x)
+            tempLocation.ar_offset_y = Double(arPosition.y)
+            tempLocation.ar_offset_z = Double(arPosition.z)
+            tempLocation.ar_origin_latitude = arOrigin.coordinate.latitude
+            tempLocation.ar_origin_longitude = arOrigin.coordinate.longitude
+
+            // Place immediately at the exact AR coordinates
+            placeObjectAtARPosition(tempLocation, arPosition: arPosition, userLocation: userLocation)
+
+        } else {
+            // Fallback to old method (reload and check nearby)
+            guard let nearbyLocations = nearbyLocationsBinding?.wrappedValue else {
+                Swift.print("⚠️ [Placement Notification] Missing nearbyLocations for fallback method")
+                return
+            }
+
+            Swift.print("🔔 [Placement Notification] Fallback method - reloading locations")
+            Swift.print("   Nearby locations: \(nearbyLocations.count)")
+
+            // Force immediate placement check (bypass throttling)
+            checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
+        }
     }
-    
+
+    /// Place an object directly at specified AR coordinates (for immediate placement after AR creation)
+    private func placeObjectAtARPosition(_ location: LootBoxLocation, arPosition: SIMD3<Float>, userLocation: CLLocation) {
+        guard let arView = arView else {
+            Swift.print("⚠️ Cannot place object: No AR view")
+            return
+        }
+
+        // Check if object is already placed
+        if placedBoxes.keys.contains(location.id) {
+            Swift.print("ℹ️ Object \(location.id) already placed, skipping")
+            return
+        }
+
+        Swift.print("🎯 Placing object '\(location.name)' (ID: \(location.id)) at AR position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))")
+
+        do {
+            // Create anchor at the exact AR position
+            let anchor = AnchorEntity(world: arPosition)
+
+            // Get factory and create entity
+            let factory = LootBoxFactoryRegistry.factory(for: location.type)
+            let (entity, _) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: 1.0)
+
+            // Ensure entity is visible and enabled
+            entity.isEnabled = true
+
+            // Add to anchor
+            anchor.addChild(entity)
+
+            // Ground the object properly
+            let bounds = entity.visualBounds(relativeTo: anchor)
+            let currentMinY = bounds.min.y
+            let desiredMinY: Float = 0
+            let deltaY = desiredMinY - currentMinY
+            entity.position.y += deltaY
+
+            // Add to scene
+            arView.scene.addAnchor(anchor)
+
+            // Track the placement
+            placedBoxes[location.id] = anchor
+            objectsInViewport.insert(location.id)
+            objectPlacementTimes[location.id] = Date()
+
+            // Mark as manually placed to prevent removal by checkAndPlaceBoxes
+            self.manuallyPlacedObjectIds.insert(location.id)
+
+            Swift.print("✅ Successfully placed object '\(location.name)' at AR coordinates")
+
+        } catch {
+            Swift.print("❌ Failed to place object '\(location.name)': \(error)")
+        }
+    }
+
     /// Handle dialog opened notification - pause AR session
     @objc private func handleDialogOpened(_ notification: Notification) {
         isDialogOpen = true
@@ -4960,3 +5059,4 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
 
 }
+
