@@ -163,6 +163,12 @@ class ARAudioManager {
                 if !(arCoordinator?.objectsInViewport.contains(locationId) ?? false) {
                     playViewportChime(for: locationId)
 
+                    // DEBUG: Check AR scene state when chime plays
+                    if let arCoordinator = arCoordinator as? ARCoordinator {
+                        Swift.print("🔔 DEBUG: Object entered viewport, checking scene state...")
+                        arCoordinator.debugARSceneState()
+                    }
+
                     // Get object details for logging (cached lookup to avoid expensive search)
                     let location = locationManager.locations.first(where: { $0.id == locationId })
                     let objectName = location?.name ?? "Unknown"

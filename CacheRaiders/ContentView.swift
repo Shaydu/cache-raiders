@@ -124,7 +124,7 @@ struct ContentView: View {
             Button(action: {
                 // Use async to avoid modifying state during view update
                 Task { @MainActor in
-                    presentedSheet = .locationConfig
+                    presentedSheet = .treasureMap
                 }
             }) {
                 Image(systemName: "map")
@@ -453,9 +453,46 @@ struct ContentView: View {
                 userLocationManager: userLocationManager
             )
         } else {
-            // Fallback: show regular map if treasure map not available
-            LocationConfigView(locationManager: locationManager)
+            // Show general treasure map with all loot boxes when no specific treasure hunt
+            generalTreasureMapContent
         }
+    }
+
+    // Helper for general treasure map content showing all loot boxes
+    @ViewBuilder
+    private var generalTreasureMapContent: some View {
+        // Create treasure map data showing all loot boxes
+        let landmarks: [LandmarkAnnotation] = [] // Could add OSM landmarks here if needed
+
+        // Find all loot box locations (excluding NPCs for now)
+        let lootBoxLocations = locationManager.locations.filter { location in
+            // Include all valid loot boxes that should show on map
+            guard !(location.latitude == 0 && location.longitude == 0) else { return false }
+            return location.shouldShowOnMap && !location.id.hasPrefix("npc_")
+        }
+
+        // Find Captain Bones location if available
+        let npcLocations = locationManager.locations.filter { location in
+            location.id == "npc_skeleton-1" ||
+            (location.id.hasPrefix("npc_") && location.id.contains("skeleton-1"))
+        }
+        let npcLocation = npcLocations.first?.coordinate
+
+        // Use the first loot box as "treasure" or user's location as center
+        let treasureLocation = lootBoxLocations.first?.coordinate ?? userLocationManager.currentLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+
+        let mapData = TreasureMapData(
+            mapName: "Treasure Map",
+            xMarksTheSpot: treasureLocation,
+            landmarks: landmarks,
+            clueCoordinates: lootBoxLocations.map { $0.coordinate }, // Show all loot boxes as red X marks
+            npcLocation: npcLocation
+        )
+
+        TreasureMapView(
+            mapData: mapData,
+            userLocationManager: userLocationManager
+        )
     }
     
     var body: some View {

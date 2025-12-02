@@ -113,11 +113,24 @@ class ARObjectPlacer {
     private func placeBoxAtPosition(_ position: SIMD3<Float>, location: LootBoxLocation, in arView: ARView) {
         // Create anchor at position
         let anchor = AnchorEntity(world: position)
+        anchor.name = "anchor-\(location.id)"
 
-        // Create findable object
-        let findableObject = FindableObject(
+        // Create the visual entity using the factory
+        let factory = location.type.factory
+        let (entity, findableObject) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: 1.0)
+
+        // CRITICAL FIX: Add the visual entity to the anchor
+        anchor.addChild(entity)
+
+        // Start loop animation if the factory supports it
+        factory.animateLoop(entity: entity)
+
+        // Create findable object (now using the one from factory)
+        let finalFindableObject = FindableObject(
             locationId: location.id,
             anchor: anchor,
+            sphereEntity: findableObject.sphereEntity,
+            container: findableObject.container,
             location: location
         )
 
@@ -125,12 +138,17 @@ class ARObjectPlacer {
         arView.scene.addAnchor(anchor)
 
         // Track the object
-        arCoordinator?.findableObjects[location.id] = findableObject
+        arCoordinator?.findableObjects[location.id] = finalFindableObject
         arCoordinator?.objectPlacementTimes[location.id] = Date()
 
         Swift.print("✅ [Placement] Placed '\(location.name)' at AR position: (\(String(format: "%.4f", position.x)), \(String(format: "%.4f", position.y)), \(String(format: "%.4f", position.z)))m")
         Swift.print("   Object ID: \(location.id)")
         Swift.print("   Type: \(location.type.displayName)")
+        Swift.print("   Entity added to anchor: \(anchor.children.contains(where: { $0 === entity }))")
+        Swift.print("   Anchor added to scene: \(arView.scene.anchors.contains(where: { $0 === anchor }))")
+        Swift.print("   Anchor children count: \(anchor.children.count)")
+        Swift.print("   Anchor enabled: \(anchor.isEnabled)")
+        Swift.print("   Entity enabled: \(entity.isEnabled)")
     }
 
     // MARK: - Sphere Placement

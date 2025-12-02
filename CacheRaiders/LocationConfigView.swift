@@ -30,22 +30,6 @@ struct LocationConfigView: View {
 
                 // Bottom controls
                 VStack(spacing: 12) {
-                    // Game Mode Selector
-                    HStack {
-                        Text("Game Mode:")
-                            .font(.headline)
-                            .foregroundColor(.primary)
-                        Spacer()
-                        Picker("Game Mode", selection: $locationManager.gameMode) {
-                            ForEach(GameMode.allCases, id: \.self) { mode in
-                                Text(mode.displayName).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 200)
-                    }
-                    .padding(.horizontal)
-
                     if let userLocation = userLocationManager.currentLocation {
                         Button("🔄 Regenerate Loot Boxes") {
                             locationManager.regenerateLocations(near: userLocation)
