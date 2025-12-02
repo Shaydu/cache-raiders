@@ -11,10 +11,13 @@ class TreasureHuntService: ObservableObject {
 
     // MARK: - Testing Mode
     
-    /// TESTING: Set to true to place treasure within 1 foot of player for quick testing
+    /// TESTING: Set to true to place treasure within 50 feet of player for quick testing
     /// Set to false for production/normal gameplay
-    private let testingMode = true
-    private let testingDistanceFeet: Double = 1.0 // ~0.3 meter - within 1 foot for easy finding
+    private let testingMode = false
+
+    /// Force reset on init for testing
+    private let forceResetOnInit = true
+    private let testingDistanceFeet: Double = 50.0 // ~15 meters - reasonable distance for testing
     
     // MARK: - Published State
 
@@ -35,6 +38,26 @@ class TreasureHuntService: ObservableObject {
     // MARK: - Initialization
 
     init() {
+        // Force reset for testing
+        if forceResetOnInit {
+            print("🔄 FORCE RESET: Clearing all treasure hunt state for fresh start")
+            // Clear local state immediately
+            hasMap = false
+            mapPiece = nil
+            treasureLocation = nil
+            showMapModal = false
+            treasureHuntId = nil
+            shouldSpawnCorgi = false
+
+            // Clear UserDefaults
+            UserDefaults.standard.removeObject(forKey: hasMapKey)
+            UserDefaults.standard.removeObject(forKey: mapPieceKey)
+            UserDefaults.standard.removeObject(forKey: treasureLocationKey)
+
+            print("🔄 FORCE RESET: Local state cleared")
+            return // Skip loading saved state
+        }
+
         // TESTING MODE: Auto-reset treasure hunt state so we always start fresh
         if testingMode {
             print("🧪 TESTING MODE: Auto-resetting treasure hunt state for fresh start")
@@ -45,14 +68,14 @@ class TreasureHuntService: ObservableObject {
             showMapModal = false
             treasureHuntId = nil
             shouldSpawnCorgi = false
-            
+
             // Clear UserDefaults
             UserDefaults.standard.removeObject(forKey: hasMapKey)
             UserDefaults.standard.removeObject(forKey: mapPieceKey)
             UserDefaults.standard.removeObject(forKey: treasureLocationKey)
-            
+
             print("🧪 TESTING MODE: Local state cleared - map will only appear after asking Captain Bones")
-            
+
             // Also reset on server (async)
             Task {
                 do {
@@ -64,10 +87,10 @@ class TreasureHuntService: ObservableObject {
             }
             return // Skip loading saved state in testing mode
         }
-        
+
         // NORMAL MODE: Load cached state from UserDefaults (fast, offline-capable)
         loadState()
-        
+
         // Also try to load from server (authoritative source)
         // This ensures we have the latest data and handles cross-device sync
         Task {
@@ -140,6 +163,7 @@ class TreasureHuntService: ObservableObject {
         print("🗺️ [TreasureHuntService] handleMapRequest called")
         print("🗺️ [TreasureHuntService] NPC: \(npcName) (ID: \(npcId))")
         print("🗺️ [TreasureHuntService] User location: (\(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude))")
+        print("🗺️ [TreasureHuntService] Testing mode: \(testingMode)")
         print("🗺️ [TreasureHuntService] Fetching treasure map from server...")
 
         // Fetch map piece from API
@@ -192,6 +216,16 @@ class TreasureHuntService: ObservableObject {
 
             // Save state
             self.saveState()
+
+            // Notify that we have a map now (for AR treasure X placement)
+            if let mapPiece = self.mapPiece {
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("TreasureMapAcquired"),
+                    object: nil,
+                    userInfo: ["mapPiece": mapPiece]
+                )
+                print("🗺️ [TreasureHuntService] Posted TreasureMapAcquired notification")
+            }
 
             // TESTING: Add corgi NPC location close to the PLAYER (for immediate testing)
             // Normal game flow: Corgi appears near the treasure X location after arriving there

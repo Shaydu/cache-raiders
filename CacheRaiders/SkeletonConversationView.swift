@@ -31,7 +31,7 @@ struct SkeletonConversationView: View {
     @FocusState private var isTextFieldFocused: Bool
     
     // Initial greeting from skeleton
-    private let initialGreeting = "Arr, ye've found me, matey! I be Captain Bones, the skeleton of a pirate who died 200 years ago today on this very spot. I know where the treasure be buried! Ask me anything, and I'll help ye find it! [v2.0]"
+    private let initialGreeting = "Arr! Who dares disturb Captain Bones from his eternal slumber?! Speak quickly, or join me crew... FOREVER!"
     
     var body: some View {
         VStack(spacing: 0) {
@@ -226,9 +226,9 @@ struct SkeletonConversationView: View {
                             isSending = false
                             print("💬 [SkeletonConversation] Response message added to messages array")
 
-                            // Open the treasure map view after a brief delay
-                            print("⏱️ [SkeletonConversation] Scheduling map opening in 1 second...")
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                            // Small delay to ensure state is fully updated
+                            print("⏱️ [SkeletonConversation] Scheduling map opening in 0.5 seconds...")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                                 print("🗺️ [SkeletonConversation] Calling onMapMentioned callback...")
                                 onMapMentioned?()
                                 print("🗺️ [SkeletonConversation] onMapMentioned callback completed")

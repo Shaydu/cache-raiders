@@ -520,39 +520,36 @@ struct ContentView: View {
            let treasureLocation = treasureHuntService.treasureLocation {
             // Create treasure map data from map piece
             let landmarks = (mapPiece.landmarks ?? []).map { landmarkData in
-                // Derive landmark type from a known field; fallback to .building
-                let landmarkType: LandmarkType
-                if let icon = (landmarkData as AnyObject).value(forKey: "iconName") as? String {
-                    switch icon.lowercased() {
-                    case "water", "drop", "wave": landmarkType = .water
-                    case "tree", "leaf": landmarkType = .tree
-                    case "building", "house": landmarkType = .building
-                    case "mountain", "mountain.2": landmarkType = .mountain
-                    case "path", "road": landmarkType = .path
-                    default: landmarkType = .building
-                    }
-                } else if let name = (landmarkData as AnyObject).value(forKey: "name") as? String {
-                    // Heuristic based on name if no icon is available
-                    switch name.lowercased() {
-                    case _ where name.lowercased().contains("water"): landmarkType = .water
-                    case _ where name.lowercased().contains("tree"): landmarkType = .tree
-                    case _ where name.lowercased().contains("mountain"): landmarkType = .mountain
-                    case _ where name.lowercased().contains("path"): landmarkType = .path
-                    default: landmarkType = .building
-                    }
-                } else {
-                    landmarkType = .building
+                // Cast to Landmark struct
+                guard let landmark = landmarkData as? Landmark else {
+                    // Fallback for unknown landmark type
+                    return LandmarkAnnotation(
+                        id: UUID().uuidString,
+                        coordinate: CLLocationCoordinate2D(latitude: 0, longitude: 0),
+                        name: "Unknown",
+                        type: .building,
+                        iconName: LandmarkType.building.iconName
+                    )
                 }
 
-                // Safely extract fields with KVC to avoid compile-time dependency on a specific model
-                let latitude = (landmarkData as AnyObject).value(forKey: "latitude") as? Double ?? 0
-                let longitude = (landmarkData as AnyObject).value(forKey: "longitude") as? Double ?? 0
-                let name = (landmarkData as AnyObject).value(forKey: "name") as? String ?? ""
+                // Derive landmark type from the landmark.type string
+                let landmarkType: LandmarkType
+                switch landmark.type.lowercased() {
+                case "water": landmarkType = .water
+                case "tree": landmarkType = .tree
+                case "building": landmarkType = .building
+                case "mountain": landmarkType = .mountain
+                case "path": landmarkType = .path
+                case "park": landmarkType = .park
+                case "bridge": landmarkType = .bridge
+                case "place_of_worship": landmarkType = .placeOfWorship
+                default: landmarkType = .building
+                }
 
                 return LandmarkAnnotation(
                     id: UUID().uuidString,
-                    coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
-                    name: name,
+                    coordinate: CLLocationCoordinate2D(latitude: landmark.latitude, longitude: landmark.longitude),
+                    name: landmark.name,
                     type: landmarkType,
                     iconName: landmarkType.iconName
                 )
@@ -720,16 +717,9 @@ struct ContentView: View {
     }
 
     private func setupInventoryNotifications() {
-        // Listen for inventory item additions
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("InventoryItemAdded"),
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            if let item = notification.userInfo?["item"] as? InventoryItem {
-                self?.inventoryNotification = "📦 \(item.name) added to inventory!"
-            }
-        }
+        // Note: ContentView is a struct, so we can't capture self in notification observers
+        // Inventory notifications are handled by the InventoryService ObservableObject
+        // and the UI updates automatically through SwiftUI's state management
     }
 
     private func setupNFCNotifications() {
@@ -738,19 +728,19 @@ struct ContentView: View {
             forName: NSNotification.Name("NFCObjectCreated"),
             object: nil,
             queue: .main
-        ) { [weak self] notification in
+        ) { notification in
             if let object = notification.object as? LootBoxLocation {
                 // Show success notification
-                self?.collectionNotification = "🎯 New \(object.type.displayName) created via NFC!"
+                self.collectionNotification = "🎯 New \(object.type.displayName) created via NFC!"
 
                 // Refresh locations to show the new object on map
                 Task {
-                    await self?.locationManager.refreshLocations()
+                    await self.locationManager.loadLocationsFromAPI()
                 }
 
                 // Clear notification after 3 seconds
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                    self?.collectionNotification = nil
+                    self.collectionNotification = nil
                 }
             }
         }

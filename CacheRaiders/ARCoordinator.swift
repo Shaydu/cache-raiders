@@ -89,7 +89,7 @@ class ARCoordinator: ARCoordinatorCore {
         if locationManager?.gameMode == .deadMensSecrets && placedNPCs["skeleton-1"] == nil {
             Swift.print("🎭 ARCoordinator initialized in story mode - spawning Captain Bones")
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                self?.placeNPC(type: .skeleton)
+                self?.placeNPC(type: NPCType.skeleton)
             }
         } else {
             Swift.print("❌ [ARCoordinator] NOT spawning Captain Bones:")
@@ -177,16 +177,24 @@ class ARCoordinator: ARCoordinatorCore {
             name: NSNotification.Name("DialogClosed"),
             object: nil
         )
+
+        // Listen for treasure map acquisition to place red X in AR
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleTreasureMapAcquired),
+            name: NSNotification.Name("TreasureMapAcquired"),
+            object: nil
+        )
     }
 
     @objc private func spawnSkeletonNPC() {
         Swift.print("📨 Received SpawnSkeletonNPC notification - spawning Captain Bones")
-        placeNPC(type: .skeleton)
+        placeNPC(type: NPCType.skeleton)
     }
 
     @objc private func spawnCorgiNPC() {
         Swift.print("🐕 Received request to spawn corgi NPC")
-        placeNPC(type: .corgi)
+        placeNPC(type: NPCType.corgi)
     }
 
     @objc private func handleGameModeChange() {
@@ -202,6 +210,20 @@ class ARCoordinator: ARCoordinatorCore {
     @objc private func handleDialogClosed() {
         Swift.print("📱 Dialog closed - resuming AR session")
         resumeARSession()
+    }
+
+    @objc func handleTreasureMapAcquired(notification: Notification) {
+        Swift.print("🗺️ Received TreasureMapAcquired notification - placing red X in AR")
+
+        // Get treasure location from treasure hunt service
+        guard let treasureHuntService = treasureHuntService,
+              let treasureLocation = treasureHuntService.treasureLocation else {
+            Swift.print("⚠️ No treasure hunt service or treasure location available")
+            return
+        }
+
+        // Place red X marker at treasure location
+        placeTreasureXAtLocation(treasureLocation)
     }
 
     // MARK: - Public Interface Methods
@@ -246,6 +268,7 @@ class ARCoordinator: ARCoordinatorCore {
             Swift.print("🎭 Updated tap handler with placed NPCs: \(self.placedNPCs.keys.sorted())")
         }
     }
+
 
     /// Get AR-enhanced location
     func getAREnhancedLocation() -> (latitude: Double, longitude: Double, arOffsetX: Double, arOffsetY: Double, arOffsetZ: Double)? {
@@ -462,14 +485,106 @@ class ARCoordinator: ARCoordinatorCore {
     }
 
     private func handleRegularNPCTap(_ npcId: String) {
-        Swift.print("🎯 Handling NPC tap for \(npcId) using npcManager")
+        Swift.print("🎯 Handling NPC tap for \(npcId)")
         Swift.print("🎯 npcManager exists: \(self.npcManager != nil)")
+        Swift.print("🎯 npcService exists: \(self.npcService != nil)")
         Swift.print("🎯 arView exists: \(self.arView != nil)")
 
-        if let arView = self.arView {
-            self.npcManager?.handleNPCTap(npcId: npcId, in: arView)
+        // Use full conversation view for skeleton (Captain Bones)
+        if npcId == NPCType.skeleton.npcId {
+            Swift.print("💀 Skeleton tapped - using full conversation view")
+            self.npcService?.handleNPCTap(type: NPCType.skeleton)
         } else {
-            Swift.print("⚠️ Cannot handle NPC tap: arView is nil")
+            // Use inline alerts for other NPCs (corgi)
+            Swift.print("🎯 Other NPC tapped - using inline alerts")
+            if let arView = self.arView {
+                self.npcManager?.handleNPCTap(npcId: npcId, in: arView)
+            } else {
+                Swift.print("⚠️ Cannot handle NPC tap: arView is nil")
+            }
         }
+    }
+
+    /// Place a red X marker at the treasure location in AR
+    func placeTreasureXAtLocation(_ location: CLLocation) {
+        guard let arView = arView else {
+            Swift.print("⚠️ Cannot place treasure X: AR view not available")
+            return
+        }
+
+        // Check if treasure X is already placed
+        if treasureXPlaced {
+            Swift.print("✅ Treasure X already placed, skipping")
+            return
+        }
+
+        Swift.print("🎯 Placing red X marker at treasure location: (\(location.coordinate.latitude), \(location.coordinate.longitude))")
+
+        do {
+            // Try to use geospatial service for precise GPS positioning
+            if let geospatialService = geospatialService,
+               let arPosition = geospatialService.convertGPSToAR(location) {
+
+                Swift.print("📍 Using geospatial positioning: AR coords (\(String(format: "%.2f", arPosition.x)), \(String(format: "%.2f", arPosition.y)), \(String(format: "%.2f", arPosition.z)))")
+
+                // Create anchor at precise GPS location
+                let anchor = AnchorEntity(world: arPosition)
+
+                // Create a red X marker model
+                let xMarker = createTreasureXMarker()
+                anchor.addChild(xMarker)
+
+                // Add to AR scene
+                arView.scene.addAnchor(anchor)
+
+                // Mark as placed
+                treasureXPlaced = true
+
+                Swift.print("✅ Treasure X marker placed at precise GPS location")
+
+            } else {
+                // Fallback: place relative to user position (demo mode)
+                Swift.print("⚠️ Geospatial service not available, using fallback positioning")
+
+                // Create anchor 5 meters in front for demo
+                let anchor = AnchorEntity(world: SIMD3<Float>(0, 0, -5))
+
+                // Create a red X marker model
+                let xMarker = createTreasureXMarker()
+                anchor.addChild(xMarker)
+
+                // Add to AR scene
+                arView.scene.addAnchor(anchor)
+
+                // Mark as placed
+                treasureXPlaced = true
+
+                Swift.print("✅ Treasure X marker placed in fallback mode (5m in front)")
+            }
+
+        } catch {
+            Swift.print("❌ Failed to place treasure X marker: \(error.localizedDescription)")
+        }
+    }
+
+    /// Create a visual red X marker for the treasure location
+    private func createTreasureXMarker() -> ModelEntity {
+        // Create a red X shape using simple geometry
+        let mesh = MeshResource.generateText(
+            "✕",
+            extrusionDepth: 0.01,
+            font: .systemFont(ofSize: 0.5),
+            containerFrame: CGRect(x: 0, y: 0, width: 0.5, height: 0.5),
+            alignment: .center,
+            lineBreakMode: .byWordWrapping
+        )
+
+        let material = SimpleMaterial(color: .red, roughness: 0.5, isMetallic: false)
+        let modelEntity = ModelEntity(mesh: mesh, materials: [material])
+
+        // Scale it appropriately for AR
+        modelEntity.scale = SIMD3<Float>(2, 2, 2)
+
+        return modelEntity
     }
 }

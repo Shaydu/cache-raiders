@@ -5,7 +5,7 @@ import Combine
 
 // MARK: - Precise AR Positioning Service
 /// Handles high-precision AR object placement using NFC + ARKit anchoring
-class PreciseARPositioningService {
+class PreciseARPositioningService: ObservableObject {
     // MARK: - Singleton
     static let shared = PreciseARPositioningService()
 

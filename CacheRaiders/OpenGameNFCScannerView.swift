@@ -1,5 +1,6 @@
 import SwiftUI
 import ARKit
+import RealityKit
 import CoreLocation
 import CoreNFC
 
@@ -7,7 +8,7 @@ import CoreNFC
 /// Handles NFC scanning in open game mode to create new objects with high-precision AR coordinates
 struct OpenGameNFCScannerView: View {
     @Environment(\.dismiss) var dismiss
-    @StateObject private var nfcService = NFCService()
+    private let nfcService = NFCService.shared
     @StateObject private var precisePositioning = PreciseARPositioningService.shared
     @StateObject private var arIntegrationService = NFCARIntegrationService.shared
 
@@ -360,7 +361,7 @@ struct OpenGameNFCScannerView: View {
     }
 
     private func setupARView() {
-        arView = ARView(frame: .zero)
+        arView = ARView(frame: CGRect(x: 0, y: 0, width: 100, height: 100))
         if let arView = arView {
             arIntegrationService.setup(with: arView)
             precisePositioning.setup(with: arView)
@@ -534,7 +535,8 @@ struct OpenGameNFCScannerView: View {
             let jsonData = try JSONSerialization.data(withJSONObject: objectData)
 
             // Create URL request
-            guard let url = URL(string: "http://\(APIService.shared.serverIP):5000/api/objects") else {
+            let baseURL = APIService.shared.baseURL
+            guard let url = URL(string: "\(baseURL)/api/objects") else {
                 throw NSError(domain: "OpenGameNFCScanner", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
             }
 
@@ -546,7 +548,11 @@ struct OpenGameNFCScannerView: View {
             // Send request
             let (_, response) = try await URLSession.shared.data(for: request)
 
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+            guard let httpResponse = response as? HTTPURLResponse else {
+                throw NSError(domain: "OpenGameNFCScanner", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
+            }
+
+            if httpResponse.statusCode == 200 {
                 // Success - create local object representation
                 let object = LootBoxLocation(
                     id: id,
