@@ -12,7 +12,14 @@ struct ContentView: View {
     @StateObject private var locationManager = LootBoxLocationManager()
     @StateObject private var userLocationManager = UserLocationManager()
     @StateObject private var treasureHuntService = TreasureHuntService()
-    @StateObject private var inventoryService = InventoryService()
+    @StateObject private var gridTreasureMapService = GridTreasureMapService()
+    
+    // Grid treasure map modal state (separate from sheets)
+    @State private var showGridTreasureMap = false
+    
+    // QR Scanner state (manually triggered from Settings)
+    @State private var showQRScanner = false
+    @State private var scannedURL: String?
     
     // Use enum-based sheet state to prevent multiple sheets being presented simultaneously
     enum SheetType: Identifiable, Equatable {
@@ -22,10 +29,7 @@ struct ContentView: View {
         case leaderboard
         case skeletonConversation(npcId: String, npcName: String)
         case treasureMap
-        case clueDrawer
-        case inventory
-        case nfcScanner
-
+        
         var id: String {
             switch self {
             case .locationConfig: return "locationConfig"
@@ -34,9 +38,6 @@ struct ContentView: View {
             case .leaderboard: return "leaderboard"
             case .skeletonConversation(let npcId, _): return "skeletonConversation_\(npcId)"
             case .treasureMap: return "treasureMap"
-            case .clueDrawer: return "clueDrawer"
-            case .inventory: return "inventory"
-            case .nfcScanner: return "nfcScanner"
             }
         }
     }
@@ -47,7 +48,6 @@ struct ContentView: View {
     @State private var distanceToNearest: Double?
     @State private var temperatureStatus: String?
     @State private var collectionNotification: String?
-    @State private var inventoryNotification: String?
     @State private var nearestObjectDirection: Double?
     
     // PERFORMANCE: Task for debouncing location updates to prevent excessive API calls
@@ -69,52 +69,26 @@ struct ContentView: View {
         return (found: foundCount, total: totalCount)
     }
 
-    // Helper function to format distance in meters
-    private func formatDistance(_ meters: Double) -> String {
-        if meters < 1.0 {
-            // Show centimeters for very close distances
-            return String(format: "%.0fcm", meters * 100)
-        } else if meters < 100 {
-            // Show one decimal place for distances under 100m
-            return String(format: "%.1fm", meters)
+    // Helper function to convert meters to feet and inches
+    private func formatDistanceInFeetInches(_ meters: Double) -> String {
+        let totalInches = meters * 39.3701 // Convert meters to inches
+        let feet = Int(totalInches / 12)
+        let inches = Int(totalInches.truncatingRemainder(dividingBy: 12))
+        
+        if feet > 0 {
+            return "\(feet)'\(inches)\""
         } else {
-            // Show whole meters for larger distances
-            return String(format: "%.0fm", meters)
+            return "\(inches)\""
         }
-    }
-
-    // Helper function to convert bearing to compass direction
-    private func bearingToCompassDirection(_ bearing: Double) -> String {
-        let directions = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"]
-        let index = Int((bearing + 22.5) / 45.0) % 8
-        return directions[index]
     }
     
-    // GPS connection quality levels
-    private enum GPSQuality {
-        case disconnected  // No location at all
-        case degraded      // Location available but poor accuracy (> 50m)
-        case good          // Good accuracy (≤ 50m)
-    }
-
-    // Computed property to determine GPS connection quality
-    private var gpsQuality: GPSQuality {
-        guard let location = userLocationManager.currentLocation else {
-            return .disconnected
-        }
-        // Check horizontal accuracy to determine quality
-        if location.horizontalAccuracy < 0 {
-            return .disconnected  // Invalid accuracy means disconnected
-        } else if location.horizontalAccuracy <= 50 {
-            return .good  // ≤ 50m is good accuracy
-        } else {
-            return .degraded  // > 50m is degraded accuracy
-        }
-    }
-
-    // Legacy property for backward compatibility
+    // Computed property to determine GPS connection status
     private var isGPSConnected: Bool {
-        return gpsQuality != .disconnected
+        guard let location = userLocationManager.currentLocation else {
+            return false
+        }
+        // GPS is connected if we have a valid location with good accuracy
+        return location.horizontalAccuracy >= 0 && location.horizontalAccuracy < 100
     }
     
     // MARK: - View Components
@@ -123,8 +97,7 @@ struct ContentView: View {
         VStack {
             topToolbarView
             
-            // Location coordinates removed for cleaner UI
-            // locationDisplayView
+            locationDisplayView
             
             Spacer()
             
@@ -160,33 +133,16 @@ struct ContentView: View {
                     .cornerRadius(10)
             }
             
-            // In Story Mode: Show clue drawer button instead of + button
-            // In Open Mode: Show + button for AR placement
-            if locationManager.gameMode == .deadMensSecrets {
-                Button(action: {
-                    // Open clue drawer in story mode
-                    Task { @MainActor in
-                        presentedSheet = .clueDrawer
-                    }
-                }) {
-                    Image(systemName: "book.closed.fill")
-                        .foregroundColor(.orange)
-                        .padding()
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(10)
+            Button(action: {
+                // Use async to avoid modifying state during view update
+                Task { @MainActor in
+                    presentedSheet = .arPlacement
                 }
-            } else {
-                Button(action: {
-                    // Use async to avoid modifying state during view update
-                    Task { @MainActor in
-                        presentedSheet = .arPlacement
-                    }
-                }) {
-                    Image(systemName: "plus")
-                        .padding()
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(10)
-                }
+            }) {
+                Image(systemName: "plus")
+                    .padding()
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(10)
             }
         }
         .padding(.top)
@@ -203,51 +159,68 @@ struct ContentView: View {
                     return distanceToNearest != nil
                 }
             }()
-
+            
             if shouldShowNav, let distance = distanceToNearest {
-                VStack(spacing: 2) {
-                    Button(action: {
-                        // Open treasure map (only available after skeleton gives map)
-                        if treasureHuntService.hasMap {
-                            presentedSheet = .treasureMap
-                        } else {
-                            // Manually send location to server (also sent automatically every 5 seconds)
-                            userLocationManager.sendCurrentLocationToServer()
+                Button(action: {
+                    // Toggle grid treasure map (only available after skeleton gives map)
+                    if treasureHuntService.hasMap,
+                       let treasureLocation = treasureHuntService.treasureLocation,
+                       let mapPiece = treasureHuntService.mapPiece {
+                        // Update grid map service with current data
+                        let landmarks = mapPiece.landmarks.map { landmarkData in
+                            let landmarkType: LandmarkType
+                            switch landmarkData.type.lowercased() {
+                            case "water": landmarkType = .water
+                            case "tree": landmarkType = .tree
+                            case "building": landmarkType = .building
+                            case "mountain": landmarkType = .mountain
+                            case "path": landmarkType = .path
+                            default: landmarkType = .building
+                            }
+                            
+                            return LandmarkAnnotation(
+                                id: UUID().uuidString,
+                                coordinate: CLLocationCoordinate2D(latitude: landmarkData.latitude, longitude: landmarkData.longitude),
+                                name: landmarkData.name,
+                                type: landmarkType,
+                                iconName: landmarkType.iconName
+                            )
                         }
-                    }) {
-                        HStack(spacing: 2) {
-                            Image(systemName: "location.north.line.fill")
-                                .font(.system(size: 12))
-                                .foregroundColor(.white)
-                                .rotationEffect(.degrees(nearestObjectDirection ?? 0))
-
-                            Text("GPS")
-                                .font(.system(size: 10))
-                                .fontWeight(.bold)
-                                .foregroundColor(.white)
-
-                            Text(formatDistance(distance))
-                                .font(.system(size: 10))
-                                .fontWeight(.bold)
+                        
+                        gridTreasureMapService.updateMapData(
+                            treasureLocation: treasureLocation.coordinate,
+                            landmarks: landmarks,
+                            userLocation: userLocationManager.currentLocation?.coordinate
+                        )
+                        showGridTreasureMap = true
+                    } else {
+                        // Manually send location to server (also sent automatically every 5 seconds)
+                        userLocationManager.sendCurrentLocationToServer()
+                    }
+                }) {
+                    VStack(alignment: .center, spacing: 4) {
+                        directionArrowView
+                        
+                        if let temperature = temperatureStatus {
+                            Text(temperature)
+                                .font(.caption)
+                                .fontWeight(.semibold)
                                 .foregroundColor(.white)
                         }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 4)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(6)
-                        .overlay(directionIndicatorBorder)
+                        
+                        Text(formatDistanceInFeetInches(distance))
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.white)
                     }
-                    .buttonStyle(PlainButtonStyle())
-
-                    // Directional clue text below the GPS box
-                    if let direction = nearestObjectDirection {
-                        Text("Head \(bearingToCompassDirection(direction)) to find the treasure")
-                            .font(.caption2)
-                            .foregroundColor(.white.opacity(0.8))
-                            .multilineTextAlignment(.center)
-                            .lineLimit(2)
-                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(8)
+                    .overlay(directionIndicatorBorder)
                 }
+                .buttonStyle(PlainButtonStyle())
+                .padding(.top)
             }
         }
     }
@@ -256,12 +229,12 @@ struct ContentView: View {
         Group {
             if let direction = nearestObjectDirection {
                 Image(systemName: "location.north.line.fill")
-                    .font(.system(size: 16))
+                    .font(.caption)
                     .foregroundColor(.white)
                     .rotationEffect(.degrees(direction))
             } else {
                 Image(systemName: "location.north.line.fill")
-                    .font(.system(size: 16))
+                    .font(.caption)
                     .foregroundColor(.white)
             }
         }
@@ -273,15 +246,10 @@ struct ContentView: View {
     }
     
     private var directionIndicatorBorderColor: Color {
-        // Show GPS quality via border color (2px border)
-        switch gpsQuality {
-        case .good:
-            return .green      // Green: Full GPS connectivity (≤ 50m accuracy)
-        case .degraded:
-            return .orange     // Amber: Degraded GPS (> 50m accuracy)
-        case .disconnected:
-            return .red        // Red: Disconnected (no location)
+        if userLocationManager.isSendingLocation || isRecentlySent {
+            return .blue
         }
+        return isGPSConnected ? .green : .red
     }
     
     private var isRecentlySent: Bool {
@@ -293,64 +261,19 @@ struct ContentView: View {
     
     private var rightButtonsView: some View {
         HStack(spacing: 8) {
-            // Treasure map button removed - users can access it from the discoveries log book (ClueDrawerView)
-
-            // Inventory button
             Button(action: {
                 // Use async to avoid modifying state during view update
                 Task { @MainActor in
-                    presentedSheet = .inventory
+                    presentedSheet = .leaderboard
                 }
             }) {
-                ZStack {
-                    Image(systemName: "backpack.fill")
-                        .foregroundColor(.brown)
-                        .padding()
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(10)
-
-                    // New items badge
-                    if inventoryService.hasNewItems {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 8, height: 8)
-                            .offset(x: 10, y: -10)
-                    }
-                }
+                Image(systemName: "trophy.fill")
+                    .foregroundColor(.yellow)
+                    .padding()
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(10)
             }
-
-            // Show leaderboard trophy only in Open mode (not in story mode)
-            if locationManager.gameMode == .open {
-                Button(action: {
-                    // Use async to avoid modifying state during view update
-                    Task { @MainActor in
-                        presentedSheet = .leaderboard
-                    }
-                }) {
-                    Image(systemName: "trophy.fill")
-                        .foregroundColor(.yellow)
-                        .padding()
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(10)
-                }
-            }
-
-            // NFC Scanner button (Open Game Mode)
-            if locationManager.gameMode == .open {
-                Button(action: {
-                    // Use async to avoid modifying state during view update
-                    Task { @MainActor in
-                        presentedSheet = .nfcScanner
-                    }
-                }) {
-                    Image(systemName: "wave.3.right.circle")
-                        .foregroundColor(.blue)
-                        .padding()
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(10)
-                }
-            }
-
+            
             Button(action: {
                 // Use async to avoid modifying state during view update
                 Task { @MainActor in
@@ -369,20 +292,17 @@ struct ContentView: View {
         .padding(.top)
     }
     
-    // DISABLED: Location coordinates display removed for cleaner UI
-    // To re-enable, uncomment the code below and add locationDisplayView back to topOverlayView
     private var locationDisplayView: some View {
-        EmptyView()
-        // Group {
-        //     if let currentLocation = userLocationManager.currentLocation {
-        //         Text("📍 Location: \(currentLocation.coordinate.latitude, specifier: "%.8f"), \(currentLocation.coordinate.longitude, specifier: "%.8f")")
-        //             .font(.caption)
-        //             .padding()
-        //             .background(.ultraThinMaterial)
-        //             .cornerRadius(10)
-        //             .padding(.top)
-        //     }
-        // }
+        Group {
+            if let currentLocation = userLocationManager.currentLocation {
+                Text("📍 Location: \(currentLocation.coordinate.latitude, specifier: "%.8f"), \(currentLocation.coordinate.longitude, specifier: "%.8f")")
+                    .font(.caption)
+                    .padding()
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(10)
+                    .padding(.top)
+            }
+        }
     }
     
     private var notificationsView: some View {
@@ -396,27 +316,7 @@ struct ContentView: View {
                     .cornerRadius(10)
                     .offset(y: -54)
             }
-
-            // Inventory notification
-            if let notification = inventoryNotification {
-                Text(notification)
-                    .font(.title2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .padding()
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(15)
-                    .shadow(radius: 10)
-                    .onAppear {
-                        // Auto-dismiss after 3 seconds
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                            withAnimation {
-                                inventoryNotification = nil
-                            }
-                        }
-                    }
-            }
-
+            
             if let notification = collectionNotification {
                 Text(notification)
                     .font(.title2)
@@ -483,33 +383,24 @@ struct ContentView: View {
                 npcName: npcName,
                 npcId: npcId,
                 onMapMentioned: {
-                    Swift.print("🗺️ ContentView: onMapMentioned callback triggered - opening treasure map")
                     // Close conversation and open treasure map
                     presentedSheet = nil
                     // Small delay to allow conversation to close smoothly
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         presentedSheet = .treasureMap
-                        Swift.print("🗺️ ContentView: Treasure map sheet opened")
                     }
                 },
                 treasureHuntService: treasureHuntService,
-                userLocationManager: userLocationManager,
-                inventoryService: inventoryService
+                userLocationManager: userLocationManager
             )
-            .presentationDetents([.medium])
+            .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
-            .presentationBackground(.clear)
+            .presentationBackgroundInteraction(.enabled)
             .presentationBackground {
                 Color.black.opacity(0.95)
             }
         case .treasureMap:
             treasureMapSheetContent
-        case .clueDrawer:
-            clueDrawerSheetContent
-        case .inventory:
-            InventoryView(inventoryService: inventoryService)
-        case .nfcScanner:
-            OpenGameNFCScannerView()
         }
     }
     
@@ -519,37 +410,21 @@ struct ContentView: View {
         if let mapPiece = treasureHuntService.mapPiece,
            let treasureLocation = treasureHuntService.treasureLocation {
             // Create treasure map data from map piece
-            let landmarks = (mapPiece.landmarks ?? []).map { landmarkData in
-                // Cast to Landmark struct
-                guard let landmark = landmarkData as? Landmark else {
-                    // Fallback for unknown landmark type
-                    return LandmarkAnnotation(
-                        id: UUID().uuidString,
-                        coordinate: CLLocationCoordinate2D(latitude: 0, longitude: 0),
-                        name: "Unknown",
-                        type: .building,
-                        iconName: LandmarkType.building.iconName
-                    )
-                }
-
-                // Derive landmark type from the landmark.type string
+            let landmarks = mapPiece.landmarks.map { landmarkData in
                 let landmarkType: LandmarkType
-                switch landmark.type.lowercased() {
+                switch landmarkData.type.lowercased() {
                 case "water": landmarkType = .water
                 case "tree": landmarkType = .tree
                 case "building": landmarkType = .building
                 case "mountain": landmarkType = .mountain
                 case "path": landmarkType = .path
-                case "park": landmarkType = .park
-                case "bridge": landmarkType = .bridge
-                case "place_of_worship": landmarkType = .placeOfWorship
                 default: landmarkType = .building
                 }
-
+                
                 return LandmarkAnnotation(
                     id: UUID().uuidString,
-                    coordinate: CLLocationCoordinate2D(latitude: landmark.latitude, longitude: landmark.longitude),
-                    name: landmark.name,
+                    coordinate: CLLocationCoordinate2D(latitude: landmarkData.latitude, longitude: landmarkData.longitude),
+                    name: landmarkData.name,
                     type: landmarkType,
                     iconName: landmarkType.iconName
                 )
@@ -583,26 +458,6 @@ struct ContentView: View {
         }
     }
     
-    // Helper for clue drawer content - Story Mode inventory of collected items and map
-    @ViewBuilder
-    private var clueDrawerSheetContent: some View {
-        ClueDrawerView(
-            treasureHuntService: treasureHuntService,
-            locationManager: locationManager,
-            userLocationManager: userLocationManager,
-            onShowTreasureMap: {
-                // When user taps map in clue drawer, open the detailed treasure map
-                presentedSheet = nil
-                // Small delay to allow clue drawer to close smoothly
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    presentedSheet = .treasureMap
-                }
-            }
-        )
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-    }
-    
     var body: some View {
         mainContentView
             .onAppear(perform: handleAppear)
@@ -615,6 +470,12 @@ struct ContentView: View {
                         conversationNPC = nil
                     }
                 }
+            }
+            .onChange(of: showGridTreasureMap) { oldValue, newValue in
+                handleGridMapChange(oldValue: oldValue, newValue: newValue)
+            }
+            .fullScreenCover(isPresented: $showGridTreasureMap) {
+                GridTreasureMapView(mapService: gridTreasureMapService)
             }
             .sheet(item: $presentedSheet) { sheetType in
                 sheetContent(for: sheetType)
@@ -635,15 +496,14 @@ struct ContentView: View {
                     }
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TreasureMapMentioned"))) { _ in
-                Swift.print("🗺️ ContentView: TreasureMapMentioned notification received - opening treasure map")
-                // Close any current sheet and open treasure map (like onMapMentioned callback)
-                presentedSheet = nil
-                // Small delay to allow sheet to close smoothly
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    presentedSheet = .treasureMap
-                    Swift.print("🗺️ ContentView: Treasure map sheet opened via notification")
-                }
+            .sheet(isPresented: $showQRScanner) {
+                QRCodeScannerView(scannedURL: $scannedURL)
+            }
+            .onChange(of: showQRScanner) { oldValue, newValue in
+                handleQRScannerChange(oldValue: oldValue, newValue: newValue)
+            }
+            .onChange(of: scannedURL) { oldURL, newURL in
+                handleScannedURLChange(oldURL: oldURL, newURL: newURL)
             }
             .onChange(of: userLocationManager.currentLocation) { oldLocation, newLocation in
                 handleLocationChange(oldLocation: oldLocation, newLocation: newLocation)
@@ -665,13 +525,10 @@ struct ContentView: View {
                 treasureHuntService: treasureHuntService
             )
             .ignoresSafeArea()
-
+            
             topOverlayView
-
+            
             bottomCounterView
-
-            // Precise positioning overlay (shows GPS → NFC → AR transition)
-            PrecisePositioningOverlay()
         }
     }
     
@@ -679,8 +536,7 @@ struct ContentView: View {
     private func handleAppear() {
         // Set location manager reference in user location manager for game mode checks
         userLocationManager.lootBoxLocationManager = locationManager
-        userLocationManager.treasureHuntService = treasureHuntService
-
+        
         userLocationManager.requestLocationPermission()
 
         // Initialize offline mode manager with location manager reference
@@ -689,15 +545,6 @@ struct ContentView: View {
         // Auto-connect WebSocket on app start (only if not in offline mode)
         if !OfflineModeManager.shared.isOfflineMode {
             WebSocketService.shared.connect()
-            
-            // CRITICAL: Refresh game mode from server on app appear
-            // This ensures we're always in sync with server, even if WebSocket connection fails
-            Task {
-                // Wait a moment for API to be ready
-                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
-                print("🎮 [ContentView] Refreshing game mode on app appear...")
-                await locationManager.refreshGameMode()
-            }
         } else {
             print("📴 Offline mode enabled - skipping WebSocket connection")
         }
@@ -707,45 +554,10 @@ struct ContentView: View {
             APIService.shared.syncSavedUserNameToServer()
         }
         
-        // Offline mode is supported for local testing without server connection
-
-        // Set up inventory notification listener
-        setupInventoryNotifications()
-
-        // Set up NFC object creation listener
-        setupNFCNotifications()
+        // Note: QR scanner is now only available manually from Settings
+        // Offline mode is supported, so we don't automatically show QR scanner on connection failures
     }
-
-    private func setupInventoryNotifications() {
-        // Note: ContentView is a struct, so we can't capture self in notification observers
-        // Inventory notifications are handled by the InventoryService ObservableObject
-        // and the UI updates automatically through SwiftUI's state management
-    }
-
-    private func setupNFCNotifications() {
-        // Listen for NFC object creation
-        NotificationCenter.default.addObserver(
-            forName: NSNotification.Name("NFCObjectCreated"),
-            object: nil,
-            queue: .main
-        ) { notification in
-            if let object = notification.object as? LootBoxLocation {
-                // Show success notification
-                self.collectionNotification = "🎯 New \(object.type.displayName) created via NFC!"
-
-                // Refresh locations to show the new object on map
-                Task {
-                    await self.locationManager.loadLocationsFromAPI()
-                }
-
-                // Clear notification after 3 seconds
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                    self.collectionNotification = nil
-                }
-            }
-        }
-    }
-
+    
     private func handleSheetChange(oldSheet: SheetType?, newSheet: SheetType?) {
         // Notify AR coordinator when sheets are presented/dismissed
         if newSheet != nil && oldSheet == nil {
@@ -757,6 +569,56 @@ struct ContentView: View {
         }
     }
     
+    private func handleGridMapChange(oldValue: Bool, newValue: Bool) {
+        // Handle fullScreenCover presentation
+        if newValue && !oldValue {
+            NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
+        } else if !newValue && oldValue {
+            NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
+        }
+    }
+    
+    private func handleQRScannerChange(oldValue: Bool, newValue: Bool) {
+        // Handle QR scanner sheet presentation
+        if newValue && !oldValue {
+            NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
+        } else if !newValue && oldValue {
+            NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
+        }
+    }
+    
+    private func handleScannedURLChange(oldURL: String?, newURL: String?) {
+        guard let url = newURL, url != oldURL else { return }
+        
+        // Update API URL with scanned QR code
+        DispatchQueue.main.async {
+            // Save the scanned URL
+            UserDefaults.standard.set(url, forKey: "apiBaseURL")
+            
+            // Reset scannedURL after processing to allow scanning again
+            self.scannedURL = nil
+            
+            // Try to reconnect
+            WebSocketService.shared.disconnect()
+            WebSocketService.shared.connect()
+            
+            // Verify connection
+            Task {
+                do {
+                    let isHealthy = try await APIService.shared.checkHealth()
+                    if isHealthy {
+                        // Connection successful - close QR scanner
+                        await MainActor.run {
+                            self.showQRScanner = false
+                        }
+                    }
+                } catch {
+                    // Still failed - keep QR scanner open
+                    print("⚠️ Connection still failed after scanning QR code")
+                }
+            }
+        }
+    }
     
     private func handleLocationChange(oldLocation: CLLocation?, newLocation: CLLocation?) {
         // PERFORMANCE: Debounce location updates to prevent excessive API calls

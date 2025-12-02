@@ -148,53 +148,6 @@ P.P.S. Sorry about the skeleton curse thing.""",
     BANDIT_DISTANCE_FROM_CORGI = 50  # meters - Bandits are 50m from where Corgi is
     REMAINING_TREASURE_PERCENTAGE = 50  # Only half the treasure remains
     
-    # Victory Ditty - Sir Biscuit's celebratory jig when treasure is recovered!
-    VICTORY_DITTY = {
-        "intro": "*clears throat* *excited tail spinning* AHEM! Here's a little ditty to make up for my half of the treasure I ate! *starts dancing*",
-        "verse1": """🎵 Oh I'm a hungry little pup, ARF ARF ARF!
-I found some gold and ate it up, WOOF WOOF WOOF!
-The steaks were good, the ale was fine,
-But now I'm sorry, so here's a rhyme! 🎵""",
-        "verse2": """🎵 We chased the bandits through the land, ARF ARF ARF!
-You caught them with your mighty hand, WOOF WOOF WOOF!
-Half the treasure's back with you,
-And I made a friend that's brave and true! 🎵""",
-        "verse3": """🎵 So thank you friend for not being mad, ARF ARF ARF!
-You're the best friend I ever had, WOOF WOOF WOOF!
-Captain Bones might still be sore,
-But together we'll find treasures MORE! 🎵""",
-        "outro": "*bows with a flourish* *tail wagging furiously* *happy bark* ARF ARF! Thank you, thank you! You've been a wonderful audience! WOOF! 🐕",
-        "full_ditty": """*clears throat* *excited tail spinning* 
-
-AHEM! Here's a little ditty to make up for my half of the treasure I ate!
-
-*starts dancing on hind legs*
-
-🎵 Oh I'm a hungry little pup, ARF ARF ARF!
-I found some gold and ate it up, WOOF WOOF WOOF!
-The steaks were good, the ale was fine,
-But now I'm sorry, so here's a rhyme!
-
-We chased the bandits through the land, ARF ARF ARF!
-You caught them with your mighty hand, WOOF WOOF WOOF!
-Half the treasure's back with you,
-And I made a friend that's brave and true!
-
-So thank you friend for not being mad, ARF ARF ARF!
-You're the best friend I ever had, WOOF WOOF WOOF!
-Captain Bones might still be sore,
-But together we'll find treasures MORE! 🎵
-
-*bows with a flourish* *tail wagging furiously* 
-
-ARF ARF! Thank you, thank you! You've been a wonderful audience! 🐕"""
-    }
-    
-    @classmethod
-    def get_victory_ditty(cls, part: str = "full_ditty") -> str:
-        """Get Sir Biscuit's victory ditty (or a specific verse)."""
-        return cls.VICTORY_DITTY.get(part, cls.VICTORY_DITTY["full_ditty"])
-    
     @classmethod
     def get_system_prompt(cls, context: str = "default", landmarks: list = None, bandit_direction: str = None) -> str:
         """Get the appropriate system prompt for Corgi based on context."""
@@ -376,14 +329,13 @@ class TreasureHuntStage2:
         """
         Called when player catches bandits and recovers treasure.
         
-        Returns game completion data including Sir Biscuit's victory ditty!
+        Returns game completion data.
         """
         return {
             "stage": cls.STAGES["GAME_COMPLETE"],
             "treasure_recovered_percentage": treasure_recovered_percentage,
             "message": f"🎉 CONGRATULATIONS! You recovered {treasure_recovered_percentage}% of Captain Bones' legendary treasure!",
             "corgi_message": "*EXCITED SPINNING* WOOF WOOF WOOF! WE DID IT! *licks your face* Thank you for forgiving me! You're the best adventurer EVER! ARF ARF!",
-            "corgi_victory_ditty": CorgiTraveller.get_victory_ditty("full_ditty"),
             "rewards": {
                 "gold_coins": 500 * (treasure_recovered_percentage / 100),
                 "experience_points": 1000,

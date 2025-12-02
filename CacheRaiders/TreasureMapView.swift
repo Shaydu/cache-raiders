@@ -26,9 +26,6 @@ enum LandmarkType {
     case building
     case mountain
     case path
-    case park
-    case bridge
-    case placeOfWorship
     
     var iconName: String {
         switch self {
@@ -37,9 +34,6 @@ enum LandmarkType {
         case .building: return "building.2.fill"
         case .mountain: return "mountain.2.fill"
         case .path: return "map.fill"
-        case .park: return "leaf.fill"
-        case .bridge: return "arrow.left.arrow.right"
-        case .placeOfWorship: return "building.columns.fill"
         }
     }
     
@@ -50,9 +44,6 @@ enum LandmarkType {
         case .building: return .brown
         case .mountain: return .gray
         case .path: return .orange
-        case .park: return .green
-        case .bridge: return .cyan
-        case .placeOfWorship: return .purple
         }
     }
 }
@@ -67,26 +58,6 @@ struct TreasureMapView: View {
         span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
     ))
     @State private var hasInitialized = false
-    
-    /// Calculate distance from user to treasure
-    private var distanceToTreasure: String {
-        guard let userLocation = userLocationManager.currentLocation else {
-            return "Unknown"
-        }
-        
-        let treasureLocation = CLLocation(
-            latitude: mapData.xMarksTheSpot.latitude,
-            longitude: mapData.xMarksTheSpot.longitude
-        )
-        
-        let distanceMeters = userLocation.distance(from: treasureLocation)
-        
-        if distanceMeters < 1000 {
-            return String(format: "%.0fm", distanceMeters)
-        } else {
-            return String(format: "%.1fkm", distanceMeters / 1000)
-        }
-    }
     
     var body: some View {
         NavigationView {
@@ -249,17 +220,6 @@ struct TreasureMapView: View {
                         Text("X Marks The Spot")
                             .font(.custom("Copperplate", size: 16))
                             .foregroundColor(.red)
-                        
-                        // Distance to treasure
-                        HStack(spacing: 4) {
-                            Image(systemName: "location.fill")
-                                .foregroundColor(.blue)
-                            Text("Distance: \(distanceToTreasure)")
-                                .font(.custom("Copperplate", size: 18))
-                                .fontWeight(.semibold)
-                                .foregroundColor(.brown)
-                        }
-                        .padding(.top, 4)
                     }
                     .padding()
                     .background(.ultraThinMaterial)
@@ -278,14 +238,7 @@ struct TreasureMapView: View {
                             LegendItem(icon: "drop.fill", color: .blue, label: "Water")
                             LegendItem(icon: "tree.fill", color: .green, label: "Tree")
                             LegendItem(icon: "building.2.fill", color: .brown, label: "Building")
-                            LegendItem(icon: "map.fill", color: .orange, label: "Road")
-                        }
-                        
-                        HStack(spacing: 16) {
                             LegendItem(icon: "mountain.2.fill", color: .gray, label: "Mountain")
-                            LegendItem(icon: "leaf.fill", color: .green, label: "Park")
-                            LegendItem(icon: "arrow.left.arrow.right", color: .cyan, label: "Bridge")
-                            LegendItem(icon: "building.columns.fill", color: .purple, label: "Place of Worship")
                         }
                         
                         HStack(spacing: 16) {
@@ -411,9 +364,6 @@ func convertOSMFeaturesToLandmarks(features: [(name: String, type: String, latit
         case "building": landmarkType = .building
         case "mountain": landmarkType = .mountain
         case "path": landmarkType = .path
-        case "park": landmarkType = .park
-        case "bridge": landmarkType = .bridge
-        case "place_of_worship": landmarkType = .placeOfWorship
         default: landmarkType = .building
         }
         
