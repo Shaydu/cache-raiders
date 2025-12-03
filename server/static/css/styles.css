@@ -797,3 +797,194 @@ button:disabled {
     pointer-events: auto !important;
 }
 
+/* Map Legend Styles */
+.map-legend {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    background: rgba(26, 26, 26, 0.95);
+    border: 1px solid #444;
+    border-radius: 8px;
+    padding: 10px;
+    z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    min-width: 40px;
+    max-width: 40px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.map-legend.expanded {
+    min-width: 200px;
+    max-width: 250px;
+    padding: 15px;
+    cursor: default;
+}
+
+.legend-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #444;
+}
+
+.map-legend:not(.expanded) .legend-header {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+    justify-content: center;
+}
+
+.legend-header h3 {
+    margin: 0;
+    font-size: 16px;
+    color: #ffd700;
+    font-weight: bold;
+}
+
+.map-legend:not(.expanded) .legend-header h3 {
+    font-size: 14px;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    margin: 2px 0;
+}
+
+.legend-toggle {
+    background: transparent;
+    border: none;
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.2s;
+    flex-shrink: 0;
+}
+
+.map-legend:not(.expanded) .legend-toggle {
+    display: none;
+}
+
+.legend-toggle:hover {
+    background: #444;
+}
+
+.legend-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.map-legend:not(.expanded) .legend-content {
+    display: none;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: #ccc;
+}
+
+.legend-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: bold;
+    flex-shrink: 0;
+}
+
+/* Icon specific styles */
+.user-icon {
+    background: #2196f3;
+    color: #fff;
+    border: 2px solid #fff;
+}
+
+.ar-unfound-icon {
+    background: #9c27b0;
+    color: #fff;
+    border: 2px solid #7b1fa2;
+}
+
+.ar-found-icon {
+    background: #ff6b6b;
+    color: #fff;
+    border: 2px solid #c62828;
+    font-size: 12px;
+}
+
+.nfc-unfound-icon {
+    background: #4a90e2;
+    color: #fff;
+    border: 2px solid #极客时间;
+}
+
+.nfc-found-icon {
+    background: #ff6b6b;
+    color: #fff;
+    border: 2px solid #c62828;
+}
+
+.admin-unfound-icon {
+    background: #4caf50;
+    color: #fff;
+    border: 2px solid #2e7d32;
+}
+
+.admin-found-icon {
+    background: #ff6b6b;
+    color: #fff;
+    border: 2px solid #c62828;
+}
+
+.regular-unfound-icon {
+    background: #ffd700;
+    color: #1a1a1a;
+    border: 2px solid #b8860b;
+}
+
+.regular-found-icon {
+    background: #ff6b6b;
+    color: #fff;
+    border: 2px solid #c62828;
+    font-size: 12px;
+}
+
+.npc-icon {
+    background: #ffd700;
+    color: #1a1a1a;
+    border: 2px solid #b8860b;
+    font-size: 12px;
+}
+
+/* Scrollbar styling for legend content */
+.legend-content::-webkit-scrollbar {
+    width: 6px;
+}
+
+.legend-content::-webkit-scrollbar-track {
+    background: #1a1a1a;
+    border-radius: 3px;
+}
+
+.legend-content::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 3px;
+}
+
+.legend-content::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+

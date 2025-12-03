@@ -284,6 +284,56 @@
     
     <div id="map"></div>
     
+    <!-- Map Legend -->
+    <div id="mapLegend" class="map-legend">
+        <div class="legend-header">
+            <h3>Legend</h3>
+            <button class="legend-toggle" onclick="LegendManager.toggleLegend()" title="Toggle Legend">−</button>
+        </div>
+        <div class="legend-content">
+            <div class="legend-item">
+                <div class="legend-icon user-icon">👤</div>
+                <span>Player</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon ar-unfound-icon">●</div>
+                <span>AR Item (Unfound)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon ar-found-icon">❌</div>
+                <span>AR Item (Found)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon nfc-unfound-icon">N</div>
+                <span>NFC Item (Unfound)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon nfc-found-icon">N</div>
+                <span>NFC Item (Found)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon admin-unfound-icon">A</div>
+                <span>Admin Item (Unfound)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon admin-found-icon">A</div>
+                <span>Admin Item (Found)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon regular-unfound-icon">●</div>
+                <span>Regular Item (Unfound)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon regular-found-icon">❌</div>
+                <span>Regular Item (Found)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon npc-icon">💀</div>
+                <span>NPC</span>
+            </div>
+        </div>
+    </div>
+    
     <!-- Modal for object details -->
     <div id="objectModal" class="modal-overlay">
         <div class="modal-content">
