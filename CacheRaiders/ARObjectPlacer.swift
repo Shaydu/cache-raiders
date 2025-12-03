@@ -92,17 +92,23 @@ class ARObjectPlacer {
         // NEW LOGIC: Use AR coordinates when user is within 8m of object AND AR session is valid
         let useARCoordinates = userDistanceToObject < 8.0 && arOriginsMatch && distanceFromOrigin < 12.0
 
-        Swift.print("🎯 AR Coordinate Decision:")
-        Swift.print("   User distance to object: \(String(format: "%.2f", userDistanceToObject))m")
-        Swift.print("   AR origins match: \(arOriginsMatch)")
-        Swift.print("   Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m")
-        Swift.print("   Use AR coordinates: \(useARCoordinates)")
+        Swift.print("🎯 AR COORDINATE DECISION for '\(location.name)':")
+        Swift.print("   📍 User distance to object: \(String(format: "%.2f", userDistanceToObject))m (threshold: 8.0m)")
+        Swift.print("   🔗 AR origins match: \(arOriginsMatch)")
+        Swift.print("   📏 Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m (max: 12.0m)")
+        Swift.print("   🎯 FINAL DECISION: \(useARCoordinates ? "✅ USING AR COORDINATES (PRECISION MODE)" : "📍 USING GPS COORDINATES (STANDARD MODE)")")
+
+        if useARCoordinates {
+            Swift.print("   💎 PRECISION PLACEMENT: Object will appear at exact AR position (cm accuracy)")
+        } else {
+            Swift.print("   🌍 STANDARD PLACEMENT: Object positioned using GPS (meter accuracy)")
+        }
 
         if useARCoordinates {
             Swift.print("✅ PRECISE placement: Using AR coordinates (within 8m threshold)")
             placeBoxAtPosition(arPosition, location: location, in: arView)
         } else {
-            let reasons = []
+            var reasons: [String] = []
             if userDistanceToObject >= 8.0 { reasons.append("user >8m from object") }
             if !arOriginsMatch { reasons.append("AR origins don't match") }
             if distanceFromOrigin >= 12.0 { reasons.append("too far from AR origin") }
