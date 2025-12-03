@@ -19,6 +19,7 @@
         <attribute name="ar_offset_y" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
         <attribute name="ar_offset_z" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
         <attribute name="ar_placement_timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="ar_anchor_transform" optional="YES" attributeType="String" usesScalarValueType="NO"/>
         <attribute name="last_synced_at" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
         <attribute name="needs_sync" attributeType="Boolean" usesScalarValueType="YES"/>
         <attribute name="created_at" optional="YES" attributeType="Date" usesScalarValueType="NO"/>

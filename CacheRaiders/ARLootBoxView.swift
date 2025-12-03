@@ -234,7 +234,7 @@ struct ARViewContainer: UIViewRepresentable {
         // Note: Lighting is controlled through the AR session configuration, not a property on ARView
 
         // Tap gesture for placing and collecting loot boxes
-        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleTap(_:)))
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator.tapHandler, action: #selector(ARTapHandler.handleTap(_:)))
         arView.addGestureRecognizer(tapGesture)
 
         // Debug visuals disabled for cleaner AR experience
@@ -362,7 +362,7 @@ struct ARViewContainer: UIViewRepresentable {
             let locationId = locationManager.pendingSphereLocationId
             // Defer ALL state modifications to avoid "Modifying state during view update" warning
             Task { @MainActor in
-                context.coordinator.placeSingleSphere(locationId: locationId)
+                context.coordinator.tapHandler?.placeSingleSphere(locationId: locationId)
                 // Reset the flags after placement is complete
                 locationManager.shouldPlaceSphere = false
                 locationManager.pendingSphereLocationId = nil
@@ -379,7 +379,7 @@ struct ARViewContainer: UIViewRepresentable {
                 locationManager.pendingARItem = nil
                 print("🔄 Pending AR item cleared to prevent duplicates")
                 // Defer the actual placement
-                context.coordinator.placeARItem(pendingItem)
+                context.coordinator.tapHandler?.placeARItem(pendingItem)
             }
         }
         

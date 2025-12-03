@@ -425,6 +425,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             object: nil
         )
         
+        // Listen for NFC object creation notifications
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleNFCObjectCreated),
+            name: NSNotification.Name("NFCObjectCreated"),
+            object: nil
+        )
+        
         // Initialize managers
         environmentManager = AREnvironmentManager(arView: arView, locationManager: locationManager)
         // Only initialize object recognizer if enabled (saves battery/processing)
@@ -741,7 +749,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
     }
-    
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
         // STORY MODE: Remove all findables and prevent new placements
         let gameMode = locationManager?.gameMode ?? .open
@@ -1425,9 +1432,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             arOffsetZ: Double(cameraPos.z)
         )
     }
-    
     // MARK: - Object Recognition (delegated to ARObjectRecognizer)
-    
     // MARK: - ARSessionDelegate
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         // CRITICAL: Set AR origin on first frame if not set - NEVER change it after
@@ -1800,6 +1805,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         self.removeCollectedObjectsFromARAsync()
                         // Also ensure all placed objects have their FindableObjects synced to tap handler
                         self.syncFindableObjectsToTapHandlerAsync()
+                        // Also check for and re-place any unfound objects that need to be visible
+                        self.replaceUnfoundObjectsAsync()
                     }
                 }
             }
@@ -1957,6 +1964,19 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Double-check dialog state on main thread (may have changed)
             guard let self = self, !self.isDialogOpen else { return }
             self.syncFindableObjectsToTapHandler()
+        }
+    }
+    
+    /// Async wrapper for replaceUnfoundObjects - dispatches to main thread for AR scene updates
+    private func replaceUnfoundObjectsAsync() {
+        // CRITICAL: Skip if dialog is open to prevent UI freezes
+        guard !isDialogOpen else { return }
+        
+        // AR scene updates must be on main thread
+        DispatchQueue.main.async { [weak self] in
+            // Double-check dialog state on main thread (may have changed)
+            guard let self = self, !self.isDialogOpen else { return }
+            self.replaceUnfoundObjects()
         }
     }
     
@@ -2192,7 +2212,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
     }
-    
     // MARK: - Loot Box Placement
     private func placeLootBoxAtLocation(_ location: LootBoxLocation, in arView: ARView) {
         Swift.print("🎯 placeLootBoxAtLocation called for: \(location.name) (type: \(location.type.displayName))")
@@ -2231,45 +2250,103 @@ class ARCoordinator: NSObject, ARSessionDelegate {
            let arOffsetZ = location.ar_offset_z {
             // AR coordinates available - use them for mm-precision placement
             let arOriginGPS = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
-            
-            // INDOOR vs OUTDOOR placement strategy:
-            // - < 12m from AR origin: INDOOR - Use AR coordinates for mm/cm precision
-            // - >= 12m from AR origin: OUTDOOR - Use GPS coordinates (acceptable GPS accuracy)
+
+            // UPDATED LOGIC: Check USER distance to object (8m threshold) for precision mode
+            // This is the key factor - not distance from AR origin
+            let objectLocation = location.location
+            let userDistanceToObject = userLocation.distance(from: objectLocation)
+
             let useARCoordinates: Bool
             let arPosition = SIMD3<Float>(Float(arOffsetX), Float(arOffsetY), Float(arOffsetZ))
             let distanceFromOrigin = length(arPosition)
-            
+
             if let currentAROrigin = arOriginLocation {
-                // Compare AR origins - if they match, we can use AR coordinates directly
+                // Compare AR origins - if they match, we can potentially use AR coordinates
                 let originDistance = currentAROrigin.distance(from: arOriginGPS)
+
+                // NEW LOGIC: Use AR coordinates when user is within 8m of object AND AR session is valid
+                // This provides precision when users are close to objects
+                let arOriginsMatch = originDistance < 1.0
+                useARCoordinates = userDistanceToObject < 8.0 && arOriginsMatch && distanceFromOrigin < 12.0
+
+                Swift.print("🎯 AR COORDINATE DECISION for '\(location.name)':")
+                Swift.print("   📍 User distance to object: \(String(format: "%.2f", userDistanceToObject))m (threshold: 8.0m)")
+                Swift.print("   🔗 AR origins match: \(arOriginsMatch) (distance: \(String(format: "%.3f", originDistance))m)")
+                Swift.print("   📏 Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m (max: 12.0m)")
+                Swift.print("   🎯 FINAL DECISION: \(useARCoordinates ? "✅ USING AR COORDINATES (PRECISION MODE)" : "📍 USING GPS COORDINATES (STANDARD MODE)")")
                 
-                // CRITICAL FIX: Only use AR coordinates if AR origins match (same session)
-                // If AR origins don't match (e.g., object was placed in ARPlacementView with different origin),
-                // we must use GPS coordinates instead, otherwise object will appear at wrong position (0,0,0)
-                // AR coordinates are only valid within the same AR session
-                useARCoordinates = originDistance < 1.0 && distanceFromOrigin < 12.0
-                
-        if useARCoordinates {
-                    Swift.print("✅ INDOOR placement (< 12m): Using AR coordinates for mm/cm-precision")
-                    Swift.print("   AR origin match: distance=\(String(format: "%.3f", originDistance))m (same session)")
-                    Swift.print("   Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m")
-                    Swift.print("   AR offset: (\(String(format: "%.4f", arOffsetX)), \(String(format: "%.4f", arOffsetY)), \(String(format: "%.4f", arOffsetZ)))m")
-                } else {
-                    if originDistance >= 1.0 {
-                        Swift.print("⚠️ AR origins don't match (distance=\(String(format: "%.3f", originDistance))m) - object was placed in different AR session")
-                        Swift.print("   Falling back to GPS coordinates (AR coordinates only valid in same session)")
+                if useARCoordinates {
+                    Swift.print("   💎 PRECISION PLACEMENT: Object will appear at exact AR position (cm accuracy)")
+                    
+                    // NEW: Check if we have AR anchor transform for even higher precision
+                    if let arAnchorTransformString = location.ar_anchor_transform,
+                       let arAnchorTransform = decodeARAnchorTransform(arAnchorTransformString) {
+                        Swift.print("   🎯 AR ANCHOR AVAILABLE: Using exact camera transform for mm precision")
+                        placeObjectWithARAnchor(location, arAnchorTransform: arAnchorTransform, in: arView)
                     } else {
-                        Swift.print("🌍 OUTDOOR placement (>= 12m): Using GPS coordinates")
-                        Swift.print("   Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m")
-                        Swift.print("   GPS accuracy acceptable for outdoor distances")
+                        // Use stored AR offset coordinates
+                        Swift.print("   📍 Using stored AR offset coordinates (cm accuracy)")
+                        let arPosition = SIMD3<Float>(
+                            Float(arOffsetX),
+                            Float(arOffsetY),
+                            Float(arOffsetZ)
+                        )
+                        
+                        // Use exact stored position - don't re-ground to preserve user's placement
+                        Swift.print("✅ [Placement] Using exact stored AR coordinates for \(location.name) (PRECISION MODE - cm accuracy)")
+                        Swift.print("   Object ID: \(location.id)")
+                        Swift.print("   Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
+                        Swift.print("   🎯 PRECISION ACHIEVED: Object placed at exact location where user positioned it")
+                        
+                        placeBoxAtPosition(arPosition, location: location, in: arView)
                     }
+                    
+                    // Log location again after 1 second to verify it's still there
+                    Task {
+                        try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                        await MainActor.run {
+                            if let anchor = placedBoxes[location.id] {
+                                let currentPos = anchor.position
+                                let isStillInScene = anchor.parent != nil
+                                Swift.print("📍 [Placement] Object '\(location.name)' location after 1 second:")
+                                Swift.print("   AR Position: X=\(String(format: "%.4f", currentPos.x))m, Y=\(String(format: "%.4f", currentPos.y))m, Z=\(String(format: "%.4f", currentPos.z))m")
+                                Swift.print("   Still in scene: \(isStillInScene ? "YES" : "NO")")
+                                Swift.print("   Anchor parent: \(anchor.parent != nil ? "exists" : "nil")")
+                                if !isStillInScene {
+                                    Swift.print("   ⚠️ WARNING: Object was removed from scene!")
+                                } else if abs(currentPos.x - arPosition.x) > 0.001 || abs(currentPos.y - arPosition.y) > 0.001 || abs(currentPos.z - arPosition.z) > 0.001 {
+                                    Swift.print("   ⚠️ WARNING: Object moved! Original: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z))), Current: (\(String(format: "%.4f", currentPos.x)), \(String(format: "%.4f", currentPos.y)), \(String(format: "%.4f", currentPos.z)))")
+                                } else {
+                                    Swift.print("   ✅ Object still at original position")
+                                }
+                            } else {
+                                // Check if object was collected (normal case - not an error)
+                                let wasCollected = locationManager?.locations.first(where: { $0.id == location.id })?.collected ?? false
+                                if wasCollected {
+                                    Swift.print("   ℹ️ Object '\(location.name)' was collected (removed from placedBoxes - this is normal)")
+                                } else if findableObjects[location.id] == nil {
+                                    Swift.print("   ⚠️ WARNING: Object '\(location.name)' not found in placedBoxes and not in findableObjects - may have been removed unexpectedly")
+                                } else {
+                                    Swift.print("   ℹ️ Object '\(location.name)' not in placedBoxes but still in findableObjects (may be in transition)")
+                                }
+                            }
+                        }
+                    }
+                    return
+                } else {
+                    let _reasons: [String] = []
+                    if userDistanceToObject >= 8.0 { Swift.print("   📍 Reason: User >8m from object (\(String(format: "%.1f", userDistanceToObject))m)") }
+                    if !arOriginsMatch { Swift.print("   📍 Reason: AR origins don't match (different sessions)") }
+                    if distanceFromOrigin >= 12.0 { Swift.print("   📍 Reason: Too far from AR origin (\(String(format: "%.1f", distanceFromOrigin))m)") }
+                    Swift.print("   🌍 STANDARD PLACEMENT: Object positioned using GPS (meter accuracy)")
                 }
             } else {
                 // No current AR origin - cannot use AR coordinates (no origin to reference)
                 // Must use GPS coordinates instead
                 useARCoordinates = false
                 Swift.print("⚠️ No current AR origin set - cannot use stored AR coordinates")
-                Swift.print("   Falling back to GPS coordinates (AR origin required for AR coordinate placement)")
+                Swift.print("   📍 Reason: No AR session active")
+                Swift.print("   🌍 STANDARD PLACEMENT: Object positioned using GPS (meter accuracy)")
             }
             
             if useARCoordinates {
@@ -2283,10 +2360,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 )
                 
                 // Use exact stored position - don't re-ground to preserve user's placement
-                Swift.print("✅ [Placement] Using exact stored AR coordinates for \(location.name) (mm-precision, no re-grounding)")
+                Swift.print("✅ [Placement] Using exact stored AR coordinates for \(location.name) (PRECISION MODE - cm accuracy)")
                 Swift.print("   Object ID: \(location.id)")
                 Swift.print("   Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
-                Swift.print("   Object will stay fixed at this position (never moves)")
+                Swift.print("   🎯 PRECISION ACHIEVED: Object placed at exact location where user positioned it")
                 
                 placeBoxAtPosition(arPosition, location: location, in: arView)
                 
@@ -2606,7 +2683,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("🎯 Placing object at tap location (distance: \(String(format: "%.2f", length(boxPosition - cameraPos)))m)")
         placeBoxAtPosition(boxPosition, location: location, in: arView)
     }
-    
     // Place an AR sphere at a GPS location (for map-added spheres)
     private func placeARSphereAtLocation(_ location: LootBoxLocation, in arView: ARView) {
         // CRITICAL: Check if already placed to prevent infinite loops
@@ -3190,9 +3266,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         // Database indicators removed - no longer adding visual indicators to objects
     }
-    
     // MARK: - DMTNT NPC Placement
-    
     /// Place an NPC in AR for story mode
     /// - Parameters:
     ///   - type: The type of NPC to place (skeleton, corgi, etc.)
@@ -3925,9 +3999,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("✅ Placed \(location.name) in front of camera (fallback) at: \(boxPosition)")
         Swift.print("   Distance from camera: \(String(format: "%.2f", finalDistance))m")
     }
-    
-    
-    
     // MARK: - Find Loot Box Helper
     /// Finds any findable object using the FindableObject base class behavior
     private func findLootBox(locationId: String, anchor: AnchorEntity, cameraPosition: SIMD3<Float>, sphereEntity: ModelEntity?) {
@@ -4016,6 +4087,29 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
         
+        // CRITICAL: Remove from AR scene immediately after collection
+        // This ensures objects disappear right when tapped, not waiting for periodic checks
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Remove from AR scene immediately
+            if let anchor = self.placedBoxes[locationId] {
+                anchor.removeFromParent()
+                self.placedBoxes.removeValue(forKey: locationId)
+                self.findableObjects.removeValue(forKey: locationId)
+                self.objectsInViewport.remove(locationId)
+                self.objectPlacementTimes.removeValue(forKey: locationId)
+                
+                // Also remove from distance tracker if applicable
+                if let textEntity = self.distanceTracker?.distanceTextEntities[locationId] {
+                    textEntity.removeFromParent()
+                    self.distanceTracker?.distanceTextEntities.removeValue(forKey: locationId)
+                }
+                
+                Swift.print("✅ Immediately removed \(locationId) from AR scene")
+            }
+        }
+        
         // Use FindableObject's find() method - this encapsulates all the basic findable behavior
         // This will trigger: confetti, sound, animation
         // The object will be removed in the completion callback
@@ -4101,634 +4195,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
     }
-    
-    // MARK: - Tap Handling (delegated to ARTapHandler)
-    @objc func handleTap(_ sender: UITapGestureRecognizer) {
-        tapHandler?.handleTap(sender)
-        guard let arView = arView,
-              let locationManager = locationManager,
-              let frame = arView.session.currentFrame else {
-            Swift.print("⚠️ Tap handler: Missing AR view, location manager, or frame")
-            return
-        }
-        
-        let tapLocation = sender.location(in: arView)
-        let cameraTransform = frame.camera.transform
-        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-        
-        Swift.print("👆 Tap detected at screen: (\(tapLocation.x), \(tapLocation.y))")
-        Swift.print("   Placed boxes count: \(placedBoxes.count), keys: \(placedBoxes.keys.sorted())")
-        
-        // Get tap world position using raycast
-        var tapWorldPosition: SIMD3<Float>? = nil
-        if let raycastResult = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .horizontal).first {
-            tapWorldPosition = SIMD3<Float>(
-                raycastResult.worldTransform.columns.3.x,
-                raycastResult.worldTransform.columns.3.y,
-                raycastResult.worldTransform.columns.3.z
-            )
-        }
-        
-        // Check if tapped on existing loot box
-        // First try direct entity hit
-        let tappedEntity: Entity? = arView.entity(at: tapLocation)
-        var locationId: String? = nil
-
-        Swift.print("🎯 Tap entity hit test result: \(tappedEntity != nil ? "hit entity" : "no entity hit")")
-
-        // Walk up the entity hierarchy to find the location ID
-        var entityToCheck = tappedEntity
-        while let currentEntity = entityToCheck {
-            let entityName = currentEntity.name
-            Swift.print("🎯 Checking entity: '\(entityName)'")
-            // Entity.name is a String, not String?, so check if it's not empty
-            if !entityName.isEmpty {
-                let idString = entityName
-                
-                // Check if this is an NPC (skeleton, corgi, etc.)
-                // CRITICAL: NPCs should NEVER be treated as loot boxes, even if they're accidentally in placedBoxes
-                if let npcType = NPCType.allCases.first(where: { $0.npcId == idString }) {
-                    Swift.print("💬 \(npcType.defaultName) NPC tapped - opening conversation")
-                    handleNPCTap(type: npcType)
-                    return // Don't process as regular object - NPCs are not loot boxes
-                }
-                
-                // Check if this ID matches a placed box (but NOT an NPC)
-                // Double-check it's not an NPC to prevent accidental matching
-                if placedBoxes[idString] != nil && placedNPCs[idString] == nil {
-                    locationId = idString
-                    Swift.print("🎯 Found matching placed box ID: \(idString)")
-                    break
-                }
-            }
-            entityToCheck = currentEntity.parent
-        }
-        
-        // If entity hit didn't work, try proximity-based detection for NPCs first
-        // Check all placed NPCs to see if tap is near any of them on screen
-        if tappedEntity == nil && !placedNPCs.isEmpty {
-            var closestNPCId: String? = nil
-            var closestNPCScreenDistance: CGFloat = CGFloat.infinity
-            let maxNPCScreenDistance: CGFloat = 250.0 // Maximum screen distance in points to consider a tap "on" the NPC (increased for easier tapping)
-            
-            for (npcId, anchor) in placedNPCs {
-                let anchorTransform = anchor.transformMatrix(relativeTo: nil)
-                let anchorWorldPos = SIMD3<Float>(
-                    anchorTransform.columns.3.x,
-                    anchorTransform.columns.3.y,
-                    anchorTransform.columns.3.z
-                )
-                
-                // Project the NPC's world position to screen coordinates
-                guard let screenPoint = arView.project(anchorWorldPos) else {
-                    continue // NPC is not visible (behind camera or outside view)
-                }
-                
-                // Check if the projection is valid (NPC is visible on screen)
-                let viewWidth = CGFloat(arView.bounds.width)
-                let viewHeight = CGFloat(arView.bounds.height)
-                let isOnScreen = screenPoint.x >= 0 && screenPoint.x <= viewWidth &&
-                                screenPoint.y >= 0 && screenPoint.y <= viewHeight
-                
-                if isOnScreen {
-                    // Calculate screen-space distance from tap to NPC
-                    let tapX = CGFloat(tapLocation.x)
-                    let tapY = CGFloat(tapLocation.y)
-                    let dx = tapX - screenPoint.x
-                    let dy = tapY - screenPoint.y
-                    let screenDistance = sqrt(dx * dx + dy * dy)
-                    
-                    // If screen distance is within threshold, consider it a hit
-                    if screenDistance < maxNPCScreenDistance && screenDistance < closestNPCScreenDistance {
-                        closestNPCScreenDistance = screenDistance
-                        closestNPCId = npcId
-                        Swift.print("💬 Found candidate NPC \(npcId): screen dist=\(String(format: "%.1f", screenDistance))px")
-                    }
-                }
-            }
-            
-            if let npcId = closestNPCId, let npcType = NPCType.allCases.first(where: { $0.npcId == npcId }) {
-                Swift.print("💬 \(npcType.defaultName) NPC tapped via proximity detection - opening conversation")
-                handleNPCTap(type: npcType)
-                return // Don't process as regular object
-            }
-        }
-        
-        // If entity hit didn't work, try proximity-based detection using screen-space projection
-        // Check all placed boxes to see if tap is near any of them on screen
-        if locationId == nil && !placedBoxes.isEmpty {
-            var closestBoxId: String? = nil
-            var closestScreenDistance: CGFloat = CGFloat.infinity
-            let maxScreenDistance: CGFloat = 150.0 // Maximum screen distance in points to consider a tap "on" the box
-            
-            // Use ARView's project method to convert world positions to screen coordinates
-            for (boxId, anchor) in placedBoxes {
-                // CRITICAL: Skip NPCs - they should never be treated as loot boxes
-                // NPCs are in placedNPCs, but double-check to prevent accidental matching
-                if placedNPCs[boxId] != nil {
-                    Swift.print("⏭️ Skipping \(boxId) in loot box proximity check - it's an NPC")
-                    continue
-                }
-                
-                let anchorTransform = anchor.transformMatrix(relativeTo: nil)
-                let anchorWorldPos = SIMD3<Float>(
-                    anchorTransform.columns.3.x,
-                    anchorTransform.columns.3.y,
-                    anchorTransform.columns.3.z
-                )
-                
-                // Project the box's world position to screen coordinates
-                guard let optionalScreenPoint = arView.project(anchorWorldPos) else {
-                    // Box is not visible (behind camera or outside view)
-                    continue
-                }
-                let screenPoint = optionalScreenPoint
-                
-                // Check if the projection is valid (box is visible on screen)
-                let viewWidth = CGFloat(arView.bounds.width)
-                let viewHeight = CGFloat(arView.bounds.height)
-                let pointX = screenPoint.x
-                let pointY = screenPoint.y
-                let isOnScreen = pointX >= 0 && pointX <= viewWidth &&
-                                 pointY >= 0 && pointY <= viewHeight
-                
-                if isOnScreen {
-                    // Calculate screen-space distance from tap to box
-                    let tapX = CGFloat(tapLocation.x)
-                    let tapY = CGFloat(tapLocation.y)
-                    let dx = tapX - screenPoint.x
-                    let dy = tapY - screenPoint.y
-                    let screenDistance = sqrt(dx * dx + dy * dy)
-                    
-                    // Also check world-space distance if we have tap world position (for validation)
-                    var worldDistance: Float = Float.infinity
-                    if let tapPos = tapWorldPosition {
-                        worldDistance = length(anchorWorldPos - tapPos)
-                    }
-                    
-                    // If screen distance is within threshold, consider it a hit
-                    if screenDistance < maxScreenDistance {
-                        // If we have world position, prefer boxes that are also close in world space
-                        let isCloseInWorld = worldDistance < 10.0
-                        let shouldSelect = worldDistance == Float.infinity || isCloseInWorld
-                        
-                        if shouldSelect && screenDistance < closestScreenDistance {
-                            closestScreenDistance = screenDistance
-                            closestBoxId = boxId
-                            if worldDistance != Float.infinity {
-                                Swift.print("🎯 Found candidate box \(boxId): screen dist=\(String(format: "%.1f", screenDistance))px, world dist=\(String(format: "%.2f", worldDistance))m")
-                            } else {
-                                Swift.print("🎯 Found candidate box \(boxId): screen dist=\(String(format: "%.1f", screenDistance))px")
-                            }
-                        }
-                    }
-                } else {
-                    // Box is not visible on screen (behind camera or outside view)
-                    Swift.print("   Box \(boxId) is off-screen (projected to: (\(String(format: "%.1f", screenPoint.x)), \(String(format: "%.1f", screenPoint.y))))")
-                }
-            }
-            
-            if let closestId = closestBoxId {
-                locationId = closestId
-                Swift.print("🎯 Detected tap on box via screen projection: \(closestId), screen distance: \(String(format: "%.1f", closestScreenDistance))px")
-            } else {
-                Swift.print("⚠️ Tap did not hit any box. Tap world pos: \(tapWorldPosition != nil ? "yes" : "no"), boxes checked: \(placedBoxes.count)")
-                // Debug: show where boxes are projected
-                for (boxId, anchor) in placedBoxes {
-                    let anchorTransform = anchor.transformMatrix(relativeTo: nil)
-                    let anchorWorldPos = SIMD3<Float>(
-                        anchorTransform.columns.3.x,
-                        anchorTransform.columns.3.y,
-                        anchorTransform.columns.3.z
-                    )
-                    if let screenPoint = arView.project(anchorWorldPos) {
-                        let distanceFromCamera = length(anchorWorldPos - cameraPos)
-                        Swift.print("   Box \(boxId): screen=(\(String(format: "%.1f", screenPoint.x)), \(String(format: "%.1f", screenPoint.y))), camera dist=\(String(format: "%.2f", distanceFromCamera))m")
-                    } else {
-                        Swift.print("   Box \(boxId): not projectable (behind camera)")
-                    }
-                }
-            }
-        }
-        
-        // UNIFIED FINDABLE BEHAVIOR: All objects in placedBoxes are findable and clickable
-        // If we found a location ID (tapped on any findable object), trigger find behavior
-        Swift.print("🎯 Tap result: locationId = \(locationId ?? "nil")")
-        if let idString = locationId {
-            Swift.print("🎯 Processing tap on: \(idString)")
-            
-            // Check if already found - but also check if location was reset
-            // If location is not collected, allow tapping again (reset functionality)
-            let isLocationCollected = locationManager.locations.first(where: { $0.id == idString })?.collected ?? false
-            
-            let isFound = (distanceTracker?.foundLootBoxes.contains(idString) ?? false) || (tapHandler?.foundLootBoxes.contains(idString) ?? false)
-            if isFound && isLocationCollected {
-                Swift.print("⚠️ Object \(idString) has already been found and is still marked as collected")
-                return
-            } else if isFound && !isLocationCollected {
-                // Location was reset - clear from found set to allow tapping again
-                distanceTracker?.foundLootBoxes.remove(idString)
-                tapHandler?.foundLootBoxes.remove(idString)
-                Swift.print("🔄 Object \(idString) was reset - clearing from found set, allowing tap again")
-            }
-            
-            // Check if in location manager and already collected
-            if let location = locationManager.locations.first(where: { $0.id == idString }),
-               location.collected {
-                Swift.print("⚠️ \(location.name) has already been collected")
-                return
-            }
-            
-            // Get the anchor for this object
-            guard let anchor = placedBoxes[idString] else {
-                Swift.print("⚠️ Anchor not found for \(idString)")
-                return
-            }
-            
-            // Get camera position
-            let cameraTransform = frame.camera.transform
-            let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-            
-            // Find the sphere entity if it exists (for objects with spheres)
-            var sphereEntity: ModelEntity? = nil
-            for child in anchor.children {
-                if let modelEntity = child as? ModelEntity,
-                   modelEntity.components[PointLightComponent.self] != nil {
-                    sphereEntity = modelEntity
-                    break
-                }
-            }
-            
-            // Use unified findLootBox for ALL objects (spheres, chalices, treasure boxes, etc.)
-            // This handles: sound, confetti, animation, increment count, and removal
-            Swift.print("🎯 Finding object: \(idString) (type: sphere=\(sphereEntity != nil), has findableObject=\(findableObjects[idString] != nil))")
-            findLootBox(locationId: idString, anchor: anchor, cameraPosition: cameraPos, sphereEntity: sphereEntity)
-            return
-        }
-        
-        // If no location-based system or not at a location, allow manual placement
-        // Place a test loot box where user taps (for testing without locations)
-        if placedBoxes.count >= 3 {
-            return
-        }
-
-        // Prevent rapid duplicate tap placements (debounce)
-        let now = Date()
-        if let lastTap = tapHandler?.lastTapPlacementTime,
-           now.timeIntervalSince(lastTap) < 1.0 {
-            Swift.print("⚠️ Tap placement blocked - too soon since last placement (\(String(format: "%.1f", now.timeIntervalSince(lastTap)))s ago)")
-            return
-        }
-        tapHandler?.lastTapPlacementTime = now
-
-        if let result = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .horizontal).first,
-           let frame = arView.session.currentFrame {
-            let cameraY = frame.camera.transform.columns.3.y
-            let hitY = result.worldTransform.columns.3.y
-            if hitY <= cameraY - 0.2 {
-                let testLocation = LootBoxLocation(
-                    id: UUID().uuidString,
-                    name: "Test Artifact",
-                    type: .templeRelic,
-                    latitude: 0,
-                    longitude: 0,
-                    radius: 100
-                )
-                // For manual tap placement, allow closer placement (1-2m instead of 3-5m)
-                // Add to locationManager FIRST so it's tracked, then place it
-                // This ensures the location exists before placement and prevents duplicates
-                locationManager.addLocation(testLocation)
-                placeLootBoxAtTapLocation(testLocation, tapResult: result, in: arView)
-            } else {
-                Swift.print("⚠️ Tap raycast hit likely ceiling. Ignoring manual placement.")
-            }
-        }
-    }
-
-    // Place a single sphere in the current AR room
-    func placeSingleSphere(locationId: String? = nil) {
-        Swift.print("🎯 placeSingleSphere() called - checking if already placed recently...")
-
-        // Prevent multiple placements from rapid view updates
-        let now = Date()
-        if let lastPlacement = lastSpherePlacementTime,
-           now.timeIntervalSince(lastPlacement) < 2.0 {
-            Swift.print("⚠️ Sphere placement blocked - too soon since last placement (\(String(format: "%.1f", now.timeIntervalSince(lastPlacement)))s ago)")
-            return
-        }
-        lastSpherePlacementTime = now
-
-        guard let arView = arView,
-              let frame = arView.session.currentFrame,
-              let locationManager = locationManager else {
-            Swift.print("⚠️ Cannot place single sphere: AR not ready")
-            return
-        }
-
-        // Limit to maximum objects (configurable in settings, default 6)
-        let maxObjects = locationManager.maxObjectLimit
-        guard placedBoxes.count < maxObjects else {
-            return
-        }
-
-        let cameraTransform = frame.camera.transform
-        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-
-        // Try to find ground plane for proper placement
-        let raycastQuery = ARRaycastQuery(
-            origin: cameraPos,
-            direction: SIMD3<Float>(0, -1, 0), // Downward ray
-            allowing: .estimatedPlane,
-            alignment: .horizontal
-        )
-
-        var spherePosition: SIMD3<Float>
-
-        if let raycastResult = arView.session.raycast(raycastQuery).first {
-            // Place on detected ground plane, 2m in front of camera
-            let groundY = raycastResult.worldTransform.columns.3.y
-            let forwardDirection = SIMD3<Float>(
-                -cameraTransform.columns.2.x, // Forward vector (negative Z in camera space)
-                0,
-                -cameraTransform.columns.2.z
-            )
-            let forwardPos = cameraPos + normalize(forwardDirection) * 2.0
-            spherePosition = SIMD3<Float>(forwardPos.x, groundY, forwardPos.z)
-            Swift.print("✅ Placed sphere on detected ground plane at Y: \(groundY)")
-        } else {
-            // Fallback: place 2m in front at current camera height
-            spherePosition = cameraPos + SIMD3<Float>(0, 0, -2)
-            Swift.print("⚠️ No ground plane detected, placing at camera height")
-        }
-
-        // Use provided location ID (from map marker) or create a new one
-        let newLocation: LootBoxLocation
-        if let existingLocationId = locationId,
-           let existingLocation = locationManager.locations.first(where: { $0.id == existingLocationId }) {
-            // Use the existing map marker location
-            newLocation = existingLocation
-            Swift.print("✅ Using existing map marker location: \(existingLocationId)")
-        } else {
-            // Create a new location (fallback for manual sphere placement)
-            newLocation = LootBoxLocation(
-                id: UUID().uuidString,
-                name: "Mysterious Sphere",
-                type: .sphere,
-                latitude: 0, // Not GPS-based
-                longitude: 0, // Not GPS-based
-                radius: 100.0, // Large radius since we're not using GPS
-                source: .arManual // Manually placed AR sphere
-            )
-            // Add to locationManager so it counts toward the total
-            // Note: Temporary AR items won't sync to API (by design)
-            locationManager.addLocation(newLocation)
-            Swift.print("✅ Created new location for sphere: \(newLocation.id)")
-            Swift.print("   📍 Note: Temporary AR sphere will NOT sync to API")
-        }
-
-        // Create sphere directly
-        let sphereRadius: Float = 0.15
-        let sphereMesh = MeshResource.generateSphere(radius: sphereRadius)
-        var sphereMaterial = SimpleMaterial()
-        sphereMaterial.color = .init(tint: .red)
-        sphereMaterial.roughness = 0.2
-        sphereMaterial.metallic = 0.3
-
-        let sphere = ModelEntity(mesh: sphereMesh, materials: [sphereMaterial])
-        sphere.name = newLocation.id // This is crucial for tap detection
-
-        // Position sphere so bottom sits flat on ground
-        sphere.position = SIMD3<Float>(0, sphereRadius, 0) // Bottom of sphere touches ground
-
-        // Add point light to make it visible
-        let light = PointLightComponent(color: .red, intensity: 200)
-        sphere.components.set(light)
-
-        // Create anchor and add sphere
-        let anchor = AnchorEntity(world: spherePosition)
-        anchor.addChild(sphere)
-
-        arView.scene.addAnchor(anchor)
-        placedBoxes[newLocation.id] = anchor
-        objectPlacementTimes[newLocation.id] = Date() // Record placement time for grace period
-        
-        // Apply uniform luminance if ambient light is disabled
-        environmentManager?.applyUniformLuminanceToNewEntity(anchor)
-
-        // Set callback to mark as collected when found
-        findableObjects[newLocation.id] = FindableObject(
-            locationId: newLocation.id,
-            anchor: anchor,
-            sphereEntity: sphere,
-            container: nil,
-            location: newLocation
-        )
-
-        findableObjects[newLocation.id]?.onFoundCallback = { [weak self] id in
-            DispatchQueue.main.async {
-                if let locationManager = self?.locationManager {
-                    locationManager.markCollected(id)
-                }
-            }
-        }
-
-        // CRITICAL: Update tap handler's findableObjects dictionary so the object is tappable
-        if let findable = findableObjects[newLocation.id] {
-            tapHandler?.findableObjects[newLocation.id] = findable
-        }
-
-        Swift.print("✅ Placed single sphere at position (\(spherePosition.x), \(spherePosition.y), \(spherePosition.z))")
-    }
-
-    // Place any AR item in the current AR room (same size as spheres)
-    func placeARItem(_ item: LootBoxLocation) {
-        Swift.print("🎯 placeARItem() called for: \(item.name) (ID: \(item.id)) at GPS (\(item.latitude), \(item.longitude))")
-        
-        // Check if this item should sync to API
-        let isTemporaryARItem = item.id.hasPrefix("AR_ITEM_") || 
-                               (item.id.hasPrefix("AR_SPHERE_") && !item.id.hasPrefix("AR_SPHERE_MAP_"))
-        if isTemporaryARItem {
-            Swift.print("   ⏭️ This is a temporary AR item - will NOT sync to API")
-        } else {
-            Swift.print("   🔄 This is a permanent item - should sync to API if API sync is enabled")
-            // Check if item is already in locationManager (which means it should be synced)
-            if locationManager?.locations.first(where: { $0.id == item.id }) != nil {
-                Swift.print("   ✅ Item already exists in locationManager - API sync status depends on useAPISync setting")
-            } else {
-                Swift.print("   ⚠️ Item not found in locationManager - may need to be added/synced")
-            }
-        }
-
-        // CRITICAL: Check if this item is already placed to prevent duplicates
-        if placedBoxes[item.id] != nil {
-            Swift.print("⚠️ Item \(item.name) (ID: \(item.id)) already placed - skipping duplicate placement")
-            return
-        }
-
-        guard let arView = arView,
-              let frame = arView.session.currentFrame,
-              let userLocation = userLocationManager?.currentLocation else {
-            Swift.print("⚠️ Cannot place AR item: AR not ready or no user location")
-            return
-        }
-        let _ = locationManager // Location manager checked but unused in this scope
-
-        // Limit to maximum objects (configurable in settings, default 6)
-        let maxObjects = locationManager?.maxObjectLimit ?? 6
-        guard placedBoxes.count < maxObjects else {
-            return
-        }
-
-        let cameraTransform = frame.camera.transform
-        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-
-        // Calculate GPS-based position
-        let targetLocation = CLLocation(latitude: item.latitude, longitude: item.longitude)
-        var distance = userLocation.distance(from: targetLocation) // Distance in meters
-        let bearing = userLocation.bearing(to: targetLocation) // Bearing in degrees (0-360, 0 = North)
-        
-        // Ensure minimum distance of 1m for AR placement (items too close are hard to interact with)
-        let minDistance: Double = 1.0
-        if distance < minDistance {
-            Swift.print("⚠️ GPS distance \(String(format: "%.2f", distance))m is too close, using minimum \(minDistance)m")
-            distance = minDistance
-        }
-        
-        Swift.print("📍 GPS offset: \(String(format: "%.2f", distance))m at bearing \(String(format: "%.1f", bearing))°")
-
-        // Convert bearing to radians and calculate offset in AR space
-        // ARKit uses a right-handed coordinate system where:
-        // - X is right (east)
-        // - Z is forward (north when camera faces north)
-        // - Y is up
-        // We need to account for the camera's current orientation
-        
-        // Get camera's forward direction in AR space
-        let cameraForward = SIMD3<Float>(
-            -cameraTransform.columns.2.x,
-            0,
-            -cameraTransform.columns.2.z
-        )
-        let cameraRight = SIMD3<Float>(
-            cameraTransform.columns.0.x,
-            0,
-            cameraTransform.columns.0.z
-        )
-        
-        // Normalize directions
-        let forwardDir = normalize(cameraForward)
-        let rightDir = normalize(cameraRight)
-        
-        // Calculate bearing relative to camera's forward direction
-        // We need to know which way the camera is facing in GPS terms
-        // For now, assume camera forward is roughly north and calculate relative bearing
-        // Convert bearing to radians (0 = North, 90 = East, 180 = South, 270 = West)
-        let bearingRad = Float(bearing * .pi / 180.0)
-        
-        // Calculate offset in AR space: use distance and bearing
-        // X = distance * sin(bearing) (east/west)
-        // Z = distance * cos(bearing) (north/south)
-        // But we need to align with camera's orientation
-        // For simplicity, place relative to camera's current position
-        let offsetX = Float(distance) * sin(bearingRad)
-        let offsetZ = Float(distance) * cos(bearingRad)
-        
-        // Apply offset relative to camera's orientation
-        // Rotate the offset to match camera's current orientation
-        // This is a simplified approach - for more accuracy, we'd need compass heading
-        let targetPos = cameraPos + rightDir * offsetX + forwardDir * offsetZ
-        
-        // Clamp distance to reasonable AR space (max 10m)
-        if distance > 10.0 {
-            Swift.print("⚠️ GPS distance \(String(format: "%.2f", distance))m exceeds 10m, clamping to 10m for AR placement")
-            let scale = Float(10.0 / distance)
-            let adjustedTargetPos = cameraPos + (targetPos - cameraPos) * scale
-            // Find the highest blocking surface at adjusted position
-            var itemPosition: SIMD3<Float>
-            if let surfaceY = groundingService?.findHighestBlockingSurface(x: adjustedTargetPos.x, z: adjustedTargetPos.z, cameraPos: cameraPos) {
-                itemPosition = SIMD3<Float>(adjustedTargetPos.x, surfaceY, adjustedTargetPos.z)
-                Swift.print("✅ Placed \(item.type.displayName) on surface at AR position (\(String(format: "%.2f", adjustedTargetPos.x)), \(String(format: "%.2f", surfaceY)), \(String(format: "%.2f", adjustedTargetPos.z)))")
-            } else {
-                itemPosition = adjustedTargetPos
-                Swift.print("⚠️ No surface detected, placing at camera height")
-            }
-            
-            // Location is already added to locationManager in addFindableItem, no need to add again
-            // Use unified placeBoxAtPosition which handles all object types correctly
-            placeBoxAtPosition(itemPosition, location: item, in: arView)
-            return
-        }
-
-        // Find the highest blocking surface at target position
-        var itemPosition: SIMD3<Float>
-        if let surfaceY = groundingService?.findHighestBlockingSurface(x: targetPos.x, z: targetPos.z, cameraPos: cameraPos) {
-            itemPosition = SIMD3<Float>(targetPos.x, surfaceY, targetPos.z)
-            Swift.print("✅ Placed \(item.type.displayName) on surface at AR position (\(String(format: "%.2f", targetPos.x)), \(String(format: "%.2f", surfaceY)), \(String(format: "%.2f", targetPos.z))) based on GPS offset")
-        } else {
-            // Fallback: place at target position at current camera height
-            itemPosition = targetPos
-            Swift.print("⚠️ No surface detected, placing \(item.type.displayName) at camera height")
-        }
-
-        // Location is already added to locationManager in addFindableItem, no need to add again
-        // Use unified placeBoxAtPosition which handles all object types correctly
-        placeBoxAtPosition(itemPosition, location: item, in: arView)
-    }
-
-    private func createSphereEntity(at position: SIMD3<Float>, item: LootBoxLocation, in arView: ARView) {
-        // Create sphere directly (same as placeSingleSphere)
-        let sphereRadius: Float = 0.15
-        let sphereMesh = MeshResource.generateSphere(radius: sphereRadius)
-        var sphereMaterial = SimpleMaterial()
-        sphereMaterial.color = .init(tint: item.type.color)
-        sphereMaterial.roughness = 0.2
-        sphereMaterial.metallic = 0.3
-
-        let sphere = ModelEntity(mesh: sphereMesh, materials: [sphereMaterial])
-        sphere.name = item.id
-
-        // Position sphere so bottom sits flat on ground
-        sphere.position = SIMD3<Float>(0, sphereRadius, 0)
-
-        // Add point light to make it visible
-        let light = PointLightComponent(color: item.type.glowColor, intensity: 200)
-        sphere.components.set(light)
-
-        // Create anchor and add sphere
-        let anchor = AnchorEntity(world: position)
-        anchor.addChild(sphere)
-
-        arView.scene.addAnchor(anchor)
-        placedBoxes[item.id] = anchor
-        
-        // Apply uniform luminance if ambient light is disabled
-        environmentManager?.applyUniformLuminanceToNewEntity(anchor)
-
-        // Set callback to mark as collected when found
-        findableObjects[item.id] = FindableObject(
-            locationId: item.id,
-            anchor: anchor,
-            sphereEntity: sphere,
-            container: nil,
-            location: item
-        )
-
-        findableObjects[item.id]?.onFoundCallback = { [weak self] id in
-            DispatchQueue.main.async {
-                if let locationManager = self?.locationManager {
-                    locationManager.markCollected(id)
-                }
-            }
-        }
-
-        // CRITICAL: Update tap handler's findableObjects dictionary so the object is tappable
-        if let findable = findableObjects[item.id] {
-            tapHandler?.findableObjects[item.id] = findable
-        }
-
-        Swift.print("✅ Placed sphere \(item.name) at position (\(position.x), \(position.y), \(position.z))")
-    }
-
     private func placeItemAsBox(at position: SIMD3<Float>, item: LootBoxLocation, in arView: ARView) {
         // Create a box entity scaled to sphere size (0.15 radius = 0.3 diameter)
         let boxSize: Float = 0.3 // Same size as sphere diameter
@@ -5084,5 +4550,91 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("   🐕 Corgi placed: \(corgiPlaced)")
     }
 
-}
+    // MARK: - NFC Object Created Notification
 
+    @objc private func handleNFCObjectCreated(_ notification: Notification) {
+        // This method is called when an NFC object is created
+        // You can add any additional logic you want to execute when an NFC object is created
+        Swift.print("🎉 NFC Object Created Notification received!")
+    }
+
+    // MARK: - AR Anchor Transform Support
+    
+    /// Decodes AR anchor transform from base64 string
+    private func decodeARAnchorTransform(_ base64String: String) -> simd_float4x4? {
+        guard let data = Data(base64Encoded: base64String) else {
+            Swift.print("❌ Failed to decode AR anchor transform from base64")
+            return nil
+        }
+        
+        do {
+            let transformArray = try JSONDecoder().decode([Float].self, from: data)
+            guard transformArray.count == 16 else {
+                Swift.print("❌ Invalid AR anchor transform array size: \(transformArray.count), expected 16")
+                return nil
+            }
+            
+            // Reconstruct the 4x4 matrix from the array
+            let transform = simd_float4x4(
+                SIMD4<Float>(transformArray[0], transformArray[1], transformArray[2], transformArray[3]),
+                SIMD4<Float>(transformArray[4], transformArray[5], transformArray[6], transformArray[7]),
+                SIMD4<Float>(transformArray[8], transformArray[9], transformArray[10], transformArray[11]),
+                SIMD4<Float>(transformArray[12], transformArray[13], transformArray[14], transformArray[15])
+            )
+            
+            Swift.print("✅ Successfully decoded AR anchor transform")
+            Swift.print("   Position: (\(String(format: "%.4f", transform.columns.3.x)), \(String(format: "%.4f", transform.columns.3.y)), \(String(format: "%.4f", transform.columns.3.z)))m")
+            
+            return transform
+        } catch {
+            Swift.print("❌ Failed to decode AR anchor transform: \(error)")
+            return nil
+        }
+    }
+    
+    /// Applies AR anchor transform to place object at exact position
+    private func placeObjectWithARAnchor(_ location: LootBoxLocation, arAnchorTransform: simd_float4x4, in arView: ARView) {
+        let position = SIMD3<Float>(
+            arAnchorTransform.columns.3.x,
+            arAnchorTransform.columns.3.y,
+            arAnchorTransform.columns.3.z
+        )
+        
+        Swift.print("🎯 [AR Anchor Precision] Placing object with cm accuracy")
+        Swift.print("   Object: \(location.name)")
+        Swift.print("   Position: (\(String(format: "%.4f", position.x)), \(String(format: "%.4f", position.y)), \(String(format: "%.4f", position.z)))m")
+        Swift.print("   🎯 PRECISION MODE: Using exact AR anchor position (mm accuracy)")
+        
+        // Use the exact position from the AR anchor - no re-grounding
+        placeBoxAtPosition(position, location: location, in: arView)
+    }
+
+    /// Check for and re-place unfound objects that should be visible but aren't in AR
+    /// This handles the case where objects are reset from collected to unfound state
+    private func replaceUnfoundObjects() {
+        guard let locationManager = locationManager,
+              let userLocation = userLocationManager?.currentLocation,
+              let arView = arView else {
+            return
+        }
+        
+        // Get nearby unfound objects that aren't currently placed
+        let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
+        let unfoundObjects = nearby.filter { 
+            !$0.collected && 
+            placedBoxes[$0.id] == nil && 
+            $0.latitude != 0 && // Skip manually placed objects (lat/lon 0,0)
+            $0.longitude != 0
+        }
+        
+        if !unfoundObjects.isEmpty {
+            Swift.print("🔄 Found \(unfoundObjects.count) unfound objects that need re-placement")
+            for location in unfoundObjects {
+                Swift.print("   ↳ Re-placing: \(location.name) (ID: \(location.id))")
+                placeLootBoxAtLocation(location, in: arView)
+            }
+        }
+    }
+
+
+}

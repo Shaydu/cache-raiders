@@ -546,21 +546,20 @@ const ObjectsManager = {
     },
 
     /**
-     * Refresh a specific object marker (called when object is found/unfound)
+     * Refresh a single object marker with updated data from server
      */
     refreshObjectMarker(objectId) {
-        console.log('🔄 Refreshing object marker for:', objectId);
-        
-        // Check if we have this marker
         if (this.markers[objectId] && this.markerData[objectId]) {
-            // Remove the current marker
-            if (MapManager.getMap()) {
-                MapManager.getMap().removeLayer(this.markers[objectId]);
-            }
-            
-            // Get updated object data from server
+            // Get updated object data from server FIRST
             ApiService.objects.get(objectId).then(obj => {
                 const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
+                
+                // Remove the old marker
+                if (MapManager.getMap()) {
+                    MapManager.getMap().removeLayer(this.markers[objectId]);
+                }
+                
+                // Add the updated marker
                 this.addObjectMarker(obj, currentZoom);
                 console.log('✅ Object marker refreshed:', objectId);
             }).catch(error => {

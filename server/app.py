@@ -306,7 +306,8 @@ def init_db():
         ('ar_offset_x', 'REAL'),
         ('ar_offset_y', 'REAL'),
         ('ar_offset_z', 'REAL'),
-        ('ar_placement_timestamp', 'TEXT')
+        ('ar_placement_timestamp', 'TEXT'),
+        ('ar_anchor_transform', 'TEXT')  # For millimeter-precise AR positioning
     ]
     
     for column_name, column_type in optional_columns:
@@ -613,6 +614,7 @@ def get_object(object_id: str):
             o.ar_offset_y,
             o.ar_offset_z,
             o.ar_placement_timestamp,
+            o.ar_anchor_transform,  -- Include AR anchor transform for precise positioning
             CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
             f.found_by,
             f.found_at
@@ -665,8 +667,8 @@ def create_object():
             
             try:
                 cursor.execute('''
-                    INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height, ar_anchor_transform)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     data['id'],
                     data['name'],
@@ -676,7 +678,8 @@ def create_object():
                     data['radius'],
                     datetime.utcnow().isoformat(),
                     data.get('created_by', 'unknown'),
-                    data.get('grounding_height')  # Optional - can be None
+                    data.get('grounding_height'),  # Optional - can be None
+                    data.get('ar_anchor_transform')  # Optional AR anchor transform
                 ))
                 
                 conn.commit()
@@ -744,6 +747,7 @@ def create_object():
                 o.ar_offset_y,
                 o.ar_offset_z,
                 o.ar_placement_timestamp,
+                o.ar_anchor_transform,  # Include AR anchor transform
                 CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
                 f.found_by,
                 f.found_at
@@ -784,6 +788,7 @@ def create_object():
                 'ar_offset_y': safe_get('ar_offset_y'),
                 'ar_offset_z': safe_get('ar_offset_z'),
                 'ar_placement_timestamp': safe_get('ar_placement_timestamp'),
+                'ar_anchor_transform': safe_get('ar_anchor_transform'),  # Include AR anchor transform
                 'collected': bool(safe_get('collected', 0)),
                 'found_by': safe_get('found_by'),
                 'found_at': safe_get('found_at')
@@ -4071,6 +4076,54 @@ def mark_found_alias(object_id: str):
 def unmark_found_alias(object_id: str):
     """Alias for /unmark-found endpoint that iOS client expects."""
     return unmark_found(object_id)
+
+@app.route('/api/objects/bulk', methods=['DELETE'])
+def delete_objects_bulk():
+    """Delete multiple objects in bulk."""
+    data = request.get_json()
+    if not data or 'ids' not in data:
+        return jsonify({'error': 'Missing ids array in request body'}), 400
+    
+    object_ids = data['ids']
+    if not isinstance(object_ids, list):
+        return jsonify({'error': 'ids must be an array'}), 400
+    
+    if len(object_ids) == 0:
+        return jsonify({'message': 'No objects to delete'}), 200
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Delete associated finds first (foreign key constraint)
+        placeholders = ','.join(['?'] * len(object_ids))
+        cursor.execute(f'DELETE FROM finds WHERE object_id IN ({placeholders})', object_ids)
+        finds_deleted = cursor.rowcount
+        
+        # Delete the objects
+        cursor.execute(f'DELETE FROM objects WHERE id IN ({placeholders})', object_ids)
+        objects_deleted = cursor.rowcount
+        
+        conn.commit()
+        
+        # Broadcast object deleted events to all connected clients
+        for object_id in object_ids:
+            socketio.emit('object_deleted', {
+                'object_id': object_id
+            })
+        
+        return jsonify({
+            'message': f'Successfully deleted {objects_deleted} object(s)',
+            'objects_deleted': objects_deleted,
+            'finds_deleted': finds_deleted
+        }), 200
+        
+    except sqlite3.Error as e:
+        conn.rollback()
+        return jsonify({'error': f'Database error: {str(e)}'}), 500
+        
+    finally:
+        conn.close()
 
 if __name__ == '__main__':
     init_db()

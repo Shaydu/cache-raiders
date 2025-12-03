@@ -57,6 +57,7 @@ class GameItemDataService {
         gameItem.ar_offset_y = location.ar_offset_y ?? 0.0
         gameItem.ar_offset_z = location.ar_offset_z ?? 0.0
         gameItem.ar_placement_timestamp = location.ar_placement_timestamp
+        gameItem.ar_anchor_transform = location.ar_anchor_transform // Add AR anchor transform support
         gameItem.created_at = Date()
         gameItem.updated_at = Date()
         gameItem.needs_sync = false // Will be set to true when modified offline
@@ -78,6 +79,7 @@ class GameItemDataService {
         gameItem.ar_offset_y = location.ar_offset_y ?? 0.0
         gameItem.ar_offset_z = location.ar_offset_z ?? 0.0
         gameItem.ar_placement_timestamp = location.ar_placement_timestamp
+        gameItem.ar_anchor_transform = location.ar_anchor_transform // Add AR anchor transform support
         gameItem.updated_at = Date()
     }
     
@@ -130,6 +132,9 @@ class GameItemDataService {
         }
         
         location.ar_placement_timestamp = gameItem.ar_placement_timestamp
+        
+        // Set AR anchor transform if available
+        location.ar_anchor_transform = gameItem.ar_anchor_transform
         
         return location
     }

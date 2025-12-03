@@ -453,10 +453,28 @@ struct OpenGameNFCScannerView: View {
 
         // Analyze NFC data and assign object type
         assignedObjectType = assignObjectType(from: nfcResult)
+        
+        // Extract AR anchor transform data if available in NFC payload
+        extractARAnchorData(from: nfcResult)
 
         // Move to positioning after a brief delay to show the analysis
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             self.startPositioning()
+        }
+    }
+    
+    private func extractARAnchorData(from nfcResult: NFCService.NFCResult) {
+        // Check if NFC payload contains AR anchor transform data
+        // This would be in the format: "ar_anchor:<base64_encoded_transform>"
+        if let payload = nfcResult.payload,
+           payload.hasPrefix("ar_anchor:"),
+           let base64Data = payload.split(separator: ":").last,
+           let anchorData = Data(base64Encoded: String(base64Data)) {
+            
+            print("🎯 Extracted AR anchor transform from NFC tag: \(anchorData.count) bytes")
+            
+            // Store the anchor data for precise positioning
+            precisePositioning.storeARAnchorData(anchorData, for: nfcResult.tagId)
         }
     }
 

@@ -81,6 +81,26 @@ class PreciseARPositioningService: ObservableObject {
 
     private var arSessionDelegate: ARSessionDelegateHandler?
 
+    // MARK: - AR Anchor Data Storage for NFC
+    
+    private var arAnchorDataStore: [String: Data] = [:] // tagID -> anchor transform data
+    
+    /// Store AR anchor transform data extracted from NFC tags
+    func storeARAnchorData(_ data: Data, for tagID: String) {
+        arAnchorDataStore[tagID] = data
+        print("💾 Stored AR anchor data for tag \(tagID): \(data.count) bytes")
+    }
+    
+    /// Retrieve AR anchor transform data for precise positioning
+    func getARAnchorData(for tagID: String) -> Data? {
+        return arAnchorDataStore[tagID]
+    }
+    
+    /// Clear stored AR anchor data
+    func clearARAnchorData(for tagID: String) {
+        arAnchorDataStore.removeValue(forKey: tagID)
+    }
+
     // MARK: - Initialization
     private init() {
         setupLocationManager()
@@ -224,6 +244,13 @@ extension PreciseARPositioningService {
                 // Create new visual anchor for this location
                 try await createNewVisualAnchor(for: geoAnchor, object: object)
             }
+        }
+        
+        // Apply millimeter-level precision using stored AR anchor transform data from NFC
+        if let anchorData = getARAnchorData(for: object.tagID),
+           let anchor = try? NSKeyedUnarchiver.unarchivedObject(ofClass: ARAnchor.self, from: anchorData) {
+            print("🎯 Using millimeter-precise AR anchor from NFC tag")
+            return anchor
         }
 
         return geoAnchor

@@ -97,6 +97,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     var ar_offset_y: Double? // Y offset from AR origin in meters (height)
     var ar_offset_z: Double? // Z offset from AR origin in meters
     var ar_placement_timestamp: Date? // When the object was placed in AR
+    var ar_anchor_transform: String? // Base64-encoded AR anchor transform for mm precision
     
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -145,7 +146,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     // MARK: - Initializers
     
     /// Normal initializer for creating new locations
-    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api, created_by: String? = nil) {
+    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api, created_by: String? = nil, ar_origin_latitude: Double? = nil, ar_origin_longitude: Double? = nil, ar_offset_x: Double? = nil, ar_offset_y: Double? = nil, ar_offset_z: Double? = nil, ar_placement_timestamp: Date? = nil, ar_anchor_transform: String? = nil) {
         self.id = id
         self.name = name
         self.type = type
@@ -156,6 +157,13 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         self.grounding_height = grounding_height
         self.source = source
         self.created_by = created_by
+        self.ar_origin_latitude = ar_origin_latitude
+        self.ar_origin_longitude = ar_origin_longitude
+        self.ar_offset_x = ar_offset_x
+        self.ar_offset_y = ar_offset_y
+        self.ar_offset_z = ar_offset_z
+        self.ar_placement_timestamp = ar_placement_timestamp
+        self.ar_anchor_transform = ar_anchor_transform
     }
     
     // MARK: - Custom Decoding (backward compatibility with prefix-based IDs)
@@ -190,10 +198,13 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
                 source = .api // Default to API for regular IDs
             }
         }
+        
+        // Decode AR anchor transform if present
+        ar_anchor_transform = try container.decodeIfPresent(String.self, forKey: .ar_anchor_transform)
     }
     
     enum CodingKeys: String, CodingKey {
-        case id, name, type, latitude, longitude, radius, collected, grounding_height, source, created_by
+        case id, name, type, latitude, longitude, radius, collected, grounding_height, source, created_by, ar_origin_latitude, ar_origin_longitude, ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp, ar_anchor_transform
     }
 }
 
@@ -802,7 +813,14 @@ class LootBoxLocationManager: ObservableObject {
                 radius: 5.0, // 5 meter radius
                 collected: false,
                 grounding_height: nil,
-                source: .arRandomized // These are auto-generated, not synced to API
+                source: .arRandomized, // These are auto-generated, not synced to API
+                ar_origin_latitude: nil,
+                ar_origin_longitude: nil,
+                ar_offset_x: nil,
+                ar_offset_y: nil,
+                ar_offset_z: nil,
+                ar_placement_timestamp: nil,
+                ar_anchor_transform: nil
             )
             locations.append(newLocation)
             

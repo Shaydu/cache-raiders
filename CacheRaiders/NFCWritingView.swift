@@ -655,12 +655,9 @@ struct NFCWritingView: View {
                     self.currentStep = .success
 
                     // Add object to location manager immediately so it appears in AR
-                    self.locationManager.locations.append(object)
-                    print("✅ Added object to locationManager.locations (\(self.locationManager.locations.count) total)")
+                    self.locationManager.addLocation(object)
+                    print("✅ Added object via locationManager.addLocation() (\(self.locationManager.locations.count) total)")
                     print("   Object details: \(object.name) at (\(object.latitude), \(object.longitude))")
-
-                    // Force objectWillChange notification on locationManager
-                    self.locationManager.objectWillChange.send()
 
                     // Notify other parts of the app to refresh
                     NotificationCenter.default.post(
@@ -702,277 +699,6 @@ struct NFCWritingView: View {
         // Return identity matrix - the AR anchor will be captured later when the user is near the object
         print("ℹ️ NFC writing - using GPS coordinates without AR anchor capture")
         return matrix_identity_float4x4
-    }
-
-    private func createObject(id: String, type: LootBoxType, latitude: Double, longitude: Double, altitude: Double, arAnchorData: Data?) async {
-        currentStep = .creating
-
-        do {
-            // Get current user device ID or username
-            let deviceUUID = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
-            let username = UserDefaults.standard.string(forKey: "username") ?? "Player"
-
-            // Store both GPS coordinates and AR anchor data for tiered accuracy
-            var objectData: [String: Any] = [
-                "id": id,
-                "name": "\(type.displayName)",
-                "type": type.rawValue,
-                // GPS coordinates (for far-away rendering)
-                "latitude": latitude,
-                "longitude": longitude,
-                "altitude": altitude,
-                // AR positioning metadata
-                "ar_precision": arAnchorData != nil,
-                "ar_latitude": latitude,
-                "ar_longitude": longitude,
-                "ar_altitude": altitude,
-                // Object properties
-                "radius": 3.0,  // Smaller radius for NFC objects since they're precise
-                "grounding_height": 0.0,
-                // NFC metadata
-                "nfc_tag_id": writeResult?.tagId ?? "",
-                "nfc_write_timestamp": Date().timeIntervalSince1970,
-                "is_nfc_object": true,
-                // Creator information
-                "created_by": username,
-                "creator_device_id": deviceUUID,
-                "created_at": Date().timeIntervalSince1970,
-                // Discovery tracking
-                "times_found": 0,
-                "first_finder": NSNull(),
-                "last_found_at": NSNull(),
-                // Visibility
-                "visible_to_all": true,
-                "active": true,
-                // Tiered accuracy fields
-                "use_ar_anchor_within_meters": 8.0,  // Use AR anchor when within 8m
-                "ar_anchor_available": arAnchorData != nil
-            ]
-
-            // Add AR anchor data if available (for precise positioning when nearby)
-            if let anchorData = arAnchorData {
-                objectData["ar_anchor_transform"] = anchorData.base64EncodedString()
-                print("✅ Including AR anchor data in object (\(anchorData.count) bytes)")
-            }
-
-            print("📤 Creating NFC loot object: \(objectData)")
-
-            let jsonData = try JSONSerialization.data(withJSONObject: objectData)
-
-            let baseURL = APIService.shared.baseURL
-            guard let url = URL(string: "\(baseURL)/api/objects") else {
-                throw NSError(domain: "NFCWriting", code: -1,
-                             userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
-            }
-
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = jsonData
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw NSError(domain: "NFCWriting", code: -1,
-                             userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
-            }
-
-            print("📥 Server response: \(httpResponse.statusCode)")
-            if let responseString = String(data: data, encoding: .utf8) {
-                print("   Response body: \(responseString)")
-            }
-
-            if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
-                let object = LootBoxLocation(
-                    id: id,
-                    name: "\(type.displayName)",
-                    type: type,
-                    latitude: latitude,
-                    longitude: longitude,
-                    radius: 3.0,  // Match the reduced radius
-                    collected: false,
-                    source: .map
-                )
-
-                DispatchQueue.main.async {
-                    self.createdObject = object
-                    self.currentStep = .success
-
-                    // Add object to location manager immediately so it appears in AR
-                    self.locationManager.locations.append(object)
-                    print("✅ Added object to locationManager.locations (\(self.locationManager.locations.count) total)")
-                    print("   Object details: \(object.name) at (\(object.latitude), \(object.longitude))")
-
-                    // Force objectWillChange notification on locationManager
-                    self.locationManager.objectWillChange.send()
-
-                    // Notify other parts of the app to refresh
-                    NotificationCenter.default.post(
-                        name: NSNotification.Name("NFCObjectCreated"),
-                        object: object
-                    )
-
-                    // Also trigger a location manager refresh
-                    NotificationCenter.default.post(
-                        name: NSNotification.Name("RefreshLootBoxes"),
-                        object: nil
-                    )
-
-                    // Play success haptic and sound
-                    let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                    impactFeedback.impactOccurred()
-                    AudioServicesPlaySystemSound(1103)
-
-                    print("✅ NFC loot object created successfully, added to AR, and notifications sent")
-                    print("   Ready to be discovered by AR view")
-                }
-            } else {
-                throw NSError(domain: "NFCWriting", code: -1,
-                             userInfo: [NSLocalizedDescriptionKey: "Server returned error: \(httpResponse.statusCode)"])
-            }
-
-        } catch {
-            print("❌ Failed to create object: \(error)")
-            DispatchQueue.main.async {
-                self.errorMessage = "Failed to create object: \(error.localizedDescription)"
-                self.currentStep = .error
-            }
-        }
-    }
-
-    private func createObjectWithARPlacement(
-        type: LootBoxType,
-        coordinate: CLLocationCoordinate2D,
-        arPosition: SIMD3<Float>,
-        arOrigin: CLLocation?,
-        groundingHeight: Double,
-        scale: Float
-    ) async {
-        currentStep = .creating
-
-        do {
-            // Get current user device ID or username
-            let deviceUUID = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
-            let username = UserDefaults.standard.string(forKey: "username") ?? "Player"
-
-            // Create object ID
-            let objectId = "nfc_\(writeResult?.tagId ?? UUID().uuidString)_\(Int(Date().timeIntervalSince1970))"
-
-            // Store with precise AR coordinates
-            var objectData: [String: Any] = [
-                "id": objectId,
-                "name": "\(type.displayName)",
-                "type": type.rawValue,
-                // GPS coordinates
-                "latitude": coordinate.latitude,
-                "longitude": coordinate.longitude,
-                "altitude": arOrigin?.altitude ?? 0,
-                // AR coordinates for precise placement
-                "ar_origin_latitude": arOrigin?.coordinate.latitude,
-                "ar_origin_longitude": arOrigin?.coordinate.longitude,
-                "ar_offset_x": Double(arPosition.x),
-                "ar_offset_y": Double(arPosition.y),
-                "ar_offset_z": Double(arPosition.z),
-                // Object properties
-                "radius": 3.0,
-                "grounding_height": groundingHeight,
-                "scale": Double(scale),
-                // NFC metadata
-                "nfc_tag_id": writeResult?.tagId ?? "",
-                "nfc_write_timestamp": Date().timeIntervalSince1970,
-                "is_nfc_object": true,
-                // Creator information
-                "created_by": username,
-                "creator_device_id": deviceUUID,
-                "created_at": Date().timeIntervalSince1970,
-                // Discovery tracking
-                "times_found": 0,
-                "first_finder": NSNull(),
-                "last_found_at": NSNull(),
-                // Visibility
-                "visible_to_all": true,
-                "active": true,
-                // Tiered accuracy
-                "use_ar_anchor_within_meters": 8.0,
-                "ar_precision": true
-            ]
-
-            print("📤 Creating NFC loot with AR placement: \(objectData)")
-
-            let jsonData = try JSONSerialization.data(withJSONObject: objectData)
-
-            let baseURL = APIService.shared.baseURL
-            guard let url = URL(string: "\(baseURL)/api/objects") else {
-                throw NSError(domain: "NFCWriting", code: -1,
-                             userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
-            }
-
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = jsonData
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw NSError(domain: "NFCWriting", code: -1,
-                             userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
-            }
-
-            print("📥 Server response: \(httpResponse.statusCode)")
-
-            if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
-                let object = LootBoxLocation(
-                    id: objectId,
-                    name: "\(type.displayName)",
-                    type: type,
-                    latitude: coordinate.latitude,
-                    longitude: coordinate.longitude,
-                    radius: 3.0,
-                    collected: false,
-                    source: .map
-                )
-
-                DispatchQueue.main.async {
-                    self.createdObject = object
-                    self.currentStep = .success
-
-                    // Add object to location manager
-                    self.locationManager.locations.append(object)
-                    self.locationManager.objectWillChange.send()
-
-                    // Notify AR coordinator
-                    NotificationCenter.default.post(
-                        name: NSNotification.Name("ARPlacementObjectSaved"),
-                        object: nil,
-                        userInfo: ["objectId": objectId]
-                    )
-
-                    // Play success feedback
-                    let impactFeedback = UIImpactFeedbackGenerator(style: .medium)
-                    impactFeedback.impactOccurred()
-                    AudioServicesPlaySystemSound(1103)
-
-                    print("✅ NFC loot with AR placement created successfully")
-
-                    // Dismiss after short delay
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        self.dismiss()
-                    }
-                }
-            } else {
-                throw NSError(domain: "NFCWriting", code: -1,
-                             userInfo: [NSLocalizedDescriptionKey: "Server error: \(httpResponse.statusCode)"])
-            }
-
-        } catch {
-            print("❌ Failed to create object: \(error)")
-            DispatchQueue.main.async {
-                self.errorMessage = "Failed to create object: \(error.localizedDescription)"
-                self.currentStep = .error
-                self.showARPlacement = false
-            }
-        }
     }
 
     private func cleanup() {
@@ -1070,6 +796,23 @@ struct NFCDiagnosticsSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Status Row
+struct StatusRow: View {
+    let label: String
+    let status: Bool
+
+    var body: some View {
+        HStack {
+            Image(systemName: status ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundColor(status ? .green : .red)
+            Text(label)
+                .foregroundColor(.primary)
+            Spacer()
+        }
+        .padding(.vertical, 4)
     }
 }
 
