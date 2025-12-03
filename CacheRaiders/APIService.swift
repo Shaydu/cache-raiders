@@ -395,7 +395,8 @@ class APIService {
             radius: apiObject.radius,
             collected: apiObject.collected,
             grounding_height: apiObject.grounding_height,
-            source: .api // API objects come from the API
+            source: .api, // API objects come from the API
+            created_by: apiObject.created_by
         )
 
         return location

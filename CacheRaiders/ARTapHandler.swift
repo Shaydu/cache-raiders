@@ -21,12 +21,15 @@ class ARTapHandler {
     
     // Callback for finding loot boxes
     var onFindLootBox: ((String, AnchorEntity, SIMD3<Float>, ModelEntity?) -> Void)?
-    
+
     // Callback for placing loot box at tap location
     var onPlaceLootBoxAtTap: ((LootBoxLocation, ARRaycastResult) -> Void)?
-    
+
     // Callback for NPC taps (takes NPC ID string, ARCoordinator will convert to NPCType)
     var onNPCTap: ((String) -> Void)?
+
+    // Callback for showing info panel for user's own objects
+    var onShowObjectInfo: ((LootBoxLocation) -> Void)?
     
     // Reference to placed NPCs for tap detection
     var placedNPCs: [String: AnchorEntity] = [:] {
@@ -321,23 +324,40 @@ class ARTapHandler {
             }
         }
         
-        // UNIFIED FINDABLE BEHAVIOR: All objects in placedBoxes are findable and clickable
-        // If we found a location ID (tapped on any findable object), trigger find behavior
+        // UNIFIED FINDABLE BEHAVIOR: Handle different tap behaviors based on object type and creator
         Swift.print("🎯 Tap result: locationId = \(locationId ?? "nil")")
         if let idString = locationId {
             Swift.print("🎯 Processing tap on: \(idString)")
-            
+
+            // Get the location object to check its properties
+            guard let location = locationManager.locations.first(where: { $0.id == idString }) else {
+                Swift.print("⚠️ Location not found in locationManager for \(idString)")
+                return
+            }
+
             // CRITICAL: Check if object is already collected - this is the primary check
             // If collected, don't allow tapping (object should have been removed from AR)
-            let isLocationCollected = locationManager.locations.first(where: { $0.id == idString })?.collected ?? false
-            
-            if isLocationCollected {
+            if location.collected {
                 Swift.print("⚠️ \(idString) has already been collected - ignoring tap")
+                return
+            }
+
+            // Check if this is an NFC object created by the current user
+            let currentUserId = APIService.shared.currentUserID
+            let isNFCObject = idString.hasPrefix("nfc_")
+            let isCreatedByCurrentUser = location.created_by == currentUserId
+
+            Swift.print("🎯 Object analysis: NFC=\(isNFCObject), created_by_current_user=\(isCreatedByCurrentUser), current_user=\(currentUserId)")
+
+            // SPECIAL HANDLING FOR NFC OBJECTS CREATED BY CURRENT USER
+            if isNFCObject && isCreatedByCurrentUser {
+                Swift.print("ℹ️ NFC object created by current user - showing info panel instead of collecting")
+                onShowObjectInfo?(location)
                 return
             }
             
             // Clear from foundLootBoxes if location was reset (allows re-tapping after reset)
-            if foundLootBoxes.contains(idString) && !isLocationCollected {
+            if foundLootBoxes.contains(idString) && !location.collected {
                 foundLootBoxes.remove(idString)
                 Swift.print("🔄 Object \(idString) was reset - clearing from found set, allowing tap again")
             }

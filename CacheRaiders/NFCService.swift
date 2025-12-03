@@ -249,41 +249,64 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
         return "ndef_unknown_\(Date().timeIntervalSince1970)"
     }
 
-    private func createNDEFMessage(from jsonString: String) -> NFCNDEFMessage? {
-        print("🔨 Creating NDEF message from JSON string")
-        print("   JSON length: \(jsonString.count) characters")
+    private func createNDEFMessage(from urlString: String) -> NFCNDEFMessage? {
+        print("🔨 Creating NDEF URI record from URL string")
+        print("   URL: \(urlString)")
+        print("   URL length: \(urlString.count) characters")
 
-        // Create a text record containing the JSON loot data
-        guard let jsonData = jsonString.data(using: .utf8) else {
-            print("❌ Failed to convert JSON string to data")
+        // Check if this looks like a URL (starts with http:// or https://)
+        let isURL = urlString.hasPrefix("http://") || urlString.hasPrefix("https://")
+        
+        if !isURL {
+            print("⚠️ Input doesn't appear to be a URL, but will create URI record anyway")
+        }
+
+        // Create NDEF URI record (TNF = NFC Well Known, Type = "U")
+        // URI format: [URI identifier byte] + [URI string bytes]
+        
+        // Determine URI identifier byte based on prefix
+        var uriIdentifier: UInt8 = 0x00 // No prefix
+        if urlString.hasPrefix("http://") {
+            uriIdentifier = 0x03 // http://www.
+        } else if urlString.hasPrefix("https://") {
+            uriIdentifier = 0x04 // https://www.
+        }
+        
+        // Remove the prefix if we're using a URI identifier
+        var uriPayload = urlString
+        if uriIdentifier == 0x03 && urlString.hasPrefix("http://") {
+            uriPayload = String(urlString.dropFirst(7)) // Remove "http://"
+        } else if uriIdentifier == 0x04 && urlString.hasPrefix("https://") {
+            uriPayload = String(urlString.dropFirst(8)) // Remove "https://"
+        }
+        
+        guard let uriData = uriPayload.data(using: .utf8) else {
+            print("❌ Failed to convert URI string to data")
             return nil
         }
 
-        print("   Data size: \(jsonData.count) bytes")
-
-        // Create NDEF text record (TNF = NFC Well Known, Type = "T")
-        // Note: For proper text records, we need to include the language code
-        // Format: Status byte (0x02 = UTF-8, en) + "en" + actual text
-        let languageCode = "en"
-        let languageCodeData = languageCode.data(using: .utf8)!
-        let statusByte: UInt8 = UInt8(languageCodeData.count) // Language code length
-
         var payload = Data()
-        payload.append(statusByte)
-        payload.append(languageCodeData)
-        payload.append(jsonData)
+        payload.append(uriIdentifier)
+        payload.append(uriData)
 
-        let textRecord = NFCNDEFPayload(
+        print("   URI payload size: \(payload.count) bytes")
+        print("   URI identifier: 0x\(String(format: "%02X", uriIdentifier))")
+
+        let uriRecord = NFCNDEFPayload(
             format: .nfcWellKnown,
-            type: "T".data(using: .utf8)!,
+            type: "U".data(using: .utf8)!,
             identifier: Data(),
             payload: payload
         )
 
-        let message = NFCNDEFMessage(records: [textRecord])
-        print("✅ Created NDEF message with \(message.records.count) record(s)")
-
-        return message
+        // Create NDEF message with the URI record
+        let ndefMessage = NFCNDEFMessage(records: [uriRecord])
+        
+        print("✅ Created URI NDEF record")
+        print("   Record type: URI")
+        print("   Payload: \(urlString)")
+        
+        return ndefMessage
     }
 
     private func createWriteMessage() -> NFCNDEFMessage? {

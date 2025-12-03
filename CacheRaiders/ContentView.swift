@@ -1,12 +1,6 @@
 import SwiftUI
 import CoreLocation
 
-// MARK: - NPC Info
-struct ConversationNPC: Equatable {
-    let id: String
-    let name: String
-}
-
 // MARK: - Main Content View
 struct ContentView: View {
     @StateObject private var locationManager = LootBoxLocationManager()
@@ -25,34 +19,6 @@ struct ContentView: View {
     // Action sheet state for + menu
     @State private var showPlusMenu = false
     
-    // Use enum-based sheet state to prevent multiple sheets being presented simultaneously
-    enum SheetType: Identifiable, Equatable {
-        case locationConfig
-        case arPlacement
-        case nfcScanner
-        case nfcWriting
-        case simpleNFCScanner
-        case inventory
-        case settings
-        case leaderboard
-        case skeletonConversation(npcId: String, npcName: String)
-        case treasureMap
-
-        var id: String {
-            switch self {
-            case .locationConfig: return "locationConfig"
-            case .arPlacement: return "arPlacement"
-            case .nfcScanner: return "nfcScanner"
-            case .nfcWriting: return "nfcWriting"
-            case .simpleNFCScanner: return "simpleNFCScanner"
-            case .inventory: return "inventory"
-            case .settings: return "settings"
-            case .leaderboard: return "leaderboard"
-            case .skeletonConversation(let npcId, _): return "skeletonConversation_\(npcId)"
-            case .treasureMap: return "treasureMap"
-            }
-        }
-    }
     
     @State private var presentedSheet: SheetType? = nil
     @State private var conversationNPC: ConversationNPC? = nil
@@ -106,15 +72,18 @@ struct ContentView: View {
     // MARK: - View Components
     
     private var topOverlayView: some View {
-        VStack {
-            topToolbarView
-            
-            locationDisplayView
-            
-            Spacer()
-            
-            notificationsView
-        }
+        TopOverlayView(
+            showPlusMenu: $showPlusMenu,
+            showGridTreasureMap: $showGridTreasureMap,
+            presentedSheet: $presentedSheet,
+            isGPSConnected: isGPSConnected,
+            formatDistanceInFeetInches: formatDistanceInFeetInches,
+            collectionNotification: collectionNotification,
+            temperatureStatus: temperatureStatus,
+            directionIndicatorView: AnyView(directionIndicatorView),
+            locationManager: locationManager,
+            userLocationManager: userLocationManager
+        )
     }
     
     private var topToolbarView: some View {
@@ -136,7 +105,12 @@ struct ContentView: View {
             Button(action: {
                 // Use async to avoid modifying state during view update
                 Task { @MainActor in
-                    presentedSheet = .treasureMap
+                    // Show different map views based on game mode
+                    if locationManager.gameMode == .deadMensSecrets {
+                        presentedSheet = .treasureMap
+                    } else {
+                        presentedSheet = .mapView
+                    }
                 }
             }) {
                 Image(systemName: "map")
@@ -428,159 +402,6 @@ struct ContentView: View {
     
     // Helper to build sheet content - breaks up complex expression
     @ViewBuilder
-    private func sheetContent(for sheetType: SheetType) -> some View {
-        switch sheetType {
-        case .locationConfig:
-            LocationConfigView(locationManager: locationManager)
-        case .arPlacement:
-            ARPlacementView(locationManager: locationManager, userLocationManager: userLocationManager)
-        case .nfcScanner:
-            OpenGameNFCScannerView()
-        case .nfcWriting:
-            NFCWritingView(locationManager: locationManager, userLocationManager: userLocationManager)
-        case .simpleNFCScanner:
-            SimpleNFCScannerView()
-        case .inventory:
-            NavigationView {
-                InventoryView(inventoryService: inventoryService)
-                    .navigationTitle("Inventory")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button("Done") {
-                                presentedSheet = nil
-                            }
-                        }
-                    }
-            }
-        case .settings:
-            SettingsView(locationManager: locationManager, userLocationManager: userLocationManager)
-        case .leaderboard:
-            NavigationView {
-                LeaderboardView()
-                    .navigationTitle("Leaderboard")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            Button("Done") {
-                                presentedSheet = nil
-                            }
-                        }
-                    }
-            }
-        case .skeletonConversation(let npcId, let npcName):
-            SkeletonConversationView(
-                npcName: npcName,
-                npcId: npcId,
-                onMapMentioned: {
-                    // Close conversation and open treasure map
-                    presentedSheet = nil
-                    // Small delay to allow conversation to close smoothly
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        presentedSheet = .treasureMap
-                    }
-                },
-                treasureHuntService: treasureHuntService,
-                userLocationManager: userLocationManager
-            )
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-            .presentationBackgroundInteraction(.enabled)
-            .presentationBackground {
-                Color.black.opacity(0.95)
-            }
-        case .treasureMap:
-            treasureMapSheetContent
-        }
-    }
-    
-    // Helper for treasure map content - breaks up complex expression
-    @ViewBuilder
-    private var treasureMapSheetContent: some View {
-        if let mapPiece = treasureHuntService.mapPiece,
-           let treasureLocation = treasureHuntService.treasureLocation {
-            // Create treasure map data from map piece
-            let landmarks: [LandmarkAnnotation] = (mapPiece.landmarks ?? []).map { landmarkData in
-                let landmarkType: LandmarkType
-                switch landmarkData.type.lowercased() {
-                case "water": landmarkType = .water
-                case "tree": landmarkType = .tree
-                case "building": landmarkType = .building
-                case "mountain": landmarkType = .mountain
-                case "path": landmarkType = .path
-                default: landmarkType = .building
-                }
-                
-                return LandmarkAnnotation(
-                    id: UUID().uuidString,
-                    coordinate: CLLocationCoordinate2D(latitude: landmarkData.latitude, longitude: landmarkData.longitude),
-                    name: landmarkData.name,
-                    type: landmarkType,
-                    iconName: landmarkType.iconName
-                )
-            }
-            
-            // Find Captain Bones location if available
-            // Use exact NPC ID to avoid duplicates (skeleton-1 becomes npc_skeleton-1 in locations)
-            // Filter to ensure we only get one unique coordinate
-            let npcLocations = locationManager.locations.filter { location in
-                location.id == "npc_skeleton-1" || 
-                (location.id.hasPrefix("npc_") && location.id.contains("skeleton-1"))
-            }
-            // Get the first unique coordinate (in case there are duplicates with same coordinates)
-            let npcLocation = npcLocations.first?.coordinate
-            
-            let mapData = TreasureMapData(
-                mapName: "Captain Bones' Treasure Map",
-                xMarksTheSpot: treasureLocation.coordinate,
-                landmarks: landmarks,
-                clueCoordinates: [], // Clues can be added here if needed
-                npcLocation: npcLocation
-            )
-            
-            TreasureMapView(mapData: mapData, userLocationManager: userLocationManager)
-                .environmentObject(userLocationManager)
-        } else {
-            // Show general treasure map with all loot boxes when no specific treasure hunt
-            generalTreasureMapContent
-        }
-    }
-
-    // Helper for general treasure map content showing all loot boxes
-    @ViewBuilder
-    private var generalTreasureMapContent: some View {
-        // Create treasure map data showing all loot boxes
-        let landmarks: [LandmarkAnnotation] = [] // Could add OSM landmarks here if needed
-
-        // Find all loot box locations (excluding NPCs for now)
-        let lootBoxLocations = locationManager.locations.filter { location in
-            // Include all valid loot boxes that should show on map
-            guard !(location.latitude == 0 && location.longitude == 0) else { return false }
-            return location.shouldShowOnMap && !location.id.hasPrefix("npc_")
-        }
-
-        // Find Captain Bones location if available
-        let npcLocations = locationManager.locations.filter { location in
-            location.id == "npc_skeleton-1" ||
-            (location.id.hasPrefix("npc_") && location.id.contains("skeleton-1"))
-        }
-        let npcLocation = npcLocations.first?.coordinate
-
-        // Use the first loot box as "treasure" or user's location as center
-        let treasureLocation = lootBoxLocations.first?.coordinate ?? userLocationManager.currentLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
-
-        let mapData = TreasureMapData(
-            mapName: "Treasure Map",
-            xMarksTheSpot: treasureLocation,
-            landmarks: landmarks,
-            clueCoordinates: lootBoxLocations.map { $0.coordinate }, // Show all loot boxes as red X marks
-            npcLocation: npcLocation
-        )
-
-        TreasureMapView(mapData: mapData, userLocationManager: userLocationManager)
-            .environmentObject(userLocationManager)
-    }
-    
     var body: some View {
         mainContentView
             .onAppear(perform: handleAppear)
@@ -601,7 +422,15 @@ struct ContentView: View {
                 GridTreasureMapView(mapService: gridTreasureMapService)
             }
             .sheet(item: $presentedSheet) { sheetType in
-                sheetContent(for: sheetType)
+                SheetContentView(
+                    sheetType: sheetType,
+                    locationManager: locationManager,
+                    userLocationManager: userLocationManager,
+                    treasureHuntService: treasureHuntService,
+                    gridTreasureMapService: gridTreasureMapService,
+                    inventoryService: inventoryService,
+                    dismiss: { presentedSheet = nil }
+                )
                     .onAppear {
                         NotificationCenter.default.post(name: NSNotification.Name("DialogOpened"), object: nil)
                     }
@@ -784,3 +613,4 @@ struct ContentView: View {
     }
 }
 
+    

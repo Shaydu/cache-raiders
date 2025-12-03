@@ -88,6 +88,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     var collected: Bool = false
     var grounding_height: Double? // Optional: stored grounding height in meters (AR world space Y coordinate)
     var source: ItemSource = .api // Default to API source for backward compatibility
+    var created_by: String? // User ID who created this object
 
     // AR-offset based positioning for centimeter-level accuracy
     var ar_origin_latitude: Double? // GPS location where AR session originated
@@ -144,7 +145,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     // MARK: - Initializers
     
     /// Normal initializer for creating new locations
-    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api) {
+    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api, created_by: String? = nil) {
         self.id = id
         self.name = name
         self.type = type
@@ -154,6 +155,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         self.collected = collected
         self.grounding_height = grounding_height
         self.source = source
+        self.created_by = created_by
     }
     
     // MARK: - Custom Decoding (backward compatibility with prefix-based IDs)
@@ -169,6 +171,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         radius = try container.decode(Double.self, forKey: .radius)
         collected = try container.decodeIfPresent(Bool.self, forKey: .collected) ?? false
         grounding_height = try container.decodeIfPresent(Double.self, forKey: .grounding_height)
+        created_by = try container.decodeIfPresent(String.self, forKey: .created_by)
         
         // Try to decode source, but if not present, infer from ID prefix (backward compatibility)
         if let decodedSource = try? container.decode(ItemSource.self, forKey: .source) {
@@ -190,7 +193,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     }
     
     enum CodingKeys: String, CodingKey {
-        case id, name, type, latitude, longitude, radius, collected, grounding_height, source
+        case id, name, type, latitude, longitude, radius, collected, grounding_height, source, created_by
     }
 }
 

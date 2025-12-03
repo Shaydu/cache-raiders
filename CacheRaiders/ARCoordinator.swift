@@ -477,6 +477,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 Swift.print("⚠️ Unknown NPC ID: \(npcId)")
             }
         }
+        tapHandler?.onShowObjectInfo = { [weak self] location in
+            self?.showObjectInfoPanel(location: location)
+        }
         
         // Monitor AR session
         arView.session.delegate = self
@@ -493,7 +496,20 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Apply ambient light setting
         environmentManager?.updateAmbientLight()
     }
-    
+
+    // MARK: - Object Info Panel
+
+    func showObjectInfoPanel(location: LootBoxLocation) {
+        Swift.print("ℹ️ Showing info panel for object: \(location.name) (ID: \(location.id))")
+
+        // Create a notification or binding to show the info panel in the UI
+        // For now, we'll use a notification that the main view can listen for
+        NotificationCenter.default.post(
+            name: NSNotification.Name("ShowObjectInfoPanel"),
+            object: location
+        )
+    }
+
     /// Handle when an object is collected by another user - remove it from AR scene
     private func handleObjectCollectedByOtherUser(objectId: String) {
         guard arView != nil else { return }

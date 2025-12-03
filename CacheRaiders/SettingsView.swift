@@ -9,7 +9,7 @@ struct SettingsView: View {
     @ObservedObject private var webSocketService = WebSocketService.shared
     @ObservedObject private var offlineModeManager = OfflineModeManager.shared
     @StateObject private var viewModel: SettingsViewModel
-    @Environment(\.dismiss) var dismiss
+    var dismissAction: (() -> Void)? = nil
     @State private var previousDistance: Double = 10.0
     @State private var showQRScanner = false
     @State private var scannedURL: String?
@@ -25,9 +25,10 @@ struct SettingsView: View {
     @State private var cachedGroupedTypes: [(models: [String], typeCounts: [(type: LootBoxType, count: Int)])] = []
     @State private var regenerateTask: Task<Void, Never>?
     
-    init(locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager) {
+    init(locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, dismissAction: (() -> Void)? = nil) {
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
+        self.dismissAction = dismissAction
         _viewModel = StateObject(wrappedValue: SettingsViewModel(locationManager: locationManager, userLocationManager: userLocationManager))
     }
     
@@ -104,30 +105,29 @@ struct SettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
-            List {
-                searchDistanceSection
-                maxObjectLimitSection
-                findableTypesSection
-                mapDisplaySection
-                conversationSection
-                arZoomSection
-                arDebugSection
-                userProfileSection
-                leaderboardSection
-                apiSyncSection
-                arLensSection
-                aboutSection
-            }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
+        List {
+            searchDistanceSection
+            maxObjectLimitSection
+            findableTypesSection
+            mapDisplaySection
+            conversationSection
+            arZoomSection
+            arDebugSection
+            userProfileSection
+            leaderboardSection
+            apiSyncSection
+            arLensSection
+            aboutSection
+        }
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("Done") {
+                    dismissAction?()
                 }
             }
+        }
             .onAppear {
                 previousDistance = locationManager.maxSearchDistance
                 
@@ -173,9 +173,8 @@ struct SettingsView: View {
             } message: {
                 Text(viewModel.alertMessage)
             }
-        }
     }
-    
+
     // MARK: - View Sections
     
     private var searchDistanceSection: some View {
@@ -183,34 +182,34 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Maximum Search Distance: \(Int(locationManager.maxSearchDistance))m")
                     .font(.headline)
-                
+
                 Slider(
                     value: Binding(
                         get: { locationManager.maxSearchDistance },
                         set: { newValue in
                             locationManager.maxSearchDistance = newValue
                             locationManager.saveMaxDistance()
-                            
+
                             // PERFORMANCE: Debounce regeneration and move to background thread
                             if previousDistance != newValue {
                                 // Cancel any pending regeneration task
                                 regenerateTask?.cancel()
-                                
+
                                 // Debounce: wait 500ms after user stops adjusting slider
                                 regenerateTask = Task { @MainActor [weak locationManager] in
                                     // Capture userLocationManager from the view context
                                     let currentUserLocationManager = userLocationManager
-                                    
+
                                     try? await Task.sleep(nanoseconds: 500_000_000) // 500ms debounce
-                                    
+
                                     guard !Task.isCancelled,
                                           let locationManager = locationManager,
                                           let userLocation = currentUserLocationManager.currentLocation else {
                                         return
                                     }
-                                    
+
                                     print("🔄 Search distance changed from \(previousDistance)m to \(newValue)m, regenerating loot boxes")
-                                    
+
                                     // Move heavy regeneration to background thread
                                     Task.detached(priority: .userInitiated) {
                                         await MainActor.run {
@@ -225,7 +224,7 @@ struct SettingsView: View {
                     in: 10...100,
                     step: 10
                 )
-                
+
                 HStack {
                     Text("10m")
                         .font(.caption)
@@ -235,7 +234,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 Text("Loot boxes within this distance will appear in AR")
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -249,7 +248,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Maximum Objects in AR: \(locationManager.maxObjectLimit)")
                     .font(.headline)
-                
+
                 Slider(
                     value: Binding(
                         get: { Double(locationManager.maxObjectLimit) },
@@ -261,7 +260,7 @@ struct SettingsView: View {
                     in: 1...25,
                     step: 1
                 )
-                
+
                 HStack {
                     Text("1")
                         .font(.caption)
@@ -271,7 +270,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 Text("Maximum number of objects that can be placed in AR at once")
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -282,15 +281,17 @@ struct SettingsView: View {
     
     private var findableTypesSection: some View {
         Section("Findable Types") {
-            ForEach(Array(groupedFindableTypes.enumerated()), id: \.offset) { index, group in
+            ForEach(0..<groupedFindableTypes.count, id: \.self) { index in
+                let group = groupedFindableTypes[index]
                 if group.types.count > 1 {
-                    ForEach(Array(group.types.enumerated()), id: \.offset) { typeIndex, type in
+                    ForEach(0..<group.types.count, id: \.self) { typeIndex in
+                        let type = group.types[typeIndex]
                         HStack(spacing: 12) {
                             Image(systemName: iconName(for: type))
                                 .foregroundColor(Color(type.color))
                                 .font(.title3)
                                 .frame(width: 30)
-                            
+
                             if group.models.isEmpty {
                                 Text(type.displayName)
                                     .font(.body)
@@ -298,9 +299,9 @@ struct SettingsView: View {
                                 Text("\(type.displayName) (\(group.models.joined(separator: ", ")))")
                                     .font(.body)
                             }
-                            
+
                             Spacer()
-                            
+
                             Text("\(countForType(type))")
                                 .font(.body)
                                 .fontWeight(.semibold)
@@ -315,9 +316,9 @@ struct SettingsView: View {
                             .foregroundColor(Color(firstType.color))
                             .font(.title3)
                             .frame(width: 30)
-                        
+
                         let typeNames = group.types.map { $0.displayName }.joined(separator: ", ")
-                        
+
                         if group.models.isEmpty {
                             Text(typeNames)
                                 .font(.body)
@@ -325,9 +326,9 @@ struct SettingsView: View {
                             Text("\(typeNames) (\(group.models.joined(separator: ", ")))")
                                 .font(.body)
                         }
-                        
+
                         Spacer()
-                        
+
                         // Sum up counts for all types in this group
                         let totalCount = group.types.reduce(0) { $0 + countForType($1) }
                         Text("\(totalCount)")
@@ -351,7 +352,7 @@ struct SettingsView: View {
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("When enabled, found items appear in deep red and unfound items appear in green on the map")
                 .font(.caption2)
                 .foregroundColor(.secondary)
@@ -377,21 +378,21 @@ struct SettingsView: View {
     private var arZoomSection: some View {
         Section("AR Zoom") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Zoom Level: \(String(format: "%.1f", locationManager.arZoomLevel))x")
+                Text("Zoom Level: \(String(format: "%.1f", self.locationManager.arZoomLevel))x")
                     .font(.headline)
-                
+
                 Slider(
                     value: Binding(
-                        get: { locationManager.arZoomLevel },
+                        get: { self.locationManager.arZoomLevel },
                         set: { newValue in
-                            locationManager.arZoomLevel = newValue
-                            locationManager.saveARZoomLevel()
+                            self.locationManager.arZoomLevel = newValue
+                            self.locationManager.saveARZoomLevel()
                         }
                     ),
                     in: 0.5...3.0,
                     step: 0.1
                 )
-                
+
                 HStack {
                     Text("0.5x")
                         .font(.caption)
@@ -405,7 +406,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 Text("Adjust the zoom level of the AR camera view. Lower values show more area, higher values zoom in closer.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -417,75 +418,75 @@ struct SettingsView: View {
     var arDebugSection: some View {
         Section("AR Debug") {
             Toggle("Debug AR and Location", isOn: Binding(
-                get: { locationManager.showARDebugVisuals },
+                get: { self.locationManager.showARDebugVisuals },
                 set: { newValue in
-                    locationManager.showARDebugVisuals = newValue
-                    locationManager.saveDebugVisuals()
+                    self.locationManager.showARDebugVisuals = newValue
+                    self.locationManager.saveDebugVisuals()
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("Enable to see ARKit feature points (green triangles) and anchor origins for debugging. Also plays a submarine ping sound when location is sent to the server.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
-            
+
             Toggle("Disable Occlusion", isOn: Binding(
-                get: { locationManager.disableOcclusion },
+                get: { self.locationManager.disableOcclusion },
                 set: { newValue in
-                    locationManager.disableOcclusion = newValue
-                    locationManager.saveDisableOcclusion()
+                    self.locationManager.disableOcclusion = newValue
+                    self.locationManager.saveDisableOcclusion()
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("When enabled, objects will be visible even when behind walls. Useful for finding hidden objects.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
-            
+
             Toggle("Disable Ambient Light", isOn: Binding(
-                get: { locationManager.disableAmbientLight },
+                get: { self.locationManager.disableAmbientLight },
                 set: { newValue in
-                    locationManager.disableAmbientLight = newValue
-                    locationManager.saveDisableAmbientLight()
+                    self.locationManager.disableAmbientLight = newValue
+                    self.locationManager.saveDisableAmbientLight()
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("When enabled, objects will have uniform brightness regardless of real-world lighting conditions.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
-            
+
             Toggle("Enable Object Recognition", isOn: Binding(
-                get: { locationManager.enableObjectRecognition },
+                get: { self.locationManager.enableObjectRecognition },
                 set: { newValue in
-                    locationManager.enableObjectRecognition = newValue
-                    locationManager.saveEnableObjectRecognition()
+                    self.locationManager.enableObjectRecognition = newValue
+                    self.locationManager.saveEnableObjectRecognition()
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("When enabled, uses Vision framework to classify objects in camera view. Disabled by default to save battery and processing power.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
-            
+
             Toggle("Enable Audio Mode", isOn: Binding(
-                get: { locationManager.enableAudioMode },
+                get: { self.locationManager.enableAudioMode },
                 set: { newValue in
-                    locationManager.enableAudioMode = newValue
-                    locationManager.saveEnableAudioMode()
+                    self.locationManager.enableAudioMode = newValue
+                    self.locationManager.saveEnableAudioMode()
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("When enabled, plays a ping sound once per second. The pitch increases as you get closer to objects, reaching maximum pitch when you're on top of them.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
 
             Toggle("Use Generic Doubloon Icons", isOn: Binding(
-                get: { locationManager.useGenericDoubloonIcons },
+                get: { self.locationManager.useGenericDoubloonIcons },
                 set: { newValue in
-                    locationManager.useGenericDoubloonIcons = newValue
-                    locationManager.saveUseGenericDoubloonIcons()
+                    self.locationManager.useGenericDoubloonIcons = newValue
+                    self.locationManager.saveUseGenericDoubloonIcons()
                 }
             ))
             .padding(.vertical, 4)
@@ -1331,6 +1332,4 @@ struct SettingsView: View {
             .padding(.vertical, 4)
         }
     }
-    
 }
-
