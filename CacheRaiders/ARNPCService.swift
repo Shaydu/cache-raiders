@@ -63,16 +63,16 @@ class ARNPCService: NSObject {
     private var hasTalkedToSkeleton: Bool = false // Track if player has talked to skeleton
     private var collectedMapPieces: Set<Int> = [] // Track which map pieces player has collected
     
-    func setup(locationManager: LootBoxLocationManager, 
-              userLocationManager: UserLocationManager, 
-              conversationManager: ARConversationManager, 
-              treasureHuntService: TreasureHuntService, 
-              arView: ARView) {
-        self.locationManager = locationManager
-        self.userLocationManager = userLocationManager
-        self.conversationManager = conversationManager
-        self.treasureHuntService = treasureHuntService
+    init(arView: ARView,
+         locationManager: LootBoxLocationManager,
+         groundingService: ARGroundingService,
+         tapHandler: ARTapHandler,
+         conversationManager: ARConversationManager,
+         conversationNPCBinding: Binding<ConversationNPC?>?) {
         self.arView = arView
+        self.locationManager = locationManager
+        self.conversationManager = conversationManager
+        super.init()
     }
     
     // NPC placement and interaction methods will be moved here from ARCoordinator

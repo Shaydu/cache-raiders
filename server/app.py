@@ -731,7 +731,7 @@ def create_object():
         
         # Get the created object to broadcast
         cursor.execute('''
-            SELECT 
+            SELECT
                 o.id,
                 o.name,
                 o.type,
@@ -747,7 +747,7 @@ def create_object():
                 o.ar_offset_y,
                 o.ar_offset_z,
                 o.ar_placement_timestamp,
-                o.ar_anchor_transform,  # Include AR anchor transform
+                o.ar_anchor_transform,
                 CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
                 f.found_by,
                 f.found_at

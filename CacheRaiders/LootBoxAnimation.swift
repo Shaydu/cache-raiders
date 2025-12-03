@@ -12,17 +12,20 @@ class LootBoxAnimation {
     
     /// Play the happy jig sound (level up sound) for treasure map acquisition
     static func playOpeningSound() {
-        Swift.print("🎵 Playing happy jig sound for treasure map!")
+        Swift.print("🎵 [LootBoxAnimation] playOpeningSound() called")
 
         // Try to play the level-up sound if available
         if let player = initializeAudioPlayer() {
+            Swift.print("   ✓ Audio player initialized successfully")
             player.currentTime = 0 // Reset to beginning
             player.volume = 0.8 // Slightly quieter than full volume
             player.play()
+            Swift.print("   ✓ Playing sound file: \(player.url?.lastPathComponent ?? "unknown")")
         } else {
             // Fallback: Play a system sound
+            Swift.print("   ⚠️ Audio player not available - using system sound")
             AudioServicesPlaySystemSound(1057) // SMS received sound as happy notification
-            Swift.print("🔊 Played system sound (level-up sound not available)")
+            Swift.print("   ✓ Played system sound 1057")
         }
     }
 
@@ -516,7 +519,14 @@ class LootBoxAnimation {
     ///   - at: Legacy parameter - relative position to parent (only used if arView is nil)
     ///   - parent: Legacy parameter - parent entity (only used if arView is nil)
     private static func createConfettiEffectInternal(atWorldPosition worldPos: SIMD3<Float>? = nil, arView: ARView? = nil, at position: SIMD3<Float>? = nil, parent: Entity? = nil) {
+        Swift.print("🎊 [LootBoxAnimation] createConfettiEffectInternal() called")
+        Swift.print("   worldPos: \(worldPos != nil ? "✓" : "✗")")
+        Swift.print("   arView: \(arView != nil ? "✓" : "✗")")
+        Swift.print("   position: \(position != nil ? "✓" : "✗")")
+        Swift.print("   parent: \(parent != nil ? "✓" : "✗")")
+
         // Play the level-up sound when confetti animation is triggered
+        Swift.print("🔊 [LootBoxAnimation] Calling playOpeningSound()...")
         playOpeningSound()
         
         // Determine parent entity and initial position

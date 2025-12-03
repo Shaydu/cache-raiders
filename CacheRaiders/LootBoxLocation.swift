@@ -165,6 +165,13 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         self.ar_placement_timestamp = ar_placement_timestamp
         self.ar_anchor_transform = ar_anchor_transform
     }
+
+    /// Convenience initializer that auto-generates a UUID if id is nil or empty
+    init(id: String? = nil, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api, created_by: String? = nil, ar_origin_latitude: Double? = nil, ar_origin_longitude: Double? = nil, ar_offset_x: Double? = nil, ar_offset_y: Double? = nil, ar_offset_z: Double? = nil, ar_placement_timestamp: Date? = nil, ar_anchor_transform: String? = nil) {
+        // Generate UUID if id is nil or empty
+        let finalId = (id?.isEmpty == false) ? id! : UUID().uuidString
+        self.init(id: finalId, name: name, type: type, latitude: latitude, longitude: longitude, radius: radius, collected: collected, grounding_height: grounding_height, source: source, created_by: created_by, ar_origin_latitude: ar_origin_latitude, ar_origin_longitude: ar_origin_longitude, ar_offset_x: ar_offset_x, ar_offset_y: ar_offset_y, ar_offset_z: ar_offset_z, ar_placement_timestamp: ar_placement_timestamp, ar_anchor_transform: ar_anchor_transform)
+    }
     
     // MARK: - Custom Decoding (backward compatibility with prefix-based IDs)
     
@@ -874,19 +881,51 @@ class LootBoxLocationManager: ObservableObject {
     }
     
     // Update location
-    func updateLocation(_ location: LootBoxLocation) {
+    func updateLocation(_ location: LootBoxLocation) async {
         if let index = locations.firstIndex(where: { $0.id == location.id }) {
             locations[index] = location
-            
+
             // Save to Core Data if should persist
             if location.shouldPersist {
                 do {
                     try dataService.saveLocation(location)
                     print("💾 Updated location '\(location.name)' in Core Data")
+
+                    // Sync to API if AR coordinates were updated
+                    if location.ar_origin_latitude != nil && location.ar_offset_x != nil {
+                        print("🔄 Syncing AR coordinates to API for '\(location.name)'...")
+                        await updateARCoordinatesInAPI(location)
+                    }
                 } catch {
                     print("❌ Error updating location in Core Data: \(error)")
                 }
             }
+        }
+    }
+
+    /// Update AR coordinates in API for precise placement
+    private func updateARCoordinatesInAPI(_ location: LootBoxLocation) async {
+        guard let arOriginLat = location.ar_origin_latitude,
+              let arOriginLon = location.ar_origin_longitude,
+              let arOffsetX = location.ar_offset_x,
+              let arOffsetY = location.ar_offset_y,
+              let arOffsetZ = location.ar_offset_z else {
+            print("⚠️ Missing AR coordinates for '\(location.name)'")
+            return
+        }
+
+        do {
+            try await APIService.shared.updateAROffset(
+                objectId: location.id,
+                arOriginLatitude: arOriginLat,
+                arOriginLongitude: arOriginLon,
+                offsetX: arOffsetX,
+                offsetY: arOffsetY,
+                offsetZ: arOffsetZ
+            )
+            print("✅ AR coordinates synced to API for '\(location.name)'")
+        } catch {
+            print("❌ Error syncing AR coordinates to API: \(error)")
         }
     }
     

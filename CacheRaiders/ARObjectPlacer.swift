@@ -4,16 +4,38 @@ import CoreLocation
 import AudioToolbox
 import UIKit
 
+// MARK: - AR Coordinator Protocol
+protocol ARCoordinatorProtocol: AnyObject {
+    var arView: ARView? { get }
+    var userLocationManager: UserLocationManager? { get }
+    var arOriginLocation: CLLocation? { get }
+    var geospatialService: ARGeospatialService? { get }
+    var groundingService: ARGroundingService? { get }
+    var findableObjects: [String: FindableObject] { get set }
+    var placedBoxes: [String: AnchorEntity] { get set }
+    var objectPlacementTimes: [String: Date] { get set }
+    var lastSpherePlacementTime: Date? { get set }
+    var sphereModeActive: Bool { get set }
+    var locationManager: LootBoxLocationManager? { get }
+    var tapHandler: ARTapHandler? { get }
+    func removeAllPlacedObjects()
+}
+
 // MARK: - AR Object Placer
 class ARObjectPlacer {
 
-    private weak var arCoordinator: ARCoordinatorCore?
-    private var locationManager: ARLocationManager?
+    private weak var arCoordinator: ARCoordinatorProtocol?
+    private var lootBoxLocationManager: LootBoxLocationManager?
+    private var arLocationManager: ARLocationManager?
 
     // MARK: - Initialization
-    init(arCoordinator: ARCoordinatorCore, locationManager: ARLocationManager) {
+    init(arCoordinator: ARCoordinatorProtocol, locationManager: LootBoxLocationManager) {
         self.arCoordinator = arCoordinator
-        self.locationManager = locationManager
+        self.lootBoxLocationManager = locationManager
+        // ARLocationManager requires ARCoordinatorCore, so we'll initialize it only if needed
+        if let core = arCoordinator as? ARCoordinatorCore {
+            self.arLocationManager = ARLocationManager(arCoordinator: core)
+        }
     }
 
     // MARK: - Loot Box Placement
@@ -76,7 +98,7 @@ class ARObjectPlacer {
 
         let arOriginGPS = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
         let arPosition = SIMD3<Float>(Float(arOffsetX), Float(arOffsetY), Float(arOffsetZ))
-        let distanceFromOrigin = locationManager?.distanceFromAROrigin(arPosition) ?? 0
+        let distanceFromOrigin = arLocationManager?.distanceFromAROrigin(arPosition) ?? 0
 
         // Check user's distance to the object (this is the key factor for precision)
         let objectLocation = location.location
@@ -146,17 +168,67 @@ class ARObjectPlacer {
     private func placeBoxAtPosition(_ position: SIMD3<Float>, location: LootBoxLocation, in arView: ARView) {
         // Create anchor at position
         let anchor = AnchorEntity(world: position)
-        anchor.name = "anchor-\(location.id)"
+        anchor.name = location.id
 
         // Create the visual entity using the factory
         let factory = location.type.factory
         let (entity, findableObject) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: 1.0)
+
+        // CRITICAL: Set entity name to location ID for tap detection
+        entity.name = location.id
+
+        // CRITICAL: Enable tap interaction by adding InputTargetComponent
+        // This allows RealityKit to detect taps on the entity
+        entity.components.set(InputTargetComponent())
 
         // CRITICAL FIX: Add the visual entity to the anchor
         anchor.addChild(entity)
 
         // Start loop animation if the factory supports it
         factory.animateLoop(entity: entity)
+
+        // CRITICAL: Save AR coordinates for centimeter-level accuracy
+        // This enables precise placement when returning to view the object
+        if let arOrigin = arCoordinator?.arOriginLocation,
+           let userLocation = arCoordinator?.userLocationManager?.currentLocation {
+
+            // Only save AR coordinates if within 8m (precision threshold)
+            let distanceToObject = userLocation.distance(from: location.location)
+            if distanceToObject < 8.0 {
+                // Update location with AR coordinates by creating a new instance
+                let updatedLocation = LootBoxLocation(
+                    id: location.id,
+                    name: location.name,
+                    type: location.type,
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                    radius: location.radius,
+                    collected: location.collected,
+                    grounding_height: location.grounding_height,
+                    source: location.source,
+                    created_by: location.created_by,
+                    ar_origin_latitude: arOrigin.coordinate.latitude,
+                    ar_origin_longitude: arOrigin.coordinate.longitude,
+                    ar_offset_x: Double(position.x),
+                    ar_offset_y: Double(position.y),
+                    ar_offset_z: Double(position.z),
+                    ar_placement_timestamp: Date(),
+                    ar_anchor_transform: location.ar_anchor_transform
+                )
+
+                Swift.print("💎 [AR Coordinates] Saved for '\(location.name)':")
+                Swift.print("   AR Origin GPS: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
+                Swift.print("   AR Offset: (\(String(format: "%.4f", position.x)), \(String(format: "%.4f", position.y)), \(String(format: "%.4f", position.z)))m")
+                Swift.print("   Distance to object: \(String(format: "%.2f", distanceToObject))m (< 8m = precision mode)")
+
+                // Save to location manager (will sync to Core Data and API)
+                Task {
+                    await lootBoxLocationManager?.updateLocation(updatedLocation)
+                }
+            } else {
+                Swift.print("📍 [AR Coordinates] Not saved - distance \(String(format: "%.2f", distanceToObject))m exceeds 8m precision threshold")
+            }
+        }
 
         // Create findable object (now using the one from factory)
         let finalFindableObject = FindableObject(
@@ -172,7 +244,12 @@ class ARObjectPlacer {
 
         // Track the object
         arCoordinator?.findableObjects[location.id] = finalFindableObject
+        arCoordinator?.placedBoxes[location.id] = anchor
         arCoordinator?.objectPlacementTimes[location.id] = Date()
+
+        // CRITICAL: Also update tapHandler's findableObjects immediately
+        // This ensures objects are tappable right away without waiting for periodic sync
+        arCoordinator?.tapHandler?.findableObjects[location.id] = finalFindableObject
 
         Swift.print("✅ [Placement] Placed '\(location.name)' at AR position: (\(String(format: "%.4f", position.x)), \(String(format: "%.4f", position.y)), \(String(format: "%.4f", position.z)))m")
         Swift.print("   Object ID: \(location.id)")
@@ -182,6 +259,12 @@ class ARObjectPlacer {
         Swift.print("   Anchor children count: \(anchor.children.count)")
         Swift.print("   Anchor enabled: \(anchor.isEnabled)")
         Swift.print("   Entity enabled: \(entity.isEnabled)")
+        Swift.print("   Entity name: '\(entity.name)'")
+        Swift.print("   Entity has InputTargetComponent: \(entity.components.has(InputTargetComponent.self))")
+        Swift.print("   Entity has CollisionComponent: \(entity.components.has(CollisionComponent.self))")
+        Swift.print("   TapHandler exists: \(arCoordinator?.tapHandler != nil)")
+        Swift.print("   TapHandler findableObjects count: \(arCoordinator?.tapHandler?.findableObjects.count ?? 0)")
+        Swift.print("   TapHandler findableObjects keys: \(arCoordinator?.tapHandler?.findableObjects.keys.sorted() ?? [])")
 
         // Play haptic and sound feedback when object appears in AR
         playObjectPlacedFeedback(for: location)
@@ -216,8 +299,8 @@ class ARObjectPlacer {
             return
         }
 
-        // Use provided location ID or generate a random one
-        let sphereId = locationId ?? "sphere-\(UUID().uuidString.prefix(8))"
+        // Use provided location ID or generate a proper UUID
+        let sphereId = locationId ?? UUID().uuidString
         let location = createRandomSphereLocation(id: sphereId)
 
         // Place the sphere
@@ -274,7 +357,8 @@ class ARObjectPlacer {
         // Place multiple random spheres
         let sphereCount = 5
         for i in 0..<sphereCount {
-            let sphereId = "random-sphere-\(i)"
+            // Generate a proper UUID for each sphere
+            let sphereId = UUID().uuidString
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.5) { [weak self] in
                 self?.placeSingleSphere(locationId: sphereId)
             }

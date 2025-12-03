@@ -11,7 +11,7 @@ import UIKit
 // Findable protocol and base class are now in FindableObject.swift
 
 // MARK: - AR Coordinator
-class ARCoordinator: NSObject, ARSessionDelegate {
+class ARCoordinator: NSObject, ARSessionDelegate, ARCoordinatorProtocol {
 
     // Managers
     private var environmentManager: AREnvironmentManager?
@@ -20,20 +20,21 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var distanceTracker: ARDistanceTracker?
     var tapHandler: ARTapHandler?
     private var databaseIndicatorService: ARDatabaseIndicatorService?
-    private var groundingService: ARGroundingService?
+    var groundingService: ARGroundingService?
     private var precisionPositioningService: ARPrecisionPositioningService? // Legacy - kept for compatibility
-    private var geospatialService: ARGeospatialService? // New ENU-based geospatial service
+    var geospatialService: ARGeospatialService? // New ENU-based geospatial service
     private var treasureHuntService: TreasureHuntService? // Treasure hunt game mode service
     private var npcService: ARNPCService? // NPC management service
+    var objectPlacementService: ARObjectPlacer? // Object placement service
     var stateManager: ARStateManager? // State management for throttling and coordination
 
     weak var arView: ARView?
-    private var locationManager: LootBoxLocationManager?
+    var locationManager: LootBoxLocationManager?
     var userLocationManager: UserLocationManager?
     private var nearbyLocationsBinding: Binding<[LootBoxLocation]>?
-    private var placedBoxes: [String: AnchorEntity] = [:]
-    private var findableObjects: [String: FindableObject] = [:] // Track all findable objects
-    private var objectPlacementTimes: [String: Date] = [:] // Track when objects were placed (for grace period)
+    var placedBoxes: [String: AnchorEntity] = [:]
+    var findableObjects: [String: FindableObject] = [:] // Track all findable objects
+    var objectPlacementTimes: [String: Date] = [:] // Track when objects were placed (for grace period)
     // MARK: - NPC Types
     enum NPCType: String, CaseIterable {
         case skeleton = "skeleton"
@@ -86,7 +87,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private static let SKELETON_HEIGHT_OFFSET: Float = 1.65 // Scaled proportionally
     private var hasTalkedToSkeleton: Bool = false // Track if player has talked to skeleton
     private var collectedMapPieces: Set<Int> = [] // Track which map pieces player has collected (1 = skeleton, 2 = corgi)
-    private var arOriginLocation: CLLocation? // GPS location when AR session started
+    var arOriginLocation: CLLocation? // GPS location when AR session started
     private var arOriginSetTime: Date? // When AR origin was set (for degraded mode timeout)
     private var isDegradedMode: Bool = false // True if operating without GPS (AR-only mode)
     private var arOriginGroundLevel: Float? // Fixed ground level at AR origin (never changes)
@@ -95,8 +96,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     var collectionNotificationBinding: Binding<String?>?
     var nearestObjectDirectionBinding: Binding<Double?>?
     var conversationNPCBinding: Binding<ConversationNPC?>?
-    private var lastSpherePlacementTime: Date? // Prevent rapid duplicate sphere placements
-    private var sphereModeActive: Bool = false // Track when we're in sphere randomization mode
+    var lastSpherePlacementTime: Date? // Prevent rapid duplicate sphere placements
+    var sphereModeActive: Bool = false // Track when we're in sphere randomization mode
     private var hasAutoRandomized: Bool = false // Track if we've already auto-randomized spheres
     var shouldForceReplacement: Bool = false // Force re-placement after reset when AR is ready
     var lastAppliedLensId: String? = nil // Track last applied AR lens to prevent redundant session resets
@@ -362,6 +363,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private weak var conversationManager: ARConversationManager?
 
     func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>, nearestObjectDirection: Binding<Double?>, conversationNPC: Binding<ConversationNPC?>, conversationManager: ARConversationManager, treasureHuntService: TreasureHuntService? = nil) {
+        Swift.print("🔧 [ARCoordinator] setupARView() called")
+
         self.arView = arView
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
@@ -444,12 +447,39 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         distanceTracker = ARDistanceTracker(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, treasureHuntService: treasureHuntService)
         occlusionManager = AROcclusionManager(arView: arView, locationManager: locationManager, distanceTracker: distanceTracker)
-        tapHandler = ARTapHandler(arView: arView, locationManager: locationManager)
         databaseIndicatorService = ARDatabaseIndicatorService()
         groundingService = ARGroundingService(arView: arView)
         precisionPositioningService = ARPrecisionPositioningService(arView: arView) // Legacy
         geospatialService = ARGeospatialService() // New ENU-based service
         stateManager = ARStateManager() // State management for throttling and coordination
+
+        // Initialize tap handler and object placement service
+        tapHandler = ARTapHandler()
+        objectPlacementService = ARObjectPlacer(arCoordinator: self, locationManager: locationManager)
+
+        // Initialize NPC service - must be created before tap handler setup
+        guard let groundingService = groundingService,
+              let tapHandler = tapHandler else {
+            Swift.print("❌ [ARCoordinator] Cannot configure NPC service: missing required dependencies")
+            Swift.print("   groundingService: \(groundingService != nil ? "✓" : "✗")")
+            Swift.print("   tapHandler: \(tapHandler != nil ? "✓" : "✗")")
+            return
+        }
+
+        npcService = ARNPCService(arView: arView, locationManager: locationManager, groundingService: groundingService, tapHandler: tapHandler, conversationManager: conversationManager, conversationNPCBinding: conversationNPCBinding)
+
+        // Setup tap handler now that all dependencies are available
+        guard let objectPlacementService = objectPlacementService,
+              let npcService = npcService else {
+            Swift.print("❌ [ARCoordinator] Cannot setup tap handler: missing required dependencies")
+            Swift.print("   objectPlacementService: \(objectPlacementService != nil ? "✓" : "✗")")
+            Swift.print("   npcService: \(npcService != nil ? "✓" : "✗")")
+            return
+        }
+
+        Swift.print("🔧 [ARCoordinator] Setting up tap handler...")
+        tapHandler.setup(locationManager: locationManager, userLocationManager: userLocationManager, objectPlacementService: objectPlacementService, npcService: npcService, conversationManager: conversationManager, arView: arView)
+        Swift.print("   ✓ Tap handler setup complete")
 
         // Configure environment lighting for proper shading and colors
         // Increase intensity to ensure objects are well-lit and colors are visible
@@ -465,19 +495,20 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         distanceTracker?.distanceToNearestBinding = distanceToNearest
         distanceTracker?.temperatureStatusBinding = temperatureStatus
         distanceTracker?.nearestObjectDirectionBinding = nearestObjectDirection
-        tapHandler?.placedBoxes = placedBoxes
-        tapHandler?.findableObjects = findableObjects
-        tapHandler?.collectionNotificationBinding = collectionNotification
-        tapHandler?.placedNPCs = placedNPCs // Pass NPCs to tap handler
-        
+        self.tapHandler?.placedBoxes = placedBoxes
+        self.tapHandler?.findableObjects = findableObjects
+        self.tapHandler?.collectionNotificationBinding = collectionNotification
+        self.tapHandler?.placedNPCs = placedNPCs // Pass NPCs to tap handler
+
         // Set up tap handler callbacks
-        tapHandler?.onFindLootBox = { [weak self] locationId, anchor, cameraPos, sphereEntity in
+        self.tapHandler?.onFindLootBox = { [weak self] locationId, anchor, cameraPos, sphereEntity in
+            Swift.print("🎯 [ARCoordinator] onFindLootBox callback invoked for: \(locationId)")
             self?.findLootBox(locationId: locationId, anchor: anchor, cameraPosition: cameraPos, sphereEntity: sphereEntity)
         }
-        tapHandler?.onPlaceLootBoxAtTap = { [weak self] location, result in
+        self.tapHandler?.onPlaceLootBoxAtTap = { [weak self] location, result in
             self?.placeLootBoxAtTapLocation(location, tapResult: result, in: arView)
         }
-        tapHandler?.onNPCTap = { [weak self] npcId in
+        self.tapHandler?.onNPCTap = { [weak self] npcId in
             // Convert NPC ID string to NPCType
             if let npcType = NPCType.allCases.first(where: { $0.npcId == npcId }) {
                 self?.handleNPCTap(type: npcType)
@@ -485,10 +516,23 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 Swift.print("⚠️ Unknown NPC ID: \(npcId)")
             }
         }
-        tapHandler?.onShowObjectInfo = { [weak self] location in
+        self.tapHandler?.onShowObjectInfo = { [weak self] location in
             self?.showObjectInfoPanel(location: location)
         }
-        
+
+        // Register tap gesture recognizer for object interaction
+        Swift.print("🔧 [ARCoordinator] Registering tap gesture recognizer...")
+        Swift.print("   tapHandler exists: \(tapHandler)")
+        Swift.print("   arView: \(arView)")
+        Swift.print("   arView.gestureRecognizers count before: \(arView.gestureRecognizers?.count ?? 0)")
+
+        let tapGesture = UITapGestureRecognizer(target: tapHandler, action: #selector(ARTapHandler.handleTap(_:)))
+        arView.addGestureRecognizer(tapGesture)
+
+        Swift.print("   arView.gestureRecognizers count after: \(arView.gestureRecognizers?.count ?? 0)")
+        Swift.print("✅ [ARCoordinator] Registered tap gesture recognizer (target: tapHandler, action: handleTap)")
+        Swift.print("   onFindLootBox callback set: \(tapHandler.onFindLootBox != nil)")
+
         // Monitor AR session
         arView.session.delegate = self
         
@@ -1294,6 +1338,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Randomly select object type for variety
             let objectTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .lootChest, .turkey, .sphere, .cube]
             let selectedType = objectTypes.randomElement() ?? .chalice
+            
+            // DEBUG: Log when turkey is selected
+            if selectedType == .turkey {
+                Swift.print("🦃 TURKEY SELECTED for randomization! This is why turkeys appear in AR.")
+            }
             
             // Use the factory's itemDescription() to get the proper name for this type
             // This ensures each type gets its unique description (e.g., "Golden Chalice" not just "Chalice")

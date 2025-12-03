@@ -61,12 +61,15 @@ class FindableObject: Findable {
     /// This is the main entry point - confetti and sound are default behaviors for all findables
     func find(onComplete: @escaping () -> Void) {
         let objectName = itemDescription()
-        
-        Swift.print("🎉 Finding object: \(objectName)")
-        
+
+        Swift.print("🎉 [FindableObject] find() called for: \(objectName) (ID: \(locationId))")
+        Swift.print("   Has container: \(container != nil)")
+        Swift.print("   Has sphereEntity: \(sphereEntity != nil)")
+        Swift.print("   Has location: \(location != nil)")
+
         // DEFAULT BEHAVIOR #1: Create confetti effect immediately
         // (Sound will play automatically when confetti is created)
-        Swift.print("🎊 Creating confetti effect...")
+        Swift.print("🎊 [FindableObject] Creating confetti effect for: \(objectName)...")
         
         // Get world position of anchor before it's removed
         let anchorTransform = anchor.transformMatrix(relativeTo: nil)

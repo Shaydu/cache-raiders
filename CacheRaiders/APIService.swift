@@ -477,7 +477,7 @@ class APIService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "id": location.id,
             "name": location.name,
             "type": location.type.rawValue,
@@ -487,6 +487,27 @@ class APIService {
             "created_by": currentUserID,
             "grounding_height": location.grounding_height
         ]
+
+        // Include AR coordinates if available for centimeter-level accuracy
+        if let arOriginLat = location.ar_origin_latitude {
+            body["ar_origin_latitude"] = arOriginLat
+        }
+        if let arOriginLon = location.ar_origin_longitude {
+            body["ar_origin_longitude"] = arOriginLon
+        }
+        if let arOffsetX = location.ar_offset_x {
+            body["ar_offset_x"] = arOffsetX
+        }
+        if let arOffsetY = location.ar_offset_y {
+            body["ar_offset_y"] = arOffsetY
+        }
+        if let arOffsetZ = location.ar_offset_z {
+            body["ar_offset_z"] = arOffsetZ
+        }
+        if let arTimestamp = location.ar_placement_timestamp {
+            let formatter = ISO8601DateFormatter()
+            body["ar_placement_timestamp"] = formatter.string(from: arTimestamp)
+        }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

@@ -12,7 +12,7 @@ import UIKit
 // NPCType is defined in NPCType.swift
 
 // MARK: - AR Coordinator Core
-class ARCoordinatorCore: NSObject {
+class ARCoordinatorCore: NSObject, ARCoordinatorProtocol {
 
     // Managers
     var environmentManager: AREnvironmentManager?
@@ -26,6 +26,7 @@ class ARCoordinatorCore: NSObject {
     var geospatialService: ARGeospatialService? // New ENU-based geospatial service
     var treasureHuntService: TreasureHuntService? // Treasure hunt game mode service
     var npcService: ARNPCService? // NPC management service
+    var objectPlacementService: ARObjectPlacer? // Object placement service
 
     weak var arView: ARView?
     var locationManager: LootBoxLocationManager?
@@ -39,7 +40,14 @@ class ARCoordinatorCore: NSObject {
 
     // BACKWARD COMPATIBILITY: Computed property for services that still reference placedBoxes
     var placedBoxes: [String: AnchorEntity] {
-        return findableObjects.mapValues { $0.anchor }
+        get {
+            return findableObjects.mapValues { $0.anchor }
+        }
+        set {
+            // When placedBoxes is set, we don't need to do anything special
+            // The findableObjects dictionary is the source of truth
+            // This setter exists only to satisfy the protocol requirement
+        }
     }
 
 
@@ -107,6 +115,9 @@ class ARCoordinatorCore: NSObject {
     // Store AR configuration for resuming
     var savedARConfiguration: ARWorldTrackingConfiguration?
 
+    // Track if setup has been completed to prevent duplicate initialization
+    private var isSetupComplete: Bool = false
+
     override init() {
         super.init()
     }
@@ -135,6 +146,12 @@ class ARCoordinatorCore: NSObject {
                      conversationNPC: Binding<ConversationNPC?>,
                      conversationManager: ARConversationManager,
                      treasureHuntService: TreasureHuntService? = nil) {
+
+        // Prevent duplicate setup
+        guard !isSetupComplete else {
+            Swift.print("⚠️ [ARCoordinatorCore] setupARView() called again - skipping duplicate setup")
+            return
+        }
 
         self.arView = arView
         self.locationManager = locationManager
@@ -165,6 +182,10 @@ class ARCoordinatorCore: NSObject {
 
         // Start location updates
         startLocationUpdates()
+
+        // Mark setup as complete
+        isSetupComplete = true
+        Swift.print("✅ [ARCoordinatorCore] Setup complete")
     }
 
     private func initializeManagers(with conversationManager: ARConversationManager) {
@@ -197,19 +218,41 @@ class ARCoordinatorCore: NSObject {
         // Configure distance tracker
         distanceTracker = ARDistanceTracker(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, treasureHuntService: treasureHuntService)
 
-        // Configure tap handler
-        tapHandler = ARTapHandler(arView: arView, locationManager: locationManager)
-
         // Configure grounding service
         groundingService = ARGroundingService(arView: arView)
 
         // Configure precision positioning service
         precisionPositioningService = ARPrecisionPositioningService(arView: arView)
 
-        // Configure NPC service
-        if let conversationManager = conversationManager {
-            npcService = ARNPCService(arCoordinator: self, arView: arView, locationManager: locationManager, groundingService: groundingService, tapHandler: tapHandler, conversationManager: conversationManager, conversationNPCBinding: conversationNPCBinding)
+        // Configure tap handler
+        tapHandler = ARTapHandler()
+
+        // Configure object placement service
+        objectPlacementService = ARObjectPlacer(arCoordinator: self, locationManager: locationManager)
+
+        // Configure NPC service - must be created before tap handler setup
+        guard let conversationManager = conversationManager,
+              let groundingService = groundingService,
+              let tapHandler = tapHandler else {
+            print("⚠️ Cannot configure NPC service: missing required dependencies")
+            return
         }
+
+        npcService = ARNPCService(arView: arView, locationManager: locationManager, groundingService: groundingService, tapHandler: tapHandler, conversationManager: conversationManager, conversationNPCBinding: conversationNPCBinding)
+
+        // Setup tap handler now that all dependencies are available
+        guard let userLocationManager = userLocationManager,
+              let objectPlacementService = objectPlacementService,
+              let npcService = npcService else {
+            print("⚠️ Cannot setup tap handler: missing required dependencies")
+            return
+        }
+
+        tapHandler.setup(locationManager: locationManager, userLocationManager: userLocationManager, objectPlacementService: objectPlacementService, npcService: npcService, conversationManager: conversationManager, arView: arView)
+        Swift.print("🎯 [ARCoordinatorCore] TapHandler setup complete")
+        Swift.print("   TapHandler: \(tapHandler)")
+        Swift.print("   ARView: \(tapHandler.arView != nil ? "✓" : "✗")")
+        Swift.print("   LocationManager: \(tapHandler.findableObjects.count) findable objects")
     }
 
     private func configureARSession(for arView: ARView) {
@@ -253,6 +296,9 @@ class ARCoordinatorCore: NSObject {
         // Add tap gesture recognizer for object interaction
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         arView.addGestureRecognizer(tapGesture)
+        Swift.print("🎯 [ARCoordinatorCore] Registered tap gesture recognizer (target: self, action: handleTap)")
+        Swift.print("   TapHandler exists: \(tapHandler != nil)")
+        Swift.print("   ARView: \(arView)")
     }
 
     private func startLocationUpdates() {
@@ -271,6 +317,9 @@ class ARCoordinatorCore: NSObject {
 
     @objc func handleTap(_ sender: UITapGestureRecognizer) {
         // Forward to tap handler
+        Swift.print("🎯 [ARCoordinatorCore] handleTap() called - forwarding to tapHandler")
+        Swift.print("   TapHandler exists: \(tapHandler != nil)")
+        Swift.print("   TapHandler.findableObjects count: \(tapHandler?.findableObjects.count ?? -1)")
         tapHandler?.handleTap(sender)
     }
 
