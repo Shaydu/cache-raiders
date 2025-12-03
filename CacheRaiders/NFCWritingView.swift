@@ -27,6 +27,7 @@ struct NFCWritingView: View {
     @State private var currentStep: WritingStep = .selecting
     @State private var arView: ARView?
     @State private var showARPlacement = false
+    @State private var showNFCDiagnostics = false
 
     enum WritingStep {
         case selecting      // User selecting loot type
@@ -118,6 +119,21 @@ struct NFCWritingView: View {
                         }
                     }
 
+                    // NFC Diagnostics Button (always visible)
+                    Button(action: { showNFCDiagnostics = true }) {
+                        HStack {
+                            Image(systemName: "wave.3.right.circle")
+                            Text("Check NFC Status")
+                        }
+                        .font(.subheadline)
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(8)
+                    }
+                    .padding(.top, 20)
+
                     Spacer()
 
                     // Action buttons
@@ -169,6 +185,9 @@ struct NFCWritingView: View {
             }
             .onDisappear {
                 cleanup()
+            }
+            .sheet(isPresented: $showNFCDiagnostics) {
+                NFCDiagnosticsSheet(diagnostics: nfcService.getNFCDiagnostics())
             }
         }
     }
@@ -315,7 +334,7 @@ struct NFCWritingView: View {
                     .cornerRadius(12)
                     .frame(maxWidth: .infinity)
 
-                    Text("NFC tag contains complete data including coordinates, timestamps, and creator info. Other players can now find this loot!")
+                    Text("NFC tag contains a unique object ID. Complete data including coordinates, timestamps, and creator info is stored securely in the database. Other players can now find this loot!")
                         .font(.body)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -410,31 +429,24 @@ struct NFCWritingView: View {
 
     private func createLootMessage(for lootType: LootBoxType, with location: CLLocation? = nil, arAnchorData: Data? = nil) -> String {
         guard let location = location else { return "{}" }
-        
-        // Get current user info (minimal)
-        let username = UserDefaults.standard.string(forKey: "username") ?? "Player"
-        let deviceUUID = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
-        
-        // Create a URL that opens our app or redirects to web version
-        // This allows non-app users to still access the content via browser
-        let baseURL = APIService.shared.baseURL
+
+        // Create a compact object ID that will be stored on the NFC tag
+        // All detailed data (coordinates, timestamps, user info) is stored only in the database
         let objectId = UUID().uuidString.prefix(8)
-        
-        // URL format: https://your-server.com/nfc/{objectId}
-        // This can be handled by your web server to show appropriate content
-        let nfcURL = "\(baseURL)/nfc/\(objectId)"
-        
-        // For app users: we'll also include minimal data in the URL query params
-        // so our app can parse it directly without hitting the server
-        let appDeepLink = "\(baseURL)/nfc/\(objectId)?t=\(lootType.rawValue)&lat=\(location.coordinate.latitude)&lon=\(location.coordinate.longitude)&alt=\(location.altitude)&u=\(username.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "Player")&d=\(deviceUUID.prefix(8))&ts=\(Int(Date().timeIntervalSince1970))"
-        
-        print("🌐 NFC URL: \(nfcURL)")
-        print("📱 App Deep Link: \(appDeepLink)")
-        
-        // Return the URL string - this will be written as an NDEF URI record
-        // Non-app users: opens browser to your server
-        // App users: your app can intercept the URL and handle it appropriately
-        return appDeepLink
+
+        // Create a minimal URL that just contains the object ID
+        // The full data will be fetched from the server when the tag is read
+        let baseURL = APIService.shared.baseURL
+        let compactURL = "\(baseURL)/nfc/\(objectId)"
+
+        print("🎯 Creating compact NFC message")
+        print("   Object ID: \(objectId)")
+        print("   Compact URL: \(compactURL)")
+        print("   URL length: \(compactURL.count) characters")
+        print("   Detailed data stored in database only")
+
+        // Return the compact URL string - this will be written as an NDEF URI record
+        return compactURL
     }
 
     private func captureARPosition() async throws {
@@ -504,22 +516,25 @@ struct NFCWritingView: View {
         isWriting = true
         errorMessage = nil
 
-        // Create the complete message with all data
-        let message = createLootMessage(for: lootType, with: location, arAnchorData: arAnchorData)
+        // Create the compact message with just the object ID
+        // All detailed data (coordinates, timestamps, user info) is stored only in the database
+        let compactMessage = createLootMessage(for: lootType, with: location, arAnchorData: arAnchorData)
 
-        print("🔧 Writing NFC tag with complete data for \(lootType.displayName)")
-        print("   Message length: \(message.count) characters")
+        print("🔧 Writing compact NFC tag for \(lootType.displayName)")
+        print("   Message contains only object ID (detailed data in database)")
+        print("   Message length: \(compactMessage.count) characters")
 
-        nfcService.writeNFC(message: message) { result in
+        nfcService.writeNFC(message: compactMessage) { result in
             DispatchQueue.main.async {
                 self.isWriting = false
 
                 switch result {
                 case .success(let nfcResult):
-                    print("✅ NFC write successful with complete data")
+                    print("✅ NFC write successful - compact object ID stored on tag")
                     self.writeResult = nfcResult
 
-                    // Now create the database object with the NFC tag ID
+                    // Now create the database object with ALL the detailed data
+                    // The NFC tag contains only the minimal identifier
                     Task {
                         await self.createObjectWithCompleteData(
                             type: lootType,
@@ -594,7 +609,8 @@ struct NFCWritingView: View {
             }
 
             print("📤 Creating comprehensive database object for NFC loot")
-            print("   NFC tag contains minimal data, database stores full metadata")
+            print("   NFC tag contains: \(compactMessage)")
+            print("   Database contains: Full coordinates, timestamps, user info, AR anchors")
 
             let jsonData = try JSONSerialization.data(withJSONObject: objectData)
 
@@ -657,7 +673,8 @@ struct NFCWritingView: View {
                     AudioServicesPlaySystemSound(1103)
 
                     print("✅ NFC loot object created successfully")
-                    print("   Minimal data on NFC tag, comprehensive data in database")
+                    print("   NFC tag: Compact object ID only")
+                    print("   Database: Full coordinates, timestamps, user info, AR anchors")
 
                     // Dismiss after short delay
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
@@ -961,6 +978,133 @@ struct NFCWritingView: View {
         nfcService.stopScanning()
         arView?.session.pause()
         arView = nil
+    }
+}
+
+// MARK: - NFC Diagnostics Sheet
+struct NFCDiagnosticsSheet: View {
+    @Environment(\.dismiss) var dismiss
+    let diagnostics: NFCService.NFCDiagnostics
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Header
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: diagnostics.readingAvailable ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                .foregroundColor(diagnostics.readingAvailable ? .green : .red)
+                                .font(.title)
+                            Text("NFC Diagnostics")
+                                .font(.title)
+                                .fontWeight(.bold)
+                        }
+
+                        Text(diagnostics.summary)
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal)
+
+                    // Device Info
+                    GroupBox(label: Text("Device Information")) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            InfoRow(label: "Model", value: diagnostics.deviceModel)
+                            InfoRow(label: "iOS Version", value: String(format: "%.1f", diagnostics.iosVersion))
+                            InfoRow(label: "Likely NFC Device", value: diagnostics.isLikelyNFCDevice ? "Yes" : "No")
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    .padding(.horizontal)
+
+                    // NFC Capabilities
+                    GroupBox(label: Text("NFC Capabilities")) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            StatusRow(label: "NFC Reading Available", status: diagnostics.readingAvailable)
+                            StatusRow(label: "NDEF Reading Available", status: diagnostics.ndefReadingAvailable)
+                            StatusRow(label: "NFC Writing Supported", status: diagnostics.supportsNFCWriting)
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    .padding(.horizontal)
+
+                    // Troubleshooting
+                    GroupBox(label: Text("Troubleshooting Tips")) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if !diagnostics.readingAvailable {
+                                Text("• This device doesn't support NFC reading/writing")
+                                    .foregroundColor(.red)
+                            }
+
+                            if !diagnostics.isLikelyNFCDevice {
+                                Text("• Older iPhone models (iPhone 6 and earlier) don't support NFC")
+                                    .foregroundColor(.orange)
+                            }
+
+                            if !diagnostics.supportsNFCWriting {
+                                Text("• NFC writing requires iOS 13.0 or later")
+                                    .foregroundColor(.orange)
+                            }
+
+                            Text("• Make sure NFC is enabled in Settings > Control Center")
+                            Text("• Hold your iPhone steady near the NFC tag")
+                            Text("• Clean the NFC area on both the phone and tag")
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    .padding(.horizontal)
+
+                    Spacer()
+                }
+                .padding(.vertical)
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                    .foregroundColor(.blue)
+                }
+            }
+        }
+    }
+}
+
+struct InfoRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .foregroundColor(.primary)
+                .font(.system(.body, design: .monospaced))
+        }
+    }
+}
+
+struct StatusRow: View {
+    let label: String
+    let status: Bool
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .foregroundColor(.secondary)
+            Spacer()
+            HStack(spacing: 4) {
+                Image(systemName: status ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundColor(status ? .green : .red)
+                Text(status ? "Yes" : "No")
+                    .foregroundColor(status ? .green : .red)
+                    .fontWeight(.medium)
+            }
+        }
     }
 }
 

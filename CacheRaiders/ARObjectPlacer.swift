@@ -78,23 +78,36 @@ class ARObjectPlacer {
         let arPosition = SIMD3<Float>(Float(arOffsetX), Float(arOffsetY), Float(arOffsetZ))
         let distanceFromOrigin = locationManager?.distanceFromAROrigin(arPosition) ?? 0
 
-        // Determine if we can use AR coordinates directly
-        var useARCoordinates = false
+        // Check user's distance to the object (this is the key factor for precision)
+        let objectLocation = location.location
+        let userDistanceToObject = userLocation.distance(from: objectLocation)
+
+        // Check if AR session origins match (within 1m tolerance)
+        var arOriginsMatch = false
         if let currentAROrigin = arCoordinator?.arOriginLocation {
             let originDistance = currentAROrigin.distance(from: arOriginGPS)
-            useARCoordinates = originDistance < 1.0 && distanceFromOrigin < 12.0
+            arOriginsMatch = originDistance < 1.0
         }
 
+        // NEW LOGIC: Use AR coordinates when user is within 8m of object AND AR session is valid
+        let useARCoordinates = userDistanceToObject < 8.0 && arOriginsMatch && distanceFromOrigin < 12.0
+
+        Swift.print("🎯 AR Coordinate Decision:")
+        Swift.print("   User distance to object: \(String(format: "%.2f", userDistanceToObject))m")
+        Swift.print("   AR origins match: \(arOriginsMatch)")
+        Swift.print("   Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m")
+        Swift.print("   Use AR coordinates: \(useARCoordinates)")
+
         if useARCoordinates {
-            Swift.print("✅ INDOOR placement: Using AR coordinates for mm/cm-precision")
+            Swift.print("✅ PRECISE placement: Using AR coordinates (within 8m threshold)")
             placeBoxAtPosition(arPosition, location: location, in: arView)
         } else {
-            if let currentAROrigin = arCoordinator?.arOriginLocation,
-               currentAROrigin.distance(from: arOriginGPS) >= 1.0 {
-                Swift.print("⚠️ AR origins don't match - falling back to GPS coordinates")
-            } else {
-                Swift.print("🌍 OUTDOOR placement: Using GPS coordinates")
-            }
+            let reasons = []
+            if userDistanceToObject >= 8.0 { reasons.append("user >8m from object") }
+            if !arOriginsMatch { reasons.append("AR origins don't match") }
+            if distanceFromOrigin >= 12.0 { reasons.append("too far from AR origin") }
+
+            Swift.print("📍 GPS placement: Using GPS coordinates - \(reasons.joined(separator: ", "))")
             placeUsingGPSCoordinates(location, userLocation: userLocation, cameraPos: SIMD3<Float>(0, 0, 0), in: arView)
         }
     }

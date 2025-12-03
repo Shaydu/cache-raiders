@@ -6,3 +6,4 @@ struct ConversationNPC: Equatable {
     let name: String
 }
 
+

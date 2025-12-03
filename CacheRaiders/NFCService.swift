@@ -90,13 +90,19 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
     @available(iOS 13.0, *)
     func writeNFC(message: String, completion: @escaping (Result<NFCResult, NFCError>) -> Void) {
         print("🎯 NFCService.writeNFC called with message: \(message)")
+        print("   iOS Version: \(UIDevice.current.systemVersion)")
+        print("   Device Model: \(UIDevice.current.model)")
+        print("   Device Name: \(UIDevice.current.name)")
 
-        // Check if NFC is available
+        // Check if NFC is available for reading (required for writing)
         guard NFCTagReaderSession.readingAvailable else {
-            print("❌ NFC not available on this device")
+            print("❌ NFC not available on this device for reading/writing")
+            print("   NFCTagReaderSession.readingAvailable = false")
             completion(.failure(.notSupported))
             return
         }
+
+        print("✅ NFC reading capability confirmed")
 
         print("🔧 NFCService.writeNFC: Starting write with message: \(message)")
 
@@ -126,6 +132,60 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
 
     func stopScanning() {
         invalidateSessions()
+    }
+
+    /// Check NFC capabilities and return diagnostic information
+    func getNFCDiagnostics() -> NFCDiagnostics {
+        let readingAvailable = NFCTagReaderSession.readingAvailable
+        let ndefReadingAvailable = NFCNDEFReaderSession.readingAvailable
+
+        // Check iOS version for NFC writing support
+        let iosVersion = Double(UIDevice.current.systemVersion) ?? 0.0
+        let supportsNFCWriting = iosVersion >= 13.0
+
+        // Known NFC-capable devices (not comprehensive, but covers most)
+        let deviceModel = UIDevice.current.model
+        let isLikelyNFCDevice = deviceModel.contains("iPhone") && !deviceModel.contains("iPhone 6") && !deviceModel.contains("iPhone 5")
+
+        return NFCDiagnostics(
+            readingAvailable: readingAvailable,
+            ndefReadingAvailable: ndefReadingAvailable,
+            supportsNFCWriting: supportsNFCWriting,
+            isLikelyNFCDevice: isLikelyNFCDevice,
+            iosVersion: iosVersion,
+            deviceModel: deviceModel
+        )
+    }
+
+    struct NFCDiagnostics {
+        let readingAvailable: Bool
+        let ndefReadingAvailable: Bool
+        let supportsNFCWriting: Bool
+        let isLikelyNFCDevice: Bool
+        let iosVersion: Double
+        let deviceModel: String
+
+        var summary: String {
+            var issues: [String] = []
+
+            if !readingAvailable {
+                issues.append("NFC reading not available on this device")
+            }
+
+            if !ndefReadingAvailable {
+                issues.append("NDEF reading not available")
+            }
+
+            if !supportsNFCWriting {
+                issues.append("iOS version \(iosVersion) may not support NFC writing (requires iOS 13.0+)")
+            }
+
+            if !isLikelyNFCDevice {
+                issues.append("Device model '\(deviceModel)' may not support NFC")
+            }
+
+            return issues.isEmpty ? "NFC appears to be fully supported" : "NFC Issues: " + issues.joined(separator: "; ")
+        }
     }
 
     private func invalidateSessions() {
@@ -250,36 +310,42 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
     }
 
     private func createNDEFMessage(from urlString: String) -> NFCNDEFMessage? {
-        print("🔨 Creating NDEF URI record from URL string")
+        print("🔨 Creating compact NDEF URI record")
         print("   URL: \(urlString)")
         print("   URL length: \(urlString.count) characters")
 
-        // Check if this looks like a URL (starts with http:// or https://)
+        // Validate this is a URL (should start with http:// or https://)
         let isURL = urlString.hasPrefix("http://") || urlString.hasPrefix("https://")
-        
+
         if !isURL {
-            print("⚠️ Input doesn't appear to be a URL, but will create URI record anyway")
+            print("⚠️ Input doesn't appear to be a valid URL")
+            return nil
+        }
+
+        // Check URL length - NFC tags have limited capacity (typically ~144 bytes)
+        if urlString.count > 100 {
+            print("⚠️ Warning: URL is \(urlString.count) characters, may exceed NFC tag capacity")
         }
 
         // Create NDEF URI record (TNF = NFC Well Known, Type = "U")
         // URI format: [URI identifier byte] + [URI string bytes]
-        
-        // Determine URI identifier byte based on prefix
+
+        // Determine URI identifier byte based on prefix for optimal compression
         var uriIdentifier: UInt8 = 0x00 // No prefix
         if urlString.hasPrefix("http://") {
             uriIdentifier = 0x03 // http://www.
         } else if urlString.hasPrefix("https://") {
             uriIdentifier = 0x04 // https://www.
         }
-        
-        // Remove the prefix if we're using a URI identifier
+
+        // Remove the prefix if we're using a URI identifier (saves space)
         var uriPayload = urlString
         if uriIdentifier == 0x03 && urlString.hasPrefix("http://") {
             uriPayload = String(urlString.dropFirst(7)) // Remove "http://"
         } else if uriIdentifier == 0x04 && urlString.hasPrefix("https://") {
             uriPayload = String(urlString.dropFirst(8)) // Remove "https://"
         }
-        
+
         guard let uriData = uriPayload.data(using: .utf8) else {
             print("❌ Failed to convert URI string to data")
             return nil
@@ -291,6 +357,7 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
 
         print("   URI payload size: \(payload.count) bytes")
         print("   URI identifier: 0x\(String(format: "%02X", uriIdentifier))")
+        print("   Total NDEF message size estimate: ~\(payload.count + 10) bytes")
 
         let uriRecord = NFCNDEFPayload(
             format: .nfcWellKnown,
@@ -301,11 +368,11 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
 
         // Create NDEF message with the URI record
         let ndefMessage = NFCNDEFMessage(records: [uriRecord])
-        
-        print("✅ Created URI NDEF record")
-        print("   Record type: URI")
-        print("   Payload: \(urlString)")
-        
+
+        print("✅ Created compact URI NDEF record")
+        print("   Record type: URI (compact)")
+        print("   Payload contains object ID only")
+
         return ndefMessage
     }
 

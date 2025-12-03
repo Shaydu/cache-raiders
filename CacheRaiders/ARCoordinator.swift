@@ -4023,7 +4023,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         findableObject.find { [weak self] in
             // Show discovery notification AFTER animation completes
             DispatchQueue.main.async { [weak self] in
-                self?.collectionNotificationBinding?.wrappedValue = "🎉 Discovered: \(objectName)!"
+                // Get the object to access created_by field
+                if let foundLocation = findableObject.location,
+                   let createdBy = foundLocation.created_by {
+                    
+                    // Format: "Found <username>'s <itemname>!"
+                    let username = createdBy == APIService.shared.currentUserID ? "Your" : "\(createdBy)'s"
+                    self?.collectionNotificationBinding?.wrappedValue = "🎉 Found \(username) \(objectName)!"
+                } else {
+                    // Fallback to original message
+                    self?.collectionNotificationBinding?.wrappedValue = "🎉 Discovered: \(objectName)!"
+                }
             }
             
             // Hide notification after 3 seconds
