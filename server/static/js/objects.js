@@ -88,6 +88,9 @@ const ObjectsManager = {
         const isNPC = obj && obj.id && obj.id.startsWith('npc_');
         const isSkeleton = isNPC && (obj.name && (obj.name.includes('Bones') || obj.name.includes('skeleton')));
         
+        // Check if this is an NFC-placed object
+        const isNFCObject = obj && obj.id && obj.id.startsWith('nfc_');
+        
         if (isNPC) {
             // NPC icon - skull for skeleton, person for others
             const iconColor = '#ffd700'; // Gold color for NPCs
@@ -107,6 +110,27 @@ const ObjectsManager = {
                     justify-content: center;
                     font-size: ${size * 0.6}px;
                 ">${iconSymbol}</div>
+            `;
+        } else if (isNFCObject) {
+            // NFC object icon - blue circle with white 'N'
+            const markerColor = isCollected ? '#ff6b6b' : '#4a90e2'; // Red if found, blue if unfound
+            const borderColor = isCollected ? '#c62828' : '#1565c0';
+            const borderWidth = Math.max(2, Math.min(4, size / 6));
+            iconHtml = `
+                <div style="
+                    background: ${markerColor}; 
+                    width: ${size}px; 
+                    height: ${size}px; 
+                    border-radius: 50%; 
+                    border: ${borderWidth}px solid ${borderColor}; 
+                    box-shadow: 0 0 ${size/2}px rgba(74, 144, 226, 0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: ${size * 0.6}px;
+                    color: white;
+                    font-weight: bold;
+                ">N</div>
             `;
         } else if (isCollected) {
             // Stylized red X for found treasure
@@ -483,6 +507,36 @@ const ObjectsManager = {
         
         // Always reload regular objects
         await this.loadObjects();
+    },
+
+    /**
+     * Refresh a specific object marker (called when object is found/unfound)
+     */
+    refreshObjectMarker(objectId) {
+        console.log('🔄 Refreshing object marker for:', objectId);
+        
+        // Check if we have this marker
+        if (this.markers[objectId] && this.markerData[objectId]) {
+            // Remove the current marker
+            if (MapManager.getMap()) {
+                MapManager.getMap().removeLayer(this.markers[objectId]);
+            }
+            
+            // Get updated object data from server
+            ApiService.objects.get(objectId).then(obj => {
+                const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
+                this.addObjectMarker(obj, currentZoom);
+                console.log('✅ Object marker refreshed:', objectId);
+            }).catch(error => {
+                console.error('Error refreshing object marker:', error);
+                // Fallback: reload all objects
+                this.loadObjects();
+            });
+        } else {
+            console.log('⚠️ Object marker not found for refresh:', objectId);
+            // Fallback: reload all objects
+            this.loadObjects();
+        }
     }
 };
 

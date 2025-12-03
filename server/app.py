@@ -4062,6 +4062,16 @@ def ollama_keepalive():
             print(f"❌ Ollama keepalive error: {e}")
             time.sleep(60)  # Wait 1 minute before retrying on error
 
+@app.route('/api/objects/<object_id>/mark-found', methods=['POST'])
+def mark_found_alias(object_id: str):
+    """Alias for /found endpoint that iOS client expects."""
+    return mark_found(object_id)
+
+@app.route('/api/objects/<object_id>/unmark-found', methods=['POST'])
+def unmark_found_alias(object_id: str):
+    """Alias for /unmark-found endpoint that iOS client expects."""
+    return unmark_found(object_id)
+
 if __name__ == '__main__':
     init_db()
     load_location_update_interval_from_db()  # Load persisted location update interval from database

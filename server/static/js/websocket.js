@@ -111,6 +111,22 @@ const WebSocketManager = {
                 }
             });
 
+            // Listen for object collected events (iOS finds objects)
+            this.socket.on('object_collected', (data) => {
+                console.log('✅ Received object_collected event:', data.object_id, 'found by:', data.found_by);
+                if (ObjectsManager && typeof ObjectsManager.refreshObjectMarker === 'function') {
+                    ObjectsManager.refreshObjectMarker(data.object_id);
+                } else if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
+                    // Fallback: reload all objects if specific refresh isn't available
+                    ObjectsManager.loadObjects();
+                }
+                
+                // Also refresh stats to update found/unfound counts
+                if (StatsManager && typeof StatsManager.refreshStats === 'function') {
+                    StatsManager.refreshStats();
+                }
+            });
+
             // Listen for game mode changes (CRITICAL: Must be in connect() to ensure socket exists)
             this.socket.on('game_mode_changed', (data) => {
                 console.log(`🎮 [WebSocket] Game mode changed event received: ${data.game_mode}`);
