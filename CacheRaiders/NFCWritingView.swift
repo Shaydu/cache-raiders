@@ -540,7 +540,8 @@ struct NFCWritingView: View {
                             type: lootType,
                             location: location,
                             arAnchorData: arAnchorData,
-                            nfcResult: nfcResult
+                            nfcResult: nfcResult,
+                            compactMessage: compactMessage
                         )
                     }
 
@@ -553,7 +554,7 @@ struct NFCWritingView: View {
         }
     }
 
-    private func createObjectWithCompleteData(type: LootBoxType, location: CLLocation, arAnchorData: Data?, nfcResult: NFCService.NFCResult) async {
+    private func createObjectWithCompleteData(type: LootBoxType, location: CLLocation, arAnchorData: Data?, nfcResult: NFCService.NFCResult, compactMessage: String) async {
         currentStep = .creating
 
         do {
@@ -1067,42 +1068,6 @@ struct NFCDiagnosticsSheet: View {
                     }
                     .foregroundColor(.blue)
                 }
-            }
-        }
-    }
-}
-
-struct InfoRow: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack {
-            Text(label)
-                .foregroundColor(.secondary)
-            Spacer()
-            Text(value)
-                .foregroundColor(.primary)
-                .font(.system(.body, design: .monospaced))
-        }
-    }
-}
-
-struct StatusRow: View {
-    let label: String
-    let status: Bool
-
-    var body: some View {
-        HStack {
-            Text(label)
-                .foregroundColor(.secondary)
-            Spacer()
-            HStack(spacing: 4) {
-                Image(systemName: status ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundColor(status ? .green : .red)
-                Text(status ? "Yes" : "No")
-                    .foregroundColor(status ? .green : .red)
-                    .fontWeight(.medium)
             }
         }
     }
