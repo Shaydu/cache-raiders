@@ -98,9 +98,9 @@ const ObjectsManager = {
         const isAdminObject = obj && obj.created_by && obj.created_by === 'admin-web-ui';
 
         if (isNPC) {
-            // NPC icon - skull for skeleton, person for others
-            const iconColor = '#ffd700'; // Gold color for NPCs
-            const borderColor = '#b8860b';
+            // NPC icon - black background with gray border, skull for skeleton, person for others
+            const iconColor = '#000000'; // Black color for NPCs
+            const borderColor = '#666666'; // Gray border
             const borderWidth = Math.max(2, Math.min(4, size / 6));
             const iconSymbol = isSkeleton ? '💀' : '👤';
             iconHtml = `
@@ -110,11 +110,12 @@ const ObjectsManager = {
                     height: ${size}px;
                     border-radius: 50%;
                     border: ${borderWidth}px solid ${borderColor};
-                    box-shadow: 0 0 ${size/2}px rgba(255, 215, 0, 0.6);
+                    box-shadow: 0 0 ${size/2}px rgba(0, 0, 0, 0.6);
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     font-size: ${size * 0.6}px;
+                    color: white;
                 ">${iconSymbol}</div>
             `;
         } else if (isNFCObject) {
@@ -122,6 +123,7 @@ const ObjectsManager = {
             const markerColor = isCollected ? '#ff6b6b' : '#4a90e2'; // Red if found, blue if unfound
             const borderColor = isCollected ? '#c62828' : '#1565c0';
             const borderWidth = Math.max(2, Math.min(4, size / 6));
+            const fontSize = size * 0.6;
             iconHtml = `
                 <div style="
                     background: ${markerColor};
@@ -133,16 +135,18 @@ const ObjectsManager = {
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    font-size: ${size * 0.6}px;
+                    font-size: ${fontSize}px;
                     color: white;
                     font-weight: bold;
-                ">N</div>
+                    position: relative;
+                ">N${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">N</div>` : ''}</div>
             `;
         } else if (isARObject) {
             // AR object icon - purple circle with white 'AR'
             const markerColor = isCollected ? '#ff6b6b' : '#9c27b0'; // Red if found, purple if unfound
             const borderColor = isCollected ? '#c62828' : '#7b1fa2';
             const borderWidth = Math.max(2, Math.min(4, size / 6));
+            const fontSize = size * 0.4; // Smaller font for 'AR'
             iconHtml = `
                 <div style="
                     background: ${markerColor};
@@ -154,16 +158,18 @@ const ObjectsManager = {
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    font-size: ${size * 0.4}px; // Smaller font for 'AR'
+                    font-size: ${fontSize}px;
                     color: white;
                     font-weight: bold;
-                ">AR</div>
+                    position: relative;
+                ">AR${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">AR</div>` : ''}</div>
             `;
         } else if (isAdminObject) {
             // Admin object icon - green circle with white 'A'
             const markerColor = isCollected ? '#ff6b6b' : '#4caf50'; // Red if found, green if unfound
             const borderColor = isCollected ? '#c62828' : '#2e7d32';
             const borderWidth = Math.max(2, Math.min(4, size / 6));
+            const fontSize = size * 0.6;
             iconHtml = `
                 <div style="
                     background: ${markerColor};
@@ -175,10 +181,11 @@ const ObjectsManager = {
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    font-size: ${size * 0.6}px;
+                    font-size: ${fontSize}px;
                     color: white;
                     font-weight: bold;
-                ">A</div>
+                    position: relative;
+                ">A${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">A</div>` : ''}</div>
             `;
         } else if (isCollected) {
             // Stylized red X for found treasure
