@@ -49,7 +49,7 @@ const ObjectsManager = {
 
         // Calculate marker size based on zoom
         const markerSize = MapManager.calculateMarkerSize(zoom, obj.collected);
-        
+
         // Store marker data for resizing
         this.markerData[obj.id] = {
             collected: obj.collected,
@@ -83,14 +83,11 @@ const ObjectsManager = {
     createMarkerIcon(isCollected, size, obj = null) {
         let iconHtml;
         const anchorOffset = size / 2;
-        
+
         // Check if this is an NPC (Dead Men's Secrets mode)
         const isNPC = obj && obj.id && obj.id.startsWith('npc_');
         const isSkeleton = isNPC && (obj.name && (obj.name.includes('Bones') || obj.name.includes('skeleton')));
-        
-        // Check if this is an NFC-placed object
-        const isNFCObject = obj && obj.id && obj.id.startsWith('nfc_');
-        
+
         if (isNPC) {
             // NPC icon - skull for skeleton, person for others
             const iconColor = '#ffd700'; // Gold color for NPCs
@@ -99,11 +96,11 @@ const ObjectsManager = {
             const iconSymbol = isSkeleton ? '💀' : '👤';
             iconHtml = `
                 <div style="
-                    background: ${iconColor}; 
-                    width: ${size}px; 
-                    height: ${size}px; 
-                    border-radius: 50%; 
-                    border: ${borderWidth}px solid ${borderColor}; 
+                    background: ${iconColor};
+                    width: ${size}px;
+                    height: ${size}px;
+                    border-radius: 50%;
+                    border: ${borderWidth}px solid ${borderColor};
                     box-shadow: 0 0 ${size/2}px rgba(255, 215, 0, 0.6);
                     display: flex;
                     align-items: center;
@@ -111,44 +108,23 @@ const ObjectsManager = {
                     font-size: ${size * 0.6}px;
                 ">${iconSymbol}</div>
             `;
-        } else if (isNFCObject) {
-            // NFC object icon - blue circle with white 'N'
-            const markerColor = isCollected ? '#ff6b6b' : '#4a90e2'; // Red if found, blue if unfound
-            const borderColor = isCollected ? '#c62828' : '#1565c0';
-            const borderWidth = Math.max(2, Math.min(4, size / 6));
-            iconHtml = `
-                <div style="
-                    background: ${markerColor}; 
-                    width: ${size}px; 
-                    height: ${size}px; 
-                    border-radius: 50%; 
-                    border: ${borderWidth}px solid ${borderColor}; 
-                    box-shadow: 0 0 ${size/2}px rgba(74, 144, 226, 0.6);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: ${size * 0.6}px;
-                    color: white;
-                    font-weight: bold;
-                ">N</div>
-            `;
         } else if (isCollected) {
             // Stylized red X for found treasure
             // Adjust stroke width based on size to keep proportions
             const strokeWidth = Math.max(2, Math.min(5, size / 6));
             iconHtml = `
                 <div style="
-                    width: ${size}px; 
-                    height: ${size}px; 
+                    width: ${size}px;
+                    height: ${size}px;
                     position: relative;
                     display: flex;
                     align-items: center;
                     justify-content: center;
                 ">
                     <svg width="${size}" height="${size}" viewBox="0 0 24 24" style="filter: drop-shadow(0 0 ${size/6}px rgba(255, 0, 0, 0.8));">
-                        <path d="M2 2 L22 22 M22 2 L2 22" 
-                              stroke="#ff0000" 
-                              stroke-width="${strokeWidth}" 
+                        <path d="M2 2 L22 22 M22 2 L2 22"
+                              stroke="#ff0000"
+                              stroke-width="${strokeWidth}"
                               stroke-linecap="round"
                               stroke-linejoin="round"/>
                     </svg>
@@ -177,15 +153,15 @@ const ObjectsManager = {
         Object.keys(this.markers).forEach(markerId => {
             const marker = this.markers[markerId];
             const markerInfo = this.markerData[markerId];
-            
+
             if (!marker || !markerInfo) return;
 
             // Calculate new size
             const newSize = MapManager.calculateMarkerSize(zoom, markerInfo.collected);
-            
+
             // Create new icon with updated size
             const newIcon = this.createMarkerIcon(markerInfo.collected, newSize, markerInfo.obj);
-            
+
             // Update marker icon
             marker.setIcon(newIcon);
         });
@@ -218,7 +194,7 @@ const ObjectsManager = {
                         ${obj.collected ? `Found by: ${obj.found_by || 'Unknown'}<br>Found at: ${new Date(obj.found_at).toLocaleString()}` : 'Status: Available'}
                     </div>
                     <div style="display: flex; gap: 8px; margin-top: 8px;">
-                        ${obj.collected 
+                        ${obj.collected
                             ? `<button onclick="ObjectsManager.markUnfound('${obj.id}')" style="background: #ff9800; flex: 1;">Mark Unfound</button>`
                             : `<button onclick="ObjectsManager.markFound('${obj.id}')" style="background: #4caf50; flex: 1;">Mark Found</button>`
                         }
@@ -284,12 +260,12 @@ const ObjectsManager = {
             delete this.markerData[objectId];
             console.log(`🗑️ Removed marker for object: ${objectId}`);
         }
-        
+
         // Reload objects list to update sidebar
         this.loadObjects().catch(err => {
             console.error('Error reloading objects after marker removal:', err);
         });
-        
+
         // Refresh stats
         if (StatsManager && typeof StatsManager.refreshStats === 'function') {
             StatsManager.refreshStats();
@@ -307,7 +283,7 @@ const ObjectsManager = {
         try {
             // Remove marker immediately for instant feedback
             this.removeObjectMarker(objectId);
-            
+
             await ApiService.objects.delete(objectId);
             UI.showStatus('Object deleted successfully', 'success');
             await StatsManager.refreshStats();
@@ -465,7 +441,7 @@ const ObjectsManager = {
                 height: ${size}px;
                 border-radius: 50%;
                 border: ${borderWidth}px solid ${borderColor};
-                box-shadow: 0 0 ${size/2}px rgba(0, 0, 0, 0.4);
+                box-shadow: 0 0 ${size/2}px rgba(0, 0, 0, 0.3);
                 display: flex;
                 align-items: center;
                 justify-content: center;
@@ -488,25 +464,6 @@ const ObjectsManager = {
         // This would need to store element data like markerData
         // For now, we can reload story elements on zoom change
         // which is less efficient but simpler
-    },
-
-    /**
-     * Refresh the map based on current game mode
-     * Called when game mode changes
-     */
-    async refreshForGameMode(gameMode) {
-        if (gameMode === 'dead_mens_secrets') {
-            // Story mode: Load story elements
-            await this.loadStoryElements();
-            console.log('📖 Story mode: Refreshed map with story elements');
-        } else {
-            // Open mode: Clear story markers
-            this.clearStoryMarkers();
-            console.log('🗺️ Open mode: Cleared story markers');
-        }
-        
-        // Always reload regular objects
-        await this.loadObjects();
     },
 
     /**
@@ -537,9 +494,27 @@ const ObjectsManager = {
             // Fallback: reload all objects
             this.loadObjects();
         }
+    },
+
+    /**
+     * Refresh the map based on current game mode
+     * Called when game mode changes
+     */
+    async refreshForGameMode(gameMode) {
+        if (gameMode === 'dead_mens_secrets') {
+            // Story mode: Load story elements
+            await this.loadStoryElements();
+            console.log('📖 Story mode: Refreshed map with story elements');
+        } else {
+            // Open mode: Clear story markers
+            this.clearStoryMarkers();
+            console.log('🗺️ Open mode: Cleared story markers');
+        }
+
+        // Always reload regular objects
+        await this.loadObjects();
     }
 };
 
 // Make ObjectsManager available globally
 window.ObjectsManager = ObjectsManager;
-
