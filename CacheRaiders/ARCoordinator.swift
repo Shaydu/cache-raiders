@@ -18,7 +18,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var occlusionManager: AROcclusionManager?
     private var objectRecognizer: ARObjectRecognizer?
     private var distanceTracker: ARDistanceTracker?
-    private var tapHandler: ARTapHandler?
+    var tapHandler: ARTapHandler?
     private var databaseIndicatorService: ARDatabaseIndicatorService?
     private var groundingService: ARGroundingService?
     private var precisionPositioningService: ARPrecisionPositioningService? // Legacy - kept for compatibility
