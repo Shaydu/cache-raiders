@@ -592,6 +592,59 @@ const ObjectsManager = {
 
         // Always reload regular objects
         await this.loadObjects();
+    },
+
+    /**
+     * Remove all objects within the current map view
+     */
+    async removeObjectsInView() {
+        const map = MapManager.getMap();
+        if (!map) {
+            UI.showStatus('Map not available', 'error');
+            return;
+        }
+
+        try {
+            // Get all objects
+            const objects = await ApiService.objects.getAll(true);
+            
+            // Get current map bounds
+            const bounds = map.getBounds();
+            
+            // Filter objects within visible bounds
+            const objectsInView = objects.filter(obj => 
+                bounds.contains([obj.latitude, obj.longitude])
+            );
+
+            if (objectsInView.length === 0) {
+                UI.showStatus('No objects found in current view', 'info');
+                return;
+            }
+
+            // Show confirmation dialog
+            const confirmed = confirm(`Are you sure you want to delete ${objectsInView.length} object(s) in the current view?\n\nThis action cannot be undone.`);
+            if (!confirmed) {
+                return;
+            }
+
+            UI.showStatus(`Deleting ${objectsInView.length} object(s)...`, 'info');
+
+            // Extract object IDs
+            const objectIds = objectsInView.map(obj => obj.id);
+
+            // Call bulk delete API
+            await ApiService.objects.deleteBulk(objectIds);
+
+            // Remove markers from map immediately
+            objectIds.forEach(id => this.removeObjectMarker(id));
+
+            UI.showStatus(`Successfully deleted ${objectsInView.length} object(s)`, 'success');
+            await StatsManager.refreshStats();
+
+        } catch (error) {
+            console.error('Error removing objects in view:', error);
+            UI.showStatus('Error removing objects: ' + error.message, 'error');
+        }
     }
 };
 

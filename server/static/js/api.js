@@ -54,6 +54,13 @@ const ApiService = {
             });
         },
 
+        async deleteBulk(ids) {
+            return ApiService.fetch('/api/objects/bulk', {
+                method: 'DELETE',
+                body: JSON.stringify({ ids })
+            });
+        },
+
         async markUnfound(id) {
             return ApiService.fetch(`/api/objects/${id}/found`, {
                 method: 'DELETE'

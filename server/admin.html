@@ -131,7 +131,10 @@
         <div class="section">
             <div class="section-header">
                 <h2>Loot Management</h2>
-                <button class="btn-refresh" onclick="ObjectsManager.loadObjects()" title="Refresh List">🔄</button>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-refresh" onclick="ObjectsManager.loadObjects()" title="Refresh List">🔄</button>
+                    <button class="btn-danger" onclick="ObjectsManager.removeObjectsInView()" title="Remove all objects in current view">🗑️ View</button>
+                </div>
             </div>
             <div class="objects-list" id="objectsList">
                 <div class="loading">Loading objects...</div>
