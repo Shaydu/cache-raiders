@@ -905,67 +905,167 @@ button:disabled {
     flex-shrink: 0;
 }
 
-/* Icon specific styles */
+/* Icon specific styles - EXACTLY matching map markers */
 .user-icon {
     background: #2196f3;
     color: #fff;
     border: 2px solid #fff;
+    box-shadow: 0 0 10px rgba(33, 150, 243, 0.6);
 }
 
 .ar-unfound-icon {
     background: #9c27b0;
     color: #fff;
     border: 2px solid #7b1fa2;
+    box-shadow: 0 0 10px rgba(156, 39, 176, 0.6);
+    font-size: 8px;
+    font-weight: bold;
 }
 
 .ar-found-icon {
-    background: #ff6b6b;
+    background: #9c27b0;
     color: #fff;
-    border: 2px solid #c62828;
-    font-size: 12px;
+    border: 2px solid #7b1fa2;
+    box-shadow: 0 0 10px rgba(156, 39, 176, 0.6);
+    font-size: 8px;
+    font-weight: bold;
+    position: relative;
+    overflow: hidden;
+}
+
+.ar-found-icon::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translate(-50%, -50%);
+    background: 
+        linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%),
+        linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%);
+    z-index: 1;
+}
+
+.ar-found-icon::after {
+    content: 'AR';
+    position: relative;
+    z-index: 2;
+    color: #fff;
 }
 
 .nfc-unfound-icon {
     background: #4a90e2;
     color: #fff;
-    border: 2px solid #极客时间;
+    border: 2px solid #1565c0;
+    box-shadow: 0 0 10px rgba(74, 144, 226, 0.6);
+    font-weight: bold;
 }
 
 .nfc-found-icon {
-    background: #ff6b6b;
+    background: #4a90e2;
     color: #fff;
-    border: 2px solid #c62828;
+    border: 2px solid #1565c0;
+    box-shadow: 0 0 10px rgba(74, 144, 226, 0.6);
+    font-weight: bold;
+    position: relative;
+    overflow: hidden;
+}
+
+.nfc-found-icon::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translate(-50%, -50%);
+    background: 
+        linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%),
+        linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%);
+    z-index: 1;
+}
+
+.nfc-found-icon::after {
+    content: 'N';
+    position: relative;
+    z-index: 2;
+    color: #fff;
 }
 
 .admin-unfound-icon {
     background: #4caf50;
     color: #fff;
     border: 2px solid #2e7d32;
+    box-shadow: 0 0 10px rgba(76, 175, 80, 0.6);
+    font-weight: bold;
 }
 
 .admin-found-icon {
-    background: #ff6b6b;
+    background: #4caf50;
     color: #fff;
-    border: 2px solid #c62828;
+    border: 2px solid #2e7d32;
+    box-shadow: 0 0 10px rgba(76, 175, 80, 0.6);
+    font-weight: bold;
+    position: relative;
+    overflow: hidden;
+}
+
+.admin-found-icon::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translate(-50%, -50%);
+    background: 
+        linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%),
+        linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%);
+    z-index: 1;
+}
+
+.admin-found-icon::after {
+    content: 'A';
+    position: relative;
+    z-index: 2;
+    color: #fff;
 }
 
 .regular-unfound-icon {
     background: #ffd700;
     color: #1a1a1a;
     border: 2px solid #b8860b;
+    box-shadow: 0 0 10px rgba(255, 215, 0, 0.6);
 }
 
 .regular-found-icon {
-    background: #ff6b6b;
-    color: #fff;
-    border: 2px solid #c62828;
-    font-size: 12px;
+    background: #ffd700;
+    color: #1a1a1a;
+    border: 2px solid #b8860b;
+    box-shadow: 0 0 10px rgba(255, 215, 0, 0.6);
+    position: relative;
+    overflow: hidden;
+}
+
+.regular-found-icon::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translate(-50%, -50%);
+    background: 
+        linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%),
+        linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%);
 }
 
 .npc-icon {
     background: #ffd700;
     color: #1a1a1a;
     border: 2px solid #b8860b;
+    box-shadow: 0 0 10px rgba(255, 215, 0, 0.6);
     font-size: 12px;
 }
 

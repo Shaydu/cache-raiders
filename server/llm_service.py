@@ -57,8 +57,8 @@ except ImportError:
 from map_feature_service import MapFeatureService
 
 # Import NPC character definitions
-from npc_captain_bones import CaptainBones
-from npc_corgi_traveller import CorgiTraveller, TreasureHuntStage2
+from npcs.captain_bones_npc import CaptainBonesNPC as CaptainBones
+from npcs.corgi_npc import CorgiNPC; CorgiTraveller = CorgiNPC
 
 def get_local_ip():
     """Get the local network IP address (same logic as app.py)."""

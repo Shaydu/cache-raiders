@@ -91,7 +91,28 @@ const ModalManager = {
                     <div class="modal-field-label">Object ID</div>
                     <div class="modal-field-value" style="font-size: 12px; font-family: monospace; word-break: break-all;">${obj.id}</div>
                 </div>
-                
+
+                <!-- Placement Type Information -->
+                ${obj.ar_origin_latitude && obj.ar_origin_longitude
+                    ? `
+                    <div class="modal-field">
+                        <div class="modal-field-label">Placement Type</div>
+                        <div class="modal-field-value">
+                            <span style="color: #4CAF50; font-weight: 500;">AR Precision Placement</span>
+                            ${obj.ar_offset_x && obj.ar_offset_y && obj.ar_offset_z
+                                ? ` (Offset: x=${obj.ar_offset_x.toFixed(2)}, y=${obj.ar_offset_y.toFixed(2)}, z=${obj.ar_offset_z.toFixed(2)})`
+                                : ''}
+                        </div>
+                    </div>
+                    `
+                    : `
+                    <div class="modal-field">
+                        <div class="modal-field-label">Placement Type</div>
+                        <div class="modal-field-value">GPS Standard Placement</div>
+                    </div>
+                    `
+                }
+
                 <div class="modal-actions">
                     <button class="btn-danger" onclick="ModalManager.deleteObjectFromModal('${obj.id}')">Delete Object</button>
                     ${obj.collected
