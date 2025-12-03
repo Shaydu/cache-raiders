@@ -88,6 +88,15 @@ const ObjectsManager = {
         const isNPC = obj && obj.id && obj.id.startsWith('npc_');
         const isSkeleton = isNPC && (obj.name && (obj.name.includes('Bones') || obj.name.includes('skeleton')));
 
+        // Check if this is an NFC-placed object
+        const isNFCObject = obj && obj.id && obj.id.startsWith('nfc_');
+
+        // Check if this is an AR-placed object (not created by admin web UI)
+        const isARObject = obj && obj.created_by && obj.created_by !== 'admin-web-ui';
+
+        // Check if this is an admin-placed object (created by admin web UI)
+        const isAdminObject = obj && obj.created_by && obj.created_by === 'admin-web-ui';
+
         if (isNPC) {
             // NPC icon - skull for skeleton, person for others
             const iconColor = '#ffd700'; // Gold color for NPCs
@@ -107,6 +116,69 @@ const ObjectsManager = {
                     justify-content: center;
                     font-size: ${size * 0.6}px;
                 ">${iconSymbol}</div>
+            `;
+        } else if (isNFCObject) {
+            // NFC object icon - blue circle with white 'N'
+            const markerColor = isCollected ? '#ff6b6b' : '#4a90e2'; // Red if found, blue if unfound
+            const borderColor = isCollected ? '#c62828' : '#1565c0';
+            const borderWidth = Math.max(2, Math.min(4, size / 6));
+            iconHtml = `
+                <div style="
+                    background: ${markerColor};
+                    width: ${size}px;
+                    height: ${size}px;
+                    border-radius: 50%;
+                    border: ${borderWidth}px solid ${borderColor};
+                    box-shadow: 0 0 ${size/2}px rgba(74, 144, 226, 0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: ${size * 0.6}px;
+                    color: white;
+                    font-weight: bold;
+                ">N</div>
+            `;
+        } else if (isARObject) {
+            // AR object icon - purple circle with white 'AR'
+            const markerColor = isCollected ? '#ff6b6b' : '#9c27b0'; // Red if found, purple if unfound
+            const borderColor = isCollected ? '#c62828' : '#7b1fa2';
+            const borderWidth = Math.max(2, Math.min(4, size / 6));
+            iconHtml = `
+                <div style="
+                    background: ${markerColor};
+                    width: ${size}px;
+                    height: ${size}px;
+                    border-radius: 50%;
+                    border: ${borderWidth}px solid ${borderColor};
+                    box-shadow: 0 0 ${size/2}px rgba(156, 39, 176, 0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: ${size * 0.4}px; // Smaller font for 'AR'
+                    color: white;
+                    font-weight: bold;
+                ">AR</div>
+            `;
+        } else if (isAdminObject) {
+            // Admin object icon - green circle with white 'A'
+            const markerColor = isCollected ? '#ff6b6b' : '#4caf50'; // Red if found, green if unfound
+            const borderColor = isCollected ? '#c62828' : '#2e7d32';
+            const borderWidth = Math.max(2, Math.min(4, size / 6));
+            iconHtml = `
+                <div style="
+                    background: ${markerColor};
+                    width: ${size}px;
+                    height: ${size}px;
+                    border-radius: 50%;
+                    border: ${borderWidth}px solid ${borderColor};
+                    box-shadow: 0 0 ${size/2}px rgba(76, 175, 80, 0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: ${size * 0.6}px;
+                    color: white;
+                    font-weight: bold;
+                ">A</div>
             `;
         } else if (isCollected) {
             // Stylized red X for found treasure
