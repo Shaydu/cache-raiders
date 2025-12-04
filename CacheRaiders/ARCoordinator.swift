@@ -1395,6 +1395,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Track the placement
         placedBoxes[item.id] = anchor
         findableObjects[item.id] = findable
+        objectPlacementTimes[item.id] = Date() // CRITICAL: Track placement time for grace period
 
         // CRITICAL: Update tap handler's dictionaries so the object is tappable
         // The tap handler checks both placedBoxes and findableObjects for tap detection
