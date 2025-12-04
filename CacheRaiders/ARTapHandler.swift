@@ -23,6 +23,7 @@ class ARTapHandler: NSObject {
     var onPlaceLootBoxAtTap: ((LootBoxLocation, ARRaycastResult) -> Void)?
     var onNPCTap: ((String) -> Void)?
     var onShowObjectInfo: ((LootBoxLocation) -> Void)?
+    var onShowNFCTokenDetail: ((NFCToken) -> Void)? // Add callback for NFC token detail
     
     // Performance tracking
     private var lastTapTime: Date?
@@ -166,10 +167,32 @@ class ARTapHandler: NSObject {
             }
 
             // Check if in location manager and already collected
-            if let location = locationManager.locations.first(where: { $0.id == idString }),
-               location.collected {
-                Swift.print("⚠️ \(location.name) has already been collected")
-                return
+            if let location = locationManager.locations.first(where: { $0.id == idString }) {
+                // Check if this is a user-placed object (NFC or AR manual placement)
+                if location.source == .arManual || location.source == .arRandomized {
+                    Swift.print("📱 User-placed object tapped - showing NFC token detail")
+                    
+                    // Convert to NFCToken and show detail view
+                    let nfcToken = NFCToken(
+                        id: location.id,
+                        name: location.name,
+                        type: location.type,
+                        latitude: location.latitude,
+                        longitude: location.longitude,
+                        createdBy: location.created_by ?? "Unknown User",
+                        createdAt: Date(), // Use current date as placeholder
+                        nfcTagId: "NFC-\(location.id.prefix(8))", // Generate NFC tag ID from object ID
+                        message: "User-placed object"
+                    )
+                    
+                    onShowNFCTokenDetail?(nfcToken)
+                    return
+                }
+                
+                if location.collected {
+                    Swift.print("⚠️ \(location.name) has already been collected")
+                    return
+                }
             }
 
             // Get the findable object

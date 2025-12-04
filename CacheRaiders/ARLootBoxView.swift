@@ -180,7 +180,7 @@ struct ARViewContainer: UIViewRepresentable {
     
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
-        
+
         // AR session configuration
         let config = ARWorldTrackingConfiguration()
         // Detect both horizontal (ground) and vertical (walls) planes
@@ -198,7 +198,7 @@ struct ARViewContainer: UIViewRepresentable {
         } else {
             print("⚠️ Scene reconstruction not supported on this device")
         }
-        
+
         // Optimize for better tracking stability
         // This helps reduce pose prediction failures during movement
         if #available(iOS 16.0, *) {
@@ -215,20 +215,20 @@ struct ARViewContainer: UIViewRepresentable {
         // These warnings (e.g., 'arInPlacePostProcessCombinedPermute14.rematerial') can be safely ignored
         // They are internal framework materials used for AR post-processing effects
         config.environmentTexturing = .automatic
-        
+
         // Apply selected lens if available
         if let selectedLensId = locationManager.selectedARLens,
            let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
             config.videoFormat = videoFormat
             print("📷 Using selected AR lens: \(selectedLensId)")
         }
-        
+
         // Check if AR is supported
         guard ARWorldTrackingConfiguration.isSupported else {
             print("❌ AR World Tracking is not supported on this device")
             return arView
         }
-        
+
         // Run the session
         arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
 
@@ -239,6 +239,26 @@ struct ARViewContainer: UIViewRepresentable {
         // Debug visuals disabled for cleaner AR experience
         // Uncomment the line below to enable debug visuals (green feature points, anchor origins)
         // arView.debugOptions = [.showFeaturePoints, .showAnchorOrigins]
+
+        // CRITICAL: Configure the coordinator with all dependencies
+        // This initializes all AR services needed for object placement
+        let coordinator = context.coordinator
+        let geospatialService = ARGeospatialService()
+        let groundingService = ARGroundingService(arView: arView)
+        let tapHandler = ARTapHandler()
+
+        coordinator.configure(
+            arView: arView,
+            userLocationManager: userLocationManager,
+            locationManager: locationManager,
+            geospatialService: geospatialService,
+            groundingService: groundingService,
+            tapHandler: tapHandler
+        )
+
+        // CRITICAL: Set the coordinator as the session delegate to receive AR frame updates
+        // Without this, objects will never be placed in AR (though they show on map)
+        arView.session.delegate = coordinator
 
         return arView
     }
@@ -310,6 +330,10 @@ struct ARViewContainer: UIViewRepresentable {
         if let userLocation = userLocationManager.currentLocation {
             // Defer state updates to avoid "Modifying state during view update" warning
             let coordinator = context.coordinator
+
+            // Check if we should place objects:
+            // 1. When locations changed (new objects added)
+            // 2. When there are nearby objects but nothing placed yet (initial load)
             let shouldCheckPlacement = locationsChanged
 
             // Use Task to properly defer ALL state updates outside of view update cycle
@@ -318,17 +342,23 @@ struct ARViewContainer: UIViewRepresentable {
                 // Update location manager with current location for API refresh timer (lightweight)
                 // This is now deferred to avoid state modification during view update
                 locationManager.updateUserLocation(userLocation)
-                
+
                 // Get nearby locations (synchronous call, no need for Task.detached)
                 let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
 
                 // Update UI on main thread - deferred outside view update cycle
                 nearbyLocations = nearby
 
-                // CRITICAL FIX: Only call checkAndPlaceBoxes when locations actually changed
-                // This prevents re-placement of already-placed objects on every frame
-                // Objects should be placed ONCE and stay fixed at their AR coordinates
-                if shouldCheckPlacement {
+                // Check if we should place objects (locations changed OR initial placement needed)
+                let hasNearbyObjects = !nearby.isEmpty
+                let hasNoPlacedObjects = coordinator.state.placedObjects.isEmpty
+                let needsInitialPlacement = hasNearbyObjects && hasNoPlacedObjects
+
+                // CRITICAL FIX: Call checkAndPlaceBoxes when:
+                // 1. Locations changed (new objects added)
+                // 2. Initial placement needed (nearby objects but nothing placed)
+                // This ensures objects appear on initial load
+                if shouldCheckPlacement || needsInitialPlacement {
                     // PERFORMANCE: Logging disabled
                     coordinator.services.objectPlacement?.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
                 }

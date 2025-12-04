@@ -132,12 +132,12 @@ struct ContentView: View {
             }
             .actionSheet(isPresented: $showPlusMenu) {
                 ActionSheet(
-                    title: Text("Create"),
-                    message: Text("Choose what to create"),
+                    title: Text("Add or Scan"),
+                    message: Text("Choose an action"),
                     buttons: [
-                        .default(Text("Place AR Object")) {
+                        .default(Text("View NFC Tokens")) {
                             Task { @MainActor in
-                                presentedSheet = .arPlacement
+                                presentedSheet = .nfcTokensList
                             }
                         },
                         .default(Text("Place NFC Token")) {
@@ -413,6 +413,11 @@ struct ContentView: View {
     // Helper to build sheet content - breaks up complex expression
     @ViewBuilder
     var body: some View {
+        finalContentView
+    }
+
+    // Break up body modifiers into smaller computed properties
+    private var mainContentViewWithAppear: some View {
         mainContentView
             .onAppear(perform: handleAppear)
             .onChange(of: presentedSheet) { oldSheet, newSheet in
@@ -425,12 +430,21 @@ struct ContentView: View {
                     }
                 }
             }
+    }
+
+    // Break up complex view modifier chain into smaller parts
+    private var contentViewWithGridMap: some View {
+        mainContentViewWithAppear
             .onChange(of: showGridTreasureMap) { oldValue, newValue in
                 handleGridMapChange(oldValue: oldValue, newValue: newValue)
             }
             .fullScreenCover(isPresented: $showGridTreasureMap) {
                 GridTreasureMapView(mapService: gridTreasureMapService)
             }
+    }
+
+    private var contentViewWithSheets: some View {
+        contentViewWithGridMap
             .sheet(item: $presentedSheet) { sheetType in
                 SheetContentView(
                     sheetType: sheetType,
@@ -439,7 +453,8 @@ struct ContentView: View {
                     treasureHuntService: treasureHuntService,
                     gridTreasureMapService: gridTreasureMapService,
                     inventoryService: inventoryService,
-                    dismiss: { presentedSheet = nil }
+                    showQRScanner: $showQRScanner,
+                    scannedURL: $scannedURL
                 )
                     .onAppear {
                         NotificationCenter.default.post(name: NSNotification.Name("DialogOpened"), object: nil)
@@ -448,6 +463,10 @@ struct ContentView: View {
                         NotificationCenter.default.post(name: NSNotification.Name("DialogClosed"), object: nil)
                     }
             }
+    }
+
+    private var contentViewWithNPCChange: some View {
+        contentViewWithSheets
             .onChange(of: conversationNPC) { oldNPC, newNPC in
                 // Only open sheet if there's a new NPC and we don't already have that sheet open
                 if let npc = newNPC {
@@ -458,6 +477,10 @@ struct ContentView: View {
                     }
                 }
             }
+    }
+
+    private var contentViewWithQRScanner: some View {
+        contentViewWithNPCChange
             .sheet(isPresented: $showQRScanner) {
                 QRCodeScannerView(scannedURL: $scannedURL)
             }
@@ -467,6 +490,10 @@ struct ContentView: View {
             .onChange(of: scannedURL) { oldURL, newURL in
                 handleScannedURLChange(oldURL: oldURL, newURL: newURL)
             }
+    }
+
+    private var finalContentView: some View {
+        contentViewWithQRScanner
             .onChange(of: userLocationManager.currentLocation) { oldLocation, newLocation in
                 handleLocationChange(oldLocation: oldLocation, newLocation: newLocation)
             }

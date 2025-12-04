@@ -62,15 +62,48 @@ class ARCoordinatorCore: NSObject, ARSessionDelegate, ARCoordinatorProtocol, ARC
     
     // MARK: - Configuration
     func configure(arView: ARView, userLocationManager: UserLocationManager, locationManager: LootBoxLocationManager, geospatialService: ARGeospatialService, groundingService: ARGroundingService, tapHandler: ARTapHandler) {
+        print("🔧 [ARCoordinatorCore] configure() called - initializing AR services")
         self.arView = arView
         self.userLocationManager = userLocationManager
         self.locationManager = locationManager
         self.geospatialService = geospatialService
         self.groundingService = groundingService
         self.tapHandler = tapHandler
-        
+
+        // Set up location monitoring
+        setupLocationMonitoring()
+
         // Initialize services after all properties are set
         initializeServices()
+        print("✅ [ARCoordinatorCore] Configuration complete - AR services initialized")
+    }
+    
+    // MARK: - Location Monitoring Setup
+    private func setupLocationMonitoring() {
+        // Subscribe to location updates
+        userLocationManager?.$currentLocation
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] location in
+                guard let self = self, let location = location else { return }
+                self.handleLocationUpdate(location)
+            }
+            .store(in: &cancellables)
+    }
+    
+    // MARK: - Location Update Handling
+    private func handleLocationUpdate(_ location: CLLocation) {
+        guard let locationManager = locationManager,
+              let objectPlacer = services.objectPlacement,
+              let arView = arView else {
+            return
+        }
+        
+        // Get nearby locations and place objects in AR
+        let nearbyLocations = locationManager.getNearbyLocations(userLocation: location)
+        objectPlacer.checkAndPlaceBoxes(userLocation: location, nearbyLocations: nearbyLocations)
+        
+        // Update last known user location for services
+        services.location?.updateUserLocation(location)
     }
     
     // MARK: - Service Initialization
@@ -93,7 +126,15 @@ class ARCoordinatorCore: NSObject, ARSessionDelegate, ARCoordinatorProtocol, ARC
     }
     
     // MARK: - ARSessionDelegate
+    private var frameUpdateCount = 0
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        // Log first few frames to confirm delegate is working
+        frameUpdateCount += 1
+        if frameUpdateCount <= 3 {
+            print("📸 [ARCoordinatorCore] AR frame update #\(frameUpdateCount) received - delegate is working!")
+        } else if frameUpdateCount == 4 {
+            print("✅ [ARCoordinatorCore] AR frame updates confirmed - future updates will be silent")
+        }
         services.handleSessionUpdate(session, frame: frame)
     }
     
