@@ -202,16 +202,37 @@ struct TopOverlayView: View {
     let directionIndicatorView: AnyView
     let locationManager: LootBoxLocationManager
     let userLocationManager: UserLocationManager
+    let nearestObjectName: String?
 
     var body: some View {
         VStack {
             TopToolbarView(showPlusMenu: $showPlusMenu, showGridTreasureMap: $showGridTreasureMap, presentedSheet: $presentedSheet, directionIndicatorView: directionIndicatorView, locationManager: locationManager, userLocationManager: userLocationManager)
 
-            LocationDisplayView(isGPSConnected: isGPSConnected, formatDistanceInFeetInches: formatDistanceInFeetInches)
+            if let objectName = nearestObjectName {
+                NearestObjectNameView(objectName: objectName)
+            } else {
+                LocationDisplayView(isGPSConnected: isGPSConnected, formatDistanceInFeetInches: formatDistanceInFeetInches)
+            }
 
             Spacer()
 
             NotificationsView(collectionNotification: collectionNotification, temperatureStatus: temperatureStatus)
         }
+    }
+}
+
+// MARK: - Nearest Object Name View
+struct NearestObjectNameView: View {
+    let objectName: String
+
+    var body: some View {
+        Text(objectName)
+            .font(.caption)
+            .fontWeight(.medium)
+            .foregroundColor(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Color.black.opacity(0.6))
+            .cornerRadius(8)
     }
 }

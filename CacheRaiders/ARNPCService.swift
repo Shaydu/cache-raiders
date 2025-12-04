@@ -5,50 +5,12 @@ import CoreLocation
 import Combine
 
 // MARK: - NPC Service
-class ARNPCService: NSObject {
+class ARNPCService: NSObject, ARNPCServiceProtocol {
     weak var arView: ARView?
     private var locationManager: LootBoxLocationManager?
     private var userLocationManager: UserLocationManager?
     private var conversationManager: ARConversationManager?
     private var treasureHuntService: TreasureHuntService?
-    
-    // MARK: - NPC Types
-    enum NPCType: String, CaseIterable {
-        case skeleton = "skeleton"
-        case corgi = "corgi"
-        
-        var modelName: String {
-            switch self {
-            case .skeleton: return "Curious_skeleton"
-            case .corgi: return "Corgi_Traveller"
-            }
-        }
-        
-        var npcId: String {
-            switch self {
-            case .skeleton: return "skeleton-1"
-            case .corgi: return "corgi-1"
-            }
-        }
-        
-        var defaultName: String {
-            switch self {
-            case .skeleton: return "Captain Bones"
-            case .corgi: return "Corgi Traveller"
-            }
-        }
-        
-        var npcType: String {
-            switch self {
-            case .skeleton: return "skeleton"
-            case .corgi: return "traveller"
-            }
-        }
-        
-        var isSkeleton: Bool {
-            return self == .skeleton
-        }
-    }
     
     private var placedNPCs: [String: AnchorEntity] = [:] // Track all placed NPCs by ID
     private var skeletonPlaced: Bool = false // Track if skeleton has been placed
@@ -67,11 +29,9 @@ class ARNPCService: NSObject {
          locationManager: LootBoxLocationManager,
          groundingService: ARGroundingService,
          tapHandler: ARTapHandler,
-         conversationManager: ARConversationManager,
          conversationNPCBinding: Binding<ConversationNPC?>?) {
         self.arView = arView
         self.locationManager = locationManager
-        self.conversationManager = conversationManager
         super.init()
     }
     
@@ -94,6 +54,28 @@ class ARNPCService: NSObject {
     
     func removeAllNPCs() {
         // Implementation to be moved from ARCoordinator
+    }
+
+    // MARK: - ARNPCServiceProtocol Methods
+    
+    func configure(with coordinator: ARCoordinatorCoreProtocol) {
+        // Implementation not needed for this service
+    }
+    
+    func cleanup() {
+        // Implementation not needed for this service
+    }
+    
+    func placeNPC(_ npcType: NPCType, at location: CLLocation?) {
+        // Implementation to be added from ARCoordinator
+    }
+    
+    func handleNPCInteraction(_ npcId: String) {
+        // Implementation to be added from ARCoordinator
+    }
+    
+    func syncNPCsWithServer() {
+        // Implementation to be added from ARCoordinator
     }
 }
 

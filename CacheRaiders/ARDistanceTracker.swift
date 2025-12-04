@@ -27,8 +27,10 @@ class ARDistanceTracker: ObservableObject {
     var distanceToNearestBinding: Binding<Double?>?
     var temperatureStatusBinding: Binding<String?>?
     var nearestObjectDirectionBinding: Binding<Double?>?
+    var nearestObjectNameBinding: Binding<String?>?
     
     @Published var nearestObjectDirection: Double? = nil
+    @Published var nearestObjectName: String? = nil
     
     private var distanceLogger: Timer?
     private var previousDistance: Double?
@@ -230,10 +232,11 @@ class ARDistanceTracker: ObservableObject {
         // Only check placed boxes if we have any, and if no selected object is being tracked
         if targetPosition == nil && !placedBoxes.isEmpty {
             var nearestDistance: Float = .infinity
+            var nearestObjectName: String? = nil
             
             for (locationId, anchor) in placedBoxes {
                 // Skip if already collected
-                guard locationManager.locations.first(where: { $0.id == locationId && !$0.collected }) != nil else {
+                guard let location = locationManager.locations.first(where: { $0.id == locationId && !$0.collected }) else {
                     continue
                 }
                 
@@ -271,8 +274,12 @@ class ARDistanceTracker: ObservableObject {
                 if distance < nearestDistance {
                     nearestDistance = distance
                     targetPosition = objectPos
+                    nearestObjectName = location.name
                 }
             }
+            
+            // Update the nearest object name
+            self.nearestObjectName = nearestObjectName
         }
 
         guard let targetPos = targetPosition else {
@@ -645,6 +652,7 @@ class ARDistanceTracker: ObservableObject {
             } else {
                 self?.nearestObjectDirectionBinding?.wrappedValue = nil
             }
+            self?.nearestObjectNameBinding?.wrappedValue = self?.nearestObjectName
         }
     }
     

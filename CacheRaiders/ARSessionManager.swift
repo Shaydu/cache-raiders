@@ -51,13 +51,15 @@ class ARSessionManager: NSObject, ARSessionDelegate {
         // Set AR origin on first frame if not set
         setupAROriginIfNeeded(frame)
 
-        // Check viewport visibility with throttling
-        audioManager?.checkViewportVisibilityThrottled()
+        // Check viewport visibility with throttling - delegate to viewport service
+        // Note: This needs to be implemented in the viewport visibility service
+        // This should be handled by viewport service
 
         // Perform object recognition with throttling (only if enabled)
         if stateManager?.shouldPerformObjectRecognition() == true &&
            arCoordinator?.locationManager?.enableObjectRecognition == true {
-            arCoordinator?.objectRecognizer?.performObjectRecognition(on: frame.capturedImage)
+            // This needs to be implemented in the object recognizer service
+            // arCoordinator?.services.environment?.recognizeObjects(in: frame)
         }
     }
 
@@ -95,8 +97,8 @@ class ARSessionManager: NSObject, ARSessionDelegate {
               geospatialService.setENUOrigin(from: userLocation) else { return }
 
         arCoordinator?.arOriginLocation = userLocation
-        arCoordinator?.arOriginSetTime = Date()
-        arCoordinator?.isDegradedMode = false
+        arCoordinator?.state.arOriginSetTime = Date()
+        arCoordinator?.state.isDegradedMode = false
 
         // Set ground level
         let groundLevel: Float
@@ -106,9 +108,8 @@ class ARSessionManager: NSObject, ARSessionDelegate {
             groundLevel = cameraPos.y - 1.5
         }
 
-        arCoordinator?.arOriginGroundLevel = groundLevel
-        geospatialService.setARSessionOrigin(arPosition: SIMD3<Float>(0, 0, 0), groundLevel: groundLevel)
-        arCoordinator?.precisionPositioningService?.setAROriginGroundLevel(groundLevel)
+        arCoordinator?.state.arOriginGroundLevel = groundLevel
+        arCoordinator?.services.environment?.setAROriginGroundLevel(groundLevel)
 
         Swift.print("✅ AR Origin SET (ACCURATE MODE) at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
         Swift.print("   GPS accuracy: \(String(format: "%.2f", userLocation.horizontalAccuracy))m")
@@ -117,30 +118,30 @@ class ARSessionManager: NSObject, ARSessionDelegate {
 
     private func handleLowGPSAccuracy(_ userLocation: CLLocation, frame: ARFrame) {
         let waitTime: TimeInterval = 10.0
-        if let setTime = arCoordinator?.arOriginSetTime {
+        if let setTime = arCoordinator?.state.arOriginSetTime {
             if Date().timeIntervalSince(setTime) > waitTime {
                 enterDegradedMode(cameraPos: SIMD3<Float>(0, 0, 0), frame: frame)
             }
         } else {
-            arCoordinator?.arOriginSetTime = Date()
+            arCoordinator?.state.arOriginSetTime = Date()
             Swift.print("⚠️ GPS accuracy too low: \(String(format: "%.2f", userLocation.horizontalAccuracy))m")
         }
     }
 
     private func handleNoGPSLocation(cameraPos: SIMD3<Float>, frame: ARFrame) {
         let waitTime: TimeInterval = 5.0
-        if let setTime = arCoordinator?.arOriginSetTime {
+        if let setTime = arCoordinator?.state.arOriginSetTime {
             if Date().timeIntervalSince(setTime) > waitTime {
                 enterDegradedMode(cameraPos: cameraPos, frame: frame)
             }
         } else {
-            arCoordinator?.arOriginSetTime = Date()
+            arCoordinator?.state.arOriginSetTime = Date()
             Swift.print("⚠️ No GPS location available")
         }
     }
 
     private func checkExitDegradedMode(_ frame: ARFrame) {
-        guard arCoordinator?.isDegradedMode == true,
+        guard arCoordinator?.state.isDegradedMode == true,
               let userLocation = arCoordinator?.userLocationManager?.currentLocation,
               userLocation.horizontalAccuracy >= 0,
               userLocation.horizontalAccuracy < 6.5 else { return }
@@ -151,12 +152,12 @@ class ARSessionManager: NSObject, ARSessionDelegate {
     private func enterDegradedMode(cameraPos: SIMD3<Float>, frame: ARFrame) {
         // Set degraded mode origin
         arCoordinator?.arOriginLocation = CLLocation(latitude: 0, longitude: 0) // Dummy location
-        arCoordinator?.arOriginSetTime = Date()
-        arCoordinator?.isDegradedMode = true
+        arCoordinator?.state.arOriginSetTime = Date()
+        arCoordinator?.state.isDegradedMode = true
 
         // Set ground level
         let groundLevel: Float = cameraPos.y - 1.5
-        arCoordinator?.arOriginGroundLevel = groundLevel
+        arCoordinator?.state.arOriginGroundLevel = groundLevel
 
         Swift.print("⚠️ ENTERED DEGRADED MODE - AR-only positioning")
         Swift.print("   No GPS available or accuracy too low")
@@ -168,8 +169,8 @@ class ARSessionManager: NSObject, ARSessionDelegate {
               geospatialService.setENUOrigin(from: userLocation) else { return }
 
         arCoordinator?.arOriginLocation = userLocation
-        arCoordinator?.arOriginSetTime = Date()
-        arCoordinator?.isDegradedMode = false
+        arCoordinator?.state.arOriginSetTime = Date()
+        arCoordinator?.state.isDegradedMode = false
 
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(
@@ -185,9 +186,8 @@ class ARSessionManager: NSObject, ARSessionDelegate {
             groundLevel = cameraPos.y - 1.5
         }
 
-        arCoordinator?.arOriginGroundLevel = groundLevel
-        geospatialService.setARSessionOrigin(arPosition: SIMD3<Float>(0, 0, 0), groundLevel: groundLevel)
-        arCoordinator?.precisionPositioningService?.setAROriginGroundLevel(groundLevel)
+        arCoordinator?.state.arOriginGroundLevel = groundLevel
+        arCoordinator?.services.environment?.setAROriginGroundLevel(groundLevel)
 
         Swift.print("✅ EXITED DEGRADED MODE - GPS accuracy improved!")
         Swift.print("   AR Origin SET at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
@@ -237,10 +237,10 @@ class ARSessionManager: NSObject, ARSessionDelegate {
             Swift.print("✅ Keeping horizontal plane: Y=\(String(format: "%.2f", planeY)), size=\(String(format: "%.2f", planeWidth))x\(String(format: "%.2f", planeHeight))")
 
             // Auto-randomize spheres if needed
-            if !(arCoordinator?.hasAutoRandomized ?? false) && arCoordinator?.placedBoxes.isEmpty ?? true {
+            if !(arCoordinator?.state.hasAutoRandomized ?? false) && arCoordinator?.state.placedBoxes.isEmpty ?? true {
                 Swift.print("🎯 Auto-randomizing spheres on detected surface!")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    self?.arCoordinator?.hasAutoRandomized = true
+                    self?.arCoordinator?.state.hasAutoRandomized = true
                     // Note: randomizeLootBoxes() would be called here in the full implementation
                 }
             }
@@ -263,12 +263,12 @@ class ARSessionManager: NSObject, ARSessionDelegate {
 
         // Reset AR origin on session failure
         arCoordinator?.arOriginLocation = nil
-        arCoordinator?.arOriginSetTime = nil
-        arCoordinator?.isDegradedMode = false
-        arCoordinator?.arOriginGroundLevel = nil
+        arCoordinator?.state.arOriginSetTime = nil
+        arCoordinator?.state.isDegradedMode = false
+        arCoordinator?.state.arOriginGroundLevel = nil
 
         // Attempt to restart session if we have a saved configuration
-        if let config = arCoordinator?.savedARConfiguration {
+        if let config = arCoordinator?.state.savedARConfiguration {
             Swift.print("🔄 Attempting to restart AR session...")
             arCoordinator?.arView?.session.run(config)
         }
@@ -286,7 +286,7 @@ class ARSessionManager: NSObject, ARSessionDelegate {
 
         // Resume normal processing
         // Reset AR origin timestamp to allow re-establishing origin
-        arCoordinator?.arOriginSetTime = nil
+        arCoordinator?.state.arOriginSetTime = nil
 
         // Note: Additional recovery logic would go here
     }

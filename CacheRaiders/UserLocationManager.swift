@@ -13,7 +13,7 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     @Published var isSendingLocation: Bool = false // Track when location is being sent to server
     @Published var lastLocationSentSuccessfully: Date? // Track when location was successfully received by server
     private var isSendingInProgress: Bool = false // Prevent concurrent sends
-    weak var arCoordinator: ARCoordinator? // Reference to AR coordinator for enhanced location
+    weak var arCoordinator: ARCoordinatorCore? // Reference to AR coordinator for enhanced location
     weak var lootBoxLocationManager: LootBoxLocationManager? // Reference to loot box location manager for game mode checks
     weak var treasureHuntService: TreasureHuntService? // Reference to treasure hunt service for discovery logic
     private var locationUpdateTimer: Timer? // Timer for automatic periodic location updates
@@ -137,7 +137,7 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
         
         let debugModeEnabled = UserDefaults.standard.bool(forKey: "showARDebugVisuals")
         
-        if let arEnhanced = arCoordinator?.getAREnhancedLocation() {
+        if let arEnhanced = arCoordinator?.services.location?.getAREnhancedLocation() {
             finalLat = arEnhanced.latitude
             finalLng = arEnhanced.longitude
             arOffsetX = arEnhanced.arOffsetX

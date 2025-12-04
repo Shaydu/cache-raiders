@@ -247,6 +247,47 @@ class ARGeospatialService {
         return arOffset
     }
     
+    // MARK: - AR to GPS Conversion
+    
+    /// Converts an AR position to GPS coordinates
+    /// - Parameter arPosition: Position in AR space (meters from AR origin)
+    /// - Returns: GPS coordinate if conversion is possible, nil otherwise
+    func convertARToGPS(arPosition: SIMD3<Float>) -> CLLocationCoordinate2D? {
+        guard let enuOrigin = enuOrigin else {
+            Swift.print("⚠️ Cannot convert AR to GPS: No ENU origin set")
+            return nil
+        }
+        
+        guard let arSessionOrigin = arSessionOrigin else {
+            Swift.print("⚠️ Cannot convert AR to GPS: No AR session origin set")
+            return nil
+        }
+        
+        // Convert AR position to ENU coordinates
+        // AR position is relative to AR session origin, so we need to add the correction offset
+        let correctedARPosition = arPosition + correctionOffset
+        let relativeToOrigin = correctedARPosition - arSessionOrigin
+        
+        // Convert to ENU (East-North-Up) coordinates
+        let enu = SIMD3<Double>(Double(relativeToOrigin.x), Double(relativeToOrigin.y), Double(relativeToOrigin.z))
+        
+        // Convert ENU to GPS using the origin
+        let distanceEast = enu.x
+        let distanceNorth = enu.y
+        let distanceUp = enu.z
+        
+        // Calculate bearing and distance
+        let distance = sqrt(distanceEast * distanceEast + distanceNorth * distanceNorth)
+        let bearing = atan2(distanceEast, distanceNorth) * 180.0 / .pi // Convert to degrees
+        
+        // Calculate new GPS coordinate
+        let newCoordinate = enuOrigin.coordinate.coordinate(atDistance: distance, atBearing: bearing)
+        
+        Swift.print("📍 AR to GPS conversion: AR(\(arPosition.x), \(arPosition.y), \(arPosition.z)) -> GPS(\(newCoordinate.latitude), \(newCoordinate.longitude))")
+        
+        return newCoordinate
+    }
+    
     // MARK: - Getters
     
     var hasENUOrigin: Bool {

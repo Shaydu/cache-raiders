@@ -3,13 +3,36 @@ import ARKit
 import RealityKit
 
 // MARK: - AR Location Manager
-class ARLocationManager {
+class ARLocationManager: ARLocationServiceProtocol {
 
     private weak var arCoordinator: ARCoordinatorCore?
 
     // MARK: - Initialization
     init(arCoordinator: ARCoordinatorCore) {
         self.arCoordinator = arCoordinator
+    }
+
+    // MARK: - ARLocationServiceProtocol Methods
+    
+    func configure(with coordinator: ARCoordinatorCoreProtocol) {
+        // Implementation not needed for this service
+    }
+    
+    func cleanup() {
+        // Implementation not needed for this service
+    }
+    
+    func updateUserLocation(_ location: CLLocation) {
+        // Implementation not needed for this service
+    }
+    
+    func calculateARPosition(from location: CLLocation) -> SIMD3<Float>? {
+        guard let arOrigin = arCoordinator?.arOriginLocation else { return nil }
+        return gpsToARPosition(coordinate: location.coordinate, arOrigin: arOrigin)
+    }
+    
+    func correctGPSDrift() {
+        // Implementation not needed for this service
     }
 
     // MARK: - AR-Enhanced Location

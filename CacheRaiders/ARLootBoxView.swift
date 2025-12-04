@@ -12,6 +12,7 @@ struct ARLootBoxView: View {
     @Binding var temperatureStatus: String?
     @Binding var collectionNotification: String?
     @Binding var nearestObjectDirection: Double?
+    @Binding var nearestObjectName: String?
     @Binding var conversationNPC: ConversationNPC?
     @ObservedObject var treasureHuntService: TreasureHuntService
 
@@ -27,6 +28,7 @@ struct ARLootBoxView: View {
                 temperatureStatus: $temperatureStatus,
                 collectionNotification: $collectionNotification,
                 nearestObjectDirection: $nearestObjectDirection,
+                nearestObjectName: $nearestObjectName,
                 conversationNPC: $conversationNPC,
                 conversationManager: conversationManager,
                 treasureHuntService: treasureHuntService
@@ -171,6 +173,7 @@ struct ARViewContainer: UIViewRepresentable {
     @Binding var temperatureStatus: String?
     @Binding var collectionNotification: String?
     @Binding var nearestObjectDirection: Double?
+    @Binding var nearestObjectName: String?
     @Binding var conversationNPC: ConversationNPC?
     @ObservedObject var conversationManager: ARConversationManager
     @ObservedObject var treasureHuntService: TreasureHuntService
@@ -237,8 +240,6 @@ struct ARViewContainer: UIViewRepresentable {
         // Uncomment the line below to enable debug visuals (green feature points, anchor origins)
         // arView.debugOptions = [.showFeaturePoints, .showAnchorOrigins]
 
-        // Setup AR coordinator (this will register tap gestures after tapHandler is initialized)
-        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, conversationNPC: $conversationNPC, conversationManager: conversationManager, treasureHuntService: treasureHuntService)
         return arView
     }
     
@@ -247,24 +248,22 @@ struct ARViewContainer: UIViewRepresentable {
         
         // Throttle updateUIView to prevent excessive calls and freezing
         let now = Date()
-        let timeSinceLastUpdate = now.timeIntervalSince(context.coordinator.stateManager?.lastViewUpdateTime ?? Date())
-        let shouldUpdate = timeSinceLastUpdate >= (context.coordinator.stateManager?.viewUpdateThrottleInterval ?? 0.1)
+        let timeSinceLastUpdate = now.timeIntervalSince(coordinator.state.objectPlacementTimes.values.max() ?? Date())
+        let shouldUpdate = timeSinceLastUpdate >= 0.1 // Default throttle interval
         
         // Always handle critical updates (lens changes, location changes)
         let currentLocationsCount = locationManager.locations.count
-        let locationsChanged = currentLocationsCount != (context.coordinator.stateManager?.lastLocationsCount ?? 0)
+        let locationsChanged = currentLocationsCount != coordinator.state.placedObjects.count
         let currentLensId = locationManager.selectedARLens
         // Only update lens if the ID actually changed (not just video format object comparison)
         // Use coordinator's persistent property instead of @State which wasn't working
-        let needsLensUpdate = currentLensId != context.coordinator.lastAppliedLensId
+        let needsLensUpdate = currentLensId != coordinator.arView?.session.configuration?.videoFormat.description
         let hasCriticalUpdate = locationsChanged || needsLensUpdate || uiView.session.configuration == nil
         
         // Only proceed if we should update OR if there's a critical update
         guard shouldUpdate || hasCriticalUpdate else {
             return // Skip this update to prevent excessive calls
         }
-        
-        context.coordinator.stateManager?.lastViewUpdateTime = now
         
         // Check if lens has changed and update AR configuration if needed
         // Ensure AR session is running or update if lens changed
@@ -297,16 +296,12 @@ struct ARViewContainer: UIViewRepresentable {
             if needsLensUpdate {
                 print("🔄 Lens changed - session reset, objects will be re-placed when tracking is ready")
                 // Set flag to force re-placement when AR tracking is ready
-                context.coordinator.shouldForceReplacement = true
+                coordinator.state.placedObjects.removeAll()
             }
-
-            // Remember the lens we just applied to prevent redundant updates
-            context.coordinator.lastAppliedLensId = currentLensId
         }
         
         // Check if locations have changed (new object added)
         if locationsChanged {
-            context.coordinator.stateManager?.lastLocationsCount = currentLocationsCount
             // PERFORMANCE: Logging disabled - runs frequently
         }
 
@@ -335,7 +330,7 @@ struct ARViewContainer: UIViewRepresentable {
                 // Objects should be placed ONCE and stay fixed at their AR coordinates
                 if shouldCheckPlacement {
                     // PERFORMANCE: Logging disabled
-                    coordinator.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+                    coordinator.services.objectPlacement?.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
                 }
             }
         }
@@ -345,25 +340,10 @@ struct ARViewContainer: UIViewRepresentable {
             print("🎯 Randomize button pressed - triggering sphere placement...")
             // Defer ALL state modifications to avoid "Modifying state during view update" warning
             Task { @MainActor in
-                context.coordinator.randomizeLootBoxes()
+                coordinator.services.objectPlacement?.randomizeLootBoxes()
                 // Reset the flag after randomization is complete
                 locationManager.shouldRandomize = false
                 print("🔄 Randomize flag reset")
-            }
-        }
-
-        // Handle single sphere placement trigger
-        if locationManager.shouldPlaceSphere {
-            print("🎯 Single sphere placement triggered in ARLootBoxView...")
-            // Get the location ID if one was provided (from map marker)
-            let locationId = locationManager.pendingSphereLocationId
-            // Defer ALL state modifications to avoid "Modifying state during view update" warning
-            Task { @MainActor in
-                context.coordinator.tapHandler?.placeSingleSphere(locationId: locationId)
-                // Reset the flags after placement is complete
-                locationManager.shouldPlaceSphere = false
-                locationManager.pendingSphereLocationId = nil
-                print("🔄 Single sphere flag reset")
             }
         }
 
@@ -372,11 +352,10 @@ struct ARViewContainer: UIViewRepresentable {
             print("🎯 Pending AR item placement triggered: \(pendingItem.name)")
             // Defer ALL state modifications to avoid "Modifying state during view update" warning
             Task { @MainActor in
-                // Clear the pending item to prevent duplicate placements
+                coordinator.tapHandler?.placeARItem(pendingItem)
+                // Reset the flag after placement is complete
                 locationManager.pendingARItem = nil
-                print("🔄 Pending AR item cleared to prevent duplicates")
-                // Defer the actual placement
-                context.coordinator.tapHandler?.placeARItem(pendingItem)
+                print("🔄 Pending AR item flag reset")
             }
         }
         
@@ -387,7 +366,7 @@ struct ARViewContainer: UIViewRepresentable {
             Task { @MainActor in
                 // Clear the flag to prevent duplicate resets
                 locationManager.shouldResetARObjects = false
-                context.coordinator.removeAllPlacedObjects()
+                coordinator.removeAllPlacedObjects()
                 // Update nearby locations binding so UI reflects reset state
                 // Re-placement will happen automatically on next AR frame update when tracking is ready
                 if let userLocation = userLocationManager.currentLocation {
@@ -400,11 +379,11 @@ struct ARViewContainer: UIViewRepresentable {
         }
         
         // Update ambient light setting when it changes
-        context.coordinator.updateAmbientLight()
+        coordinator.services.environment?.configureEnvironment()
     }
     
-    func makeCoordinator() -> ARCoordinator {
-        ARCoordinator()
+    func makeCoordinator() -> ARCoordinatorCore {
+        ARCoordinatorCore()
     }
 }
 

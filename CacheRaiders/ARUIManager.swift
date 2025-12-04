@@ -4,13 +4,39 @@ import RealityKit
 import ARKit
 
 // MARK: - AR UI Manager
-class ARUIManager {
+class ARUIManager: ARUIServiceProtocol {
 
     private weak var arCoordinator: ARCoordinatorCore?
 
     // MARK: - Initialization
     init(arCoordinator: ARCoordinatorCore) {
         self.arCoordinator = arCoordinator
+    }
+
+    // MARK: - ARUIServiceProtocol Methods
+    
+    func configure(with coordinator: ARCoordinatorCoreProtocol) {
+        // Implementation not needed for this service
+    }
+    
+    func cleanup() {
+        // Implementation not needed for this service
+    }
+    
+    func showObjectInfoPanel(for entity: Entity) {
+        // Implementation to be added from ARCoordinator
+    }
+    
+    func hideObjectInfoPanel() {
+        // Implementation to be added from ARCoordinator
+    }
+    
+    func updateDistanceOverlay(for entity: Entity) {
+        // Implementation to极速赛车开奖官网开奖结果
+    }
+    
+    func showDebugOverlay(_ message: String) {
+        // Implementation to be added from ARCoordinator
     }
 
     // MARK: - Dialog State Management
@@ -233,11 +259,11 @@ class ARUIManager {
 
     /// Show a collection notification
     func showCollectionNotification(_ message: String, duration: TimeInterval = 5.0) {
-        arCoordinator?.collectionNotificationBinding?.wrappedValue = message
+        arCoordinator?.state.collectionNotificationBinding?.wrappedValue = message
 
         // Hide notification after specified duration
         DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
-            self?.arCoordinator?.collectionNotificationBinding?.wrappedValue = nil
+            self?.arCoordinator?.state.collectionNotificationBinding?.wrappedValue = nil
         }
     }
 
@@ -259,22 +285,22 @@ class ARUIManager {
 
     /// Update distance to nearest object binding
     func updateDistanceToNearest(_ distance: Double?) {
-        arCoordinator?.distanceToNearestBinding?.wrappedValue = distance
+        arCoordinator?.state.distanceToNearestBinding?.wrappedValue = distance
     }
 
     /// Update temperature status binding
     func updateTemperatureStatus(_ status: String?) {
-        arCoordinator?.temperatureStatusBinding?.wrappedValue = status
+        arCoordinator?.state.temperatureStatusBinding?.wrappedValue = status
     }
 
     /// Update nearest object direction binding
     func updateNearestObjectDirection(_ direction: Double?) {
-        arCoordinator?.nearestObjectDirectionBinding?.wrappedValue = direction
+        arCoordinator?.state.nearestObjectDirectionBinding?.wrappedValue = direction
     }
 
     /// Update conversation NPC binding
     func updateConversationNPC(_ npc: ConversationNPC?) {
-        arCoordinator?.conversationNPCBinding?.wrappedValue = npc
+        arCoordinator?.state.conversationNPCBinding?.wrappedValue = npc
     }
     
     /// Show a conversation message via coordinator bindings (fallback to print)

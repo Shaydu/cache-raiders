@@ -5,7 +5,7 @@ import CoreLocation
 import Combine
 
 // MARK: - Environment Service
-class AREnvironmentService: NSObject {
+class AREnvironmentService: NSObject, AREnvironmentServiceProtocol {
     weak var arView: ARView?
     private var locationManager: LootBoxLocationManager?
     
@@ -30,10 +30,6 @@ class AREnvironmentService: NSObject {
         // Implementation to be moved from ARCoordinator
     }
     
-    func updateOcclusion() {
-        // Implementation to be moved from ARCoordinator
-    }
-    
     func updateSceneReconstruction() {
         // Implementation to be moved from ARCoordinator
     }
@@ -52,5 +48,73 @@ class AREnvironmentService: NSObject {
     
     func resetARSession(options: ARSession.RunOptions = []) {
         // Implementation to be moved from ARCoordinator
+    }
+
+    // MARK: - AREnvironmentServiceProtocol Methods
+    
+    func configureEnvironment() {
+        // Implementation moved from ARCoordinator
+        if let arView = arView {
+            let config = configureARSession()
+            arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+            updateAmbientLight()
+            updateOcclusion()
+            updateSceneReconstruction()
+        }
+    }
+    
+    func updateOcclusion() {
+        // Implementation moved from ARCoordinator
+        if occlusionEnabled {
+            arView?.environment.sceneUnderstanding.options.insert([.occlusion, .collision])
+        } else {
+            arView?.environment.sceneUnderstanding.options.remove([.occlusion, .collision])
+        }
+    }
+    
+    func recognizeObjects(in frame: ARFrame) {
+        // Implementation to be added from ARCoordinator
+        // Object recognition logic goes here
+    }
+    
+    func setAROriginGroundLevel(_ groundLevel: Float) {
+        // Implementation to be added - this method sets the AR origin ground level
+        // This can be used for environment configuration based on ground level
+    }
+    
+    // MARK: - ARSessionService Methods
+    
+    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        // Implementation moved from ARCoordinator
+        updateOcclusion()
+        recognizeObjects(in: frame)
+    }
+    
+    func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+        // Implementation moved from ARCoordinator
+        // Handle AR anchor additions
+    }
+    
+    func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        // Implementation moved from ARCoordinator
+        // Handle AR anchor updates
+    }
+    
+    func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
+        // Implementation moved from ARCoordinator
+        // Handle AR anchor removals
+    }
+    
+    // MARK: - ARServiceProtocol Methods
+    
+    func configure(with coordinator: ARCoordinatorCoreProtocol) {
+        if let locationManager = coordinator.locationManager {
+            setup(locationManager: locationManager, arView: coordinator.arView!)
+        }
+    }
+    
+    func cleanup() {
+        arView = nil
+        locationManager = nil
     }
 }

@@ -2,7 +2,7 @@ import CoreNFC
 import UIKit
 
 // MARK: - NFC Service
-class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDelegate {
+class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDelegate, NFCIntegrationServiceProtocol {
     // MARK: - Singleton
     static let shared = NFCService()
 
@@ -633,6 +633,32 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
         self.writeNDEFMessage = nil
         session.invalidate(errorMessage: "ISO15693 tags not yet supported")
         completion?(.failure(.readError("ISO15693 tags not yet supported")))
+    }
+
+    // MARK: - NFCIntegrationServiceProtocol Methods
+    
+    func configure(with coordinator: ARCoordinatorCoreProtocol) {
+        // Implementation not needed for this service
+    }
+    
+    func cleanup() {
+        // Implementation not needed for this service
+    }
+    
+    func startNFCScan(for objectId: String) {
+        // Implementation to be added from ARCoordinator
+    }
+    
+    func stopNFCScan(for objectId: String) {
+        // Implementation to be added from ARCoordinator
+    }
+    
+    func handleNFCDiscovery(_ objectId: String, tagId: String) {
+        // Implementation to be added from ARCoordinator
+    }
+    
+    func updateNFCGuidanceState(_ state: NFCGuidanceState) {
+        // Implementation to be added from ARCoordinator
     }
 }
 

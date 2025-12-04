@@ -2,404 +2,140 @@ import SwiftUI
 import RealityKit
 import ARKit
 import CoreLocation
-import AVFoundation
-import AudioToolbox
-import Vision
 import Combine
-import UIKit
-
-// Findable protocol and base class are now in FindableObject.swift
-// NPCType is defined in NPCType.swift
+import AudioToolbox
 
 // MARK: - AR Coordinator Core
-class ARCoordinatorCore: NSObject, ARCoordinatorProtocol {
-
-    // Managers
-    var environmentManager: AREnvironmentManager?
-    var occlusionManager: AROcclusionManager?
-    var objectRecognizer: ARObjectRecognizer?
-    var distanceTracker: ARDistanceTracker?
-    var tapHandler: ARTapHandler?
-    var databaseIndicatorService: ARDatabaseIndicatorService?
-    var groundingService: ARGroundingService?
-    var precisionPositioningService: ARPrecisionPositioningService? // Legacy - kept for compatibility
-    var geospatialService: ARGeospatialService? // New ENU-based geospatial service
-    var treasureHuntService: TreasureHuntService? // Treasure hunt game mode service
-    var npcService: ARNPCService? // NPC management service
-    var objectPlacementService: ARObjectPlacer? // Object placement service
-
+class ARCoordinatorCore: NSObject, ARSessionDelegate, ARCoordinatorProtocol, ARCoordinatorCoreProtocol {
+    
+    // MARK: - Public Properties (from ARCoordinatorProtocol)
     weak var arView: ARView?
-    var locationManager: LootBoxLocationManager?
     var userLocationManager: UserLocationManager?
-    private var nearbyLocationsBinding: Binding<[LootBoxLocation]>?
-    private var conversationManager: ARConversationManager?
-
-    // MEMORY OPTIMIZATION: Consolidated tracking - findableObjects contains the anchor, so no need for separate placedBoxes dictionary
-    var findableObjects: [String: FindableObject] = [:] // Track all findable objects (contains anchor reference)
-    var objectPlacementTimes: [String: Date] = [:] // Track when objects were placed (for grace period)
-
-    // BACKWARD COMPATIBILITY: Computed property for services that still reference placedBoxes
+    var locationManager: LootBoxLocationManager?
+    var arOriginLocation: CLLocation?
+    var geospatialService: ARGeospatialService?
+    var groundingService: ARGroundingService?
+    var tapHandler: ARTapHandler?
+    
+    // State properties (moved to state struct)
+    var findableObjects: [String: FindableObject] {
+        get { state.placedObjects }
+        set { state.placedObjects = newValue }
+    }
+    
     var placedBoxes: [String: AnchorEntity] {
-        get {
-            return findableObjects.mapValues { $0.anchor }
-        }
-        set {
-            // When placedBoxes is set, we don't need to do anything special
-            // The findableObjects dictionary is the source of truth
-            // This setter exists only to satisfy the protocol requirement
-        }
+        get { state.placedBoxes }
+        set { state.placedBoxes = newValue }
     }
-
-
-    // MARK: - Skeleton Size Constants (defined in one place)
-    // Target: 6-7 feet tall (1.83-2.13m) in AR space
-    // Assuming base model is ~1.4m at scale 1.0, scale of 1.4 gives ~1.96m (6.4 feet)
-    static let SKELETON_SCALE: Float = 1.4 // Results in approximately 6.5 feet tall skeleton
-    static let SKELETON_COLLISION_SIZE = SIMD3<Float>(0.66, 2.0, 0.66) // Scaled proportionally for 6-7ft skeleton
-    static let SKELETON_HEIGHT_OFFSET: Float = 1.65 // Scaled proportionally
-
-    // NPC tracking
-    var placedNPCs: [String: AnchorEntity] = [:] // Track all placed NPCs by ID
-    var skeletonPlaced: Bool = false // Track if skeleton has been placed
-    var corgiPlaced: Bool = false // Track if corgi has been placed
-    var treasureXPlaced: Bool = false // Track if treasure X has been placed in AR
-    var skeletonAnchor: AnchorEntity? // Reference to skeleton anchor (kept for backward compatibility)
-    let SKELETON_NPC_ID = "skeleton-1" // ID for the skeleton NPC
-
-    var hasTalkedToSkeleton: Bool = false // Track if player has talked to skeleton
-    var collectedMapPieces: Set<Int> = [] // Track which map pieces player has collected (1 = skeleton, 2 = corgi)
-
-    // AR Origin and location tracking
-    var arOriginLocation: CLLocation? // GPS location when AR session started
-    var arOriginSetTime: Date? // When AR origin was set (for degraded mode timeout)
-    var isDegradedMode: Bool = false // True if operating without GPS (AR-only mode)
-    var arOriginGroundLevel: Float? // Fixed ground level at AR origin (never changes)
-
-    // UI Bindings
-    var distanceToNearestBinding: Binding<Double?>?
-    var temperatureStatusBinding: Binding<String?>?
-    var collectionNotificationBinding: Binding<String?>?
-    var nearestObjectDirectionBinding: Binding<Double?>?
-    var conversationNPCBinding: Binding<ConversationNPC?>?
-
-    // Placement state
-    var lastSpherePlacementTime: Date? // Prevent rapid duplicate sphere placements
-    var sphereModeActive: Bool = false // Track when we're in sphere randomization mode
-    var hasAutoRandomized: Bool = false // Track if we've already auto-randomized spheres
-    var shouldForceReplacement: Bool = false // Force re-placement after reset when AR is ready
-    var lastAppliedLensId: String? = nil // Track last applied AR lens to prevent redundant session resets
-
-    // PERFORMANCE: Disable verbose placement logging (causes freezing when many objects)
-    let verbosePlacementLogging = false // Set to true only when debugging placement issues
-
-    // Arrow direction tracking
-    @Published var nearestObjectDirection: Double? = nil // Direction in degrees (0 = north, 90 = east, etc.)
-
-    // Viewport visibility tracking for chime sounds
-    var objectsInViewport: Set<String> = [] // Track which objects are currently visible
-    var lastViewportCheck: Date = Date() // Throttle viewport checks to improve framerate
-
-    // Dialog state tracking - pause AR session when sheet is open
-    var isDialogOpen: Bool = false {
-        didSet {
-            if isDialogOpen != oldValue {
-                if isDialogOpen {
-                    pauseARSession()
-                } else {
-                    resumeARSession()
-                }
-            }
-        }
+    
+    var objectPlacementTimes: [String: Date] {
+        get { state.objectPlacementTimes }
+        set { state.objectPlacementTimes = newValue }
     }
-
-    // Store AR configuration for resuming
-    var savedARConfiguration: ARWorldTrackingConfiguration?
-
-    // Track if setup has been completed to prevent duplicate initialization
-    private var isSetupComplete: Bool = false
-
+    
+    var lastSpherePlacementTime: Date? {
+        get { state.lastSpherePlacementTime }
+        set { state.lastSpherePlacementTime = newValue }
+    }
+    
+    var sphereModeActive: Bool {
+        get { state.sphereModeActive }
+        set { state.sphereModeActive = newValue }
+    }
+    
+    var objectsInViewport: Set<String> {
+        get { state.objectsInViewport }
+        set { state.objectsInViewport = newValue }
+    }
+    
+    // MARK: - Internal Properties
+    var state: ARCoordinatorState
+    var services: ARCoordinatorServices
+    private var cancellables = Set<AnyCancellable>()
+    
+    // MARK: - Initialization
     override init() {
+        self.state = ARCoordinatorState()
+        self.services = ARCoordinatorServices()
         super.init()
     }
-
-    /// Setup AR view with all necessary managers and bindings
-    /// - Parameters:
-    ///   - arView: The AR view to setup
-    ///   - locationManager: Location manager for loot boxes
-    ///   - userLocationManager: User location manager
-    ///   - nearbyLocations: Binding for nearby locations
-    ///   - distanceToNearest: Binding for distance to nearest object
-    ///   - temperatureStatus: Binding for temperature status
-    ///   - collectionNotification: Binding for collection notifications
-    ///   - nearestObjectDirection: Binding for nearest object direction
-    ///   - conversationNPC: Binding for conversation NPC
-    ///   - conversationManager: AR conversation manager
-    ///   - treasureHuntService: Treasure hunt service
-    func setupARView(_ arView: ARView,
-                     locationManager: LootBoxLocationManager,
-                     userLocationManager: UserLocationManager,
-                     nearbyLocations: Binding<[LootBoxLocation]>,
-                     distanceToNearest: Binding<Double?>,
-                     temperatureStatus: Binding<String?>,
-                     collectionNotification: Binding<String?>,
-                     nearestObjectDirection: Binding<Double?>,
-                     conversationNPC: Binding<ConversationNPC?>,
-                     conversationManager: ARConversationManager,
-                     treasureHuntService: TreasureHuntService? = nil) {
-
-        // Prevent duplicate setup
-        guard !isSetupComplete else {
-            Swift.print("⚠️ [ARCoordinatorCore] setupARView() called again - skipping duplicate setup")
-            return
-        }
-
+    
+    // MARK: - Configuration
+    func configure(arView: ARView, userLocationManager: UserLocationManager, locationManager: LootBoxLocationManager, geospatialService: ARGeospatialService, groundingService: ARGroundingService, tapHandler: ARTapHandler) {
         self.arView = arView
-        self.locationManager = locationManager
         self.userLocationManager = userLocationManager
-        self.nearbyLocationsBinding = nearbyLocations
-        self.distanceToNearestBinding = distanceToNearest
-        self.temperatureStatusBinding = temperatureStatus
-        self.collectionNotificationBinding = collectionNotification
-        self.nearestObjectDirectionBinding = nearestObjectDirection
-        self.conversationNPCBinding = conversationNPC
-        self.conversationManager = conversationManager
-        self.treasureHuntService = treasureHuntService
-
-        // Initialize all managers
-        initializeManagers(with: conversationManager)
-
-        // Configure managers that depend on AR view now that it's available
-        configureManagersWithARView()
-
-        // Configure AR session
-        configureARSession(for: arView)
-
-        // Setup audio session
-        setupAudioSession()
-
-        // Register gesture recognizers
-        registerGestureRecognizers(for: arView)
-
-        // Start location updates
-        startLocationUpdates()
-
-        // Mark setup as complete
-        isSetupComplete = true
-        Swift.print("✅ [ARCoordinatorCore] Setup complete")
+        self.locationManager = locationManager
+        self.geospatialService = geospatialService
+        self.groundingService = groundingService
+        self.tapHandler = tapHandler
+        
+        // Initialize services after all properties are set
+        initializeServices()
     }
-
-    private func initializeManagers(with conversationManager: ARConversationManager) {
-        // Initialize managers that don't need arView/locationManager immediately
-        // Managers that need arView/locationManager will be initialized later in configureManagersWithARView
-
-        // Initialize object recognizer (no dependencies)
-        objectRecognizer = ARObjectRecognizer()
-
-        // Initialize database indicator service (no init parameters needed)
-        databaseIndicatorService = ARDatabaseIndicatorService()
-
-        // Initialize geospatial service
-        geospatialService = ARGeospatialService()
+    
+    // MARK: - Service Initialization
+    private func initializeServices() {
+        // Initialize all services here using existing implementations
+        services.objectPlacement = ARObjectPlacer(arCoordinator: self, locationManager: locationManager!)
+        services.npc = ARNPCService(arView: arView!,
+                                      locationManager: locationManager!,
+                                  groundingService: groundingService!,
+                                  tapHandler: tapHandler!,
+                                      conversationNPCBinding: nil)
+        services.nfc = NFCService()
+        services.location = ARLocationManager(arCoordinator: self)
+        services.environment = AREnvironmentService()
+        services.state = ARStateManager()
+        services.ui = ARUIManager(arCoordinator: self)
+        
+        // Configure all services
+        services.configureAllServices(with: self)
     }
-
-    private func configureManagersWithARView() {
-        // Configure managers that need arView and locationManager now that they're available
-        guard let arView = arView, let locationManager = locationManager else {
-            print("⚠️ Cannot configure managers: arView or locationManager not available")
-            return
-        }
-
-        // Configure environment manager
-        environmentManager = AREnvironmentManager(arView: arView, locationManager: locationManager)
-
-        // Configure occlusion manager
-        occlusionManager = AROcclusionManager(arView: arView, locationManager: locationManager, distanceTracker: distanceTracker)
-
-        // Configure distance tracker
-        distanceTracker = ARDistanceTracker(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, treasureHuntService: treasureHuntService)
-
-        // Configure grounding service
-        groundingService = ARGroundingService(arView: arView)
-
-        // Configure precision positioning service
-        precisionPositioningService = ARPrecisionPositioningService(arView: arView)
-
-        // Configure tap handler
-        tapHandler = ARTapHandler()
-
-        // Configure object placement service
-        objectPlacementService = ARObjectPlacer(arCoordinator: self, locationManager: locationManager)
-
-        // Configure NPC service - must be created before tap handler setup
-        guard let conversationManager = conversationManager,
-              let groundingService = groundingService,
-              let tapHandler = tapHandler else {
-            print("⚠️ Cannot configure NPC service: missing required dependencies")
-            return
-        }
-
-        npcService = ARNPCService(arView: arView, locationManager: locationManager, groundingService: groundingService, tapHandler: tapHandler, conversationManager: conversationManager, conversationNPCBinding: conversationNPCBinding)
-
-        // Setup tap handler now that all dependencies are available
-        guard let userLocationManager = userLocationManager,
-              let objectPlacementService = objectPlacementService,
-              let npcService = npcService else {
-            print("⚠️ Cannot setup tap handler: missing required dependencies")
-            return
-        }
-
-        tapHandler.setup(locationManager: locationManager, userLocationManager: userLocationManager, objectPlacementService: objectPlacementService, npcService: npcService, conversationManager: conversationManager, arView: arView)
-        Swift.print("🎯 [ARCoordinatorCore] TapHandler setup complete")
-        Swift.print("   TapHandler: \(tapHandler)")
-        Swift.print("   ARView: \(tapHandler.arView != nil ? "✓" : "✗")")
-        Swift.print("   LocationManager: \(tapHandler.findableObjects.count) findable objects")
+    
+    // MARK: - ARSessionDelegate
+    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        services.handleSessionUpdate(session, frame: frame)
     }
-
-    private func configureARSession(for arView: ARView) {
-        // Create AR configuration with all features enabled
-        let configuration = ARWorldTrackingConfiguration()
-
-        // Enable plane detection
-        configuration.planeDetection = [.horizontal, .vertical]
-
-        // Enable scene reconstruction for better occlusion
-        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-            configuration.sceneReconstruction = .mesh
-        }
-
-        // Enable environment texturing for better lighting
-        if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
-            configuration.frameSemantics.insert(.sceneDepth)
-        }
-
-        // Enable person segmentation for better occlusion
-        if ARWorldTrackingConfiguration.supportsFrameSemantics(.personSegmentationWithDepth) {
-            configuration.frameSemantics.insert(.personSegmentationWithDepth)
-        }
-
-        // Start AR session
-        arView.session.run(configuration)
-        savedARConfiguration = configuration
+    
+    func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+        services.handleAnchorsAdded(session, anchors: anchors)
     }
-
-    private func setupAudioSession() {
-        do {
-            let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            try audioSession.setActive(true)
-        } catch {
-            Swift.print("⚠️ Could not configure audio session: \(error)")
-        }
+    
+    func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        services.handleAnchorsUpdated(session, anchors: anchors)
     }
-
-    private func registerGestureRecognizers(for arView: ARView) {
-        // Add tap gesture recognizer for object interaction
-        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
-        arView.addGestureRecognizer(tapGesture)
-        Swift.print("🎯 [ARCoordinatorCore] Registered tap gesture recognizer (target: self, action: handleTap)")
-        Swift.print("   TapHandler exists: \(tapHandler != nil)")
-        Swift.print("   ARView: \(arView)")
+    
+    func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
+        services.handleAnchorsRemoved(session, anchors: anchors)
     }
-
-    private func startLocationUpdates() {
-        userLocationManager?.startUpdatingLocation()
+    
+    // MARK: - ARCoordinatorCoreProtocol Methods
+    func showDebugMessage(_ message: String) {
+        print("🔍 [DEBUG]: \(message)")
+        services.ui?.showDebugOverlay(message)
     }
-
-    // MARK: - Core Methods (to be implemented by subclasses or coordinators)
-
-    func pauseARSession() {
-        // Implementation will be in main coordinator
+    
+    func playHapticFeedback() {
+        AudioServicesPlaySystemSound(1519) // Actuate "Peek" feedback (weak boom)
     }
-
-    func resumeARSession() {
-        // Implementation will be in main coordinator
+    
+    func scheduleBackgroundTask(_ task: @escaping () -> Void) {
+        services.state?.scheduleBackgroundOperation(task)
     }
-
-    @objc func handleTap(_ sender: UITapGestureRecognizer) {
-        // Forward to tap handler
-        Swift.print("🎯 [ARCoordinatorCore] handleTap() called - forwarding to tapHandler")
-        Swift.print("   TapHandler exists: \(tapHandler != nil)")
-        Swift.print("   TapHandler.findableObjects count: \(tapHandler?.findableObjects.count ?? -1)")
-        tapHandler?.handleTap(sender)
+    
+    // MARK: - Cleanup
+    func cleanup() {
+        services.cleanupAllServices()
+        cancellables.removeAll()
     }
-
-    // MARK: - Utility Methods
-
-    func clearFoundLootBoxes() {
-        // Clear collected state for all loot boxes
-        locationManager?.resetAllLocations()
-
-        // Remove all placed objects from AR scene
-        removeAllPlacedObjects()
-    }
-
+    
+    // MARK: - Object Management (delegated to services)
     func removeAllPlacedObjects() {
-        guard let arView = arView else { return }
-
-        // Remove all findable objects
-        for (_, findable) in findableObjects {
-            arView.scene.removeAnchor(findable.anchor)
-        }
-        findableObjects.removeAll()
-        objectPlacementTimes.removeAll()
-
-        // Remove all NPCs
-        for (_, npcAnchor) in placedNPCs {
-            arView.scene.removeAnchor(npcAnchor)
-        }
-        placedNPCs.removeAll()
-        skeletonPlaced = false
-        corgiPlaced = false
-        skeletonAnchor = nil
-        treasureXPlaced = false
-
-        // Reset state
-        arOriginLocation = nil
-        arOriginSetTime = nil
-        isDegradedMode = false
-        arOriginGroundLevel = nil
-
-        Swift.print("🧹 Cleared all AR objects and reset AR origin")
+        services.objectPlacement?.removeAllPlacedObjects()
+        services.npc?.removeAllNPCs()
     }
-
-    func updateAmbientLight() {
-        guard let arView = arView,
-              let frame = arView.session.currentFrame else { return }
-
-        // Get camera transform for lighting direction
-        let cameraTransform = frame.camera.transform
-
-        // Create directional light that follows camera
-        let light = DirectionalLight()
-        light.light.intensity = 1000
-        light.light.color = .white
-
-        // Position light above and behind camera
-        let lightPosition = SIMD3<Float>(
-            cameraTransform.columns.3.x,
-            cameraTransform.columns.3.y + 2.0, // 2m above camera
-            cameraTransform.columns.3.z - 1.0  // 1m behind camera
-        )
-        light.position = lightPosition
-
-        // Orient light toward scene center
-        light.look(at: SIMD3<Float>(0, 0, 0), from: lightPosition, relativeTo: nil)
-
-        // Add or update light in scene
-        if let existingLightAnchor = arView.scene.anchors.first(where: { ($0 as? AnchorEntity)?.name == "ambientLight" }) as? AnchorEntity {
-            // Update existing light
-            if let existingLight = existingLightAnchor.children.first as? DirectionalLight {
-                existingLight.light.intensity = light.light.intensity
-                existingLight.light.color = light.light.color
-                existingLight.position = light.position
-                existingLight.look(at: SIMD3<Float>(0, 0, 0), from: lightPosition, relativeTo: nil)
-            }
-        } else {
-            // Add new light
-            let lightAnchor = AnchorEntity(world: .zero)
-            lightAnchor.name = "ambientLight"
-            lightAnchor.addChild(light)
-            arView.scene.addAnchor(lightAnchor)
-        }
+    
+    deinit {
+        cleanup()
     }
 }

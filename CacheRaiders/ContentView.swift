@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var temperatureStatus: String?
     @State private var collectionNotification: String?
     @State private var nearestObjectDirection: Double?
+    @State private var nearestObjectName: String?
     
     // PERFORMANCE: Task for debouncing location updates to prevent excessive API calls
     @State private var locationUpdateTask: Task<Void, Never>?
@@ -82,7 +83,8 @@ struct ContentView: View {
             temperatureStatus: temperatureStatus,
             directionIndicatorView: AnyView(directionIndicatorView),
             locationManager: locationManager,
-            userLocationManager: userLocationManager
+            userLocationManager: userLocationManager,
+            nearestObjectName: nearestObjectName
         )
     }
     
@@ -215,6 +217,14 @@ struct ContentView: View {
                                 .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.white)
+                        }
+                        
+                        if let objectName = nearestObjectName {
+                            Text(objectName)
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundColor(.white.opacity(0.8))
+                                .lineLimit(1)
                         }
                         
                         Text(formatDistanceInFeetInches(distance))
@@ -471,7 +481,7 @@ struct ContentView: View {
             distanceToNearest: $distanceToNearest,
             temperatureStatus: $temperatureStatus,
             collectionNotification: $collectionNotification,
-            nearestObjectDirection: $nearestObjectDirection,
+            nearestObjectDirection: $nearestObjectDirection, nearestObjectName: $nearestObjectName,
             conversationNPC: $conversationNPC,
             treasureHuntService: treasureHuntService
         )

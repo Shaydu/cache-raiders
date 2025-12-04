@@ -2,7 +2,7 @@ import Foundation
 import Dispatch
 
 // MARK: - AR State Manager
-class ARStateManager {
+class ARStateManager: ARStateServiceProtocol {
 
     // MARK: - Background Processing Queues
     // CRITICAL: Use dedicated queues for heavy processing to prevent UI freezes
@@ -238,6 +238,37 @@ class ARStateManager {
     /// Execute a block asynchronously on the state queue with barrier (for writing state)
     func executeOnStateQueueWithBarrier(_ block: @escaping () -> Void) {
         stateQueue.async(flags: .barrier, execute: block)
+    }
+
+    // MARK: - ARStateServiceProtocol conformance
+    
+    /// Throttle operations to prevent excessive calls
+    func throttle(_ key: String, interval: TimeInterval, operation: @escaping () -> Void) {
+        // For now, just execute immediately - can be enhanced with proper throttling per key
+        operation()
+    }
+    
+    /// Schedule background operation on appropriate queue
+    func scheduleBackgroundOperation(_ operation: @escaping () -> Void) {
+        executeOnBackgroundQueue(operation)
+    }
+    
+    /// Update object placement time (placeholder for now)
+    func updateObjectPlacementTime(_ objectId: String, time: Date) {
+        // This could be used to track when objects were placed for cleanup purposes
+    }
+    
+    // MARK: - ARServiceProtocol conformance
+    
+    /// Configure with coordinator (required by ARServiceProtocol)
+    func configure(with coordinator: ARCoordinatorCoreProtocol) {
+        // Store coordinator reference if needed
+    }
+    
+    /// Cleanup resources (required by ARServiceProtocol)
+    func cleanup() {
+        clearPendingPlacements()
+        clearPendingRemovals()
     }
 }
 

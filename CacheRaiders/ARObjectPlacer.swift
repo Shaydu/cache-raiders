@@ -22,7 +22,7 @@ protocol ARCoordinatorProtocol: AnyObject {
 }
 
 // MARK: - AR Object Placer
-class ARObjectPlacer {
+class ARObjectPlacer: ARObjectPlacementServiceProtocol {
 
     private weak var arCoordinator: ARCoordinatorProtocol?
     private var lootBoxLocationManager: LootBoxLocationManager?
@@ -401,7 +401,9 @@ class ARObjectPlacer {
     /// Check and place boxes based on nearby locations
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
         guard let arCoordinator = arCoordinator else { return }
-        guard (arCoordinator as? ARCoordinator)?.stateManager?.shouldPerformNearbyCheck() ?? true else { return }
+        guard let arCoordinatorCore = arCoordinator as? ARCoordinatorCore,
+              let stateManager = arCoordinatorCore.services.state as? ARStateManager,
+              stateManager.shouldPerformNearbyCheck() else { return }
 
         let nearbyLocationIds = Set(nearbyLocations.map { $0.id })
         let locationMap = Dictionary(uniqueKeysWithValues:
@@ -439,6 +441,45 @@ class ARObjectPlacer {
                 }
             }
         }
+    }
+
+    // MARK: - ARObjectPlacementServiceProtocol Methods
+    
+    func removeAllPlacedObjects() {
+        guard let arCoordinator = arCoordinator else { return }
+        
+        Swift.print("🧹 Removing all placed objects")
+        
+        // Remove all anchors from scene
+        for (_, anchor) in arCoordinator.placedBoxes {
+            arCoordinator.arView?.scene.removeAnchor(anchor)
+        }
+        
+        // Clear all tracking dictionaries
+        arCoordinator.findableObjects.removeAll()
+        arCoordinator.placedBoxes.removeAll()
+        arCoordinator.objectPlacementTimes.removeAll()
+        
+        // Clear tap handler's findable objects
+        arCoordinator.tapHandler?.findableObjects.removeAll()
+        
+        Swift.print("✅ All placed objects removed - scene cleared")
+    }
+    
+    func configure(with coordinator: ARCoordinatorCoreProtocol) {
+        // Implementation not needed for this service
+    }
+    
+    func cleanup() {
+        // Implementation not needed for this service
+    }
+    
+    func findLootBox(_ location: LootBoxLocation, source: FoundSource) {
+        // Implementation to be added from ARCoordinator
+    }
+    
+    func handleObjectTap(_ entity: Entity) {
+        // Implementation to be added from ARCoordinator
     }
 }
 
