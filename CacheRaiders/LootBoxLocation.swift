@@ -149,7 +149,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     // MARK: - Initializers
     
     /// Normal initializer for creating new locations
-    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api, created_by: String? = nil, ar_origin_latitude: Double? = nil, ar_origin_longitude: Double? = nil, ar_offset_x: Double? = nil, ar_offset_y: Double? = nil, ar_offset_z: Double? = nil, ar_placement_timestamp: Date? = nil, ar_anchor_transform: String? = nil) {
+    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api, created_by: String? = nil, needs_sync: Bool = false, last_modified: Date? = nil, server_version: Int64? = nil, ar_origin_latitude: Double? = nil, ar_origin_longitude: Double? = nil, ar_offset_x: Double? = nil, ar_offset_y: Double? = nil, ar_offset_z: Double? = nil, ar_placement_timestamp: Date? = nil, ar_anchor_transform: String? = nil) {
         self.id = id
         self.name = name
         self.type = type
@@ -160,6 +160,9 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         self.grounding_height = grounding_height
         self.source = source
         self.created_by = created_by
+        self.needs_sync = needs_sync
+        self.last_modified = last_modified
+        self.server_version = server_version
         self.ar_origin_latitude = ar_origin_latitude
         self.ar_origin_longitude = ar_origin_longitude
         self.ar_offset_x = ar_offset_x
@@ -184,7 +187,9 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         grounding_height = try container.decodeIfPresent(Double.self, forKey: .grounding_height)
         created_by = try container.decodeIfPresent(String.self, forKey: .created_by)
         needs_sync = try container.decodeIfPresent(Bool.self, forKey: .needs_sync) ?? false
-        
+        last_modified = try container.decodeIfPresent(Date.self, forKey: .last_modified)
+        server_version = try container.decodeIfPresent(Int64.self, forKey: .server_version)
+
         // Try to decode source, but if not present, infer from ID prefix (backward compatibility)
         if let decodedSource = try? container.decode(ItemSource.self, forKey: .source) {
             source = decodedSource
@@ -203,12 +208,18 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
             }
         }
         
-        // Decode AR anchor transform if present
+        // Decode AR positioning data if present
+        ar_origin_latitude = try container.decodeIfPresent(Double.self, forKey: .ar_origin_latitude)
+        ar_origin_longitude = try container.decodeIfPresent(Double.self, forKey: .ar_origin_longitude)
+        ar_offset_x = try container.decodeIfPresent(Double.self, forKey: .ar_offset_x)
+        ar_offset_y = try container.decodeIfPresent(Double.self, forKey: .ar_offset_y)
+        ar_offset_z = try container.decodeIfPresent(Double.self, forKey: .ar_offset_z)
+        ar_placement_timestamp = try container.decodeIfPresent(Date.self, forKey: .ar_placement_timestamp)
         ar_anchor_transform = try container.decodeIfPresent(String.self, forKey: .ar_anchor_transform)
     }
     
     enum CodingKeys: String, CodingKey {
-        case id, name, type, latitude, longitude, radius, collected, grounding_height, source, created_by, ar_origin_latitude, ar_origin_longitude, ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp, ar_anchor_transform, needs_sync
+        case id, name, type, latitude, longitude, radius, collected, grounding_height, source, created_by, needs_sync, last_modified, server_version, ar_origin_latitude, ar_origin_longitude, ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp, ar_anchor_transform
     }
 }
 
@@ -505,7 +516,7 @@ class LootBoxLocationManager: ObservableObject {
         WebSocketService.shared.onObjectUpdated = { [weak self] objectData in
             guard let self = self else { return }
             
-            print("🔄 WebSocket: Object updated with data: \(objectData)")
+            print("🔄 WebSocket: Object updated - data: \(objectData)")
             
             Task { @MainActor in
                 // Convert the WebSocket data to a LootBoxLocation
@@ -514,19 +525,19 @@ class LootBoxLocationManager: ObservableObject {
                     return
                 }
                 
-                print("🔄 Real-time object updated: '\(lootBoxLocation.name)' (ID: \(lootBoxLocation.id))")
+                print("🔄 Real-time object update: '\(lootBoxLocation.name)' (ID: \(lootBoxLocation.id))")
                 
                 // Update the location in our array
                 if let index = self.locations.firstIndex(where: { $0.id == lootBoxLocation.id }) {
                     self.locations[index] = lootBoxLocation
                     print("✅ Updated object in locations array")
                 } else {
-                    // If object doesn't exist locally, add it
+                    // Add if not found (shouldn't happen, but handle gracefully)
                     self.locations.append(lootBoxLocation)
-                    print("✅ Added updated object to locations array (total: \(self.locations.count))")
+                    print("⚠️ Object not found in local array, added as new")
                 }
                 
-                // Notify observers
+                // Notify observers that locations have changed
                 self.objectWillChange.send()
                 
                 // Save to Core Data for offline access
@@ -539,6 +550,13 @@ class LootBoxLocationManager: ObservableObject {
                         print("⚠️ Failed to save updated object to Core Data: \(error)")
                     }
                 }
+                
+                // Notify AR coordinator to update the object
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("ObjectUpdatedRealtime"),
+                    object: nil,
+                    userInfo: ["location": lootBoxLocation]
+                )
             }
         }
         

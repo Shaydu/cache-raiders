@@ -177,7 +177,14 @@ struct ARViewContainer: UIViewRepresentable {
     
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
-        
+
+        // CRITICAL: Load latest locations from API when entering AR mode
+        // This ensures any objects placed via admin interface appear immediately
+        Task {
+            await locationManager.loadLocationsFromAPI(userLocation: userLocationManager.currentLocation, includeFound: true)
+            print("✅ Loaded latest locations from API when entering AR mode")
+        }
+
         // AR session configuration
         let config = ARWorldTrackingConfiguration()
         // Detect both horizontal (ground) and vertical (walls) planes

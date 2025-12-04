@@ -574,33 +574,11 @@ struct NFCWritingView: View {
                 // GPS coordinates
                 "latitude": location.coordinate.latitude,
                 "longitude": location.coordinate.longitude,
-                "altitude": location.altitude,
                 // Object properties
                 "radius": 3.0,  // Smaller radius for NFC objects since they're precise
                 "grounding_height": 0.0,
-                // NFC metadata
-                "nfc_tag_id": nfcResult.tagId,
-                "nfc_write_timestamp": Date().timeIntervalSince1970,
-                "is_nfc_object": true,
                 // Creator information
-                "created_by": username,
-                "creator_device_id": deviceUUID,
-                "created_at": Date().timeIntervalSince1970,
-                // Discovery tracking
-                "times_found": 0,
-                "first_finder": NSNull(),
-                "last_found_at": NSNull(),
-                // Visibility
-                "visible_to_all": true,
-                "active": true,
-                // AR positioning metadata (if available)
-                "ar_precision": arAnchorData != nil,
-                "ar_latitude": location.coordinate.latitude,
-                "ar_longitude": location.coordinate.longitude,
-                "ar_altitude": location.altitude,
-                // Tiered accuracy fields
-                "use_ar_anchor_within_meters": 8.0,  // Use AR anchor when within 8m
-                "ar_anchor_available": arAnchorData != nil
+                "created_by": username
             ]
 
             // Add AR anchor data if available (for precise positioning when nearby)
@@ -699,10 +677,24 @@ struct NFCWritingView: View {
     }
 
     private func getCurrentARCameraTransform() async throws -> simd_float4x4 {
-        // For NFC writing, we don't need AR camera transform since we're using GPS coordinates
-        // Return identity matrix - the AR anchor will be captured later when the user is near the object
-        print("ℹ️ NFC writing - using GPS coordinates without AR anchor capture")
-        return matrix_identity_float4x4
+        // CRITICAL: Capture the actual AR camera position when NFC tag is tapped
+        // This provides centimeter-level accuracy for object placement
+        print("🎯 Capturing AR camera transform for precise NFC object placement...")
+
+        // Access the AR session from the existing AR view (if available)
+        // We need to get the camera transform from the active AR session
+        if let arSession = arIntegrationService.getCurrentARSession(),
+           let frame = arSession.currentFrame {
+            let cameraTransform = frame.camera.transform
+            print("✅ Captured AR camera transform at NFC tap location")
+            print("   Position: x=\(String(format: "%.4f", cameraTransform.columns.3.x)), y=\(String(format: "%.4f", cameraTransform.columns.3.y)), z=\(String(format: "%.4f", cameraTransform.columns.3.z))")
+            return cameraTransform
+        } else {
+            print("⚠️ No active AR session - falling back to GPS-only positioning")
+            print("   For best accuracy, use NFC placement while in AR mode")
+            // Return identity matrix as fallback
+            return matrix_identity_float4x4
+        }
     }
 
     private func cleanup() {

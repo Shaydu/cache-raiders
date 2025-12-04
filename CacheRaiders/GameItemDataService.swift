@@ -87,6 +87,24 @@ class GameItemDataService {
         gameItem.collected = location.collected
         gameItem.grounding_height = location.grounding_height ?? 0.0
         gameItem.source = location.source.rawValue
+        
+        // Conflict resolution: only update if server version is newer or equal
+        if let serverVersion = location.server_version {
+            let currentVersion = gameItem.server_version?.int64Value ?? 0
+            if serverVersion >= currentVersion {
+                gameItem.last_modified = location.last_modified
+                gameItem.server_version = NSNumber(value: serverVersion)
+            }
+        } else if let newModTime = location.last_modified {
+            // If no version but has timestamp, use timestamp-based resolution
+            if let currentModTime = gameItem.last_modified {
+                if newModTime > currentModTime {
+                    gameItem.last_modified = newModTime
+                }
+            } else {
+                gameItem.last_modified = newModTime
+            }
+        }
 
         // Use ARPositioningService to handle AR positioning data
         if let arData = ARPositioningService.shared.extractARPositioning(from: location),
@@ -137,7 +155,9 @@ class GameItemDataService {
             radius: gameItem.radius,
             collected: gameItem.collected,
             grounding_height: groundingHeight,
-            source: source
+            source: source,
+            last_modified: gameItem.last_modified as Date?,
+            server_version: gameItem.server_version?.int64Value
         )
         
         // Set AR positioning data using ARPositioningService

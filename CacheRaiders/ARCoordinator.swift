@@ -991,13 +991,36 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // CRITICAL: Never re-place objects that are already placed - they should stay fixed
             // This is especially important for manually placed objects with AR coordinates
             if placedBoxes[location.id] != nil {
+                // Check if this is a GPS collision case where we might create a modified location
+                // If so, we should skip entirely rather than create a duplicate with same ID
+                if location.latitude != 0 && location.longitude != 0 {
+                    let newLoc = CLLocation(latitude: location.latitude, longitude: location.longitude)
+                    
+                    // Check if this would trigger GPS collision offset
+                    var wouldOffset = false
+                    for (existingId, _) in placedBoxes {
+                        if let existingLocation = nearbyLocations.first(where: { $0.id == existingId }) {
+                            let existingLoc = CLLocation(latitude: existingLocation.latitude, longitude: existingLocation.longitude)
+                            let gpsDistance = existingLoc.distance(from: newLoc)
+                            if gpsDistance < 1.0 {
+                                wouldOffset = true
+                                break
+                            }
+                        }
+                    }
+                    
+                    if wouldOffset {
+                        Swift.print("⏭️ Skipping GPS collision case for already-placed object '\\(location.name)' - would create duplicate with same ID")
+                        continue
+                    }
+                }
                 continue
             }
 
             // Skip tap-created locations (lat: 0, lon: 0) - they're placed manually via tap
             // These should not be placed again by checkAndPlaceBoxes
             if location.latitude == 0 && location.longitude == 0 {
-                Swift.print("⏭️ Skipping tap-created object '\(location.name)' (lat/lon 0,0) - placed manually")
+                Swift.print("⏭️ Skipping tap-created object '\\(location.name)' (lat/lon 0,0) - placed manually")
                 continue
             }
 
@@ -1008,7 +1031,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                                        location.ar_offset_y != nil &&
                                        location.ar_offset_z != nil
                 if !hasValidAROffsets {
-                    Swift.print("⏭️ Skipping AR-placed object '\(location.name)' - waiting for ar_offset coordinates")
+                    Swift.print("⏭️ Skipping AR-placed object '\\(location.name)' - waiting for ar_offset coordinates")
                     continue
                 }
             }
@@ -1018,16 +1041,40 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             let isInFoundSets = distanceTracker?.foundLootBoxes.contains(location.id) ?? false || tapHandler?.foundLootBoxes.contains(location.id) ?? false
             if location.collected || isInFoundSets {
                 if location.collected {
-                    Swift.print("⏭️ Skipping collected object '\(location.name)' (ID: \(location.id)) - location.collected = true")
+                    Swift.print("⏭️ Skipping collected object '\\(location.name)' (ID: \\(location.id)) - location.collected = true")
                 } else if isInFoundSets {
-                    Swift.print("⏭️ Skipping object '\(location.name)' (ID: \(location.id)) - still in foundLootBoxes sets (should be cleared when uncollected)")
+                    Swift.print("⏭️ Skipping object '\\(location.name)' (ID: \\(location.id)) - still in foundLootBoxes sets (should be cleared when uncollected)")
                     Swift.print("   💡 Try marking as unfound again or restart the app to clear found sets")
                 }
                 continue
             }
             
             // Log that we're attempting to place this object
-            Swift.print("✅ Attempting to place unfound object '\(location.name)' (ID: \(location.id), type: \(location.type.displayName))")
+            Swift.print("✅ Attempting to place unfound object '\\(location.name)' (ID: \\(location.id), type: \\(location.type.displayName))")
+            
+            // CRITICAL: Check for GPS collision - if another object with same/similar GPS coordinates is already placed
+            // We should skip entirely rather than create modified locations with the same ID
+            if location.latitude != 0 && location.longitude != 0 {
+                let newLoc = CLLocation(latitude: location.latitude, longitude: location.longitude)
+                
+                // Check against already-placed objects
+                for (existingId, _) in placedBoxes {
+                    // Find the location for this existing object
+                    if let existingLocation = nearbyLocations.first(where: { $0.id == existingId }) {
+                        // Check if GPS coordinates are very close (within 1 meter)
+                        let existingLoc = CLLocation(latitude: existingLocation.latitude, longitude: existingLocation.longitude)
+                        let gpsDistance = existingLoc.distance(from: newLoc)
+
+                        if gpsDistance < 1.0 {
+                            Swift.print("⏭️ Skipping GPS collision for '\\(location.name)' - object \\(existingId) already placed at similar coordinates")
+                            continue // Skip to next location in the loop
+                        }
+                    }
+                }
+            }
+            
+            // Log that we're attempting to place this object
+            Swift.print("✅ Attempting to place unfound object '\\(location.name)' (ID: \\(location.id), type: \\(location.type.displayName))")
             
             // CRITICAL: Check for GPS collision - if another object with same/similar GPS coordinates is already placed OR in the current batch
             // Instead of skipping, offset the location by 5m in a random direction
@@ -2498,9 +2545,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // CRITICAL: Require AR origin to be set before placing GPS-based objects
             // In degraded mode, GPS-based objects cannot be placed UNLESS manually placed
             if isDegradedMode && !hasIntendedPosition {
-                Swift.print("⚠️ Cannot place GPS-based object '\(location.name)': Operating in degraded AR-only mode")
+                Swift.print("⚠️ Cannot place GPS-based object '\(location.name)' using GPS: Operating in degraded AR-only mode")
                 Swift.print("   GPS-based objects require accurate GPS fix (< 7.5m accuracy)")
-                Swift.print("   Use AR-only placement (tap-to-place or randomize) instead")
+                Swift.print("   🎯 Switching to AR-only placement for this object")
+                
+                // Use AR-only placement instead of GPS-based placement
+                placeLootBoxInFrontOfCamera(location: location, in: arView)
                 return
             } else if isDegradedMode && hasIntendedPosition {
                 Swift.print("✅ Allowing manually placed object '\(location.name)' in degraded mode (has intended AR position)")

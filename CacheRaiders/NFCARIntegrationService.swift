@@ -43,6 +43,11 @@ class NFCARIntegrationService: NSObject, ObservableObject {
         PreciseARPositioningService.shared.setup(with: arView)
     }
 
+    /// Get the current AR session for capturing camera transforms during NFC placement
+    func getCurrentARSession() -> ARSession? {
+        return arView?.session
+    }
+
     private func setupLocationManager() {
         locationManager = CLLocationManager()
         locationManager?.desiredAccuracy = kCLLocationAccuracyBest
