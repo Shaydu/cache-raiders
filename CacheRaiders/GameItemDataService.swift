@@ -135,7 +135,10 @@ class GameItemDataService {
         
         // Set AR anchor transform if available
         location.ar_anchor_transform = gameItem.ar_anchor_transform
-        
+
+        // Set sync status
+        location.needs_sync = gameItem.needs_sync
+
         return location
     }
     
@@ -274,6 +277,15 @@ class GameItemDataService {
         }
     }
     
+    /// Get all items from local database
+    func getAllItems() throws -> [LootBoxLocation] {
+        let context = viewContext
+        let fetchRequest: NSFetchRequest<GameItem> = GameItem.fetchRequest()
+
+        let gameItems = try context.fetch(fetchRequest)
+        return gameItems.compactMap { convertToLootBoxLocation($0) }
+    }
+
     /// Get items that need syncing to API
     func getItemsNeedingSync() throws -> [LootBoxLocation] {
         let context = viewContext

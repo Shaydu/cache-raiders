@@ -89,6 +89,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     var grounding_height: Double? // Optional: stored grounding height in meters (AR world space Y coordinate)
     var source: ItemSource = .api // Default to API source for backward compatibility
     var created_by: String? // User ID who created this object
+    var needs_sync: Bool = false // Whether this item needs to be synced to API
 
     // AR-offset based positioning for centimeter-level accuracy
     var ar_origin_latitude: Double? // GPS location where AR session originated
@@ -180,6 +181,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         collected = try container.decodeIfPresent(Bool.self, forKey: .collected) ?? false
         grounding_height = try container.decodeIfPresent(Double.self, forKey: .grounding_height)
         created_by = try container.decodeIfPresent(String.self, forKey: .created_by)
+        needs_sync = try container.decodeIfPresent(Bool.self, forKey: .needs_sync) ?? false
         
         // Try to decode source, but if not present, infer from ID prefix (backward compatibility)
         if let decodedSource = try? container.decode(ItemSource.self, forKey: .source) {
@@ -204,7 +206,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     }
     
     enum CodingKeys: String, CodingKey {
-        case id, name, type, latitude, longitude, radius, collected, grounding_height, source, created_by, ar_origin_latitude, ar_origin_longitude, ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp, ar_anchor_transform
+        case id, name, type, latitude, longitude, radius, collected, grounding_height, source, created_by, ar_origin_latitude, ar_origin_longitude, ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp, ar_anchor_transform, needs_sync
     }
 }
 
@@ -500,14 +502,74 @@ class LootBoxLocationManager: ObservableObject {
         // Fetch game mode when WebSocket connects (in case it changed while disconnected)
         WebSocketService.shared.onConnected = { [weak self] in
             guard let self = self else { return }
-            
+
             print("🔌 WebSocket connected - fetching current game mode from server")
             print("   Current local game mode: \(self.gameMode.rawValue) (\(self.gameMode.displayName))")
-            
+
             // Fetch current game mode to ensure we're in sync with server (with retries)
             Task {
                 await self.fetchGameModeFromServer(retryCount: 2)
             }
+        }
+
+        // Set up NotificationCenter observer for real-time object creation
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWebSocketObjectCreated(_:)),
+            name: NSNotification.Name("WebSocketObjectCreated"),
+            object: nil
+        )
+    }
+
+    /// Handle real-time object creation via WebSocket
+    @objc private func handleWebSocketObjectCreated(_ notification: Notification) {
+        guard let objectData = notification.userInfo as? [String: Any] else {
+            print("⚠️ WebSocketObjectCreated notification missing userInfo or invalid format")
+            return
+        }
+
+        print("📦 Handling real-time object creation: \(objectData)")
+
+        Task { @MainActor in
+            // Convert the WebSocket data to a LootBoxLocation
+            guard let lootBoxLocation = APIService.shared.convertWebSocketDataToLootBoxLocation(objectData) else {
+                print("⚠️ Failed to convert WebSocket object data to LootBoxLocation")
+                return
+            }
+
+            print("📦 Real-time object created: '\(lootBoxLocation.name)' (ID: \(lootBoxLocation.id)) at (\(lootBoxLocation.latitude), \(lootBoxLocation.longitude))")
+
+            // Check if this object already exists (avoid duplicates)
+            if let existingIndex = self.locations.firstIndex(where: { $0.id == lootBoxLocation.id }) {
+                print("⚠️ Object '\(lootBoxLocation.id)' already exists, updating instead")
+                self.locations[existingIndex] = lootBoxLocation
+            } else {
+                // Add the new object to our locations array
+                self.locations.append(lootBoxLocation)
+                print("✅ Added new object to locations array (total: \(self.locations.count))")
+            }
+
+            // Notify observers that locations have changed
+            self.objectWillChange.send()
+
+            // Save to Core Data for offline access
+            Task.detached(priority: .utility) { [weak self] in
+                guard let self = self else { return }
+                do {
+                    try await self.dataService.saveLocations([lootBoxLocation])
+                    print("💾 Saved real-time object to Core Data")
+                } catch {
+                    print("⚠️ Failed to save real-time object to Core Data: \(error)")
+                }
+            }
+
+            // Notify any listeners that a new object was created
+            // This allows the AR view to immediately place the new object
+            NotificationCenter.default.post(
+                name: NSNotification.Name("ObjectCreatedRealtime"),
+                object: nil,
+                userInfo: ["location": lootBoxLocation]
+            )
         }
     }
     
@@ -1882,6 +1944,56 @@ class LootBoxLocationManager: ObservableObject {
             if let apiError = error as? APIError {
                 print("   API Error details: \(apiError)")
             }
+        }
+    }
+
+    /// View all objects in the local Core Data database
+    func viewLocalDatabaseContents() async {
+        print("📱 Querying local Core Data database contents...")
+
+        do {
+            // Get all items from local Core Data
+            let localItems = try dataService.getAllItems()
+
+            print("📱 Local Database Contents:")
+            print("   Total objects: \(localItems.count)")
+
+            let foundCount = localItems.filter { $0.collected }.count
+            let unfoundCount = localItems.count - foundCount
+
+            print("   Found: \(foundCount)")
+            print("   Unfound: \(unfoundCount)")
+            print("")
+
+            if localItems.isEmpty {
+                print("   (Local database is empty)")
+            } else {
+                print("   Objects:")
+                for (index, location) in localItems.enumerated() {
+                    let status = location.collected ? "✅ FOUND" : "🔍 UNFOUND"
+                    let syncStatus = location.needs_sync ? " (needs sync)" : ""
+
+                    print("   \(index + 1). \(location.name) (\(location.type.displayName))")
+                    print("      ID: \(location.id)")
+                    print("      Status: \(status)\(syncStatus)")
+                    print("      Location: (\(String(format: "%.8f", location.latitude)), \(String(format: "%.8f", location.longitude)))")
+                    print("      Radius: \(location.radius)m")
+                    print("      Source: \(location.source.rawValue)")
+                    print("")
+                }
+            }
+
+            // Also get stats
+            do {
+                let dataService = GameItemDataService.shared
+                let itemsNeedingSync = try dataService.getItemsNeedingSync()
+                print("   Items needing sync to API: \(itemsNeedingSync.count)")
+            } catch {
+                print("⚠️ Error getting sync stats: \(error.localizedDescription)")
+            }
+
+        } catch {
+            print("❌ Error querying local database: \(error.localizedDescription)")
         }
     }
 

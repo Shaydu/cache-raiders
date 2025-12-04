@@ -18,7 +18,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var occlusionManager: AROcclusionManager?
     private var objectRecognizer: ARObjectRecognizer?
     private var distanceTracker: ARDistanceTracker?
-    private var tapHandler: ARTapHandler?
+    var tapHandler: ARTapHandler?
     private var databaseIndicatorService: ARDatabaseIndicatorService?
     private var groundingService: ARGroundingService?
     private var precisionPositioningService: ARPrecisionPositioningService? // Legacy - kept for compatibility
@@ -430,6 +430,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             self,
             selector: #selector(handleNFCObjectCreated),
             name: NSNotification.Name("NFCObjectCreated"),
+            object: nil
+        )
+
+        // Listen for real-time object creation via WebSocket
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRealtimeObjectCreated),
+            name: NSNotification.Name("ObjectCreatedRealtime"),
             object: nil
         )
         
@@ -1330,6 +1338,83 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         } else {
             Swift.print("   🎯 Objects placed on floors/tables - look around to find them!")
         }
+    }
+
+    /// Place a single random sphere for testing
+    func placeSingleSphere(locationId: String? = nil) {
+        guard let arView = arView,
+              let frame = arView.session.currentFrame else {
+            Swift.print("⚠️ Cannot place sphere: AR frame not available")
+            return
+        }
+
+        // Use provided location ID or generate a random one
+        let sphereId = locationId ?? "sphere-\(UUID().uuidString.prefix(8))"
+        let location = createRandomSphereLocation(id: sphereId)
+
+        // Place the sphere
+        placeLootBoxAtLocation(location, in: arView)
+
+        // Track placement time to prevent rapid re-placement
+        lastSpherePlacementTime = Date()
+    }
+
+    /// Place an AR item from game data
+    func placeARItem(_ item: LootBoxLocation) {
+        guard let arView = arView,
+              let userLocation = userLocationManager?.currentLocation else {
+            Swift.print("⚠️ Cannot place AR item: AR view or user location not available")
+            return
+        }
+
+        Swift.print("📦 Placing AR item: \(item.name)")
+
+        // Create anchor at current camera position with forward offset
+        guard let frame = arView.session.currentFrame else { return }
+
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        let forward = SIMD3<Float>(-cameraTransform.columns.2.x, -cameraTransform.columns.2.y, -cameraTransform.columns.2.z)
+
+        // Position 2m in front of camera
+        let position = cameraPos + normalize(forward) * 2.0
+
+        // Create anchor at this position
+        let anchor = AnchorEntity(world: position)
+
+        // Create the entity using the factory
+        let factory = item.type.factory
+        let (entity, findable) = factory.createEntity(location: item, anchor: anchor, sizeMultiplier: 1.0)
+
+        // Add entity to anchor
+        anchor.addChild(entity)
+
+        // Add anchor to scene
+        arView.scene.addAnchor(anchor)
+
+        // Track the placement
+        placedBoxes[item.id] = anchor
+        findableObjects[item.id] = findable
+
+        // CRITICAL: Update tap handler's dictionaries so the object is tappable
+        // The tap handler checks both placedBoxes and findableObjects for tap detection
+        tapHandler?.placedBoxes[item.id] = anchor
+        tapHandler?.findableObjects[item.id] = findable
+
+        Swift.print("✅ Placed AR item '\(item.name)' at camera-relative position")
+    }
+
+    /// Create a random sphere location for testing
+    private func createRandomSphereLocation(id: String) -> LootBoxLocation {
+        return LootBoxLocation(
+            id: id,
+            name: "Test Sphere \(id.suffix(4))",
+            type: .sphere,
+            latitude: 0,
+            longitude: 0,
+            radius: 100.0,
+            source: .arRandomized
+        )
     }
 
 
@@ -2769,9 +2854,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 arView.scene.addAnchor(anchor)
                 placedBoxes[location.id] = anchor
                 objectPlacementTimes[location.id] = Date() // Record placement time for grace period
-                
+
                 environmentManager?.applyUniformLuminanceToNewEntity(anchor)
-                
+
                 // If enabled, attach a hidden real object that will be revealed from the generic icon
                 let useGenericIcons = locationManager?.useGenericDoubloonIcons ?? false
                 let isContainerType = location.type != .sphere && location.type != .cube
@@ -2788,7 +2873,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 } else {
                     containerForReveal = nil
                 }
-                
+
                 findableObjects[location.id] = FindableObject(
                     locationId: location.id,
                     anchor: anchor,
@@ -2805,7 +2890,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     }
                 }
 
-                // CRITICAL: Update tap handler's findableObjects dictionary so the object is tappable
+                // CRITICAL: Update tap handler's dictionaries so the object is tappable
+                // The tap handler checks both placedBoxes and findableObjects for tap detection
+                tapHandler?.placedBoxes[location.id] = anchor
                 if let findable = findableObjects[location.id] {
                     tapHandler?.findableObjects[location.id] = findable
                 }
@@ -2869,7 +2956,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             arView.scene.addAnchor(anchor)
             placedBoxes[location.id] = anchor
             environmentManager?.applyUniformLuminanceToNewEntity(anchor)
-            
+
             // If enabled, attach a hidden real object that will be revealed from the generic icon
             let useGenericIcons = locationManager?.useGenericDoubloonIcons ?? false
             let isContainerType = location.type != .sphere && location.type != .cube
@@ -2902,7 +2989,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 }
             }
 
-            // CRITICAL: Update tap handler's findableObjects dictionary so the object is tappable
+            // CRITICAL: Update tap handler's dictionaries so the object is tappable
+            // The tap handler checks both placedBoxes and findableObjects for tap detection
+            tapHandler?.placedBoxes[location.id] = anchor
             if let findable = findableObjects[location.id] {
                 tapHandler?.findableObjects[location.id] = findable
             }
@@ -3009,7 +3098,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
 
-        // CRITICAL: Update tap handler's findableObjects dictionary so the object is tappable
+        // CRITICAL: Update tap handler's dictionaries so the object is tappable
+        // The tap handler checks both placedBoxes and findableObjects for tap detection
+        tapHandler?.placedBoxes[location.id] = anchor
         if let findable = findableObjects[location.id] {
             tapHandler?.findableObjects[location.id] = findable
         }
@@ -3209,7 +3300,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         )
 
         Swift.print("✅ Placed \(selectedObjectType) at AR position: \(finalAnchorPos)")
-        
+
         // DEBUG: Log container info
         Swift.print("   FindableObject created:")
         Swift.print("     - Has container: \(findableObject.container != nil)")
@@ -3234,10 +3325,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         findableObjects[location.id] = findableObject
         Swift.print("   ✅ Stored FindableObject in findableObjects dictionary")
 
-        // CRITICAL: Update tap handler's findableObjects dictionary so the object is tappable
-        // The tap handler needs direct access to findableObjects for tap detection to work
+        // CRITICAL: Update tap handler's dictionaries so the object is tappable
+        // The tap handler checks both placedBoxes and findableObjects for tap detection
+        tapHandler?.placedBoxes[location.id] = anchor
         tapHandler?.findableObjects[location.id] = findableObject
-        Swift.print("   ✅ Updated tap handler's findableObjects - object is now tappable")
+        Swift.print("   ✅ Updated tap handler's placedBoxes and findableObjects - object is now tappable")
         
         // Start continuous loop animation if the factory supports it
         // This is especially important for animated models like the turkey
@@ -4222,7 +4314,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         arView.scene.addAnchor(anchor)
         placedBoxes[item.id] = anchor
-        
+
         // Apply uniform luminance if ambient light is disabled
         environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
@@ -4243,7 +4335,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
 
-        // CRITICAL: Update tap handler's findableObjects dictionary so the object is tappable
+        // CRITICAL: Update tap handler's dictionaries so the object is tappable
+        // The tap handler checks both placedBoxes and findableObjects for tap detection
+        tapHandler?.placedBoxes[item.id] = anchor
         if let findable = findableObjects[item.id] {
             tapHandler?.findableObjects[item.id] = findable
         }
@@ -4408,10 +4502,34 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Add to scene
             arView.scene.addAnchor(anchor)
 
+            // Create FindableObject for tap handling
+            let findableObject = FindableObject(
+                locationId: location.id,
+                anchor: anchor,
+                sphereEntity: nil, // This method doesn't create spheres
+                container: nil, // Container would be created by factory if needed
+                location: location
+            )
+
+            // Set callback to mark as collected when found
+            findableObject.onFoundCallback = { [weak self] id in
+                DispatchQueue.main.async {
+                    if let locationManager = self?.locationManager {
+                        locationManager.markCollected(id)
+                    }
+                }
+            }
+
             // Track the placement
             placedBoxes[location.id] = anchor
+            findableObjects[location.id] = findableObject
             objectsInViewport.insert(location.id)
             objectPlacementTimes[location.id] = Date()
+
+            // CRITICAL: Update tap handler's dictionaries so the object is tappable
+            // The tap handler checks both placedBoxes and findableObjects for tap detection
+            tapHandler?.placedBoxes[location.id] = anchor
+            tapHandler?.findableObjects[location.id] = findableObject
 
             // Mark as manually placed to prevent removal by checkAndPlaceBoxes
             self.manuallyPlacedObjectIds.insert(location.id)
@@ -4556,6 +4674,38 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // This method is called when an NFC object is created
         // You can add any additional logic you want to execute when an NFC object is created
         Swift.print("🎉 NFC Object Created Notification received!")
+    }
+
+    @objc private func handleRealtimeObjectCreated(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let location = userInfo["location"] as? LootBoxLocation else {
+            Swift.print("⚠️ Real-time object created notification missing location data")
+            return
+        }
+
+        Swift.print("🚀 Real-time object created - attempting immediate AR placement: '\(location.name)' (ID: \(location.id))")
+
+        Task { @MainActor in
+            guard let arView = self.arView,
+                  let userLocation = self.userLocationManager?.currentLocation else {
+                Swift.print("⚠️ Cannot place real-time object - AR view or user location not available")
+                return
+            }
+
+            // Get nearby locations including the new one
+            let nearbyLocations = self.locationManager?.getNearbyLocations(userLocation: userLocation) ?? []
+
+            // Check if the new location is actually nearby (within search distance)
+            let newLocationNearby = nearbyLocations.contains { $0.id == location.id }
+
+            if newLocationNearby {
+                Swift.print("✅ New object is within range - placing in AR immediately")
+                // Place the object using the existing placement logic
+                self.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
+            } else {
+                Swift.print("ℹ️ New object is outside search range - will appear when user moves closer")
+            }
+        }
     }
 
     // MARK: - AR Anchor Transform Support

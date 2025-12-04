@@ -402,6 +402,67 @@ class APIService {
         return location
     }
 
+    /// Convert WebSocket object creation data to LootBoxLocation
+    func convertWebSocketDataToLootBoxLocation(_ data: [String: Any]) -> LootBoxLocation? {
+        guard let id = data["id"] as? String,
+              let name = data["name"] as? String,
+              let typeString = data["type"] as? String,
+              let latitude = data["latitude"] as? Double,
+              let longitude = data["longitude"] as? Double,
+              let radius = data["radius"] as? Double else {
+            print("⚠️ WebSocket data missing required fields: \(data)")
+            return nil
+        }
+
+        guard let lootBoxType = LootBoxType(rawValue: typeString) else {
+            print("⚠️ Unknown loot box type in WebSocket data: \(typeString)")
+            return nil
+        }
+
+        // Extract optional fields
+        let collected = data["collected"] as? Bool ?? false
+        let groundingHeight = data["grounding_height"] as? Double
+        let createdBy = data["created_by"] as? String
+
+        // Extract AR coordinate fields
+        let arOriginLatitude = data["ar_origin_latitude"] as? Double
+        let arOriginLongitude = data["ar_origin_longitude"] as? Double
+        let arOffsetX = data["ar_offset_x"] as? Double
+        let arOffsetY = data["ar_offset_y"] as? Double
+        let arOffsetZ = data["ar_offset_z"] as? Double
+        let arAnchorTransform = data["ar_anchor_transform"] as? String
+
+        // Convert timestamp string to Date if present
+        var arPlacementTimestamp: Date? = nil
+        if let timestampString = data["ar_placement_timestamp"] as? String {
+            // Try to parse as ISO 8601 format (what the server likely sends)
+            let isoFormatter = ISO8601DateFormatter()
+            arPlacementTimestamp = isoFormatter.date(from: timestampString)
+        }
+
+        let location = LootBoxLocation(
+            id: id,
+            name: name,
+            type: lootBoxType,
+            latitude: latitude,
+            longitude: longitude,
+            radius: radius,
+            collected: collected,
+            grounding_height: groundingHeight,
+            source: .api, // WebSocket objects come from the API
+            created_by: createdBy,
+            ar_origin_latitude: arOriginLatitude,
+            ar_origin_longitude: arOriginLongitude,
+            ar_offset_x: arOffsetX,
+            ar_offset_y: arOffsetY,
+            ar_offset_z: arOffsetZ,
+            ar_placement_timestamp: arPlacementTimestamp,
+            ar_anchor_transform: arAnchorTransform
+        )
+
+        return location
+    }
+
     func updateObjectLocation(objectId: String, location: CLLocation) async throws {
         let url = URL(string: "\(baseURL)/api/objects/\(objectId)/location")!
         var request = URLRequest(url: url)

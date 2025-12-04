@@ -992,6 +992,7 @@ struct SettingsView: View {
             refreshFromAPIButton
             syncLocalItemsButton
             viewDatabaseContentsButton
+            viewLocalDatabaseContentsButton
             refreshDatabaseListButton
             Divider()
                 .padding(.vertical, 4)
@@ -1084,8 +1085,40 @@ struct SettingsView: View {
             }
             .disabled(viewModel.isLoading)
             .padding(.vertical, 4)
-            
+
             Text("View all objects in the shared database (check console for output)")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var viewLocalDatabaseContentsButton: some View {
+        Group {
+            Button(action: {
+                guard !viewModel.isLoading else { return }
+                viewModel.isLoading = true
+                Task {
+                    await locationManager.viewLocalDatabaseContents()
+                    await MainActor.run {
+                        viewModel.displayAlert(title: "Local Database Contents", message: "Local database contents logged to console. Check Xcode console for full details.")
+                        viewModel.isLoading = false
+                    }
+                }
+            }) {
+                HStack {
+                    if viewModel.isLoading {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "internaldrive.fill")
+                    }
+                    Text("View Local Database Contents")
+                }
+            }
+            .disabled(viewModel.isLoading)
+            .padding(.vertical, 4)
+
+            Text("View all objects in your local device database (check console for output)")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }

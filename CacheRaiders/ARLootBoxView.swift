@@ -362,7 +362,7 @@ struct ARViewContainer: UIViewRepresentable {
             let locationId = locationManager.pendingSphereLocationId
             // Defer ALL state modifications to avoid "Modifying state during view update" warning
             Task { @MainActor in
-                context.coordinator.tapHandler?.placeSingleSphere(locationId: locationId)
+                context.coordinator.placeSingleSphere(locationId: locationId)
                 // Reset the flags after placement is complete
                 locationManager.shouldPlaceSphere = false
                 locationManager.pendingSphereLocationId = nil
@@ -379,7 +379,7 @@ struct ARViewContainer: UIViewRepresentable {
                 locationManager.pendingARItem = nil
                 print("🔄 Pending AR item cleared to prevent duplicates")
                 // Defer the actual placement
-                context.coordinator.tapHandler?.placeARItem(pendingItem)
+                context.coordinator.placeARItem(pendingItem)
             }
         }
         
