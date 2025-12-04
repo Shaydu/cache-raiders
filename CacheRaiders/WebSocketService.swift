@@ -65,6 +65,7 @@ class WebSocketService: ObservableObject {
     var onNPCDeleted: ((String) -> Void)? // (npc_id)
     var onLocationUpdateIntervalChanged: ((Double) -> Void)? // (interval_seconds)
     var onGameModeChanged: ((String) -> Void)? // (game_mode)
+    var onObjectUpdated: (([String: Any]) -> Void)? // Object update data
     
     var baseURL: String {
         // Use the same validated baseURL as APIService to ensure consistency
@@ -503,6 +504,9 @@ class WebSocketService: ObservableObject {
         case "object_deleted":
             handleObjectDeletedEvent(eventData)
             
+        case "object_updated":
+            handleObjectUpdatedEvent(eventData)
+            
         case "npc_created":
             handleNPCCreatedEvent(eventData)
             
@@ -601,6 +605,20 @@ class WebSocketService: ObservableObject {
                 object: nil,
                 userInfo: ["object_id": objectId]
             )
+        }
+    }
+    
+    /// Handle object_updated event: {"id": "...", "name": "...", ...}
+    private func handleObjectUpdatedEvent(_ data: [String: Any]) {
+        guard let objectId = data["id"] as? String else {
+            print("⚠️ object_updated event missing id")
+            return
+        }
+        
+        print("🔄 WebSocket: Object updated - ID: \(objectId)")
+        
+        DispatchQueue.main.async {
+            self.onObjectUpdated?(data)
         }
     }
     

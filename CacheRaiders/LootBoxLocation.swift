@@ -90,6 +90,8 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     var source: ItemSource = .api // Default to API source for backward compatibility
     var created_by: String? // User ID who created this object
     var needs_sync: Bool = false // Whether this item needs to be synced to API
+    var last_modified: Date? // Timestamp of last modification for conflict resolution
+    var server_version: Int64? // Server version for conflict resolution
 
     // AR-offset based positioning for centimeter-level accuracy
     var ar_origin_latitude: Double? // GPS location where AR session originated
@@ -498,6 +500,47 @@ class LootBoxLocationManager: ObservableObject {
         
         print("✅ [LootBoxLocationManager] onGameModeChanged callback registered")
         print("   Callback address: \(String(describing: WebSocketService.shared.onGameModeChanged))")
+        
+        // Set up object updated callback
+        WebSocketService.shared.onObjectUpdated = { [weak self] objectData in
+            guard let self = self else { return }
+            
+            print("🔄 WebSocket: Object updated with data: \(objectData)")
+            
+            Task { @MainActor in
+                // Convert the WebSocket data to a LootBoxLocation
+                guard let lootBoxLocation = APIService.shared.convertWebSocketDataToLootBoxLocation(objectData) else {
+                    print("⚠️ Failed to convert WebSocket object update data to LootBoxLocation")
+                    return
+                }
+                
+                print("🔄 Real-time object updated: '\(lootBoxLocation.name)' (ID: \(lootBoxLocation.id))")
+                
+                // Update the location in our array
+                if let index = self.locations.firstIndex(where: { $0.id == lootBoxLocation.id }) {
+                    self.locations[index] = lootBoxLocation
+                    print("✅ Updated object in locations array")
+                } else {
+                    // If object doesn't exist locally, add it
+                    self.locations.append(lootBoxLocation)
+                    print("✅ Added updated object to locations array (total: \(self.locations.count))")
+                }
+                
+                // Notify observers
+                self.objectWillChange.send()
+                
+                // Save to Core Data for offline access
+                Task.detached(priority: .utility) { [weak self] in
+                    guard let self = self else { return }
+                    do {
+                        try await self.dataService.saveLocations([lootBoxLocation])
+                        print("💾 Saved updated object to Core Data")
+                    } catch {
+                        print("⚠️ Failed to save updated object to Core Data: \(error)")
+                    }
+                }
+            }
+        }
         
         // Fetch game mode when WebSocket connects (in case it changed while disconnected)
         WebSocketService.shared.onConnected = { [weak self] in

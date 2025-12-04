@@ -312,7 +312,20 @@ def init_db():
     
     for column_name, column_type in optional_columns:
         try:
-            cursor.execute(f'ALTER TABLE objects ADD COLUMN {column_name} {column_type}')
+            # Sanitize column_name and column_type to prevent SQL injection
+            if not all(c.isalnum() or c == '_' for c in column_name):
+                print(f"⚠️ Skipping invalid column name: {column_name}")
+                continue
+            if column_type.upper() not in ['TEXT', 'REAL', 'INTEGER', 'NUMERIC', 'BLOB']:
+                print(f"⚠️ Skipping invalid column type: {column_type}")
+                continue
+            # Use parameterized query to safely add columns
+            # Note: SQLite doesn't support parameterized DDL, so we have to use string formatting
+            # but with proper validation above to prevent SQL injection
+            safe_column_name = ''.join(c for c in column_name if c.isalnum() or c == '_')
+            safe_column_type = column_type.upper() if column_type.upper() in ['TEXT', 'REAL', 'INTEGER', 'NUMERIC', 'BLOB'] else 'TEXT'
+            # Quote column name to handle special characters properly
+            cursor.execute(f'ALTER TABLE objects ADD COLUMN "{safe_column_name}" {safe_column_type}')
         except sqlite3.OperationalError:
             pass  # Column already exists
     
@@ -731,7 +744,7 @@ def create_object():
         
         # Get the created object to broadcast
         cursor.execute('''
-            SELECT 
+            SELECT
                 o.id,
                 o.name,
                 o.type,
@@ -747,7 +760,7 @@ def create_object():
                 o.ar_offset_y,
                 o.ar_offset_z,
                 o.ar_placement_timestamp,
-                o.ar_anchor_transform,  # Include AR anchor transform
+                o.ar_anchor_transform,
                 CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
                 f.found_by,
                 f.found_at
