@@ -233,15 +233,15 @@ struct ARViewContainer: UIViewRepresentable {
         // The config.environmentTexturing = .automatic above ensures virtual objects are lit by real-world lighting
         // Note: Lighting is controlled through the AR session configuration, not a property on ARView
 
-        // Tap gesture for placing and collecting loot boxes
-        let tapGesture = UITapGestureRecognizer(target: context.coordinator.tapHandler, action: #selector(ARTapHandler.handleTap(_:)))
-        arView.addGestureRecognizer(tapGesture)
-
         // Debug visuals disabled for cleaner AR experience
         // Uncomment the line below to enable debug visuals (green feature points, anchor origins)
         // arView.debugOptions = [.showFeaturePoints, .showAnchorOrigins]
 
         context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, conversationNPC: $conversationNPC, conversationManager: conversationManager, treasureHuntService: treasureHuntService)
+
+        // Tap gesture for placing and collecting loot boxes - ADD AFTER setupARView so tapHandler is initialized
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator.tapHandler, action: #selector(ARTapHandler.handleTap(_:)))
+        arView.addGestureRecognizer(tapGesture)
         return arView
     }
     

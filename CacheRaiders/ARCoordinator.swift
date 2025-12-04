@@ -3343,15 +3343,26 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                let arOrigin = arOriginLocation,
                let index = locationManager.locations.firstIndex(where: { $0.id == location.id }) {
                 var updatedLocation = locationManager.locations[index]
-                updatedLocation.ar_origin_latitude = arOrigin.coordinate.latitude
-                updatedLocation.ar_origin_longitude = arOrigin.coordinate.longitude
-                updatedLocation.ar_offset_x = Double(groundedPosition.x)
-                updatedLocation.ar_offset_y = Double(groundedPosition.y)
-                updatedLocation.ar_offset_z = Double(groundedPosition.z)
+
+                // Use ARPositioningService to set AR positioning data
+                let arService = ARPositioningService.shared
+                let arOriginStruct = ARPositioningService.AROrigin(
+                    latitude: arOrigin.coordinate.latitude,
+                    longitude: arOrigin.coordinate.longitude
+                )
+                let arOffsets = ARPositioningService.AROffsets.fromARPosition(groundedPosition)
+
+                arService.applyARPositioning(
+                    to: &updatedLocation,
+                    origin: arOriginStruct,
+                    offsets: arOffsets,
+                    placementTimestamp: arService.createPlacementTimestamp()
+                )
+
                 locationManager.locations[index] = updatedLocation
                 locationManager.saveLocations()
                 Swift.print("✅ Saved AR coordinates for manually placed object '\(location.name)'")
-                Swift.print("   AR offset: (\(String(format: "%.4f", groundedPosition.x)), \(String(format: "%.4f", groundedPosition.y)), \(String(format: "%.4f", groundedPosition.z)))m")
+                Swift.print("   AR offset: (\(String(format: "%.4f", arOffsets.x)), \(String(format: "%.4f", arOffsets.y)), \(String(format: "%.4f", arOffsets.z)))m")
                 Swift.print("   This object will NOT be removed by checkAndPlaceBoxes")
             }
         }
@@ -4438,12 +4449,20 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 source: .arManual
             )
 
-            // Set AR offset properties after initialization
-            tempLocation.ar_offset_x = Double(arPosition.x)
-            tempLocation.ar_offset_y = Double(arPosition.y)
-            tempLocation.ar_offset_z = Double(arPosition.z)
-            tempLocation.ar_origin_latitude = arOrigin.coordinate.latitude
-            tempLocation.ar_origin_longitude = arOrigin.coordinate.longitude
+            // Set AR positioning data using ARPositioningService
+            let arService = ARPositioningService.shared
+            let arOriginStruct = ARPositioningService.AROrigin(
+                latitude: arOrigin.coordinate.latitude,
+                longitude: arOrigin.coordinate.longitude
+            )
+            let arOffsets = ARPositioningService.AROffsets.fromARPosition(arPosition)
+
+            arService.applyARPositioning(
+                to: &tempLocation,
+                origin: arOriginStruct,
+                offsets: arOffsets,
+                placementTimestamp: arService.createPlacementTimestamp()
+            )
 
             // Place immediately at the exact AR coordinates
             placeObjectAtARPosition(tempLocation, arPosition: arPosition, userLocation: userLocation)

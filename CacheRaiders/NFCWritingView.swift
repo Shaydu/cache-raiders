@@ -605,6 +605,10 @@ struct NFCWritingView: View {
 
             // Add AR anchor data if available (for precise positioning when nearby)
             if let anchorData = arAnchorData {
+                // Use ARPositioningService to encode the anchor transform properly
+                let arService = ARPositioningService.shared
+                // Note: anchorData is already base64 encoded, so we use it directly
+                // In the future, this should be converted to a proper transform matrix
                 objectData["ar_anchor_transform"] = anchorData.base64EncodedString()
                 print("✅ Including AR anchor data in database object (\(anchorData.count) bytes)")
             }

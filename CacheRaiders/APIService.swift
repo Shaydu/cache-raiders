@@ -402,6 +402,38 @@ class APIService {
         return location
     }
 
+    /// Extract AR positioning data from JSON dictionary using ARPositioningService
+    private func extractARPositioningData(from data: [String: Any]) -> (origin: ARPositioningService.AROrigin?, offsets: ARPositioningService.AROffsets?, anchorTransform: String?, placementTimestamp: Date?) {
+        // Extract AR coordinate fields
+        let arOriginLatitude = data["ar_origin_latitude"] as? Double
+        let arOriginLongitude = data["ar_origin_longitude"] as? Double
+        let arOffsetX = data["ar_offset_x"] as? Double
+        let arOffsetY = data["ar_offset_y"] as? Double
+        let arOffsetZ = data["ar_offset_z"] as? Double
+        let arAnchorTransform = data["ar_anchor_transform"] as? String
+
+        // Convert timestamp string to Date if present
+        var arPlacementTimestamp: Date? = nil
+        if let timestampString = data["ar_placement_timestamp"] as? String {
+            // Try to parse as ISO 8601 format (what the server likely sends)
+            let isoFormatter = ISO8601DateFormatter()
+            arPlacementTimestamp = isoFormatter.date(from: timestampString)
+        }
+
+        // Create AR positioning structures
+        var origin: ARPositioningService.AROrigin? = nil
+        if let lat = arOriginLatitude, let lng = arOriginLongitude {
+            origin = ARPositioningService.AROrigin(latitude: lat, longitude: lng)
+        }
+
+        var offsets: ARPositioningService.AROffsets? = nil
+        if let x = arOffsetX, let y = arOffsetY, let z = arOffsetZ {
+            offsets = ARPositioningService.AROffsets(x: x, y: y, z: z)
+        }
+
+        return (origin, offsets, arAnchorTransform, arPlacementTimestamp)
+    }
+
     /// Convert WebSocket object creation data to LootBoxLocation
     func convertWebSocketDataToLootBoxLocation(_ data: [String: Any]) -> LootBoxLocation? {
         guard let id = data["id"] as? String,
@@ -424,21 +456,8 @@ class APIService {
         let groundingHeight = data["grounding_height"] as? Double
         let createdBy = data["created_by"] as? String
 
-        // Extract AR coordinate fields
-        let arOriginLatitude = data["ar_origin_latitude"] as? Double
-        let arOriginLongitude = data["ar_origin_longitude"] as? Double
-        let arOffsetX = data["ar_offset_x"] as? Double
-        let arOffsetY = data["ar_offset_y"] as? Double
-        let arOffsetZ = data["ar_offset_z"] as? Double
-        let arAnchorTransform = data["ar_anchor_transform"] as? String
-
-        // Convert timestamp string to Date if present
-        var arPlacementTimestamp: Date? = nil
-        if let timestampString = data["ar_placement_timestamp"] as? String {
-            // Try to parse as ISO 8601 format (what the server likely sends)
-            let isoFormatter = ISO8601DateFormatter()
-            arPlacementTimestamp = isoFormatter.date(from: timestampString)
-        }
+        // Extract AR positioning data using ARPositioningService helper
+        let arData = extractARPositioningData(from: data)
 
         let location = LootBoxLocation(
             id: id,
@@ -451,13 +470,13 @@ class APIService {
             grounding_height: groundingHeight,
             source: .api, // WebSocket objects come from the API
             created_by: createdBy,
-            ar_origin_latitude: arOriginLatitude,
-            ar_origin_longitude: arOriginLongitude,
-            ar_offset_x: arOffsetX,
-            ar_offset_y: arOffsetY,
-            ar_offset_z: arOffsetZ,
-            ar_placement_timestamp: arPlacementTimestamp,
-            ar_anchor_transform: arAnchorTransform
+            ar_origin_latitude: arData.origin?.latitude,
+            ar_origin_longitude: arData.origin?.longitude,
+            ar_offset_x: arData.offsets?.x,
+            ar_offset_y: arData.offsets?.y,
+            ar_offset_z: arData.offsets?.z,
+            ar_placement_timestamp: arData.placementTimestamp,
+            ar_anchor_transform: arData.anchorTransform
         )
 
         return location

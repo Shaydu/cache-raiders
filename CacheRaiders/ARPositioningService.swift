@@ -383,7 +383,7 @@ class ARPositioningService {
             return false
         }
 
-        let distance = self.distance(from: arData.origin, to: currentLocation)
+        let distance = self.distance(from: arData.origin!, to: currentLocation)
         return distance <= maxDistance
     }
 }

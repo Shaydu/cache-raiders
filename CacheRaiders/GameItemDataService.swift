@@ -51,13 +51,27 @@ class GameItemDataService {
         gameItem.collected = location.collected
         gameItem.grounding_height = location.grounding_height ?? 0.0
         gameItem.source = location.source.rawValue
-        gameItem.ar_origin_latitude = location.ar_origin_latitude ?? 0.0
-        gameItem.ar_origin_longitude = location.ar_origin_longitude ?? 0.0
-        gameItem.ar_offset_x = location.ar_offset_x ?? 0.0
-        gameItem.ar_offset_y = location.ar_offset_y ?? 0.0
-        gameItem.ar_offset_z = location.ar_offset_z ?? 0.0
+
+        // Use ARPositioningService to handle AR positioning data
+        if let arData = ARPositioningService.shared.extractARPositioning(from: location),
+           let origin = arData.origin,
+           let offsets = arData.offsets {
+            gameItem.ar_origin_latitude = origin.latitude
+            gameItem.ar_origin_longitude = origin.longitude
+            gameItem.ar_offset_x = offsets.x
+            gameItem.ar_offset_y = offsets.y
+            gameItem.ar_offset_z = offsets.z
+        } else {
+            // No AR positioning data - use zero values for Core Data compatibility
+            gameItem.ar_origin_latitude = 0.0
+            gameItem.ar_origin_longitude = 0.0
+            gameItem.ar_offset_x = 0.0
+            gameItem.ar_offset_y = 0.0
+            gameItem.ar_offset_z = 0.0
+        }
+
         gameItem.ar_placement_timestamp = location.ar_placement_timestamp
-        gameItem.ar_anchor_transform = location.ar_anchor_transform // Add AR anchor transform support
+        gameItem.ar_anchor_transform = location.ar_anchor_transform
         gameItem.created_at = Date()
         gameItem.updated_at = Date()
         gameItem.needs_sync = false // Will be set to true when modified offline
@@ -73,13 +87,27 @@ class GameItemDataService {
         gameItem.collected = location.collected
         gameItem.grounding_height = location.grounding_height ?? 0.0
         gameItem.source = location.source.rawValue
-        gameItem.ar_origin_latitude = location.ar_origin_latitude ?? 0.0
-        gameItem.ar_origin_longitude = location.ar_origin_longitude ?? 0.0
-        gameItem.ar_offset_x = location.ar_offset_x ?? 0.0
-        gameItem.ar_offset_y = location.ar_offset_y ?? 0.0
-        gameItem.ar_offset_z = location.ar_offset_z ?? 0.0
+
+        // Use ARPositioningService to handle AR positioning data
+        if let arData = ARPositioningService.shared.extractARPositioning(from: location),
+           let origin = arData.origin,
+           let offsets = arData.offsets {
+            gameItem.ar_origin_latitude = origin.latitude
+            gameItem.ar_origin_longitude = origin.longitude
+            gameItem.ar_offset_x = offsets.x
+            gameItem.ar_offset_y = offsets.y
+            gameItem.ar_offset_z = offsets.z
+        } else {
+            // Clear AR positioning data
+            gameItem.ar_origin_latitude = 0.0
+            gameItem.ar_origin_longitude = 0.0
+            gameItem.ar_offset_x = 0.0
+            gameItem.ar_offset_y = 0.0
+            gameItem.ar_offset_z = 0.0
+        }
+
         gameItem.ar_placement_timestamp = location.ar_placement_timestamp
-        gameItem.ar_anchor_transform = location.ar_anchor_transform // Add AR anchor transform support
+        gameItem.ar_anchor_transform = location.ar_anchor_transform
         gameItem.updated_at = Date()
     }
     
@@ -112,28 +140,22 @@ class GameItemDataService {
             source: source
         )
         
-        // Set optional AR offset fields
-        // Convert non-zero values back to optional Double
-        if gameItem.ar_origin_latitude != 0.0 {
+        // Set AR positioning data using ARPositioningService
+        let arService = ARPositioningService.shared
+
+        // Check if we have complete AR positioning data (all origin and offset values non-zero)
+        let hasAROrigin = gameItem.ar_origin_latitude != 0.0 && gameItem.ar_origin_longitude != 0.0
+        let hasAROffsets = gameItem.ar_offset_x != 0.0 && gameItem.ar_offset_y != 0.0 && gameItem.ar_offset_z != 0.0
+
+        if hasAROrigin && hasAROffsets {
             location.ar_origin_latitude = gameItem.ar_origin_latitude
-        }
-        if gameItem.ar_origin_longitude != 0.0 {
             location.ar_origin_longitude = gameItem.ar_origin_longitude
-        }
-        
-        if gameItem.ar_offset_x != 0.0 {
             location.ar_offset_x = gameItem.ar_offset_x
-        }
-        if gameItem.ar_offset_y != 0.0 {
             location.ar_offset_y = gameItem.ar_offset_y
-        }
-        if gameItem.ar_offset_z != 0.0 {
             location.ar_offset_z = gameItem.ar_offset_z
         }
-        
+
         location.ar_placement_timestamp = gameItem.ar_placement_timestamp
-        
-        // Set AR anchor transform if available
         location.ar_anchor_transform = gameItem.ar_anchor_transform
 
         // Set sync status
