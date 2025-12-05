@@ -17,6 +17,7 @@ Stores all loot box objects with their locations.
 | `radius` | REAL | NOT NULL | Radius in meters (how close user needs to be) |
 | `created_at` | TEXT | NOT NULL | ISO 8601 timestamp when object was created |
 | `created_by` | TEXT | | User ID who created the object (optional) |
+| `multifindable` | INTEGER | DEFAULT 0 | Whether item is multifindable (0=single-find, 1=multi-find) |
 
 **Example:**
 ```sql

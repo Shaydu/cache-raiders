@@ -18,7 +18,7 @@ struct SheetContentView: View {
         case .arPlacement:
             ARPlacementView(locationManager: locationManager, userLocationManager: userLocationManager)
         case .nfcScanner:
-            NFCScanOnlyView()
+            NFCScanOnlyView(locationManager: locationManager)
         case .nfcWriting:
             NFCWritingView(locationManager: locationManager, userLocationManager: userLocationManager)
         case .simpleNFCScanner:

@@ -788,7 +788,8 @@ struct NFCWritingView: View {
                     longitude: location.coordinate.longitude,
                     radius: 3.0,  // Match the reduced radius
                     collected: false,  // NOT collected by placer - must be scanned to find
-                    source: .map
+                    source: .map,
+                    multifindable: true // NFC-placed items are multifindable
                 )
 
                 DispatchQueue.main.async {
@@ -1016,7 +1017,9 @@ struct NFCWritingView: View {
                 ar_offset_z: Double(arPosition.z),
                 ar_placement_timestamp: Date(),
                 ar_anchor_transform: arTransformBase64,
-                ar_world_transform: arTransformData
+                ar_world_transform: arTransformData,
+                nfc_tag_id: nfcResult.tagId,
+                multifindable: true // NFC-placed items are multifindable by default
             )
 
             let apiObject = try await APIService.shared.createObject(location)

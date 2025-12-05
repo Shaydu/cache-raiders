@@ -811,6 +811,18 @@ extension PreciseARPositioningService {
 
         objectPlaced.send(object.objectID)
         print("✅ Placed precise AR object: \(object.objectID)")
+
+        // Notify ARCoordinator to register this object for tapping
+        NotificationCenter.default.post(
+            name: NSNotification.Name("NFCObjectPlaced"),
+            object: nil,
+            userInfo: [
+                "objectId": object.objectID,
+                "anchorEntity": anchorEntity,
+                "nfcObject": object
+            ]
+        )
+        print("📢 Posted NFCObjectPlaced notification for object: \(object.objectID)")
     }
 
     /// Place AR object at exact NFC tap position for maximum precision
@@ -843,6 +855,18 @@ extension PreciseARPositioningService {
 
         objectPlaced.send(object.objectID)
         print("✅ Placed AR object at exact NFC tap position: \(object.objectID)")
+
+        // Notify ARCoordinator to register this object for tapping
+        NotificationCenter.default.post(
+            name: NSNotification.Name("NFCObjectPlaced"),
+            object: nil,
+            userInfo: [
+                "objectId": object.objectID,
+                "anchorEntity": anchorEntity,
+                "nfcObject": object
+            ]
+        )
+        print("📢 Posted NFCObjectPlaced notification for object: \(object.objectID)")
 
         // Store the refined transform for future reference
         var updatedObject = object

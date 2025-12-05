@@ -9,6 +9,8 @@ import Combine
 import UIKit
 
 // Findable protocol and base class are now in FindableObject.swift
+// Import for NFC positioning service
+import Foundation
 
 // MARK: - AR Coordinator
 class ARCoordinator: NSObject, ARSessionDelegate {
@@ -448,6 +450,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             self,
             selector: #selector(handleNFCObjectCreated),
             name: NSNotification.Name("NFCObjectCreated"),
+            object: nil
+        )
+
+        // Listen for NFC object placement notifications (when PreciseARPositioningService places objects)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleNFCObjectPlaced),
+            name: NSNotification.Name("NFCObjectPlaced"),
             object: nil
         )
 
@@ -4855,6 +4865,77 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // This method is called when an NFC object is created
         // You can add any additional logic you want to execute when an NFC object is created
         Swift.print("🎉 NFC Object Created Notification received!")
+    }
+
+    @objc private func handleNFCObjectPlaced(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let objectId = userInfo["objectId"] as? String,
+              let anchorEntity = userInfo["anchorEntity"] as? AnchorEntity else {
+            Swift.print("⚠️ NFC object placed notification missing required data")
+            return
+        }
+
+        Swift.print("🎯 Handling NFC object placement: '\(objectId)'")
+
+        // Create a basic LootBoxLocation for this NFC object
+        // We don't have detailed object info here, so we use defaults
+        let location = LootBoxLocation(
+            id: objectId,
+            name: "NFC Object", // Will be updated when tapped and API data is fetched
+            type: .chalice,
+            latitude: 0, // NFC objects may not have GPS coordinates
+            longitude: 0,
+            radius: 5.0,
+            source: .arManual // NFC-placed objects
+        )
+
+        // Register the anchor for tapping
+        registerNFCObjectAnchor(objectId: objectId, anchorEntity: anchorEntity, location: location)
+
+        Swift.print("✅ NFC object '\(objectId)' is now tappable")
+    }
+
+    /// Register an already-placed NFC object anchor for tapping
+    /// This is called when NFC objects are placed by PreciseARPositioningService
+    func registerNFCObjectAnchor(objectId: String, anchorEntity: AnchorEntity, location: LootBoxLocation? = nil) {
+        Swift.print("🎯 Registering NFC object for tapping: '\(objectId)'")
+
+        // Register with placed boxes for tap detection
+        placedBoxes[objectId] = anchorEntity
+
+        // Create findable object for tap handler
+        let findable = FindableObject(
+            locationId: objectId,
+            anchor: anchorEntity,
+            sphereEntity: nil, // NFC objects might not have a specific sphere entity
+            location: location ?? LootBoxLocation(
+                id: objectId,
+                name: "NFC Object",
+                type: .chalice,
+                latitude: 0,
+                longitude: 0,
+                radius: 5.0
+            )
+        )
+        findableObjects[objectId] = findable
+
+        // Register with tap handler
+        tapHandler?.placedBoxes[objectId] = anchorEntity
+        tapHandler?.findableObjects[objectId] = findable
+
+        // Mark as placed
+        placedBoxesSet.insert(objectId)
+
+        // Set entity name for tap detection (critical for entity hit testing)
+        anchorEntity.name = objectId
+        // Also set name on child entities
+        for child in anchorEntity.children {
+            if child.name.isEmpty {
+                child.name = "\(objectId)_child"
+            }
+        }
+
+        Swift.print("✅ NFC object '\(objectId)' registered for tapping")
     }
 
     @objc private func handleRealtimeObjectCreated(_ notification: Notification) {

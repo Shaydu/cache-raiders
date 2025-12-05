@@ -15,6 +15,7 @@ struct ARPlacementView: View {
     @State private var showObjectSelector = true
     @State private var crosshairPosition: CGPoint = .zero
     @State private var placementMode: PlacementMode = .selecting
+    @State private var isMultifindable: Bool = false // Default to single-find for map placement
     
     enum PlacementMode {
         case selecting
@@ -67,7 +68,10 @@ struct ARPlacementView: View {
                                         Text(type.displayName).tag(type)
                                     }
                                 }
-                                
+
+                                Toggle("Multi-Findable", isOn: $isMultifindable)
+                                    .help("When enabled, this item disappears only for users who find it. Other players can still find it. When disabled, it disappears for everyone once found.")
+
                                 Button(action: {
                                     isPlacingNew = true
                                     placementMode = .placing
@@ -277,7 +281,8 @@ struct ARPlacementView: View {
             ar_offset_x: Double(arPosition.x),
             ar_offset_y: Double(arPosition.y),
             ar_offset_z: Double(arPosition.z),
-            ar_placement_timestamp: Date()
+            ar_placement_timestamp: Date(),
+            multifindable: isMultifindable
         )
 
         do {

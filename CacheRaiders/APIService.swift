@@ -80,6 +80,7 @@ struct APIObject: Codable {
     var collected: Bool
     var found_by: String?
     var found_at: String?
+    var multifindable: Bool?
 }
 
 struct NPCResponse: Codable {
@@ -316,9 +317,9 @@ class APIService {
 
     // MARK: - Objects
     func getObjects(includeFound: Bool = false) async throws -> [APIObject] {
-        var urlString = "\(baseURL)/api/objects"
+        var urlString = "\(baseURL)/api/objects?user_id=\(currentUserID)"
         if includeFound {
-            urlString += "?include_found=true"
+            urlString += "&include_found=true"
         }
 
         let url = URL(string: urlString)!
@@ -327,7 +328,7 @@ class APIService {
     }
 
     func getObjects(latitude: Double, longitude: Double, radius: Double, includeFound: Bool = false) async throws -> [APIObject] {
-        var urlString = "\(baseURL)/api/objects?latitude=\(latitude)&longitude=\(longitude)&radius=\(radius)"
+        var urlString = "\(baseURL)/api/objects?latitude=\(latitude)&longitude=\(longitude)&radius=\(radius)&user_id=\(currentUserID)"
         if includeFound {
             urlString += "&include_found=true"
         }
@@ -410,7 +411,8 @@ class APIService {
             collected: apiObject.collected,
             grounding_height: apiObject.grounding_height,
             source: .api, // API objects come from the API
-            created_by: apiObject.created_by
+            created_by: apiObject.created_by,
+            multifindable: apiObject.multifindable
         )
 
         return location
@@ -469,6 +471,7 @@ class APIService {
         let collected = data["collected"] as? Bool ?? false
         let groundingHeight = data["grounding_height"] as? Double
         let createdBy = data["created_by"] as? String
+        let multifindable = data["multifindable"] as? Bool
 
         // Extract AR positioning data using ARPositioningService helper
         let arData = extractARPositioningData(from: data)
@@ -490,7 +493,8 @@ class APIService {
             ar_offset_y: arData.offsets?.y,
             ar_offset_z: arData.offsets?.z,
             ar_placement_timestamp: arData.placementTimestamp,
-            ar_anchor_transform: arData.anchorTransform
+            ar_anchor_transform: arData.anchorTransform,
+            multifindable: multifindable
         )
 
         return location
@@ -581,6 +585,23 @@ class APIService {
             "created_by": currentUserID,
             "grounding_height": location.grounding_height
         ]
+
+        // Set multifindable flag
+        // Use explicit setting if provided, otherwise use defaults based on placement type
+        var multifindableValue: Int
+        if let multifindable = location.multifindable {
+            multifindableValue = multifindable ? 1 : 0
+        } else {
+            // Default behavior: NFC-placed items are multifindable, others are not
+            let isNFCPlaced = location.nfc_tag_id != nil && !location.nfc_tag_id!.isEmpty
+            multifindableValue = isNFCPlaced ? 1 : 0
+        }
+        body["multifindable"] = multifindableValue
+
+        // Add NFC tag ID if present
+        if let nfcTagId = location.nfc_tag_id {
+            body["nfc_tag_id"] = nfcTagId
+        }
 
         // CRITICAL: Add AR offset coordinates for <10cm accuracy if available
         if let arOffsetX = location.ar_offset_x,

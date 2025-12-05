@@ -5,6 +5,7 @@ import CoreNFC
 /// Simple view for scanning NFC tokens and logging finds
 struct NFCScanOnlyView: View {
     @Environment(\.dismiss) var dismiss
+    @ObservedObject var locationManager: LootBoxLocationManager
     private let nfcService = NFCService.shared
     private let apiService = APIService.shared
     private let findDataService = FindDataService.shared
@@ -368,6 +369,12 @@ struct NFCScanOnlyView: View {
                     print("📴 Offline mode - find saved locally, will sync when online")
                 }
 
+                // Mark the object as collected in the location manager so AR view removes it
+                DispatchQueue.main.async {
+                    self.locationManager.markCollected(objectId)
+                    print("✅ Marked object \(objectId) as collected in location manager")
+                }
+
                 DispatchQueue.main.async {
                     self.statusMessage = "Find logged successfully!"
                     self.showSuccess = true
@@ -389,6 +396,6 @@ struct NFCScanOnlyView: View {
 // MARK: - Preview
 struct NFCScanOnlyView_Previews: PreviewProvider {
     static var previews: some View {
-        NFCScanOnlyView()
+        NFCScanOnlyView(locationManager: LootBoxLocationManager())
     }
 }

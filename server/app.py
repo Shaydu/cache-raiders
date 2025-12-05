@@ -488,12 +488,13 @@ def health():
 
 @app.route('/api/objects', methods=['GET'])
 def get_objects():
-    """Get all objects, optionally filtered by location."""
+    """Get all objects, optionally filtered by location and user visibility."""
     try:
         latitude = request.args.get('latitude', type=float)
         longitude = request.args.get('longitude', type=float)
         radius = request.args.get('radius', type=float, default=10000.0)  # Default 10km
         include_found = request.args.get('include_found', 'false').lower() == 'true'
+        user_id = request.args.get('user_id', type=str)  # User ID to filter per-user visibility
         
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -505,7 +506,7 @@ def get_objects():
         
         # Build SELECT clause dynamically based on available columns
         base_columns = [
-            'o.id', 'o.name', 'o.type', 'o.latitude', 'o.longitude', 
+            'o.id', 'o.name', 'o.type', 'o.latitude', 'o.longitude',
             'o.radius', 'o.created_at', 'o.created_by', 'o.grounding_height'
         ]
         ar_columns = [
@@ -515,18 +516,21 @@ def get_objects():
         ]
         
         select_columns = base_columns.copy()
+        # Add multifindable column if it exists
+        if 'multifindable' in column_names:
+            select_columns.append('o.multifindable')
         for ar_col in ar_columns:
             if ar_col in column_names:
                 select_columns.append(f'o.{ar_col}')
-        
+
         select_columns.extend([
             'CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected',
             'f.found_by',
             'f.found_at'
         ])
-        
+
         query = f'''
-            SELECT 
+            SELECT
                 {', '.join(select_columns)}
             FROM objects o
             LEFT JOIN finds f ON o.id = f.object_id
@@ -555,7 +559,19 @@ def get_objects():
         
         # Filter out found objects unless include_found is true
         if not include_found:
-            conditions.append('f.id IS NULL')
+            if user_id:
+                # Use multifindable flag for per-user visibility:
+                # - multifindable=1: hide only if this user found it
+                # - multifindable=0: hide if anyone found it (traditional behavior)
+                conditions.append('''
+                    (o.multifindable = 1 AND (f.id IS NULL OR f.found_by != ?))
+                    OR (o.multifindable = 0 AND f.id IS NULL)
+                    OR (o.multifindable IS NULL AND f.id IS NULL)
+                ''')
+                params.append(user_id)
+            else:
+                # Legacy behavior: hide all found objects if no user_id provided
+                conditions.append('f.id IS NULL')
         
         if conditions:
             query += ' WHERE ' + ' AND '.join(conditions)
@@ -581,6 +597,7 @@ def get_objects():
                     'created_at': row['created_at'],
                     'created_by': row['created_by'],
                     'grounding_height': row['grounding_height'],
+                    'multifindable': bool(row['multifindable']) if 'multifindable' in row.keys() else None,
                     'collected': bool(row['collected']),
                     'found_by': row['found_by'],
                     'found_at': row['found_at']

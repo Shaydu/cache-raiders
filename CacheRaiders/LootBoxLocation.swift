@@ -102,6 +102,8 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     var ar_placement_timestamp: Date? // When the object was placed in AR
     var ar_anchor_transform: String? // Base64-encoded AR anchor transform for mm precision
     var ar_world_transform: Data? // Full AR world transform matrix for exact tap positioning
+    var nfc_tag_id: String? // NFC tag ID if this object was placed via NFC
+    var multifindable: Bool? // Whether this item is multifindable (nil = use default based on placement type)
     
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -150,7 +152,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     // MARK: - Initializers
     
     /// Normal initializer for creating new locations
-    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api, created_by: String? = nil, needs_sync: Bool = false, last_modified: Date? = nil, server_version: Int64? = nil, ar_origin_latitude: Double? = nil, ar_origin_longitude: Double? = nil, ar_offset_x: Double? = nil, ar_offset_y: Double? = nil, ar_offset_z: Double? = nil, ar_placement_timestamp: Date? = nil, ar_anchor_transform: String? = nil, ar_world_transform: Data? = nil) {
+    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api, created_by: String? = nil, needs_sync: Bool = false, last_modified: Date? = nil, server_version: Int64? = nil, ar_origin_latitude: Double? = nil, ar_origin_longitude: Double? = nil, ar_offset_x: Double? = nil, ar_offset_y: Double? = nil, ar_offset_z: Double? = nil, ar_placement_timestamp: Date? = nil, ar_anchor_transform: String? = nil, ar_world_transform: Data? = nil, nfc_tag_id: String? = nil, multifindable: Bool? = nil) {
         self.id = id
         self.name = name
         self.type = type
@@ -172,6 +174,8 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         self.ar_placement_timestamp = ar_placement_timestamp
         self.ar_anchor_transform = ar_anchor_transform
         self.ar_world_transform = ar_world_transform
+        self.nfc_tag_id = nfc_tag_id
+        self.multifindable = multifindable
     }
     
     // MARK: - Custom Decoding (backward compatibility with prefix-based IDs)
@@ -311,7 +315,7 @@ class LootBoxLocationManager: ObservableObject {
         }
     }
     var onSizeChanged: (() -> Void)? // Callback when size settings change
-    var onObjectCollectedByOtherUser: ((String) -> Void)? // Callback when object is collected by another user (to remove from AR)
+    var onObjectCollectedByOtherUser: ((String) -> Void)? // Callback when object is collected (by any user, to remove from AR)
     var onObjectUncollected: ((String) -> Void)? // Callback when object is uncollected (to re-place in AR)
     var onAllObjectsCleared: (() -> Void)? // Callback when all objects should be cleared (e.g., game mode change)
     private let locationsFileName = "lootBoxLocations.json"
@@ -1033,7 +1037,7 @@ class LootBoxLocationManager: ObservableObject {
                 } catch {
                     print("❌ Error saving collected status to Core Data: \(error)")
                 }
-                
+
                 // Also sync to API if enabled (will queue if offline)
                 if useAPISync {
                     Task {
@@ -1043,6 +1047,10 @@ class LootBoxLocationManager: ObservableObject {
             } else {
                 print("⏭️ Skipping save for temporary AR item: \(locationId)")
             }
+
+            // Notify AR coordinator to remove the object from AR scene
+            // This callback is used for both current user and other users collecting objects
+            onObjectCollectedByOtherUser?(locationId)
 
             // Explicitly notify observers (in case @Published doesn't catch the change)
             objectWillChange.send()
