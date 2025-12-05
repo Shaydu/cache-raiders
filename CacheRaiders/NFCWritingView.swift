@@ -37,7 +37,6 @@ struct NFCWritingView: View {
 
     enum WritingStep {
         case selecting      // User selecting loot type
-        case positioning    // Capturing AR position with coordinates
         case writing        // Writing complete data to NFC token
         case creating       // Creating object via API
         case success        // Object created successfully
@@ -48,10 +47,8 @@ struct NFCWritingView: View {
         switch currentStep {
         case .selecting:
             return "Select the loot type to place"
-        case .positioning:
-            return "Capturing precise AR position..."
         case .writing:
-            return "Writing complete data to NFC tag..."
+            return "Tap NFC tag to write data..."
         case .creating:
             return "Saving to database..."
         case .success:
@@ -64,7 +61,6 @@ struct NFCWritingView: View {
     private var stepColor: Color {
         switch currentStep {
         case .selecting: return .blue
-        case .positioning: return .purple
         case .writing: return .orange
         case .creating: return .green
         case .success: return .green
@@ -112,8 +108,6 @@ struct NFCWritingView: View {
                         switch currentStep {
                         case .selecting:
                             lootTypeSelectionView
-                        case .positioning:
-                            positioningView
                         case .writing:
                             writingView
                         case .creating:
@@ -139,6 +133,26 @@ struct NFCWritingView: View {
                         .cornerRadius(8)
                     }
                     .padding(.top, 20)
+
+                    // NFC Tag Requirements Info
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("💡 NFC Tag Support")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.primary)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("✅ Working: NTAG 213, 215, 216")
+                            Text("✅ Working: NDEF-formatted tags")
+                            Text("✅ Working: Blank NTAG tags (auto-formatted)")
+                            Text("❌ Not working: MIFARE Classic")
+                            Text("❌ Not working: Corrupted tags")
+                        }
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal)
+                    .padding(.top, 10)
 
                     Spacer()
 
@@ -275,90 +289,25 @@ struct NFCWritingView: View {
                     .foregroundColor(.orange)
             }
 
-            Text("Writing complete data...")
+            Text("Writing to NFC tag...")
                 .font(.headline)
                 .foregroundColor(.orange)
 
             if let type = selectedLootType {
-                Text("Writing: \(type.displayName) with coordinates")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-
-
-    private var positioningView: some View {
-        VStack(spacing: 16) {
-            if isWaitingForARTap {
-                // AR tap placement interface
-                ZStack {
-                    if let arView = arView {
-                        NFCARViewContainer(arView: arView, tapHandler: handleARTap)
-                            .frame(height: 300)
-                            .cornerRadius(16)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 16)
-                                    .stroke(Color.purple.opacity(0.5), lineWidth: 2)
-                            )
-                    } else {
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.gray.opacity(0.2))
-                            .frame(height: 300)
-                            .overlay(
-                                VStack(spacing: 16) {
-                                    ProgressView()
-                                        .scaleEffect(1.5)
-                                    Text("Initializing AR...")
-                                        .font(.headline)
-                                        .foregroundColor(.secondary)
-                                }
-                            )
-                    }
-
-                    // Instructions overlay
-                    VStack {
-                        Spacer()
-                        Text(arPlacementInstructions)
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .padding()
-                            .background(Color.black.opacity(0.7))
-                            .cornerRadius(12)
-                            .padding(.bottom, 20)
-                    }
-                }
-            } else {
-                // Traditional GPS positioning interface
-                ZStack {
-                    Circle()
-                        .stroke(Color.purple.opacity(0.3), lineWidth: 4)
-                        .frame(width: 120, height: 120)
-
-                    Circle()
-                        .stroke(Color.purple, lineWidth: 4)
-                        .frame(width: 120, height: 120)
-                        .scaleEffect(1.2)
-                        .opacity(0.0)
-                        .animation(.easeInOut(duration: 1.0).repeatForever(), value: currentStep == .positioning)
-
-                    Image(systemName: "arkit")
-                        .font(.system(size: 40))
-                        .foregroundColor(.purple)
-                }
-
-                Text("Capturing AR position...")
-                    .font(.headline)
-                    .foregroundColor(.purple)
-
-                if let type = selectedLootType {
-                    Text("Creating: \(type.displayName)")
+                VStack(spacing: 4) {
+                    Text("Writing: \(type.displayName)")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
+
+                    Text("Will format tag if needed")
+                        .font(.caption)
+                        .foregroundColor(.secondary.opacity(0.7))
                 }
             }
         }
     }
+
+
 
     private var creatingView: some View {
         VStack(spacing: 16) {
@@ -454,13 +403,62 @@ struct NFCWritingView: View {
     private func startWriting() {
         guard let lootType = selectedLootType else { return }
 
-        // Skip initial NFC writing - go directly to AR positioning first
-        print("🎯 Starting AR positioning first, then NFC writing with complete data")
-        startPositioning()
+        // Skip AR positioning - go directly to NFC writing with current position
+        print("🎯 Starting NFC writing with current position (no camera view)")
+        startNFCWriting()
+    }
+
+    private func startNFCWriting() {
+        currentStep = .writing
+        isWriting = true
+
+        // Get current location
+        guard let location = userLocationManager.currentLocation else {
+            errorMessage = "Unable to get current location. Please ensure location services are enabled."
+            currentStep = .error
+            isWriting = false
+            return
+        }
+
+        print("📍 Writing NFC with current location: lat=\(location.coordinate.latitude), lon=\(location.coordinate.longitude)")
+
+        // Capture AR position if available (for precision)
+        var arOffsetX: Double? = nil
+        var arOffsetY: Double? = nil
+        var arOffsetZ: Double? = nil
+
+        // Check if we have an active AR session
+        if let arSession = arIntegrationService.getCurrentARSession(),
+           let frame = arSession.currentFrame {
+            let cameraTransform = frame.camera.transform
+            let cameraPos = SIMD3<Float>(
+                cameraTransform.columns.3.x,
+                cameraTransform.columns.3.y,
+                cameraTransform.columns.3.z
+            )
+
+            arOffsetX = Double(cameraPos.x)
+            arOffsetY = Double(cameraPos.y)
+            arOffsetZ = Double(cameraPos.z)
+
+            print("✅ Captured AR position for precision: (\(arOffsetX!), \(arOffsetY!), \(arOffsetZ!))")
+        }
+
+        // Write NFC with complete data
+        Task {
+            await writeNFCWithCompleteData(
+                for: selectedLootType!,
+                location: location,
+                arOffsetX: arOffsetX,
+                arOffsetY: arOffsetY,
+                arOffsetZ: arOffsetZ,
+                arOriginLat: location.coordinate.latitude,
+                arOriginLon: location.coordinate.longitude
+            )
+        }
     }
 
     private func startPositioning() {
-        currentStep = .positioning
 
         // Get current user location from the existing location manager
         if let location = userLocationManager.currentLocation {
@@ -669,7 +667,7 @@ struct NFCWritingView: View {
                             arOriginLat: arOriginLat,
                             arOriginLon: arOriginLon,
                             nfcResult: nfcResult,
-                            compactMessage: nfcMessages.first ?? "" // Use the first URL (app URL) for object ID extraction
+                            compactMessage: nfcContent.url // Use the URL for object ID extraction
                         )
                     }
 
@@ -894,10 +892,10 @@ struct NFCWritingView: View {
         // Create the message content with URL and object ID
         let nfcContent = createLootMessage(for: lootType, with: gpsLocation, arAnchorData: nil)
 
-        guard !nfcMessages.isEmpty else {
+        guard !nfcContent.url.isEmpty && !nfcContent.objectId.isEmpty else {
             DispatchQueue.main.async {
                 self.isWriting = false
-                self.errorMessage = "Failed to create NFC messages"
+                self.errorMessage = "Failed to create NFC message content"
                 self.currentStep = .error
             }
             return
@@ -923,7 +921,7 @@ struct NFCWritingView: View {
                             arWorldTransform: arWorldTransform,
                             gpsLocation: gpsLocation,
                             nfcResult: nfcResult,
-                            compactMessage: nfcMessages.first ?? ""
+                            compactMessage: nfcContent.url
                         )
                     }
 

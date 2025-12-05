@@ -228,16 +228,12 @@ struct NFCScanOnlyView: View {
         if ndefMessage.records.count >= 2 {
             let secondRecord = ndefMessage.records[1] // Second record (index 1)
             print("   Second record type: '\(String(data: secondRecord.type, encoding: .utf8) ?? "unknown")'")
-            print("   Second record format: \(secondRecord.format.rawValue)")
 
-            // Check if it's a text record (type "T")
-            if let recordType = String(data: secondRecord.type, encoding: .utf8), recordType == "T" {
-                // This is a text record - extract the object ID
-                let objectId = extractTextFromRecord(secondRecord)
-                if let objectId = objectId, !objectId.isEmpty {
-                    print("   ✅ Found object ID in second record: '\(objectId)'")
-                    return objectId
-                }
+            // Try to extract text from the second record (should be the object ID)
+            let objectId = extractTextFromRecord(secondRecord)
+            if let objectId = objectId, !objectId.isEmpty {
+                print("   ✅ Found object ID in second record: '\(objectId)'")
+                return objectId
             }
         }
 

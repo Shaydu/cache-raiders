@@ -612,8 +612,16 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
     func tagReaderSession(_ session: NFCTagReaderSession, didInvalidateWithError error: Error) {
         print("❌ NFC Tag Session invalidated with error: \(error.localizedDescription)")
         print("   - Error type: \(type(of: error))")
+        print("   - Error domain: \((error as NSError).domain)")
+        print("   - Error code: \((error as NSError).code)")
         if let readerError = error as? NFCReaderError {
-            print("   - Reader error code: \(readerError.code.rawValue)")
+            print("   - Reader error code: \(readerError.code.rawValue) (\(readerError.code))")
+        }
+
+        // Check for specific "data is missing" error
+        if error.localizedDescription.contains("missing") || error.localizedDescription.contains("data") {
+            print("   🚨 This looks like a blank/unformatted NFC tag error!")
+            print("   💡 Try using NTAG 213, 215, or 216 tags that are NDEF-compatible")
         }
 
         // Check if we already handled the completion (success case)
@@ -667,6 +675,23 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
     @available(iOS 13.0, *)
     func tagReaderSession(_ session: NFCTagReaderSession, didDetect tags: [NFCTag]) {
         print("🎯 NFC Tags detected: \(tags.count)")
+
+        // Log details about detected tags
+        for (index, tag) in tags.enumerated() {
+            print("   Tag \(index + 1): \(tag)")
+            switch tag {
+            case .miFare(let miFareTag):
+                print("   - Type: MiFare, Identifier: \(miFareTag.identifier.hexString)")
+            case .iso7816(let iso7816Tag):
+                print("   - Type: ISO7816")
+            case .feliCa(let feliCaTag):
+                print("   - Type: FeliCa")
+            case .iso15693(let iso15693Tag):
+                print("   - Type: ISO15693")
+            @unknown default:
+                print("   - Type: Unknown")
+            }
+        }
 
         guard let firstTag = tags.first else {
             session.invalidate(errorMessage: "No tag found")
@@ -743,11 +768,23 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
         }
 
         // Query NDEF status
+        print("🔍 Querying NDEF status of tag...")
         tag.queryNDEFStatus { [weak self] status, capacity, error in
             guard let self = self else { return }
 
             if let error = error {
                 print("❌ Failed to query NDEF status: \(error.localizedDescription)")
+                print("   - Error domain: \((error as NSError).domain)")
+                print("   - Error code: \((error as NSError).code)")
+
+                // Check for "data is missing" type errors
+                if error.localizedDescription.contains("missing") ||
+                   error.localizedDescription.contains("data") ||
+                   error.localizedDescription.contains("read") {
+                    print("   🚨 This tag appears to be blank or not NDEF-formatted!")
+                    print("   💡 Solution: Use NTAG 213/215/216 tags or format the tag first")
+                }
+
                 let completion = self.writeCompletion
                 self.writeCompletion = nil
                 self.writeMessage = nil
@@ -759,14 +796,25 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
 
             print("📊 NDEF Status: \(status.rawValue), Capacity: \(capacity) bytes")
 
+            // Log what the status means
             switch status {
             case .notSupported:
-                let completion = self.writeCompletion
-                self.writeCompletion = nil
-                self.writeMessage = nil
-                self.writeNDEFMessage = nil
-                session.invalidate(errorMessage: "Tag is not NDEF formatted")
-                completion?(.failure(.readError("Tag is not NDEF formatted")))
+                print("   - Status: Not supported initially (will attempt to format blank NTAG tags)")
+            case .readOnly:
+                print("   - Status: Read-only (tag is locked)")
+            case .readWrite:
+                print("   - Status: Read-write (tag can be written to)")
+            @unknown default:
+                print("   - Status: Unknown")
+            }
+
+            switch status {
+            case .notSupported:
+                // For blank/unformatted tags, iOS can format them during write
+                print("⚠️ Tag reports as not NDEF supported - attempting to format and write...")
+                print("   💡 iOS will attempt to format compatible tags (NTAG 213/215/216)")
+                print("   💡 MIFARE Classic tags cannot be formatted to NDEF")
+                self.attemptWriteToTag(tag, ndefMessage: ndefMessage, session: session)
             case .readOnly:
                 let completion = self.writeCompletion
                 self.writeCompletion = nil
@@ -776,51 +824,7 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
                 completion?(.failure(.readError("Tag is read-only")))
             case .readWrite:
                 // Write the NDEF message
-                tag.writeNDEF(ndefMessage) { error in
-                    if let error = error {
-                        print("❌ Failed to write NDEF: \(error.localizedDescription)")
-                        let completion = self.writeCompletion
-                        self.writeCompletion = nil
-                        self.writeMessage = nil
-                        self.writeNDEFMessage = nil
-                        session.invalidate(errorMessage: "Write failed")
-                        completion?(.failure(.readError("Write failed: \(error.localizedDescription)")))
-                    } else {
-                        print("✅ Successfully wrote NDEF message to tag")
-
-                        // Check if we should lock the tag after writing
-                        if self.shouldLockTag {
-                            print("🔒 Tag locking requested but not supported on this iOS version")
-                            print("⚠️ Tag was written but not locked (locking not available)")
-                        }
-
-                        // Continue with completion regardless of locking result
-                        let tagId = tag.identifier.hexString
-                        let result = NFCResult(
-                            tagId: tagId,
-                            ndefMessage: ndefMessage,
-                            payload: self.writeMessage,
-                            timestamp: Date(),
-                            arTransform: nil,
-                            cameraTransform: nil
-                        )
-                        session.alertMessage = self.shouldLockTag ?
-                            "Loot data written successfully!" : "Loot data written successfully!"
-
-                        // Call completion handler BEFORE invalidating
-                        let completion = self.writeCompletion
-                        self.writeCompletion = nil
-                        self.writeMessage = nil
-                        self.writeNDEFMessage = nil
-                        self.shouldLockTag = false
-
-                        // Now invalidate the session
-                        session.invalidate()
-
-                        // Call the completion handler
-                        completion?(.success(result))
-                    }
-                }
+                self.attemptWriteToTag(tag, ndefMessage: ndefMessage, session: session)
             @unknown default:
                 let completion = self.writeCompletion
                 self.writeCompletion = nil
@@ -828,6 +832,169 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
                 self.writeNDEFMessage = nil
                 session.invalidate(errorMessage: "Unknown tag status")
                 completion?(.failure(.readError("Unknown tag status")))
+            }
+        }
+    }
+
+    @available(iOS 13.0, *)
+    private func attemptWriteToTag(_ tag: NFCMiFareTag, ndefMessage: NFCNDEFMessage, session: NFCTagReaderSession) {
+        print("📝 Attempting to write NDEF message to tag...")
+        print("   - Tag identifier: \(tag.identifier.hexString)")
+        print("   - Message records: \(ndefMessage.records.count)")
+        print("   - Message size: ~\(ndefMessage.records.reduce(0) { $0 + $1.payload.count }) bytes")
+
+        tag.writeNDEF(ndefMessage) { [weak self] error in
+            guard let self = self else { return }
+
+            if let error = error {
+                print("❌ Failed to write NDEF: \(error.localizedDescription)")
+                print("   - Error domain: \((error as NSError).domain)")
+                print("   - Error code: \((error as NSError).code)")
+
+                // Provide specific guidance based on error type
+                let errorDesc = error.localizedDescription.lowercased()
+                if errorDesc.contains("format") || errorDesc.contains("ndef") || errorDesc.contains("not supported") {
+                    print("   🚨 Tag formatting failed - this tag type doesn't support NDEF")
+                    print("   💡 Supported tags: NTAG 213, NTAG 215, NTAG 216")
+                    print("   💡 Avoid: MIFARE Classic, unformatted tags")
+                } else if errorDesc.contains("capacity") || errorDesc.contains("size") {
+                    print("   🚨 Tag capacity exceeded")
+                    print("   💡 Try a larger capacity tag (NTAG 215/216 instead of 213)")
+                } else if errorDesc.contains("lock") || errorDesc.contains("read") {
+                    print("   🚨 Tag is locked or read-only")
+                    print("   💡 This tag has been permanently locked")
+                }
+
+                // Try alternative approach for certain error types
+                if errorDesc.contains("format") || errorDesc.contains("ndef") {
+                    print("   🔄 Attempting alternative formatting approach...")
+                    self.tryAlternativeWrite(tag, ndefMessage: ndefMessage, session: session)
+                    return // Don't complete yet, alternative method will handle completion
+                }
+
+                // Provide user-friendly error message
+                var userMessage = "Write failed: \(error.localizedDescription)"
+                if errorDesc.contains("format") || errorDesc.contains("ndef") || errorDesc.contains("not supported") {
+                    userMessage = "This NFC tag type is not supported. Please use NTAG 213, 215, or 216 tags."
+                } else if errorDesc.contains("capacity") {
+                    userMessage = "NFC tag capacity too small. Please use a larger capacity tag."
+                }
+
+                // Clean up and complete with error
+                let writeCompletion = self.writeCompletion
+                self.writeCompletion = nil
+                self.writeMessage = nil
+                self.writeNDEFMessage = nil
+                session.invalidate(errorMessage: "Write failed")
+                writeCompletion?(.failure(.readError(userMessage)))
+            } else {
+                print("✅ Successfully wrote NDEF message to tag")
+
+                // Check if we should lock the tag after writing
+                if self.shouldLockTag {
+                    print("🔒 Tag locking requested but not supported on this iOS version")
+                    print("⚠️ Tag was written but not locked (locking not available)")
+                }
+
+                // Continue with completion regardless of locking result
+                let tagId = tag.identifier.hexString
+                let result = NFCResult(
+                    tagId: tagId,
+                    ndefMessage: ndefMessage,
+                    payload: self.writeMessage,
+                    timestamp: Date(),
+                    arTransform: nil,
+                    cameraTransform: nil
+                )
+                session.alertMessage = self.shouldLockTag ?
+                    "Loot data written successfully!" : "Loot data written successfully!"
+
+                // Clean up and complete with success
+                let writeCompletion = self.writeCompletion
+                self.writeCompletion = nil
+                self.writeMessage = nil
+                self.writeNDEFMessage = nil
+                self.shouldLockTag = false
+
+                // Now invalidate the session
+                session.invalidate()
+
+                // Call the completion handler
+                writeCompletion?(.success(result))
+            }
+        }
+    }
+
+    @available(iOS 13.0, *)
+    private func tryAlternativeWrite(_ tag: NFCMiFareTag, ndefMessage: NFCNDEFMessage, session: NFCTagReaderSession) {
+        print("🔄 Trying alternative write approach...")
+
+        // Some tags need a "priming" write with minimal data first
+        // Create a minimal NDEF message to format the tag
+        let minimalPayload = "CacheRaiders".data(using: .utf8)!
+        let minimalRecord = NFCNDEFPayload(
+            format: .nfcWellKnown,
+            type: "T".data(using: .utf8)!,
+            identifier: Data(),
+            payload: minimalPayload
+        )
+        let minimalMessage = NFCNDEFMessage(records: [minimalRecord])
+
+        print("   📝 Step 1: Writing minimal message to format tag...")
+        tag.writeNDEF(minimalMessage) { [weak self] error in
+            guard let self = self else { return }
+
+            if let error = error {
+                print("   ❌ Minimal format write failed: \(error.localizedDescription)")
+                print("   💡 This tag likely doesn't support NDEF formatting")
+
+                let completion = self.writeCompletion
+                self.writeCompletion = nil
+                self.writeMessage = nil
+                self.writeNDEFMessage = nil
+                session.invalidate(errorMessage: "Tag doesn't support NDEF")
+                completion?(.failure(.readError("This NFC tag type cannot be formatted for NDEF. Please use NTAG 213, 215, or 216 tags.")))
+            } else {
+                print("   ✅ Minimal format write succeeded")
+
+                // Now try writing the full message
+                print("   📝 Step 2: Writing full message...")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { // Small delay
+                    tag.writeNDEF(ndefMessage) { error in
+                        if let error = error {
+                            print("   ❌ Full message write failed: \(error.localizedDescription)")
+
+                            let completion = self.writeCompletion
+                            self.writeCompletion = nil
+                            self.writeMessage = nil
+                            self.writeNDEFMessage = nil
+                            session.invalidate(errorMessage: "Write failed after formatting")
+                            completion?(.failure(.readError("Failed to write data after formatting tag")))
+                        } else {
+                            print("   ✅ Full message write succeeded after formatting!")
+
+                            // Success! Complete the operation
+                            let tagId = tag.identifier.hexString
+                            let result = NFCResult(
+                                tagId: tagId,
+                                ndefMessage: ndefMessage,
+                                payload: self.writeMessage,
+                                timestamp: Date(),
+                                arTransform: nil,
+                                cameraTransform: nil
+                            )
+
+                            let completion = self.writeCompletion
+                            self.writeCompletion = nil
+                            self.writeMessage = nil
+                            self.writeNDEFMessage = nil
+                            self.shouldLockTag = false
+
+                            session.invalidate()
+                            completion?(.success(result))
+                        }
+                    }
+                }
             }
         }
     }
@@ -869,3 +1036,4 @@ extension NFCReaderError {
         return code == .readerSessionInvalidationErrorUserCanceled
     }
 }
+
