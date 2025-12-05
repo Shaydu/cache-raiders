@@ -2,6 +2,7 @@ import ARKit
 import RealityKit
 import CoreLocation
 import Combine
+import CoreNFC
 
 // MARK: - NFC-AR Integration Service
 /// Seamlessly switches from GPS macro positioning to NFC-grounded micro AR positioning
@@ -46,6 +47,19 @@ class NFCARIntegrationService: NSObject, ObservableObject {
     /// Get the current AR session for capturing camera transforms during NFC placement
     func getCurrentARSession() -> ARSession? {
         return arView?.session
+    }
+
+    /// Enhanced NFC scanning with precise AR positioning capture
+    func scanNFCWithARPositioning(completion: @escaping (Result<NFCService.NFCResult, NFCService.NFCError>) -> Void) {
+        guard let arSession = getCurrentARSession() else {
+            print("❌ No AR session available for NFC positioning")
+            // Fall back to regular NFC scanning
+            NFCService.shared.scanNFC(completion: completion)
+            return
+        }
+
+        print("🎯 Starting NFC scan with AR positioning capture")
+        NFCService.shared.scanNFCWithARPositioning(arSession: arSession, completion: completion)
     }
 
     private func setupLocationManager() {
@@ -167,8 +181,8 @@ class NFCARIntegrationService: NSObject, ObservableObject {
                 // Store for AR grounding
                 self.activeObjects[object.objectID] = object
 
-                // Start AR grounding process
-                await self.startARGrounding(for: object, nfcTransform: nil)
+                // Start AR grounding process with NFC result for exact positioning
+                await self.startARGrounding(for: object, nfcResult: nfcResult)
 
             } catch {
                 print("❌ Failed to load object data: \(error)")
@@ -177,26 +191,35 @@ class NFCARIntegrationService: NSObject, ObservableObject {
     }
 
     // MARK: - AR Grounding (Micro Positioning)
-    private func startARGrounding(for object: PreciseARPositioningService.NFCTaggedObject, nfcTransform: simd_float4x4?) async {
+    private func startARGrounding(for object: PreciseARPositioningService.NFCTaggedObject, nfcResult: NFCService.NFCResult) async {
         transitionToState(.arGrounding)
 
         do {
-            // Place the AR object with precise positioning
-            try await PreciseARPositioningService.shared.placePreciseARObject(object: object)
+            // Use exact NFC tap positioning if available, otherwise fall back to GPS-based positioning
+            if nfcResult.arTransform != nil {
+                print("🎯 Using exact NFC tap positioning for maximum accuracy")
+                try await PreciseARPositioningService.shared.placeARObjectAtExactNFCTap(object: object, nfcResult: nfcResult)
+                transitionToState(.lockedIn)
+                precisionAchieved.send((objectID: object.objectID, precision: 0.005)) // 5mm precision
+            } else {
+                print("📍 Falling back to GPS-based AR positioning")
+                // Place the AR object with precise positioning
+                try await PreciseARPositioningService.shared.placePreciseARObject(object: object)
+
+                // If we have NFC transform, apply precision correction immediately
+                if let nfcTransform = nfcResult.arTransform {
+                    PreciseARPositioningService.shared.snapToAnchorPrecision(for: object, nfcScanTransform: nfcTransform)
+                    transitionToState(.lockedIn)
+                    precisionAchieved.send((objectID: object.objectID, precision: 0.02)) // 2cm
+                } else {
+                    // Monitor precision over time
+                    monitorPrecision(for: object.objectID)
+                }
+            }
 
             // Store the grounding anchor
             if let anchor = PreciseARPositioningService.shared.getActiveAnchor(for: object.objectID) {
                 groundingAnchors[object.objectID] = anchor
-            }
-
-            // If we have NFC transform, apply precision correction immediately
-            if let nfcTransform = nfcTransform {
-                PreciseARPositioningService.shared.snapToAnchorPrecision(for: object, nfcScanTransform: nfcTransform)
-                transitionToState(.lockedIn)
-                precisionAchieved.send((objectID: object.objectID, precision: 0.02)) // 2cm
-            } else {
-                // Monitor precision over time
-                monitorPrecision(for: object.objectID)
             }
 
         } catch {
@@ -261,9 +284,11 @@ class NFCARIntegrationService: NSObject, ObservableObject {
             name: NSNotification.Name("NFCTagDiscovered"),
             object: NFCService.NFCResult(
                 tagId: tagID,
-                ndefMessage: nil,
-                payload: nil,
-                timestamp: Date()
+                ndefMessage: nil as NFCNDEFMessage?,
+                payload: nil as String?,
+                timestamp: Date(),
+                arTransform: nil,
+                cameraTransform: nil
             )
         )
     }

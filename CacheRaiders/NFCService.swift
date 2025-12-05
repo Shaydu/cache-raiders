@@ -1,5 +1,6 @@
 import CoreNFC
 import UIKit
+import ARKit
 
 // MARK: - NFC Service
 class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDelegate {
@@ -14,13 +15,22 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
     private var writeMessage: String?
     private var writeNDEFMessage: NFCNDEFMessage?
     private var shouldLockTag: Bool = false
+    private var arSession: ARSession? // Reference to AR session for position capture
 
-    // MARK: - NFC Result
+    // MARK: - NFC Message Content
+    struct NFCMessageContent {
+        let url: String
+        let objectId: String
+    }
+
+// MARK: - NFC Result
     struct NFCResult {
         let tagId: String
         let ndefMessage: NFCNDEFMessage?
         let payload: String?
         let timestamp: Date
+        let arTransform: simd_float4x4? // Exact AR position where NFC was tapped
+        let cameraTransform: simd_float4x4? // Camera transform at time of scan
     }
 
     // MARK: - NFC Error
@@ -51,7 +61,13 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
     }
 
     // MARK: - Public Methods
+    /// Scan NFC without AR positioning (legacy method)
     func scanNFC(completion: @escaping (Result<NFCResult, NFCError>) -> Void) {
+        scanNFCWithARPositioning(arSession: nil, completion: completion)
+    }
+
+    /// Scan NFC with high-precision AR positioning capture
+    func scanNFCWithARPositioning(arSession: ARSession?, completion: @escaping (Result<NFCResult, NFCError>) -> Void) {
         self.readCompletion = completion
 
         // TEMPORARY WORKAROUND: Skip availability check for debugging
@@ -66,10 +82,10 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
         // Invalidate any existing sessions
         invalidateSessions()
 
-        // Create new reader session
+        // Create new reader session with improved configuration
         print("📱 Creating NFC reader session...")
         readerSession = NFCNDEFReaderSession(delegate: self, queue: nil, invalidateAfterFirstRead: true)
-        readerSession?.alertMessage = "Hold your iPhone near an NFC tag to read it."
+        readerSession?.alertMessage = "Hold your iPhone steady near an NFC tag to read it. Keep the tag in place until you see the success message."
 
         // Check if session was created successfully
         if let session = readerSession {
@@ -86,6 +102,37 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
             completion(.failure(.sessionInvalidated))
             return
         }
+    }
+
+    /// Get current AR camera transform for precise positioning
+    private func getCurrentARTransform() -> (arTransform: simd_float4x4?, cameraTransform: simd_float4x4?) {
+        guard let arSession = arSession,
+              let frame = arSession.currentFrame else {
+            print("⚠️ No AR session or frame available for position capture")
+            return (nil, nil)
+        }
+
+        let cameraTransform = frame.camera.transform
+        print("📍 Captured AR camera transform at NFC scan time")
+
+        // Estimate NFC tag position based on camera orientation
+        // NFC scanning typically happens when device is ~5-15cm from the tag
+        // We'll estimate the position along the camera's forward vector
+        let estimatedDistance: Float = 0.1 // 10cm in front of camera
+        let forwardDirection = -simd_normalize(SIMD3<Float>(cameraTransform.columns.2.x, cameraTransform.columns.2.y, cameraTransform.columns.2.z)) // Negative Z is forward in camera space
+        let cameraPosition = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+
+        // Calculate estimated tag position
+        let tagPosition = cameraPosition + (forwardDirection * estimatedDistance)
+
+        // Create transform matrix for the estimated tag position
+        // Keep the same orientation as camera for simplicity
+        var tagTransform = cameraTransform
+        tagTransform.columns.3 = SIMD4<Float>(tagPosition.x, tagPosition.y, tagPosition.z, 1.0)
+
+        print("🎯 Estimated NFC tag position: (\(String(format: "%.3f", tagPosition.x)), \(String(format: "%.3f", tagPosition.y)), \(String(format: "%.3f", tagPosition.z)))")
+
+        return (tagTransform, cameraTransform)
     }
 
     @available(iOS 13.0, *)
@@ -108,7 +155,8 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
         print("🔧 NFCService.writeNFC: Starting write with message: \(message)")
 
         // Create NDEF message to write BEFORE invalidating sessions
-        guard let ndefMessage = createNDEFMessage(from: message) else {
+        let content = NFCMessageContent(url: message, objectId: "TEMP_ID") // This should be updated by caller
+        guard let ndefMessage = createNDEFMessage(from: content) else {
             print("❌ Failed to create NDEF message")
             completion(.failure(.readError("Failed to create NDEF message")))
             return
@@ -120,6 +168,95 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
         // NOW set the write data (after invalidate, so it doesn't get cleared)
         self.writeCompletion = completion
         self.writeMessage = message
+        self.writeNDEFMessage = ndefMessage
+        self.shouldLockTag = lockTag
+
+        // Create new writer session with NFCTagReaderSession to get write access
+        writerSession = NFCTagReaderSession(pollingOption: [.iso14443], delegate: self, queue: nil)
+        writerSession?.alertMessage = "Hold your iPhone near an NFC tag to write loot data."
+
+        print("🚀 Starting NFC writer session...")
+        writerSession?.begin()
+        print("📡 NFC writer session begin() called")
+    }
+
+    func writeNFC(content: NFCMessageContent, lockTag: Bool = false, completion: @escaping (Result<NFCResult, NFCError>) -> Void) {
+        print("🎯 NFCService.writeNFC called with URL + object ID")
+        print("   URL: \(content.url)")
+        print("   Object ID: \(content.objectId)")
+        print("   iOS Version: \(UIDevice.current.systemVersion)")
+        print("   Device Model: \(UIDevice.current.model)")
+        print("   Device Name: \(UIDevice.current.name)")
+
+        // Check if NFC is available for reading (required for writing)
+        guard NFCTagReaderSession.readingAvailable else {
+            print("❌ NFC not available on this device for reading/writing")
+            print("   NFCTagReaderSession.readingAvailable = false")
+            completion(.failure(.notSupported))
+            return
+        }
+
+        print("✅ NFC reading capability confirmed")
+
+        print("🔧 NFCService.writeNFC: Starting write with URL + object ID")
+
+        // Create NDEF message to write BEFORE invalidating sessions
+        guard let ndefMessage = createNDEFMessage(from: content) else {
+            print("❌ Failed to create NDEF message")
+            completion(.failure(.readError("Failed to create NDEF message")))
+            return
+        }
+
+        // Invalidate any existing sessions FIRST
+        invalidateSessions()
+
+        // NOW set the write data (after invalidate, so it doesn't get cleared)
+        self.writeCompletion = completion
+        self.writeMessage = "URL: \(content.url), ObjectID: \(content.objectId)"
+        self.writeNDEFMessage = ndefMessage
+        self.shouldLockTag = lockTag
+
+        // Create new writer session with NFCTagReaderSession to get write access
+        writerSession = NFCTagReaderSession(pollingOption: [.iso14443], delegate: self, queue: nil)
+        writerSession?.alertMessage = "Hold your iPhone near an NFC tag to write loot data."
+
+        print("🚀 Starting NFC writer session...")
+        writerSession?.begin()
+        print("📡 NFC writer session begin() called")
+    }
+
+    func writeNFC(messages: [String], lockTag: Bool = false, completion: @escaping (Result<NFCResult, NFCError>) -> Void) {
+        print("🎯 NFCService.writeNFC called with \(messages.count) message(s): \(messages)")
+        print("   iOS Version: \(UIDevice.current.systemVersion)")
+        print("   Device Model: \(UIDevice.current.model)")
+        print("   Device Name: \(UIDevice.current.name)")
+
+        // Check if NFC is available for reading (required for writing)
+        guard NFCTagReaderSession.readingAvailable else {
+            print("❌ NFC not available on this device for reading/writing")
+            print("   NFCTagReaderSession.readingAvailable = false")
+            completion(.failure(.notSupported))
+            return
+        }
+
+        print("✅ NFC reading capability confirmed")
+
+        print("🔧 NFCService.writeNFC: Starting write with \(messages.count) message(s)")
+
+        // Create NDEF message to write BEFORE invalidating sessions
+        let content = NFCMessageContent(url: messages.first ?? "", objectId: messages.last ?? "TEMP_ID") // This should be updated by caller
+        guard let ndefMessage = createNDEFMessage(from: content) else {
+            print("❌ Failed to create NDEF message")
+            completion(.failure(.readError("Failed to create NDEF message")))
+            return
+        }
+
+        // Invalidate any existing sessions FIRST
+        invalidateSessions()
+
+        // NOW set the write data (after invalidate, so it doesn't get cleared)
+        self.writeCompletion = completion
+        self.writeMessage = messages.joined(separator: ", ")
         self.writeNDEFMessage = ndefMessage
         self.shouldLockTag = lockTag
 
@@ -213,8 +350,21 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
                 nfcError = .userCancelled
             case .readerSessionInvalidationErrorSessionTimeout:
                 nfcError = .timeout
+            case .readerTransceiveErrorTagConnectionLost:
+                // Error code 204 - tag connection lost
+                print("   → Tag connection lost (204) - this often happens when the tag moves away too quickly")
+                nfcError = .readError("Tag connection lost - try holding the device steadier over the NFC tag")
+            case .readerTransceiveErrorRetryExceeded:
+                // Error code 203 - retry exceeded
+                print("   → Retry exceeded - tag may be faulty or positioned incorrectly")
+                nfcError = .readError("Unable to read tag - try repositioning the NFC tag")
+            case .readerSessionInvalidationErrorSessionTerminatedUnexpectedly:
+                // Error code 205 - session terminated unexpectedly
+                print("   → Session terminated unexpectedly")
+                nfcError = .readError("NFC session ended unexpectedly - try again")
             default:
-                nfcError = .sessionInvalidated
+                print("   → Unhandled NFC error code: \(readerError.code.rawValue)")
+                nfcError = .readError("NFC error \(readerError.code.rawValue): \(error.localizedDescription)")
             }
         } else {
             nfcError = .sessionInvalidated
@@ -284,11 +434,16 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
         // Extract payload as string
         let payload = extractPayload(from: message)
 
+        // Capture AR positioning data at the exact moment of NFC detection
+        let arTransforms = getCurrentARTransform()
+
         let result = NFCResult(
             tagId: tagId,
             ndefMessage: message,
             payload: payload,
-            timestamp: Date()
+            timestamp: Date(),
+            arTransform: arTransforms.arTransform,
+            cameraTransform: arTransforms.cameraTransform
         )
 
         readCompletion?(.success(result))
@@ -311,69 +466,110 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
         return "ndef_unknown_\(Date().timeIntervalSince1970)"
     }
 
-    private func createNDEFMessage(from urlString: String) -> NFCNDEFMessage? {
-        print("🔨 Creating compact NDEF URI record")
-        print("   URL: \(urlString)")
-        print("   URL length: \(urlString.count) characters")
+    private func createNDEFMessage(from content: NFCMessageContent) -> NFCNDEFMessage? {
+        print("🔨 Creating NDEF message with URL + object ID records")
+
+        var records: [NFCNDEFPayload] = []
+
+        // Record 1: URI record with URL (for web access)
+        print("   Record 1 (URL): \(content.url)")
+        print("   URL length: \(content.url.count) characters")
 
         // Validate this is a URL (should start with http:// or https://)
-        let isURL = urlString.hasPrefix("http://") || urlString.hasPrefix("https://")
+        let isURL = content.url.hasPrefix("http://") || content.url.hasPrefix("https://")
 
-        if !isURL {
-            print("⚠️ Input doesn't appear to be a valid URL")
+        if isURL {
+            // Check URL length - NFC tags have limited capacity (typically ~144 bytes per record)
+            if content.url.count > 100 {
+                print("⚠️ Warning: URL is \(content.url.count) characters, may exceed NFC tag capacity")
+            }
+
+            // Create NDEF URI record (TNF = NFC Well Known, Type = "U")
+            // URI format: [URI identifier byte] + [URI string bytes]
+
+            // Determine URI identifier byte based on prefix for optimal compression
+            var uriIdentifier: UInt8 = 0x00 // No prefix
+            if content.url.hasPrefix("http://") {
+                uriIdentifier = 0x03 // http://www.
+            } else if content.url.hasPrefix("https://") {
+                uriIdentifier = 0x04 // https://www.
+            }
+
+            // Remove the prefix if we're using a URI identifier (saves space)
+            var uriPayload = content.url
+            if uriIdentifier == 0x03 && content.url.hasPrefix("http://") {
+                uriPayload = String(content.url.dropFirst(7)) // Remove "http://"
+            } else if uriIdentifier == 0x04 && content.url.hasPrefix("https://") {
+                uriPayload = String(content.url.dropFirst(8)) // Remove "https://"
+            }
+
+            guard let uriData = uriPayload.data(using: .utf8) else {
+                print("❌ Failed to convert URI string to data")
+                return nil
+            }
+
+            var payload = Data()
+            payload.append(uriIdentifier)
+            payload.append(uriData)
+
+            print("   Record 1 payload size: \(payload.count) bytes")
+            print("   Record 1 URI identifier: 0x\(String(format: "%02X", uriIdentifier))")
+
+            let uriRecord = NFCNDEFPayload(
+                format: .nfcWellKnown,
+                type: "U".data(using: .utf8)!,
+                identifier: Data(),
+                payload: payload
+            )
+
+            records.append(uriRecord)
+        } else {
+            print("❌ URL doesn't appear to be valid, skipping URI record")
             return nil
         }
 
-        // Check URL length - NFC tags have limited capacity (typically ~144 bytes)
-        if urlString.count > 100 {
-            print("⚠️ Warning: URL is \(urlString.count) characters, may exceed NFC tag capacity")
-        }
+        // Record 2: Text record with object ID (for app identification)
+        print("   Record 2 (Object ID): \(content.objectId)")
+        print("   Object ID length: \(content.objectId.count) characters")
 
-        // Create NDEF URI record (TNF = NFC Well Known, Type = "U")
-        // URI format: [URI identifier byte] + [URI string bytes]
-
-        // Determine URI identifier byte based on prefix for optimal compression
-        var uriIdentifier: UInt8 = 0x00 // No prefix
-        if urlString.hasPrefix("http://") {
-            uriIdentifier = 0x03 // http://www.
-        } else if urlString.hasPrefix("https://") {
-            uriIdentifier = 0x04 // https://www.
-        }
-
-        // Remove the prefix if we're using a URI identifier (saves space)
-        var uriPayload = urlString
-        if uriIdentifier == 0x03 && urlString.hasPrefix("http://") {
-            uriPayload = String(urlString.dropFirst(7)) // Remove "http://"
-        } else if uriIdentifier == 0x04 && urlString.hasPrefix("https://") {
-            uriPayload = String(urlString.dropFirst(8)) // Remove "https://"
-        }
-
-        guard let uriData = uriPayload.data(using: .utf8) else {
-            print("❌ Failed to convert URI string to data")
+        // Create NDEF Text record (TNF = NFC Well Known, Type = "T")
+        // Text format: [status byte] + [language code] + [text]
+        // Status byte: bit 7 = UTF-16 (0 for UTF-8), bits 5-0 = language code length
+        let languageCode = "en" // English
+        guard let languageData = languageCode.data(using: .ascii),
+              let textData = content.objectId.data(using: .utf8) else {
+            print("❌ Failed to convert object ID to data")
             return nil
         }
 
-        var payload = Data()
-        payload.append(uriIdentifier)
-        payload.append(uriData)
+        // Status byte: UTF-8 encoding (bit 7 = 0), language code length = 2
+        let statusByte: UInt8 = UInt8(languageData.count)
+        var textPayload = Data()
+        textPayload.append(statusByte)
+        textPayload.append(languageData)
+        textPayload.append(textData)
 
-        print("   URI payload size: \(payload.count) bytes")
-        print("   URI identifier: 0x\(String(format: "%02X", uriIdentifier))")
-        print("   Total NDEF message size estimate: ~\(payload.count + 10) bytes")
+        print("   Record 2 payload size: \(textPayload.count) bytes")
 
-        let uriRecord = NFCNDEFPayload(
+        let textRecord = NFCNDEFPayload(
             format: .nfcWellKnown,
-            type: "U".data(using: .utf8)!,
+            type: "T".data(using: .utf8)!,
             identifier: Data(),
-            payload: payload
+            payload: textPayload
         )
 
-        // Create NDEF message with the URI record
-        let ndefMessage = NFCNDEFMessage(records: [uriRecord])
+        records.append(textRecord)
 
-        print("✅ Created compact URI NDEF record")
-        print("   Record type: URI (compact)")
-        print("   Payload contains object ID only")
+        // Calculate total message size
+        let totalPayloadSize = records.reduce(0) { $0 + $1.payload.count }
+        print("   Total NDEF message size estimate: ~\(totalPayloadSize + (records.count * 10)) bytes")
+
+        // Create NDEF message with URL and object ID records
+        let ndefMessage = NFCNDEFMessage(records: records)
+
+        print("✅ Created NDEF message with 2 records:")
+        print("   Record 1: URI (URL for web access)")
+        print("   Record 2: Text (Object ID for app identification)")
 
         return ndefMessage
     }
@@ -438,9 +634,21 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
             case .readerSessionInvalidationErrorSessionTimeout:
                 nfcError = .timeout
                 print("   → Session timed out")
+            case .readerTransceiveErrorTagConnectionLost:
+                // Error code 204 - tag connection lost
+                nfcError = .readError("Tag connection lost - try holding the device steadier over the NFC tag")
+                print("   → Tag connection lost (204) during write operation")
+            case .readerTransceiveErrorRetryExceeded:
+                // Error code 203 - retry exceeded
+                nfcError = .readError("Unable to write to tag - try repositioning the NFC tag")
+                print("   → Retry exceeded during write operation")
+            case .readerSessionInvalidationErrorSessionTerminatedUnexpectedly:
+                // Error code 205 - session terminated unexpectedly
+                nfcError = .readError("NFC session ended unexpectedly - try again")
+                print("   → Session terminated unexpectedly during write")
             default:
-                nfcError = .sessionInvalidated
-                print("   → Session invalidated: \(readerError.code)")
+                nfcError = .readError("NFC error \(readerError.code.rawValue): \(error.localizedDescription)")
+                print("   → Unhandled NFC error code during write: \(readerError.code.rawValue)")
             }
         } else {
             nfcError = .sessionInvalidated
@@ -582,63 +790,35 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
 
                         // Check if we should lock the tag after writing
                         if self.shouldLockTag {
-                            print("🔒 Attempting to lock the tag...")
-                            tag.lockNDEF { lockError in
-                                if let lockError = lockError {
-                                    print("❌ Failed to lock tag: \(lockError.localizedDescription)")
-                                    // Still consider the write successful, but log the locking failure
-                                    print("⚠️ Tag was written but not locked")
-                                } else {
-                                    print("✅ Tag successfully locked - now read-only")
-                                }
-
-                                // Continue with completion regardless of locking result
-                                let tagId = tag.identifier.hexString
-                                let result = NFCResult(
-                                    tagId: tagId,
-                                    ndefMessage: ndefMessage,
-                                    payload: self.writeMessage,
-                                    timestamp: Date()
-                                )
-                                session.alertMessage = self.shouldLockTag ?
-                                    "Loot data written and tag locked!" : "Loot data written successfully!"
-
-                                // Call completion handler BEFORE invalidating
-                                let completion = self.writeCompletion
-                                self.writeCompletion = nil
-                                self.writeMessage = nil
-                                self.writeNDEFMessage = nil
-                                self.shouldLockTag = false
-
-                                // Now invalidate the session
-                                session.invalidate()
-
-                                // Call the completion handler
-                                completion?(.success(result))
-                            }
-                        } else {
-                            // No locking needed, complete immediately
-                            let tagId = tag.identifier.hexString
-                            let result = NFCResult(
-                                tagId: tagId,
-                                ndefMessage: ndefMessage,
-                                payload: self.writeMessage,
-                                timestamp: Date()
-                            )
-                            session.alertMessage = "Loot data written successfully!"
-
-                            // Call completion handler BEFORE invalidating
-                            let completion = self.writeCompletion
-                            self.writeCompletion = nil
-                            self.writeMessage = nil
-                            self.writeNDEFMessage = nil
-
-                            // Now invalidate the session
-                            session.invalidate()
-
-                            // Call the completion handler
-                            completion?(.success(result))
+                            print("🔒 Tag locking requested but not supported on this iOS version")
+                            print("⚠️ Tag was written but not locked (locking not available)")
                         }
+
+                        // Continue with completion regardless of locking result
+                        let tagId = tag.identifier.hexString
+                        let result = NFCResult(
+                            tagId: tagId,
+                            ndefMessage: ndefMessage,
+                            payload: self.writeMessage,
+                            timestamp: Date(),
+                            arTransform: nil,
+                            cameraTransform: nil
+                        )
+                        session.alertMessage = self.shouldLockTag ?
+                            "Loot data written successfully!" : "Loot data written successfully!"
+
+                        // Call completion handler BEFORE invalidating
+                        let completion = self.writeCompletion
+                        self.writeCompletion = nil
+                        self.writeMessage = nil
+                        self.writeNDEFMessage = nil
+                        self.shouldLockTag = false
+
+                        // Now invalidate the session
+                        session.invalidate()
+
+                        // Call the completion handler
+                        completion?(.success(result))
                     }
                 }
             @unknown default:

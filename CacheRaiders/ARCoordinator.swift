@@ -34,6 +34,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var placedBoxes: [String: AnchorEntity] = [:]
     private var findableObjects: [String: FindableObject] = [:] // Track all findable objects
     private var objectPlacementTimes: [String: Date] = [:] // Track when objects were placed (for grace period)
+    private var placedBoxesSet: Set<String> = [] // Track IDs of placed boxes
+    private var activeAnchors: [String: ARAnchor] = [:] // Track active AR anchors
+    let objectPlaced = PassthroughSubject<String, Never>() // Publisher for object placement events
     // MARK: - NPC Types
     enum NPCType: String, CaseIterable {
         case skeleton = "skeleton"
@@ -2854,6 +2857,58 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("🎯 Placing object at tap location (distance: \(String(format: "%.2f", length(boxPosition - cameraPos)))m)")
         placeBoxAtPosition(boxPosition, location: location, in: arView)
     }
+    // Place an object at exact AR world transform position (highest precision)
+    private func placeBoxAtARTransform(_ arWorldTransform: simd_float4x4, location: LootBoxLocation, in arView: ARView) {
+        guard let frame = arView.session.currentFrame else {
+            Swift.print("⚠️ [AR Transform Placement] Cannot place '\(location.name)': AR frame not available")
+            return
+        }
+
+        let cameraTransform = frame.camera.transform
+        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+        let objectPos = SIMD3<Float>(arWorldTransform.columns.3.x, arWorldTransform.columns.3.y, arWorldTransform.columns.3.z)
+        let distance = length(objectPos - cameraPos)
+
+        Swift.print("🎯 Placing '\(location.name)' at exact AR position (distance: \(String(format: "%.2f", distance))m)")
+
+        // Create the 3D model entity
+        let modelEntity = createModelEntity(for: location, in: arView)
+
+        // Create anchor entity at the exact AR world transform
+        let anchorEntity = AnchorEntity(world: arWorldTransform)
+        anchorEntity.addChild(modelEntity)
+
+        // Add to scene
+        arView.scene.addAnchor(anchorEntity)
+
+        // Store references for interaction
+        placedBoxes[location.id] = anchorEntity
+
+        // Update findable objects
+        let findable = FindableObject(
+            locationId: location.id,
+            anchor: anchorEntity,
+            sphereEntity: modelEntity,
+            location: location
+        )
+        findableObjects[location.id] = findable
+
+        // Mark as placed in the box set
+        placedBoxesSet.insert(location.id)
+
+        // Set up tap handler for this object
+        tapHandler?.placedBoxes[location.id] = anchorEntity
+        tapHandler?.findableObjects[location.id] = findable
+
+        // Play placement sound
+        AudioServicesPlaySystemSound(1104) // Tink sound
+
+        // Notify that object was placed
+        objectPlaced.send(location.id)
+
+        Swift.print("✅ Placed '\(location.name)' at exact AR world transform position")
+    }
+
     // Place an AR sphere at a GPS location (for map-added spheres)
     private func placeARSphereAtLocation(_ location: LootBoxLocation, in arView: ARView) {
         // CRITICAL: Check if already placed to prevent infinite loops
@@ -2880,7 +2935,28 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
         
-        // CRITICAL: Use AR coordinates first for mm-precision (primary)
+        // CRITICAL: Check for exact AR world transform first (highest precision)
+        if let arWorldTransformData = location.ar_world_transform,
+           arWorldTransformData.count == MemoryLayout<simd_float4x4>.size {
+            let arWorldTransform = arWorldTransformData.withUnsafeBytes { bytes in
+                bytes.load(as: simd_float4x4.self)
+            }
+            // EXACT AR positioning: Use the stored world transform directly
+            print("🎯 Using exact AR world transform for \(location.name) - highest precision!")
+
+            // Place object at the exact stored AR position
+            let anchor = ARAnchor(transform: arWorldTransform)
+            arView.session.add(anchor: anchor)
+            activeAnchors[location.id] = anchor
+
+            // Create the visual entity
+            placeBoxAtARTransform(arWorldTransform, location: location, in: arView)
+
+            // Skip the rest of GPS-based positioning
+            return
+        }
+
+        // CRITICAL: Use AR coordinates second for mm-precision (primary fallback)
         // Only fall back to GPS if AR coordinates aren't available
         if let arOriginLat = location.ar_origin_latitude,
            let arOriginLon = location.ar_origin_longitude,
@@ -2889,13 +2965,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
            let arOffsetZ = location.ar_offset_z {
             // AR coordinates available - use them for mm-precision placement
             let arOriginGPS = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
-            
+
             // Check if AR origin matches current AR session origin
             let useARCoordinates: Bool
             if let currentAROrigin = arOriginLocation {
                 let originDistance = currentAROrigin.distance(from: arOriginGPS)
                 useARCoordinates = originDistance < 1.0 // Within 1m = same AR session origin
-                
+
                 if useARCoordinates {
                     Swift.print("✅ Using AR coordinates for mm-precision sphere placement: \(location.name)")
                     Swift.print("   AR offset: (\(String(format: "%.4f", arOffsetX)), \(String(format: "%.4f", arOffsetY)), \(String(format: "%.4f", arOffsetZ)))m")
@@ -4889,6 +4965,33 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 placeLootBoxAtLocation(location, in: arView)
             }
         }
+    }
+
+    // MARK: - Helper Methods
+
+    /// Creates a ModelEntity for a given loot box location
+    private func createModelEntity(for location: LootBoxLocation, in arView: ARView) -> ModelEntity {
+        // Create a simple box for the item
+        let boxSize: Float = 0.3 // Same size as sphere diameter
+
+        // Create a simple box mesh
+        let boxMesh = MeshResource.generateBox(width: boxSize, height: boxSize, depth: boxSize, cornerRadius: 0.05)
+        var boxMaterial = SimpleMaterial()
+        boxMaterial.color = .init(tint: location.type.color)
+        boxMaterial.roughness = 0.3
+        boxMaterial.metallic = 0.5
+
+        let boxEntity = ModelEntity(mesh: boxMesh, materials: [boxMaterial])
+        boxEntity.name = location.id
+
+        // Position box so bottom sits on ground
+        boxEntity.position = SIMD3<Float>(0, boxSize/2, 0)
+
+        // Add point light for visibility
+        let light = PointLightComponent(color: location.type.glowColor, intensity: 150)
+        boxEntity.components.set(light)
+
+        return boxEntity
     }
 
 

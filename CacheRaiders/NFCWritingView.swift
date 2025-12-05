@@ -30,6 +30,11 @@ struct NFCWritingView: View {
     @State private var showNFCDiagnostics = false
     @State private var shouldLockTag = false
 
+    // AR tap placement properties
+    @State private var capturedARTapResult: ARRaycastResult?
+    @State private var arPlacementInstructions = "Tap on a surface to place your NFC token"
+    @State private var isWaitingForARTap = false
+
     enum WritingStep {
         case selecting      // User selecting loot type
         case positioning    // Capturing AR position with coordinates
@@ -285,31 +290,72 @@ struct NFCWritingView: View {
 
     private var positioningView: some View {
         VStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .stroke(Color.purple.opacity(0.3), lineWidth: 4)
-                    .frame(width: 120, height: 120)
+            if isWaitingForARTap {
+                // AR tap placement interface
+                ZStack {
+                    if let arView = arView {
+                        NFCARViewContainer(arView: arView, tapHandler: handleARTap)
+                            .frame(height: 300)
+                            .cornerRadius(16)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .stroke(Color.purple.opacity(0.5), lineWidth: 2)
+                            )
+                    } else {
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color.gray.opacity(0.2))
+                            .frame(height: 300)
+                            .overlay(
+                                VStack(spacing: 16) {
+                                    ProgressView()
+                                        .scaleEffect(1.5)
+                                    Text("Initializing AR...")
+                                        .font(.headline)
+                                        .foregroundColor(.secondary)
+                                }
+                            )
+                    }
 
-                Circle()
-                    .stroke(Color.purple, lineWidth: 4)
-                    .frame(width: 120, height: 120)
-                    .scaleEffect(1.2)
-                    .opacity(0.0)
-                    .animation(.easeInOut(duration: 1.0).repeatForever(), value: currentStep == .positioning)
+                    // Instructions overlay
+                    VStack {
+                        Spacer()
+                        Text(arPlacementInstructions)
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .padding()
+                            .background(Color.black.opacity(0.7))
+                            .cornerRadius(12)
+                            .padding(.bottom, 20)
+                    }
+                }
+            } else {
+                // Traditional GPS positioning interface
+                ZStack {
+                    Circle()
+                        .stroke(Color.purple.opacity(0.3), lineWidth: 4)
+                        .frame(width: 120, height: 120)
 
-                Image(systemName: "arkit")
-                    .font(.system(size: 40))
+                    Circle()
+                        .stroke(Color.purple, lineWidth: 4)
+                        .frame(width: 120, height: 120)
+                        .scaleEffect(1.2)
+                        .opacity(0.0)
+                        .animation(.easeInOut(duration: 1.0).repeatForever(), value: currentStep == .positioning)
+
+                    Image(systemName: "arkit")
+                        .font(.system(size: 40))
+                        .foregroundColor(.purple)
+                }
+
+                Text("Capturing AR position...")
+                    .font(.headline)
                     .foregroundColor(.purple)
-            }
 
-            Text("Capturing AR position...")
-                .font(.headline)
-                .foregroundColor(.purple)
-
-            if let type = selectedLootType {
-                Text("Creating: \(type.displayName)")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                if let type = selectedLootType {
+                    Text("Creating: \(type.displayName)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
             }
         }
     }
@@ -433,17 +479,25 @@ struct NFCWritingView: View {
 
         print("📍 Using location: lat=\(location.coordinate.latitude), lon=\(location.coordinate.longitude), alt=\(location.altitude)")
 
-        // Start AR positioning
-        Task {
-            do {
-                try await captureARPosition()
-            } catch {
-                DispatchQueue.main.async {
-                    self.errorMessage = "Failed to capture AR position: \(error.localizedDescription)"
-                    self.currentStep = .error
-                }
-            }
-        }
+        // Initialize AR view for tap placement
+        setupARViewForPlacement()
+
+        // Switch to AR tap interface
+        isWaitingForARTap = true
+        arPlacementInstructions = "Tap on any surface to place your NFC token exactly there"
+    }
+
+    private func setupARViewForPlacement() {
+        // Create AR view for tap placement
+        arView = ARView(frame: .zero)
+
+        // Configure AR session
+        let config = ARWorldTrackingConfiguration()
+        config.planeDetection = [.horizontal, .vertical]
+        config.environmentTexturing = .automatic
+
+        arView?.session.run(config)
+        print("🎯 AR view initialized for NFC tap placement")
     }
 
     private func resetToSelecting() {
@@ -454,26 +508,25 @@ struct NFCWritingView: View {
         shouldLockTag = false
     }
 
-    private func createLootMessage(for lootType: LootBoxType, with location: CLLocation? = nil, arAnchorData: Data? = nil) -> String {
-        guard let location = location else { return "{}" }
+    private func createLootMessage(for lootType: LootBoxType, with location: CLLocation? = nil, arAnchorData: Data? = nil) -> NFCService.NFCMessageContent {
+        guard let location = location else { return NFCService.NFCMessageContent(url: "", objectId: "") }
 
         // Create a compact object ID that will be stored on the NFC tag
         // All detailed data (coordinates, timestamps, user info) is stored only in the database
-        let objectId = UUID().uuidString.prefix(8)
+        let objectId = UUID().uuidString.prefix(8).uppercased() // Use uppercase for consistency
 
-        // Create a minimal URL that just contains the object ID
-        // The full data will be fetched from the server when the tag is read
+        // Create URL for web find sheet access
         let baseURL = APIService.shared.baseURL
-        let compactURL = "\(baseURL)/nfc/\(objectId)"
+        let findSheetURL = "\(baseURL)/nfc/\(objectId)"
 
-        print("🎯 Creating compact NFC message")
+        print("🎯 Creating NFC messages with URL + object ID")
         print("   Object ID: \(objectId)")
-        print("   Compact URL: \(compactURL)")
-        print("   URL length: \(compactURL.count) characters")
+        print("   Find Sheet URL: \(findSheetURL)")
+        print("   URL length: \(findSheetURL.count) characters")
         print("   Detailed data stored in database only")
 
-        // Return the compact URL string - this will be written as an NDEF URI record
-        return compactURL
+        // Return structured content with URL and object ID
+        return NFCService.NFCMessageContent(url: findSheetURL, objectId: objectId)
     }
 
     private func captureARPosition() async throws {
@@ -577,15 +630,25 @@ struct NFCWritingView: View {
         isWriting = true
         errorMessage = nil
 
-        // Create the compact message with just the object ID
+        // Create the message content with URL and object ID
         // All detailed data (coordinates, timestamps, user info) is stored only in the database
-        let compactMessage = createLootMessage(for: lootType, with: location, arAnchorData: nil)
+        let nfcContent = createLootMessage(for: lootType, with: location, arAnchorData: nil)
 
-        print("🔧 Writing compact NFC tag for \(lootType.displayName)")
-        print("   Message contains only object ID (detailed data in database)")
-        print("   Message length: \(compactMessage.count) characters")
+        guard !nfcContent.url.isEmpty && !nfcContent.objectId.isEmpty else {
+            DispatchQueue.main.async {
+                self.isWriting = false
+                self.errorMessage = "Failed to create NFC message content"
+                self.currentStep = .error
+            }
+            return
+        }
 
-        nfcService.writeNFC(message: compactMessage, lockTag: shouldLockTag) { result in
+        print("🔧 Writing NFC tag for \(lootType.displayName)")
+        print("   Tag contains URL + object ID")
+        print("   URL length: \(nfcContent.url.count) characters")
+        print("   Object ID: \(nfcContent.objectId)")
+
+        nfcService.writeNFC(content: nfcContent, lockTag: shouldLockTag) { result in
             DispatchQueue.main.async {
                 self.isWriting = false
 
@@ -595,7 +658,7 @@ struct NFCWritingView: View {
                     self.writeResult = nfcResult
 
                     // Now create the database object with ALL the detailed data
-                    // The NFC tag contains only the minimal identifier
+                    // The NFC tag contains both app URL and find sheet URL
                     Task {
                         await self.createObjectWithCompleteData(
                             type: lootType,
@@ -606,7 +669,7 @@ struct NFCWritingView: View {
                             arOriginLat: arOriginLat,
                             arOriginLon: arOriginLon,
                             nfcResult: nfcResult,
-                            compactMessage: compactMessage
+                            compactMessage: nfcMessages.first ?? "" // Use the first URL (app URL) for object ID extraction
                         )
                     }
 
@@ -773,6 +836,221 @@ struct NFCWritingView: View {
                 self.showARPlacement = false
             }
         }
+    }
+
+    // MARK: - AR Tap Handling
+    private func handleARTap(_ tapResult: ARRaycastResult) {
+        print("🎯 NFC placement tap detected at AR position")
+        capturedARTapResult = tapResult
+
+        // Provide haptic feedback
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+
+        // Update instructions
+        arPlacementInstructions = "Perfect! Position captured. Writing NFC tag..."
+
+        // Proceed with NFC writing using the captured AR position
+        Task {
+            await proceedWithCapturedARPosition()
+        }
+    }
+
+    private func proceedWithCapturedARPosition() async {
+        guard let tapResult = capturedARTapResult,
+              let lootType = selectedLootType,
+              let userLocation = userLocationManager.currentLocation else {
+            print("❌ Missing required data for AR position capture")
+            errorMessage = "Missing tap result, loot type, or location"
+            currentStep = .error
+            return
+        }
+
+        // Extract the exact AR world transform from the tap
+        let arWorldTransform = tapResult.worldTransform
+        let arPosition = SIMD3<Float>(
+            arWorldTransform.columns.3.x,
+            arWorldTransform.columns.3.y,
+            arWorldTransform.columns.3.z
+        )
+
+        print("📍 Exact AR tap position captured:")
+        print("   World Position: (\(String(format: "%.3f", arPosition.x)), \(String(format: "%.3f", arPosition.y)), \(String(format: "%.3f", arPosition.z)))")
+
+        // Store the AR transform for later use in NFC writing
+        // We'll pass this to the NFC writing process
+        await writeNFCWithARTransform(
+            for: lootType,
+            arWorldTransform: arWorldTransform,
+            gpsLocation: userLocation
+        )
+    }
+
+    private func writeNFCWithARTransform(for lootType: LootBoxType, arWorldTransform: simd_float4x4, gpsLocation: CLLocation) async {
+        currentStep = .writing
+        isWriting = true
+        errorMessage = nil
+
+        // Create the message content with URL and object ID
+        let nfcContent = createLootMessage(for: lootType, with: gpsLocation, arAnchorData: nil)
+
+        guard !nfcMessages.isEmpty else {
+            DispatchQueue.main.async {
+                self.isWriting = false
+                self.errorMessage = "Failed to create NFC messages"
+                self.currentStep = .error
+            }
+            return
+        }
+
+        print("🔧 Writing NFC tag for \(lootType.displayName) at exact AR tap position")
+        print("   AR World Transform captured and will be stored")
+        print("   Tag contains URL + object ID")
+
+        nfcService.writeNFC(content: nfcContent, lockTag: shouldLockTag) { result in
+            DispatchQueue.main.async {
+                self.isWriting = false
+
+                switch result {
+                case .success(let nfcResult):
+                    print("✅ NFC write successful - AR position data will be stored")
+                    self.writeResult = nfcResult
+
+                    // Now create the database object with the exact AR position
+                    Task {
+                        await self.createObjectWithARPosition(
+                            type: lootType,
+                            arWorldTransform: arWorldTransform,
+                            gpsLocation: gpsLocation,
+                            nfcResult: nfcResult,
+                            compactMessage: nfcMessages.first ?? ""
+                        )
+                    }
+
+                case .failure(let error):
+                    print("❌ NFC write failed: \(error)")
+                    self.errorMessage = error.localizedDescription
+                    self.currentStep = .error
+                }
+            }
+        }
+    }
+
+    private func createObjectWithARPosition(
+        type: LootBoxType,
+        arWorldTransform: simd_float4x4,
+        gpsLocation: CLLocation,
+        nfcResult: NFCService.NFCResult,
+        compactMessage: String
+    ) async {
+        currentStep = .creating
+
+        do {
+            // Extract object ID from the compact message URL
+            guard let objectId = extractObjectIdFromMessage(compactMessage) else {
+                throw NSError(domain: "NFCWriting", code: -1,
+                             userInfo: [NSLocalizedDescriptionKey: "Could not extract object ID from NFC message"])
+            }
+
+            print("🎯 Creating object \(objectId) at exact AR tap position")
+
+            // Convert AR world transform to GPS coordinates for database storage
+            // This ensures other users can find the object even if AR tracking resets
+            let arPosition = SIMD3<Float>(
+                arWorldTransform.columns.3.x,
+                arWorldTransform.columns.3.y,
+                arWorldTransform.columns.3.z
+            )
+
+            // Store the AR world transform in the database as the primary positioning data
+            // Convert simd_float4x4 to Data using direct memory copy
+            let arTransformData = withUnsafePointer(to: arWorldTransform) { pointer in
+                Data(bytes: UnsafeRawPointer(pointer), count: MemoryLayout<simd_float4x4>.size)
+            }
+
+            // Also create base64 encoded version for compatibility
+            let arTransformBase64 = arTransformData.base64EncodedString()
+
+            let objectData: [String: Any] = [
+                "id": objectId,
+                "name": type.displayName,
+                "type": type.rawValue,
+                "latitude": gpsLocation.coordinate.latitude,
+                "longitude": gpsLocation.coordinate.longitude,
+                "altitude": gpsLocation.altitude,
+                "ar_world_transform": arTransformData, // Primary positioning data - full transform matrix
+                "ar_anchor_transform": arTransformBase64, // Base64 encoded for compatibility
+                "ar_origin_latitude": gpsLocation.coordinate.latitude, // AR session origin
+                "ar_origin_longitude": gpsLocation.coordinate.longitude,
+                "ar_offset_x": Double(arPosition.x), // Store as offsets for compatibility
+                "ar_offset_y": Double(arPosition.y),
+                "ar_offset_z": Double(arPosition.z),
+                "ar_placement_timestamp": ISO8601DateFormatter().string(from: Date()),
+                "creator_user_id": APIService.shared.currentUserID,
+                "nfc_tag_id": nfcResult.tagId,
+                "created_at": ISO8601DateFormatter().string(from: Date()),
+                "is_active": true
+            ]
+
+            print("📤 Creating object with exact AR positioning:")
+            print("   Object ID: \(objectId)")
+            print("   AR Position: (\(String(format: "%.3f", arPosition.x)), \(String(format: "%.3f", arPosition.y)), \(String(format: "%.3f", arPosition.z)))")
+            print("   GPS Backup: \(String(format: "%.6f", gpsLocation.coordinate.latitude)), \(String(format: "%.6f", gpsLocation.coordinate.longitude))")
+
+            // Create LootBoxLocation instance from the data
+            let location = LootBoxLocation(
+                id: objectId,
+                name: type.displayName,
+                type: type,
+                latitude: gpsLocation.coordinate.latitude,
+                longitude: gpsLocation.coordinate.longitude,
+                radius: 3.0,
+                collected: false,
+                grounding_height: nil,
+                source: .map,
+                created_by: APIService.shared.currentUserID,
+                needs_sync: false,
+                last_modified: Date(),
+                ar_origin_latitude: gpsLocation.coordinate.latitude,
+                ar_origin_longitude: gpsLocation.coordinate.longitude,
+                ar_offset_x: Double(arPosition.x),
+                ar_offset_y: Double(arPosition.y),
+                ar_offset_z: Double(arPosition.z),
+                ar_placement_timestamp: Date(),
+                ar_anchor_transform: arTransformBase64,
+                ar_world_transform: arTransformData
+            )
+
+            let apiObject = try await APIService.shared.createObject(location)
+
+            if let lootBoxLocation = APIService.shared.convertToLootBoxLocation(apiObject) {
+                DispatchQueue.main.async {
+                    self.createdObject = lootBoxLocation
+                    self.currentStep = .success
+                    print("✅ NFC object created successfully with exact AR positioning")
+                }
+            } else {
+                throw NSError(domain: "NFCWriting", code: -1,
+                             userInfo: [NSLocalizedDescriptionKey: "Failed to convert API response to LootBoxLocation"])
+            }
+
+        } catch {
+            DispatchQueue.main.async {
+                print("❌ Failed to create object: \(error)")
+                self.errorMessage = "Failed to save object: \(error.localizedDescription)"
+                self.currentStep = .error
+            }
+        }
+    }
+
+    // MARK: - Helper Functions
+    private func extractObjectIdFromMessage(_ message: String) -> String? {
+        // Extract object ID from URL format: "baseURL/nfc/<objectId>"
+        if let url = URL(string: message),
+           let lastComponent = url.pathComponents.last {
+            return lastComponent
+        }
+        return nil
     }
 
     private func cleanup() {
@@ -956,6 +1234,52 @@ struct LootTypeCard: View {
         case .sphere: return "circle.fill"
         case .cube: return "square.fill"
         case .turkey: return "bird.fill"
+        }
+    }
+}
+
+// MARK: - NFC AR View Container
+struct NFCARViewContainer: UIViewRepresentable {
+    let arView: ARView
+    let tapHandler: (ARRaycastResult) -> Void
+
+    func makeUIView(context: Context) -> ARView {
+        // Configure AR view for tap placement
+        let config = ARWorldTrackingConfiguration()
+        config.planeDetection = [.horizontal, .vertical]
+        arView.session.run(config)
+
+        // Add tap gesture recognizer
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        arView.addGestureRecognizer(tapGesture)
+
+        return arView
+    }
+
+    func updateUIView(_ uiView: ARView, context: Context) {
+        // Update if needed
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(tapHandler: tapHandler)
+    }
+
+    class Coordinator: NSObject {
+        let tapHandler: (ARRaycastResult) -> Void
+
+        init(tapHandler: @escaping (ARRaycastResult) -> Void) {
+            self.tapHandler = tapHandler
+        }
+
+        @objc func handleTap(_ sender: UITapGestureRecognizer) {
+            guard let arView = sender.view as? ARView else { return }
+
+            let tapLocation = sender.location(in: arView)
+
+            // Perform raycast to find surface
+            if let raycastResult = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .any).first {
+                tapHandler(raycastResult)
+            }
         }
     }
 }

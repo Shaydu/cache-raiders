@@ -37,7 +37,10 @@ struct SheetContentView: View {
                     }
             }
         case .settings:
-            SettingsView(locationManager: locationManager, userLocationManager: userLocationManager, dismissAction: dismiss)
+            NavigationView {
+                SettingsView(locationManager: locationManager, userLocationManager: userLocationManager, dismissAction: dismiss)
+                    .navigationBarTitleDisplayMode(.inline)
+            }
         case .leaderboard:
             NavigationView {
                 LeaderboardView()

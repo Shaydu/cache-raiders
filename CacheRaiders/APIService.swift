@@ -343,6 +343,20 @@ class APIService {
         return try decoder.decode(APIObject.self, from: data)
     }
 
+    // NFC-aware object lookup that can handle chip UIDs
+    func getObjectByNFCId(_ nfcId: String) async throws -> APIObject {
+        // Try the NFC details endpoint first (handles chip UID pattern matching)
+        let nfcUrl = URL(string: "\(baseURL)/api/nfc/\(nfcId)")!
+        do {
+            let (data, _) = try await session.data(from: nfcUrl)
+            return try decoder.decode(APIObject.self, from: data)
+        } catch {
+            // If NFC endpoint fails, try regular object endpoint
+            print("⚠️ NFC endpoint failed for '\(nfcId)', trying regular object lookup")
+            return try await getObject(id: nfcId)
+        }
+    }
+
     func markFound(objectId: String) async throws {
         let url = URL(string: "\(baseURL)/api/objects/\(objectId)/mark-found")!
         var request = URLRequest(url: url)

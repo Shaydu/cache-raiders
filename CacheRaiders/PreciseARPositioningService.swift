@@ -19,7 +19,7 @@ class PreciseARPositioningService: ObservableObject {
         let longitude: Double
         let altitude: Double
         let createdAt: Date
-        let refinedTransform: simd_float4x4? // After visual refinement
+        var refinedTransform: simd_float4x4? // After visual refinement
         let visualAnchorData: Data? // Look Around anchor data
     }
 
@@ -811,6 +811,43 @@ extension PreciseARPositioningService {
 
         objectPlaced.send(object.objectID)
         print("✅ Placed precise AR object: \(object.objectID)")
+    }
+
+    /// Place AR object at exact NFC tap position for maximum precision
+    func placeARObjectAtExactNFCTap(object: NFCTaggedObject, nfcResult: NFCService.NFCResult) async throws {
+        print("🎯 Placing AR object at exact NFC tap position for \(object.objectID)")
+
+        guard let arView = arView else { throw PreciseARError.arViewNotConfigured }
+
+        var anchor: ARAnchor
+
+        // If we have a captured AR transform from the NFC tap, use it directly
+        if let tapTransform = nfcResult.arTransform {
+            print("📍 Using exact NFC tap transform for placement")
+            anchor = ARAnchor(transform: tapTransform)
+        } else {
+            // Fall back to micro-positioned anchor using GPS
+            print("⚠️ No tap transform available, falling back to GPS-based positioning")
+            anchor = try await createMicroPositionedAnchor(for: object)
+        }
+
+        // Add to AR scene
+        arView.session.add(anchor: anchor)
+        activeAnchors[object.objectID] = anchor
+
+        // Add visual representation
+        let modelEntity = try await createARModel(for: object)
+        let anchorEntity = AnchorEntity(anchor: anchor)
+        anchorEntity.addChild(modelEntity)
+        arView.scene.addAnchor(anchorEntity)
+
+        objectPlaced.send(object.objectID)
+        print("✅ Placed AR object at exact NFC tap position: \(object.objectID)")
+
+        // Store the refined transform for future reference
+        var updatedObject = object
+        updatedObject.refinedTransform = anchor.transform
+        cachedObjects[object.objectID] = updatedObject
     }
 
     private func createARModel(for object: NFCTaggedObject) async throws -> ModelEntity {

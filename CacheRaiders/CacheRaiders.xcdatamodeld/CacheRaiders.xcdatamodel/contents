@@ -32,8 +32,23 @@
             </uniquenessConstraint>
         </uniquenessConstraints>
     </entity>
+    <entity name="Find" representedClassName="Find" syncable="YES" codeGenerationType="class">
+        <attribute name="id" attributeType="String" defaultValueString="" usesScalarValueType="NO"/>
+        <attribute name="object_id" attributeType="String" defaultValueString="" usesScalarValueType="NO"/>
+        <attribute name="found_by" attributeType="String" defaultValueString="" usesScalarValueType="NO"/>
+        <attribute name="found_at" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="needs_sync" attributeType="Boolean" usesScalarValueType="YES"/>
+        <attribute name="created_at" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="last_synced_at" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
     <elements>
         <element name="Item" positionX="-63" positionY="-18" width="128" height="44"/>
         <element name="GameItem" positionX="-63" positionY="9" width="128" height="359"/>
+        <element name="Find" positionX="-63" positionY="45" width="128" height="179"/>
     </elements>
 </model>

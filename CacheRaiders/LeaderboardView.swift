@@ -81,6 +81,7 @@ struct LeaderboardView: View {
                         }
                     }
                     .padding()
+                    .padding(.leading, 8) // Extra padding for rank circles
                 }
             }
         }
@@ -124,7 +125,7 @@ struct LeaderboardRow: View {
                 Circle()
                     .fill(rankBadgeColor)
                     .frame(width: 44, height: 44)
-                
+
                 if rank == 1 {
                     Image(systemName: "crown.fill")
                         .foregroundColor(.yellow)
@@ -136,6 +137,7 @@ struct LeaderboardRow: View {
                         .foregroundColor(rankTextColor)
                 }
             }
+            .padding(.leading, 4) // Ensure circle isn't clipped
             
             // User name
             VStack(alignment: .leading, spacing: 4) {

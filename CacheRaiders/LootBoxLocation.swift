@@ -101,6 +101,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     var ar_offset_z: Double? // Z offset from AR origin in meters
     var ar_placement_timestamp: Date? // When the object was placed in AR
     var ar_anchor_transform: String? // Base64-encoded AR anchor transform for mm precision
+    var ar_world_transform: Data? // Full AR world transform matrix for exact tap positioning
     
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -149,7 +150,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     // MARK: - Initializers
     
     /// Normal initializer for creating new locations
-    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api, created_by: String? = nil, needs_sync: Bool = false, last_modified: Date? = nil, server_version: Int64? = nil, ar_origin_latitude: Double? = nil, ar_origin_longitude: Double? = nil, ar_offset_x: Double? = nil, ar_offset_y: Double? = nil, ar_offset_z: Double? = nil, ar_placement_timestamp: Date? = nil, ar_anchor_transform: String? = nil) {
+    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api, created_by: String? = nil, needs_sync: Bool = false, last_modified: Date? = nil, server_version: Int64? = nil, ar_origin_latitude: Double? = nil, ar_origin_longitude: Double? = nil, ar_offset_x: Double? = nil, ar_offset_y: Double? = nil, ar_offset_z: Double? = nil, ar_placement_timestamp: Date? = nil, ar_anchor_transform: String? = nil, ar_world_transform: Data? = nil) {
         self.id = id
         self.name = name
         self.type = type
@@ -170,6 +171,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         self.ar_offset_z = ar_offset_z
         self.ar_placement_timestamp = ar_placement_timestamp
         self.ar_anchor_transform = ar_anchor_transform
+        self.ar_world_transform = ar_world_transform
     }
     
     // MARK: - Custom Decoding (backward compatibility with prefix-based IDs)
@@ -216,10 +218,11 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         ar_offset_z = try container.decodeIfPresent(Double.self, forKey: .ar_offset_z)
         ar_placement_timestamp = try container.decodeIfPresent(Date.self, forKey: .ar_placement_timestamp)
         ar_anchor_transform = try container.decodeIfPresent(String.self, forKey: .ar_anchor_transform)
+        ar_world_transform = try container.decodeIfPresent(Data.self, forKey: .ar_world_transform)
     }
     
     enum CodingKeys: String, CodingKey {
-        case id, name, type, latitude, longitude, radius, collected, grounding_height, source, created_by, needs_sync, last_modified, server_version, ar_origin_latitude, ar_origin_longitude, ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp, ar_anchor_transform
+        case id, name, type, latitude, longitude, radius, collected, grounding_height, source, created_by, needs_sync, last_modified, server_version, ar_origin_latitude, ar_origin_longitude, ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp, ar_anchor_transform, ar_world_transform
     }
 }
 

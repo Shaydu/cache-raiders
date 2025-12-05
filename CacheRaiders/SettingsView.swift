@@ -583,6 +583,7 @@ struct SettingsView: View {
                         .foregroundColor(index < 3 ? .black : .primary)
                 }
             }
+            .padding(.leading, 2) // Ensure circle isn't clipped
 
             Text(finder.display_name ?? finder.user_id)
                 .font(.caption)

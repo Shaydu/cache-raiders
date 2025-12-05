@@ -5,23 +5,28 @@ import CoreLocation
 /// Offline Mode Manager - Manages offline mode state (user-controlled toggle)
 class OfflineModeManager: ObservableObject {
     static let shared = OfflineModeManager()
-    
+
     @Published var isOfflineMode: Bool = false {
         didSet {
             // Save to UserDefaults
             UserDefaults.standard.set(isOfflineMode, forKey: "offlineModeEnabled")
-            
+
             // Handle mode change
             handleModeChange()
         }
     }
-    
+
     @Published var pendingSyncCount: Int = 0
-    
+
     private let offlineModeKey = "offlineModeEnabled"
-    
+
     private weak var locationManager: LootBoxLocationManager?
     private var cancellables = Set<AnyCancellable>()
+
+    // Services for sync operations
+    private let findDataService = FindDataService.shared
+    private let gameItemDataService = GameItemDataService.shared
+    private let apiService = APIService.shared
     
     private init() {
         // Load saved offline mode preference (defaults to false/online)
@@ -53,21 +58,24 @@ class OfflineModeManager: ObservableObject {
         } else {
             // Going online: connect WebSocket, sync with server, reload from API
             print("📡 Online mode enabled - connecting to server and WebSocket")
-            
+
             // Connect WebSocket
             if let locationManager = locationManager, locationManager.useAPISync {
                 WebSocketService.shared.connect()
-                
+
                 // Reload locations from API (replaces local Core Data with server data)
                 Task {
                     // Load all locations from API (no user location filter needed)
                     await locationManager.loadLocationsFromAPI(userLocation: nil)
-                    
+
                     // Then sync any pending changes
                     await locationManager.syncPendingChangesToAPI()
+
+                    // Also sync any pending finds
+                    await syncPendingFinds()
                 }
             }
-            
+
             NotificationCenter.default.post(
                 name: NSNotification.Name("OfflineModeDisabled"),
                 object: nil,
@@ -90,16 +98,56 @@ class OfflineModeManager: ObservableObject {
     
     // MARK: - Helper Methods
     
-    /// Update pending sync count from Core Data
-    private func updatePendingSyncCount() {
-        Task { @MainActor in
-            do {
-                let dataService = GameItemDataService.shared
-                let itemsNeedingSync = try dataService.getItemsNeedingSync()
-                self.pendingSyncCount = itemsNeedingSync.count
-            } catch {
-                print("⚠️ Error getting pending sync count: \(error)")
+    /// Sync pending finds to the server
+    private func syncPendingFinds() async {
+        do {
+            let pendingFinds = try findDataService.getFindRecordsNeedingSync()
+            print("🔄 Syncing \(pendingFinds.count) pending finds to server...")
+
+            var syncedCount = 0
+            var failedCount = 0
+
+            for find in pendingFinds {
+                do {
+                    try await apiService.markFound(objectId: find.objectId)
+                    try findDataService.markAsSynced(findId: find.id)
+                    syncedCount += 1
+                    print("✅ Synced find: \(find.id)")
+                } catch {
+                    failedCount += 1
+                    print("❌ Failed to sync find \(find.id): \(error.localizedDescription)")
+                }
             }
+
+            print("🔄 Find sync complete: \(syncedCount) synced, \(failedCount) failed")
+
+            // Update pending sync count after syncing
+            await updatePendingSyncCountAsync()
+
+        } catch {
+            print("⚠️ Error syncing pending finds: \(error)")
+        }
+    }
+
+    /// Update pending sync count from Core Data (includes both game items and finds)
+    private func updatePendingSyncCountAsync() async {
+        do {
+            let gameItemsNeedingSync = try gameItemDataService.getItemsNeedingSync()
+            let findsNeedingSync = try findDataService.getFindRecordsNeedingSync()
+            let totalPending = gameItemsNeedingSync.count + findsNeedingSync.count
+
+            await MainActor.run {
+                self.pendingSyncCount = totalPending
+            }
+        } catch {
+            print("⚠️ Error getting pending sync count: \(error)")
+        }
+    }
+
+    /// Synchronous wrapper for updating pending sync count (for timer)
+    private func updatePendingSyncCount() {
+        Task {
+            await updatePendingSyncCountAsync()
         }
     }
     
