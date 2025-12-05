@@ -27,6 +27,7 @@ class ARDistanceTracker: ObservableObject {
     var distanceToNearestBinding: Binding<Double?>?
     var temperatureStatusBinding: Binding<String?>?
     var nearestObjectDirectionBinding: Binding<Double?>?
+    var currentTargetObjectNameBinding: Binding<String?>?
     
     @Published var nearestObjectDirection: Double? = nil
     @Published var currentTargetObjectName: String? = nil
@@ -195,6 +196,7 @@ class ARDistanceTracker: ObservableObject {
                 }
                 
                 targetPosition = objectPos
+                currentTargetObjectName = locationManager.locations.first(where: { $0.id == selectedId && !$0.collected })?.name
             } else if let location = locationManager.locations.first(where: { $0.id == selectedId && !$0.collected }),
                       let userLocation = userLocationManager?.currentLocation,
                       location.latitude != 0 || location.longitude != 0 {
@@ -224,6 +226,7 @@ class ARDistanceTracker: ObservableObject {
                 // Use camera Y position for height (assume same level)
                 targetPosition = cameraPos + normalizedTargetDir * estimatedDistance
                 targetPosition?.y = cameraPos.y // Keep at camera height
+                currentTargetObjectName = location.name
             }
         }
         
@@ -278,6 +281,7 @@ class ARDistanceTracker: ObservableObject {
 
         guard let targetPos = targetPosition else {
             nearestObjectDirection = nil
+            currentTargetObjectName = nil
             return
         }
 
