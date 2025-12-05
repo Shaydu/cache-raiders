@@ -6,6 +6,7 @@ import Combine
 /// Manages a visual reticle/cursor that shows where objects will be placed
 class ARPlacementReticle: ObservableObject {
     weak var arView: ARView?
+    weak var locationManager: LootBoxLocationManager?
 
     private var reticleAnchor: AnchorEntity?
     private var reticleEntity: ModelEntity?
@@ -18,8 +19,21 @@ class ARPlacementReticle: ObservableObject {
     @Published var distanceFromCamera: Float?
     @Published var heightFromGround: Float?
 
-    init(arView: ARView?) {
+    init(arView: ARView?, locationManager: LootBoxLocationManager?) {
         self.arView = arView
+        self.locationManager = locationManager
+
+        // Listen for ambient light setting changes
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(ambientLightSettingChanged),
+            name: NSNotification.Name("AmbientLightSettingChanged"),
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     /// Shows the placement reticle
@@ -150,11 +164,8 @@ class ARPlacementReticle: ObservableObject {
         // Create ring mesh (torus)
         let ringMesh = MeshResource.generateBox(width: outerRadius * 2, height: thickness, depth: outerRadius * 2)
 
-        // Material - semi-transparent glowing blue
-        var material = SimpleMaterial()
-        material.color = .init(tint: UIColor(red: 0.2, green: 0.6, blue: 1.0, alpha: 0.6))
-        material.roughness = 0.0
-        material.metallic = 1.0
+        // Material - adaptive based on ambient light setting
+        let material = createAdaptiveMaterial()
 
         let reticle = ModelEntity(mesh: ringMesh, materials: [material])
 
@@ -164,8 +175,7 @@ class ARPlacementReticle: ObservableObject {
 
         // Horizontal crosshair
         let hCrosshair = MeshResource.generateBox(width: crosshairLength * 2, height: thickness, depth: crosshairThickness)
-        var crosshairMaterial = SimpleMaterial()
-        crosshairMaterial.color = .init(tint: UIColor(red: 0.2, green: 0.8, blue: 1.0, alpha: 0.8))
+        let crosshairMaterial = createAdaptiveCrosshairMaterial()
         let hLine = ModelEntity(mesh: hCrosshair, materials: [crosshairMaterial])
         hLine.position = SIMD3<Float>(0, 0.005, 0)
         reticle.addChild(hLine)
@@ -176,8 +186,10 @@ class ARPlacementReticle: ObservableObject {
         vLine.position = SIMD3<Float>(0, 0.005, 0)
         reticle.addChild(vLine)
 
-        // Add point light for glow effect
-        let light = PointLightComponent(color: UIColor(red: 0.2, green: 0.8, blue: 1.0, alpha: 1.0), intensity: 100)
+        // Add point light for glow effect - adaptive intensity
+        let disableAmbient = locationManager?.disableAmbientLight ?? false
+        let lightIntensity: Float = disableAmbient ? 300 : 100 // Brighter in dark environments
+        let light = PointLightComponent(color: UIColor(red: 0.2, green: 0.8, blue: 1.0, alpha: 1.0), intensity: lightIntensity)
         reticle.components.set(light)
 
         // Pulse animation
@@ -250,5 +262,75 @@ class ARPlacementReticle: ObservableObject {
         reticleAnchor = nil
         reticleEntity = nil
         distanceLabel = nil
+    }
+
+    // MARK: - Adaptive Lighting Support
+
+    /// Creates material that adapts to ambient light settings
+    private func createAdaptiveMaterial() -> Material {
+        let disableAmbient = locationManager?.disableAmbientLight ?? false
+
+        if disableAmbient {
+            // Use UnlitMaterial for visibility in dark environments
+            var unlitMaterial = UnlitMaterial()
+            unlitMaterial.color = .init(tint: UIColor(red: 0.2, green: 0.8, blue: 1.0, alpha: 0.8))
+            return unlitMaterial
+        } else {
+            // Use SimpleMaterial for normal lighting conditions
+            var material = SimpleMaterial()
+            material.color = .init(tint: UIColor(red: 0.2, green: 0.6, blue: 1.0, alpha: 0.6))
+            material.roughness = 0.0
+            material.metallic = 1.0
+            return material
+        }
+    }
+
+    /// Creates crosshair material that adapts to ambient light settings
+    private func createAdaptiveCrosshairMaterial() -> Material {
+        let disableAmbient = locationManager?.disableAmbientLight ?? false
+
+        if disableAmbient {
+            // Use UnlitMaterial for visibility in dark environments
+            var unlitMaterial = UnlitMaterial()
+            unlitMaterial.color = .init(tint: UIColor(red: 0.2, green: 0.8, blue: 1.0, alpha: 1.0))
+            return unlitMaterial
+        } else {
+            // Use SimpleMaterial for normal lighting conditions
+            var material = SimpleMaterial()
+            material.color = .init(tint: UIColor(red: 0.2, green: 0.8, blue: 1.0, alpha: 0.8))
+            material.roughness = 0.0
+            material.metallic = 1.0
+            return material
+        }
+    }
+
+    /// Updates reticle materials when ambient light setting changes
+    @objc private func ambientLightSettingChanged() {
+        guard let reticle = reticleEntity else { return }
+
+        // Update main reticle material
+        let newMaterial = createAdaptiveMaterial()
+        if var model = reticle.model {
+            model.materials = [newMaterial]
+            reticle.model = model
+        }
+
+        // Update crosshair materials
+        let newCrosshairMaterial = createAdaptiveCrosshairMaterial()
+        for child in reticle.children {
+            if let modelEntity = child as? ModelEntity,
+               var model = modelEntity.model {
+                model.materials = [newCrosshairMaterial]
+                modelEntity.model = model
+            }
+        }
+
+        // Update light intensity
+        let disableAmbient = locationManager?.disableAmbientLight ?? false
+        let lightIntensity: Float = disableAmbient ? 300 : 100
+        let light = PointLightComponent(color: UIColor(red: 0.2, green: 0.8, blue: 1.0, alpha: 1.0), intensity: lightIntensity)
+        reticle.components.set(light)
+
+        Swift.print("🔄 Reticle materials and lighting updated for ambient light setting change")
     }
 }

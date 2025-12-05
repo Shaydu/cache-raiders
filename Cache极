@@ -48,3 +48,4 @@ struct NFCScanOnlyView: View {
             VStack(spacing: 20) {
                 // Header
                 VStack(spacing极
+

@@ -23,3 +23,4 @@ struct NFCScanOnlyView: View {
         case processing     // Processing scanned NFC data
         case success        // Object found successfully
         case notFound       // NFC tag scanned but极
+

@@ -142,6 +142,10 @@ struct ARPlacementView: View {
                                     "scale": scale
                                 ]
 
+                                // CRITICAL FIX: Don't reload ALL locations from API - this causes unrelated objects to appear!
+                                // Instead, just notify the main AR view to place the single object that was saved
+                                // The object is already in locationManager.locations (added by updateObjectLocation or createNewObject)
+
                                 await MainActor.run {
                                     NotificationCenter.default.post(
                                         name: NSNotification.Name("ARPlacementObjectSaved"),
@@ -151,17 +155,8 @@ struct ARPlacementView: View {
                                     print("📢 [Placement] Posted notification with direct placement data")
                                 }
 
-                                // Now reload locations in background (for persistence)
-                                Task {
-                                    await locationManager.loadLocationsFromAPI(userLocation: userLocationManager.currentLocation)
-                                    print("✅ [Placement] Locations reloaded for persistence")
-                                }
-
-                                // Longer delay to ensure the main AR view has time to:
-                                // 1. Receive the notification
-                                // 2. Process the reloaded locations
-                                // 3. Place the object via checkAndPlaceBoxes
-                                try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+                                // Brief delay to ensure the main AR view receives notification before view dismisses
+                                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
 
                                 print("✅ [Placement] Placement process complete - dismissing view")
                                 dismiss()
@@ -236,6 +231,47 @@ struct ARPlacementView: View {
                 print("⚠️ [Placement] No AR origin available - cannot save AR coordinates")
             }
 
+            // CRITICAL FIX: Update the location in locationManager.locations with new AR coordinates
+            // This ensures the updated object data is available for getNearbyLocations() without reloading from API
+            // We need to create a new LootBoxLocation with updated values since properties are immutable
+            await MainActor.run {
+                if let existingIndex = locationManager.locations.firstIndex(where: { $0.id == objectId }) {
+                    let existingLocation = locationManager.locations[existingIndex]
+
+                    // Create new location with updated coordinates
+                    let updatedLocation = LootBoxLocation(
+                        id: existingLocation.id,
+                        name: existingLocation.name,
+                        type: existingLocation.type,
+                        latitude: coordinate.latitude,
+                        longitude: coordinate.longitude,
+                        radius: existingLocation.radius,
+                        collected: existingLocation.collected,
+                        grounding_height: groundingHeight,
+                        source: existingLocation.source,
+                        created_by: existingLocation.created_by,
+                        needs_sync: existingLocation.needs_sync,
+                        last_modified: Date(),
+                        server_version: existingLocation.server_version,
+                        ar_origin_latitude: arOrigin?.coordinate.latitude,
+                        ar_origin_longitude: arOrigin?.coordinate.longitude,
+                        ar_offset_x: Double(arPosition.x),
+                        ar_offset_y: Double(arPosition.y),
+                        ar_offset_z: Double(arPosition.z),
+                        ar_placement_timestamp: Date(),
+                        ar_anchor_transform: existingLocation.ar_anchor_transform,
+                        ar_world_transform: existingLocation.ar_world_transform,
+                        nfc_tag_id: existingLocation.nfc_tag_id,
+                        multifindable: existingLocation.multifindable
+                    )
+
+                    locationManager.locations[existingIndex] = updatedLocation
+                    print("✅ [Placement] Updated object in locationManager.locations")
+                } else {
+                    print("⚠️ [Placement] Object \(objectId) not found in locationManager.locations")
+                }
+            }
+
             // Store the intended AR position from ARPlacementView in UserDefaults
             // This will be used by main AR view to measure GPS error and correct it
             let arPositionKey = "ARPlacementPosition_\(objectId)"
@@ -267,6 +303,7 @@ struct ARPlacementView: View {
         let objectId = UUID().uuidString
 
         // CRITICAL: Include AR offset coordinates in initial object creation for <10cm accuracy
+        // Use .map source so object persists to Core Data and syncs to API
         let newLocation = LootBoxLocation(
             id: objectId,
             name: "New \(type.displayName)",
@@ -275,7 +312,7 @@ struct ARPlacementView: View {
             longitude: coordinate.longitude,
             radius: 3.0, // Smaller radius since we have precise AR coordinates
             grounding_height: groundingHeight,
-            source: .arManual,
+            source: .map, // Use .map instead of .arManual so object persists and syncs
             ar_origin_latitude: arOrigin?.coordinate.latitude,
             ar_origin_longitude: arOrigin?.coordinate.longitude,
             ar_offset_x: Double(arPosition.x),
@@ -286,21 +323,33 @@ struct ARPlacementView: View {
         )
 
         do {
-            let createdObject = try await APIService.shared.createObject(newLocation)
+            let createdAPIObject = try await APIService.shared.createObject(newLocation)
 
             // AR offset coordinates were already included in the initial creation above
             print("✅ [Placement] Created object with AR coordinates:")
-            print("   Object ID: \(createdObject.id)")
-            print("   Type: \(createdObject.type)")
+            print("   Object ID: \(createdAPIObject.id)")
+            print("   Type: \(createdAPIObject.type)")
             if let arOrigin = arOrigin {
                 print("   AR Origin: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
                 print("   AR Offset: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
                 print("   💎 Object will appear at EXACT placement location (<10cm accuracy)!")
             }
 
+            // CRITICAL FIX: Add the newly created object to locationManager.locations so it appears in getNearbyLocations()
+            // This prevents having to reload ALL locations from API, which causes unrelated objects to appear
+            // Convert APIObject to LootBoxLocation first
+            if let createdLocation = APIService.shared.convertToLootBoxLocation(createdAPIObject) {
+                await MainActor.run {
+                    locationManager.addLocation(createdLocation)
+                    print("✅ [Placement] Added new object to locationManager.locations")
+                }
+            } else {
+                print("⚠️ [Placement] Failed to convert APIObject to LootBoxLocation")
+            }
+
             // Store the intended AR position from ARPlacementView in UserDefaults
             // This will be used by main AR view to measure GPS error and correct it
-            let arPositionKey = "ARPlacementPosition_\(createdObject.id)"
+            let arPositionKey = "ARPlacementPosition_\(createdAPIObject.id)"
             let arPositionDict: [String: Float] = [
                 "x": arPosition.x,
                 "y": arPosition.y,
@@ -311,15 +360,15 @@ struct ARPlacementView: View {
             UserDefaults.standard.set(arPositionDict, forKey: arPositionKey)
 
             print("✅ [Placement] Created new object in API:")
-            print("   Object ID: \(createdObject.id)")
-            print("   Name: \(createdObject.name)")
-            print("   Type: \(createdObject.type)")
+            print("   Object ID: \(createdAPIObject.id)")
+            print("   Name: \(createdAPIObject.name)")
+            print("   Type: \(createdAPIObject.type)")
             print("   AR Position (intended): (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))")
-            print("   GPS (uncorrected): (\(String(format: "%.6f", createdObject.latitude)), \(String(format: "%.6f", createdObject.longitude)))")
+            print("   GPS (uncorrected): (\(String(format: "%.6f", createdAPIObject.latitude)), \(String(format: "%.6f", createdAPIObject.longitude)))")
             print("   💡 Main AR view will use AR coordinates for precise placement")
 
             // Update grounding height for the newly created object
-            try await APIService.shared.updateGroundingHeight(objectId: createdObject.id, height: groundingHeight)
+            try await APIService.shared.updateGroundingHeight(objectId: createdAPIObject.id, height: groundingHeight)
             // Note: Scale is stored locally or could be added to API in the future
             print("📏 [Placement] Object scale set to \(scale)x (stored locally)")
         } catch {
@@ -339,7 +388,7 @@ struct ARPlacementARViewWrapper: View {
     let onCancel: () -> Void
     let onDone: () -> Void
 
-    @StateObject private var placementReticle = ARPlacementReticle(arView: nil)
+    @StateObject private var placementReticle = ARPlacementReticle(arView: nil, locationManager: nil)
     @State private var isPlacementMode = true
     @State private var scaleMultiplier: Float = 1.0
     @State private var coordinator: ARPlacementARView.Coordinator?
@@ -537,8 +586,9 @@ struct ARPlacementARView: UIViewRepresentable {
             self.isNewObject = isNewObject
             self.placementReticle = placementReticle
 
-            // Initialize placement reticle with AR view
+            // Initialize placement reticle with AR view and location manager
             placementReticle.arView = arView
+            placementReticle.locationManager = locationManager
             placementReticle.show()
             
             // CRITICAL: Force initial update to ensure reticle anchor is positioned
@@ -548,20 +598,30 @@ struct ARPlacementARView: UIViewRepresentable {
             // Initialize precision positioning service
             precisionPositioningService = ARPrecisionPositioningService(arView: arView)
 
-            // Set AR origin on first location update with good GPS accuracy
-            // For < 7.5m AR-to-GPS conversion accuracy, we need < 7.5m GPS accuracy
-            // RELAXED: Allow placement even with worse GPS accuracy (up to 20m) for better UX
-            if let userLocation = userLocationManager.currentLocation {
-                if userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 7.5 {
-                    arOriginGPS = userLocation
-                    print("📍 AR Origin set for placement: accuracy=\(String(format: "%.2f", userLocation.horizontalAccuracy))m (excellent)")
-                } else if arOriginGPS == nil && userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 20.0 {
-                    // Allow placement with reduced accuracy (7.5m - 20m) for better UX
-                    arOriginGPS = userLocation
-                    print("📍 AR Origin set for placement: accuracy=\(String(format: "%.2f", userLocation.horizontalAccuracy))m (acceptable, placement enabled)")
-                } else if arOriginGPS == nil {
-                    let accuracy = userLocation.horizontalAccuracy >= 0 ? String(format: "%.2f", userLocation.horizontalAccuracy) : "unknown"
-                    print("⚠️ Waiting for better GPS accuracy (< 20m, currently \(accuracy)m) before setting AR origin")
+            // CRITICAL: Use shared AR origin from main AR view for coordinate consistency
+            // This ensures objects placed here use the SAME coordinate system as the main AR view
+            if let sharedOrigin = locationManager.sharedAROrigin {
+                arOriginGPS = sharedOrigin
+                print("📍 [Placement] Using shared AR origin from main AR view")
+                print("   Origin: (\(String(format: "%.6f", sharedOrigin.coordinate.latitude)), \(String(format: "%.6f", sharedOrigin.coordinate.longitude)))")
+                print("   GPS Accuracy: \(String(format: "%.2f", sharedOrigin.horizontalAccuracy))m")
+                print("   ✅ COORDINATE CONSISTENCY ACHIEVED: Objects will persist at exact placement location")
+            } else {
+                // Fallback: Set AR origin from current location if shared origin not available
+                // This can happen if placement view is opened before main AR view initializes
+                print("⚠️ [Placement] Shared AR origin not available, using current location as fallback")
+                if let userLocation = userLocationManager.currentLocation {
+                    if userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 7.5 {
+                        arOriginGPS = userLocation
+                        print("📍 AR Origin set for placement: accuracy=\(String(format: "%.2f", userLocation.horizontalAccuracy))m (excellent)")
+                    } else if arOriginGPS == nil && userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 20.0 {
+                        // Allow placement with reduced accuracy (7.5m - 20m) for better UX
+                        arOriginGPS = userLocation
+                        print("📍 AR Origin set for placement: accuracy=\(String(format: "%.2f", userLocation.horizontalAccuracy))m (acceptable, placement enabled)")
+                    } else if arOriginGPS == nil {
+                        let accuracy = userLocation.horizontalAccuracy >= 0 ? String(format: "%.2f", userLocation.horizontalAccuracy) : "unknown"
+                        print("⚠️ Waiting for better GPS accuracy (< 20m, currently \(accuracy)m) before setting AR origin")
+                    }
                 }
             }
 
@@ -907,7 +967,7 @@ struct ARPlacementARView: UIViewRepresentable {
                 longitude: gpsCoordinate?.longitude ?? arOrigin.coordinate.longitude,
                 radius: 5.0,
                 grounding_height: surfaceY,
-                source: .arManual
+                source: .map // Use .map so object shows on map immediately
             )
             
             placeObjectImmediately(at: tapWorldPos, location: tempLocation, in: arView)
@@ -994,7 +1054,7 @@ struct ARPlacementARView: UIViewRepresentable {
                 longitude: gpsCoordinate?.longitude ?? arOrigin.coordinate.longitude,
                 radius: 5.0,
                 grounding_height: surfaceY,
-                source: .arManual
+                source: .map // Use .map so object shows on map immediately
             )
             
             placeObjectImmediately(at: adjustedPosition, location: tempLocation, in: arView)

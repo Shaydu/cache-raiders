@@ -255,3 +255,4 @@ class FindDataService {
         return try context.count(for: fetchRequest)
     }
 }
+

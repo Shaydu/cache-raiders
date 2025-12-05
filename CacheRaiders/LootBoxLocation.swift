@@ -269,6 +269,7 @@ class LootBoxLocationManager: ObservableObject {
     @Published var databaseStats: DatabaseStats? = nil // Database stats for loot box counter
     @Published var showOnlyNextItem: Bool = false // Show only the next unfound item in the list
     @Published var useGenericDoubloonIcons: Bool = false // When enabled, show generic doubloon icons and reveal real objects with animation
+    @Published var sharedAROrigin: CLLocation? = nil // Shared AR origin between main AR view and placement view for coordinate consistency
     @Published var gameMode: GameMode = .open { // Game mode: Open or Story Mode
         didSet {
             print("🎮 [LootBoxLocationManager] gameMode didSet: \(oldValue.displayName) → \(gameMode.displayName)")

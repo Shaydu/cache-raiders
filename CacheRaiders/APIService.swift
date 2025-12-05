@@ -401,6 +401,22 @@ class APIService {
             return nil
         }
 
+        // Parse AR placement timestamp if present
+        var arPlacementTimestamp: Date? = nil
+        if let timestampString = apiObject.ar_placement_timestamp {
+            let isoFormatter = ISO8601DateFormatter()
+            arPlacementTimestamp = isoFormatter.date(from: timestampString)
+        }
+
+        // Determine source: if object has AR coordinates, treat as AR-placed (use .map for persistence)
+        // Use .map instead of .arManual so it persists to Core Data and syncs to API
+        let hasARCoordinates = apiObject.ar_origin_latitude != nil &&
+                               apiObject.ar_origin_longitude != nil &&
+                               apiObject.ar_offset_x != nil &&
+                               apiObject.ar_offset_y != nil &&
+                               apiObject.ar_offset_z != nil
+        let source: ItemSource = hasARCoordinates ? .map : .api
+
         let location = LootBoxLocation(
             id: apiObject.id,
             name: apiObject.name,
@@ -410,8 +426,14 @@ class APIService {
             radius: apiObject.radius,
             collected: apiObject.collected,
             grounding_height: apiObject.grounding_height,
-            source: .api, // API objects come from the API
+            source: source, // Use .map for AR-placed objects (persists + syncs), .api for GPS-only
             created_by: apiObject.created_by,
+            ar_origin_latitude: apiObject.ar_origin_latitude,
+            ar_origin_longitude: apiObject.ar_origin_longitude,
+            ar_offset_x: apiObject.ar_offset_x,
+            ar_offset_y: apiObject.ar_offset_y,
+            ar_offset_z: apiObject.ar_offset_z,
+            ar_placement_timestamp: arPlacementTimestamp,
             multifindable: apiObject.multifindable
         )
 

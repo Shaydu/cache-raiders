@@ -448,6 +448,11 @@ struct SettingsView: View {
                 set: { newValue in
                     self.locationManager.disableAmbientLight = newValue
                     self.locationManager.saveDisableAmbientLight()
+                    // Notify components that need to update their materials
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("AmbientLightSettingChanged"),
+                        object: nil
+                    )
                 }
             ))
             .padding(.vertical, 4)

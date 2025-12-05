@@ -834,6 +834,7 @@ def create_object():
                 'ar_anchor_transform': safe_get('ar_anchor_transform'),  # Include AR anchor transform
                 'ar_world_transform': safe_get('ar_world_transform'),  # Include full AR world transform
                 'nfc_tag_id': safe_get('nfc_tag_id'),  # Include NFC tag ID
+                'multifindable': bool(safe_get('multifindable', 0)),  # Include multifindable flag
                 'collected': bool(safe_get('collected', 0)),
                 'found_by': safe_get('found_by'),
                 'found_at': safe_get('found_at')

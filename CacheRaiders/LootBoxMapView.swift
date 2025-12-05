@@ -101,8 +101,9 @@ struct LootBoxMapView: View {
             }
 
             // Selection Filtering: if an item is selected, only show that item
-            // (NPCs are always shown regardless of selection)
-            if let selected = selectedId, !isNPC {
+            // (NPCs and AR-placed items are always shown regardless of selection)
+            let isARPlaced = location.source == .map || location.source == .arManual || location.source == .arRandomized
+            if let selected = selectedId, !isNPC && !isARPlaced {
                 if location.id != selected {
                     return false // Filter out non-selected items
                 }

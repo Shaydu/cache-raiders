@@ -734,6 +734,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Use current GPS location even if accuracy is poor
             arOriginLocation = userLocation
 
+            // Share AR origin with placement view for coordinate consistency
+            locationManager?.sharedAROrigin = userLocation
+
             // Set up geospatial service with this GPS location
             if geospatialService?.setENUOrigin(from: userLocation) == true {
                 Swift.print("📍 Degraded mode: Using GPS with reduced accuracy")
@@ -743,6 +746,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         } else {
             // No GPS available - cannot place GPS-based objects
             arOriginLocation = nil
+            locationManager?.sharedAROrigin = nil
             Swift.print("📍 Degraded mode: No GPS available - AR-only objects only")
         }
         arOriginSetTime = Date()
@@ -1634,6 +1638,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     // Step 1: Set ENU origin from GPS (geospatial coordinate frame)
                     if geospatialService?.setENUOrigin(from: userLocation) == true {
                         arOriginLocation = userLocation
+                        locationManager?.sharedAROrigin = userLocation // Share AR origin with placement view
                         arOriginSetTime = Date()
                         isDegradedMode = false
                         Swift.print("✅ [SESSION] AR origin successfully set!")
@@ -1717,6 +1722,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 // Set ENU origin from GPS (geospatial coordinate frame)
                 if geospatialService?.setENUOrigin(from: userLocation) == true {
                     arOriginLocation = userLocation
+                    locationManager?.sharedAROrigin = userLocation // Share AR origin with placement view
                     arOriginSetTime = Date()
                     isDegradedMode = false
                     
@@ -4608,36 +4614,51 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
             Swift.print("🔔 [Placement Notification] Direct placement for object: \(objectId)")
             Swift.print("   AR Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))")
+            Swift.print("   AR Origin: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
 
-            // Create temporary location for immediate placement
-            var tempLocation = LootBoxLocation(
-                id: objectId,
-                name: "New AR Object", // Will be updated when locations reload
-                type: .chalice, // Will be updated when locations reload
-                latitude: gpsCoordinate.latitude,
-                longitude: gpsCoordinate.longitude,
-                radius: 5.0,
-                grounding_height: groundingHeight,
-                source: .arManual
-            )
+            // CRITICAL: Try to get the actual location from locationManager (it should have AR coordinates already saved)
+            // If found, use it directly. Otherwise create a temporary location.
+            var locationToPlace: LootBoxLocation
 
-            // Set AR positioning data using ARPositioningService
-            let arService = ARPositioningService.shared
-            let arOriginStruct = ARPositioningService.AROrigin(
-                latitude: arOrigin.coordinate.latitude,
-                longitude: arOrigin.coordinate.longitude
-            )
-            let arOffsets = ARPositioningService.AROffsets.fromARPosition(arPosition)
+            if let actualLocation = locationManager?.locations.first(where: { $0.id == objectId }) {
+                Swift.print("✅ Found location in locationManager with saved AR coordinates")
+                Swift.print("   Name: \(actualLocation.name), Type: \(actualLocation.type.displayName)")
+                Swift.print("   AR Offset: (\(actualLocation.ar_offset_x ?? 0), \(actualLocation.ar_offset_y ?? 0), \(actualLocation.ar_offset_z ?? 0))")
+                locationToPlace = actualLocation
+            } else {
+                Swift.print("⚠️ Location not found in locationManager, creating temporary location")
+                // Create temporary location for immediate placement
+                var tempLocation = LootBoxLocation(
+                    id: objectId,
+                    name: "New AR Object", // Will be updated when locations reload
+                    type: .chalice, // Will be updated when locations reload
+                    latitude: gpsCoordinate.latitude,
+                    longitude: gpsCoordinate.longitude,
+                    radius: 5.0,
+                    grounding_height: groundingHeight,
+                    source: .arManual
+                )
 
-            arService.applyARPositioning(
-                to: &tempLocation,
-                origin: arOriginStruct,
-                offsets: arOffsets,
-                placementTimestamp: arService.createPlacementTimestamp()
-            )
+                // Set AR positioning data using ARPositioningService
+                let arService = ARPositioningService.shared
+                let arOriginStruct = ARPositioningService.AROrigin(
+                    latitude: arOrigin.coordinate.latitude,
+                    longitude: arOrigin.coordinate.longitude
+                )
+                let arOffsets = ARPositioningService.AROffsets.fromARPosition(arPosition)
+
+                arService.applyARPositioning(
+                    to: &tempLocation,
+                    origin: arOriginStruct,
+                    offsets: arOffsets,
+                    placementTimestamp: arService.createPlacementTimestamp()
+                )
+
+                locationToPlace = tempLocation
+            }
 
             // Place immediately at the exact AR coordinates
-            placeObjectAtARPosition(tempLocation, arPosition: arPosition, userLocation: userLocation)
+            placeObjectAtARPosition(locationToPlace, arPosition: arPosition, userLocation: userLocation)
 
         } else {
             // Fallback to old method (reload and check nearby)
@@ -4667,15 +4688,80 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             return
         }
 
-        Swift.print("🎯 Placing object '\(location.name)' (ID: \(location.id)) at AR position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))")
+        // CRITICAL FIX: Use AR coordinates directly if they match the current AR origin
+        // The arPosition parameter comes from ARPlacementView and is in the placement view's AR coordinate system.
+        // However, the SAVED ar_offset coordinates in the location object are what we should use,
+        // because they were saved to the API and properly set on the location object.
+
+        var finalPosition = arPosition // Default to passed position
+        var useARCoordinates = false
+
+        // Check if we have saved AR coordinates that match our current AR origin
+        if let arOriginLat = location.ar_origin_latitude,
+           let arOriginLon = location.ar_origin_longitude,
+           let offsetX = location.ar_offset_x,
+           let offsetY = location.ar_offset_y,
+           let offsetZ = location.ar_offset_z,
+           let currentOrigin = arOriginLocation {
+
+            // Check if AR origins match (within 10 meters - same AR session)
+            let savedOrigin = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
+            let originDistance = currentOrigin.distance(from: savedOrigin)
+
+            if originDistance < 10.0 {
+                // Same AR origin - use saved AR coordinates directly
+                finalPosition = SIMD3<Float>(Float(offsetX), Float(offsetY), Float(offsetZ))
+                useARCoordinates = true
+                Swift.print("✅ Using saved AR coordinates (origin match: \(String(format: "%.1f", originDistance))m)")
+                Swift.print("   AR Origin: (\(String(format: "%.6f", arOriginLat)), \(String(format: "%.6f", arOriginLon)))")
+                Swift.print("   AR Offset: (\(String(format: "%.4f", offsetX)), \(String(format: "%.4f", offsetY)), \(String(format: "%.4f", offsetZ)))m")
+            } else {
+                Swift.print("⚠️ AR origin mismatch (\(String(format: "%.1f", originDistance))m apart) - falling back to GPS conversion")
+            }
+        }
+
+        // Fallback: Convert from GPS if AR coordinates not available or origin mismatch
+        if !useARCoordinates {
+            guard let frame = arView.session.currentFrame else {
+                Swift.print("⚠️ Cannot place object: No AR frame")
+                return
+            }
+
+            let targetGPS = CLLocation(latitude: location.latitude, longitude: location.longitude)
+            let cameraTransform = frame.camera.transform
+            let arOriginGPS = self.arOriginLocation ?? userLocation
+
+            guard let mainARPosition = precisionPositioningService?.convertGPSToARPosition(
+                targetGPS: targetGPS,
+                userGPS: userLocation,
+                cameraTransform: cameraTransform,
+                arOriginGPS: arOriginGPS
+            ) else {
+                Swift.print("⚠️ Cannot convert GPS to AR position for object: \(location.name)")
+                return
+            }
+
+            // Use grounding height if available, otherwise use converted Y position
+            let finalY = location.grounding_height.map { Float($0) } ?? mainARPosition.y
+            finalPosition = SIMD3<Float>(mainARPosition.x, finalY, mainARPosition.z)
+
+            Swift.print("📍 Using GPS-converted position (fallback)")
+            Swift.print("   GPS: (\(String(format: "%.6f", location.latitude)), \(String(format: "%.6f", location.longitude)))")
+        }
+
+        Swift.print("🎯 Placing object '\(location.name)' (ID: \(location.id)) in main AR view")
+        Swift.print("   Final AR Position: (\(String(format: "%.4f", finalPosition.x)), \(String(format: "%.4f", finalPosition.y)), \(String(format: "%.4f", finalPosition.z)))")
 
         do {
-            // Create anchor at the exact AR position
-            let anchor = AnchorEntity(world: arPosition)
+            // Create anchor at the final AR position in main AR view's coordinate system
+            let anchor = AnchorEntity(world: finalPosition)
+            // CRITICAL: Set anchor name to location.id so tap detection works even if entity hit test fails
+            anchor.name = location.id
 
             // Get factory and create entity
             let factory = LootBoxFactoryRegistry.factory(for: location.type)
-            let (entity, _) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: 1.0)
+            // CRITICAL: Use the findableObject returned by factory - it has proper sphere/container references
+            let (entity, findableObject) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: 1.0)
 
             // Ensure entity is visible and enabled
             entity.isEnabled = true
@@ -4693,17 +4779,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Add to scene
             arView.scene.addAnchor(anchor)
 
-            // Create FindableObject for tap handling
-            let findableObject = FindableObject(
-                locationId: location.id,
-                anchor: anchor,
-                sphereEntity: nil, // This method doesn't create spheres
-                container: nil, // Container would be created by factory if needed
-                location: location
-            )
-
             // Set callback to mark as collected when found
-            findableObject.onFoundCallback = { [weak self] id in
+            findableObject.onFoundCallback = { [weak self] (id: String) in
                 DispatchQueue.main.async {
                     if let locationManager = self?.locationManager {
                         locationManager.markCollected(id)
@@ -4722,10 +4799,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             tapHandler?.placedBoxes[location.id] = anchor
             tapHandler?.findableObjects[location.id] = findableObject
 
+            // Start continuous loop animation if the factory supports it
+            factory.animateLoop(entity: entity)
+
+            // Apply uniform luminance if ambient light is disabled
+            environmentManager?.applyUniformLuminanceToNewEntity(anchor)
+
             // Mark as manually placed to prevent removal by checkAndPlaceBoxes
             self.manuallyPlacedObjectIds.insert(location.id)
 
             Swift.print("✅ Successfully placed object '\(location.name)' at AR coordinates")
+            Swift.print("   Object is now tappable and visible in AR")
 
         } catch {
             Swift.print("❌ Failed to place object '\(location.name)': \(error)")
@@ -4951,6 +5035,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             guard let arView = self.arView,
                   let userLocation = self.userLocationManager?.currentLocation else {
                 Swift.print("⚠️ Cannot place real-time object - AR view or user location not available")
+                return
+            }
+
+            // CRITICAL: Check if this object is already placed (e.g., by NFC direct placement)
+            // This prevents double placement when NFC objects are both directly placed AND broadcast via WebSocket
+            if placedBoxes.keys.contains(location.id) {
+                Swift.print("⏭️ Object '\(location.id)' already placed - skipping real-time placement to avoid duplicate")
                 return
             }
 
