@@ -167,6 +167,10 @@
             margin-top: 20px;
             max-height: 400px;
             overflow-y: auto;
+            padding-left: 16px;
+            padding-top: 16px;
+            margin-left: -16px;
+            margin-top: 4px;
         }
 
         .find-item {
@@ -369,7 +373,7 @@
                 </div>
             </div>
 
-            <!-- Find Log -->
+                <!-- Find Log -->
             <div class="card">
                 <h2>📋 Find Log</h2>
 
@@ -387,6 +391,10 @@
                         <div class="detail-label" style="margin-bottom: 5px;">Last Found</div>
                         <span class="stat-badge" id="lastFoundTime">-</span>
                     </div>
+                </div>
+
+                <div style="margin-bottom: 20px; font-size: 14px; color: #888; font-style: italic;">
+                    Note: The list below shows each individual find. The same player may appear multiple times if they found this item more than once.
                 </div>
 
                 <div id="findsContainer">
@@ -576,7 +584,7 @@
 
                 // Calculate unique players and last found time
                 if (data.finds && data.finds.length > 0) {
-                    const uniquePlayers = new Set(data.finds.map(find => find.found_by)).size;
+                    const uniquePlayers = new Set(data.finds.map(find => find.player_name)).size;
                     document.getElementById('uniquePlayersCount').textContent = uniquePlayers;
 
                     const lastFind = data.finds[0]; // Already sorted by found_at DESC
