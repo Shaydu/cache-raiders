@@ -29,7 +29,8 @@ class ARDistanceTracker: ObservableObject {
     var nearestObjectDirectionBinding: Binding<Double?>?
     
     @Published var nearestObjectDirection: Double? = nil
-    
+    @Published var currentTargetObjectName: String? = nil
+
     private var distanceLogger: Timer?
     private var previousDistance: Double?
     private var audioPingService: AudioPingService?

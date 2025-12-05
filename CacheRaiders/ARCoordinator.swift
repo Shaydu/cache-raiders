@@ -2931,6 +2931,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         tapHandler?.placedBoxes[location.id] = anchorEntity
         tapHandler?.findableObjects[location.id] = findable
 
+        // Update all manager references
+        updateManagerReferences()
+
         // Play placement sound
         AudioServicesPlaySystemSound(1104) // Tink sound
 
@@ -3089,7 +3092,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 if let findable = findableObjects[location.id] {
                     tapHandler?.findableObjects[location.id] = findable
                 }
-                
+
+                // Update all manager references
+                updateManagerReferences()
+
                 Swift.print("✅ Placed AR sphere '\(location.name)' using stored AR coordinates at (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f",    arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
                 return
             }
@@ -3188,6 +3194,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             if let findable = findableObjects[location.id] {
                 tapHandler?.findableObjects[location.id] = findable
             }
+
+            // Update all manager references
+            updateManagerReferences()
+
             return
         }
         
@@ -3297,6 +3307,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         if let findable = findableObjects[location.id] {
             tapHandler?.findableObjects[location.id] = findable
         }
+
+        // Update all manager references
+        updateManagerReferences()
 
         Swift.print("✅ Placed AR sphere '\(location.name)' at AR position (\(String(format: "%.2f", precisePosition.x)), \(String(format: "%.2f", precisePosition.z)))")
     }
@@ -3523,6 +3536,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         tapHandler?.placedBoxes[location.id] = anchor
         tapHandler?.findableObjects[location.id] = findableObject
         Swift.print("   ✅ Updated tap handler's placedBoxes and findableObjects - object is now tappable")
+
+        // Update all manager references
+        updateManagerReferences()
         
         // Start continuous loop animation if the factory supports it
         // This is especially important for animated models like the turkey
@@ -4546,6 +4562,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             tapHandler?.findableObjects[item.id] = findable
         }
 
+        // Update all manager references
+        updateManagerReferences()
+
         Swift.print("✅ Placed \(item.type.displayName) \(item.name) as box at position (\(position.x), \(position.y), \(position.z))")
     }
 
@@ -4827,6 +4846,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             tapHandler?.placedBoxes[location.id] = anchor
             tapHandler?.findableObjects[location.id] = findableObject
 
+            // Update all manager references
+            updateManagerReferences()
+
             // Start continuous loop animation if the factory supports it
             factory.animateLoop(entity: entity)
 
@@ -5074,6 +5096,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Register with tap handler
         tapHandler?.placedBoxes[objectId] = anchorEntity
         tapHandler?.findableObjects[objectId] = findable
+
+        // Update all manager references
+        updateManagerReferences()
 
         // Mark as placed
         placedBoxesSet.insert(objectId)
