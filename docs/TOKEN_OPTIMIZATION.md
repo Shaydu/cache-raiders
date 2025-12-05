@@ -175,3 +175,4 @@ print(f"Total tokens: {response.usage.total_tokens}")
 **Result**: ~70% reduction in token usage, making the free tier last much longer!
 
 
+

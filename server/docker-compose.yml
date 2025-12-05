@@ -1,10 +1,38 @@
-version: '3.8'
-
 services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cache-raiders-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      # Persist Ollama models and data
+      - ollama_data:/root/.ollama
+      # Mount entrypoint script to auto-load model on startup
+      - ./ollama-entrypoint.sh:/ollama-entrypoint.sh:ro
+    restart: unless-stopped
+    entrypoint: ["/bin/bash", "/ollama-entrypoint.sh"]
+    healthcheck:
+      # Use Ollama CLI for health check (available in container)
+      # This checks if Ollama is responding and can list models
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s  # Give Ollama 90 seconds to start and load model before health checks begin
+    # Expose Ollama on all interfaces (0.0.0.0) so it's accessible from the API container
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+      # Keep models in memory for 24 hours to prevent reload delays
+      - OLLAMA_KEEP_ALIVE=24h
+      # Model to auto-load on startup
+      - OLLAMA_MODEL=granite4:350m
+
   api:
     build: .
     ports:
       - "5001:5001"
+    depends_on:
+      - ollama
     volumes:
       # Persist database across container restarts
       - ./data:/app/data
@@ -12,19 +40,46 @@ services:
       - ./cache_raiders.db:/app/cache_raiders.db
       # Mount admin.html for live editing (no rebuild needed)
       - ./admin.html:/app/admin.html
+      # Mount nfc_details.html for live editing (no rebuild needed)
+      - ./nfc_details.html:/app/nfc_details.html
       # Mount app.py for live editing (no rebuild needed for code changes)
       - ./app.py:/app/app.py
+      # Mount llm_service.py for live editing
+      - ./llm_service.py:/app/llm_service.py
+      # Mount map_feature_service.py for live editing
+      - ./map_feature_service.py:/app/map_feature_service.py
+      # Mount treasure_hunt_stages.py for live editing
+      - ./treasure_hunt_stages.py:/app/treasure_hunt_stages.py
+      # Mount NPC modules for live editing
+      - ./npcs:/app/npcs
       # Mount static files for live editing
       - ./static:/app/static
+      # Mount logs directory for debugging (create on host if needed)
+      - ./logs:/app/logs
+      # Mount .env file so it's accessible in container (for other settings)
+      - ./.env:/app/.env
+    # Don't use env_file for LLM settings - use environment section to ensure container settings take precedence
     environment:
       - FLASK_ENV=production
       - PORT=5001
-      - HOST_IP=192.168.68.53
+      # HOST_IP: Your Mac's Wi-Fi IP address (for iOS devices to connect)
+      # This is set dynamically by start-server.sh at runtime
+      - HOST_IP=${HOST_IP:-localhost}
+      # LLM settings - these override any .env file values
+      - LLM_PROVIDER=ollama
+      - LLM_BASE_URL=http://ollama:11434
+      - LLM_MODEL=granite4:350m
+      # Prevent dotenv from overriding container environment variables
+      - DOCKER_CONTAINER=true
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      test: ["CMD", "python3", "-c", "import requests; requests.get('http://localhost:5001/health', timeout=5).raise_for_status()"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+volumes:
+  ollama_data:
+    driver: local
 
 

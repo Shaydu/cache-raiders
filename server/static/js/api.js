@@ -54,6 +54,13 @@ const ApiService = {
             });
         },
 
+        async deleteBulk(ids) {
+            return ApiService.fetch('/api/objects/bulk', {
+                method: 'DELETE',
+                body: JSON.stringify({ ids })
+            });
+        },
+
         async markUnfound(id) {
             return ApiService.fetch(`/api/objects/${id}/found`, {
                 method: 'DELETE'
@@ -92,6 +99,12 @@ const ApiService = {
             return ApiService.fetch(`/api/players/${deviceUuid}`, {
                 method: 'DELETE'
             });
+        },
+
+        async kick(deviceUuid) {
+            return ApiService.fetch(`/api/players/${deviceUuid}/kick`, {
+                method: 'POST'
+            });
         }
     },
 
@@ -120,6 +133,15 @@ const ApiService = {
     map: {
         async getDefaultCenter() {
             return ApiService.fetch('/api/map/default_center');
+        }
+    },
+
+    /**
+     * Story Mode Elements API (for admin map)
+     */
+    storyElements: {
+        async getAll() {
+            return ApiService.fetch('/api/admin/story-mode-elements');
         }
     },
 

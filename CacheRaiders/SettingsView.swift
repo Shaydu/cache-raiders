@@ -7,8 +7,9 @@ struct SettingsView: View {
     @ObservedObject var locationManager: LootBoxLocationManager
     @ObservedObject var userLocationManager: UserLocationManager
     @ObservedObject private var webSocketService = WebSocketService.shared
+    @ObservedObject private var offlineModeManager = OfflineModeManager.shared
     @StateObject private var viewModel: SettingsViewModel
-    @Environment(\.dismiss) var dismiss
+    var dismissAction: (() -> Void)? = nil
     @State private var previousDistance: Double = 10.0
     @State private var showQRScanner = false
     @State private var scannedURL: String?
@@ -24,9 +25,10 @@ struct SettingsView: View {
     @State private var cachedGroupedTypes: [(models: [String], typeCounts: [(type: LootBoxType, count: Int)])] = []
     @State private var regenerateTask: Task<Void, Never>?
     
-    init(locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager) {
+    init(locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, dismissAction: (() -> Void)? = nil) {
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
+        self.dismissAction = dismissAction
         _viewModel = StateObject(wrappedValue: SettingsViewModel(locationManager: locationManager, userLocationManager: userLocationManager))
     }
     
@@ -62,10 +64,11 @@ struct SettingsView: View {
     
     // PERFORMANCE: Update cached data off main thread when locations change
     private func updateCachedTypeData() {
-        // Capture display names on main actor before entering detached task
+        // Capture display names and model names on main actor before entering detached task
         let typeDisplayNames = Dictionary(uniqueKeysWithValues: LootBoxType.allCases.map { ($0, $0.displayName) })
+        let typeModelNames = Dictionary(uniqueKeysWithValues: LootBoxType.allCases.map { ($0, $0.factory.modelNames) })
         
-        Task.detached(priority: .userInitiated) { [locations = locationManager.locations, typeDisplayNames] in
+        Task.detached(priority: .userInitiated) { [locations = locationManager.locations, typeDisplayNames, typeModelNames] in
             // Build type counts dictionary off main thread
             var typeCounts: [LootBoxType: Int] = [:]
             for location in locations {
@@ -76,7 +79,7 @@ struct SettingsView: View {
             var groups: [[String]: [LootBoxType]] = [:]
             
             for type in LootBoxType.allCases {
-                let models = type.factory.modelNames
+                let models = typeModelNames[type] ?? []
                 let key = models.sorted()
                 if groups[key] == nil {
                     groups[key] = []
@@ -102,30 +105,29 @@ struct SettingsView: View {
     }
     
     var body: some View {
-        NavigationView {
-            List {
-                gameModeSection
-                searchDistanceSection
-                maxObjectLimitSection
-                findableTypesSection
-                mapDisplaySection
-                arZoomSection
-                arDebugSection
-                userProfileSection
-                leaderboardSection
-                apiSyncSection
-                arLensSection
-                aboutSection
-            }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
+        List {
+            searchDistanceSection
+            maxObjectLimitSection
+            findableTypesSection
+            mapDisplaySection
+            conversationSection
+            arZoomSection
+            arDebugSection
+            userProfileSection
+            leaderboardSection
+            apiSyncSection
+            arLensSection
+            aboutSection
+        }
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("Done") {
+                    dismissAction?()
                 }
             }
+        }
             .onAppear {
                 previousDistance = locationManager.maxSearchDistance
                 
@@ -171,70 +173,43 @@ struct SettingsView: View {
             } message: {
                 Text(viewModel.alertMessage)
             }
-        }
     }
-    
+
     // MARK: - View Sections
-    
-    private var gameModeSection: some View {
-        Section("Game Mode") {
-            Picker("Game Mode", selection: Binding(
-                get: { locationManager.gameMode },
-                set: { newValue in
-                    locationManager.gameMode = newValue
-                    locationManager.saveGameMode()
-                }
-            )) {
-                ForEach(GameMode.allCases, id: \.self) { mode in
-                    Text(mode.displayName).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.vertical, 4)
-            
-            Text(gameModeDescription)
-                .font(.caption2)
-                .foregroundColor(.secondary)
-        }
-    }
-    
-    private var gameModeDescription: String {
-        return locationManager.gameMode.description
-    }
     
     private var searchDistanceSection: some View {
         Section("Search Distance") {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Maximum Search Distance: \(Int(locationManager.maxSearchDistance))m")
                     .font(.headline)
-                
+
                 Slider(
                     value: Binding(
                         get: { locationManager.maxSearchDistance },
                         set: { newValue in
                             locationManager.maxSearchDistance = newValue
                             locationManager.saveMaxDistance()
-                            
+
                             // PERFORMANCE: Debounce regeneration and move to background thread
                             if previousDistance != newValue {
                                 // Cancel any pending regeneration task
                                 regenerateTask?.cancel()
-                                
+
                                 // Debounce: wait 500ms after user stops adjusting slider
                                 regenerateTask = Task { @MainActor [weak locationManager] in
                                     // Capture userLocationManager from the view context
                                     let currentUserLocationManager = userLocationManager
-                                    
+
                                     try? await Task.sleep(nanoseconds: 500_000_000) // 500ms debounce
-                                    
+
                                     guard !Task.isCancelled,
                                           let locationManager = locationManager,
                                           let userLocation = currentUserLocationManager.currentLocation else {
                                         return
                                     }
-                                    
+
                                     print("🔄 Search distance changed from \(previousDistance)m to \(newValue)m, regenerating loot boxes")
-                                    
+
                                     // Move heavy regeneration to background thread
                                     Task.detached(priority: .userInitiated) {
                                         await MainActor.run {
@@ -249,7 +224,7 @@ struct SettingsView: View {
                     in: 10...100,
                     step: 10
                 )
-                
+
                 HStack {
                     Text("10m")
                         .font(.caption)
@@ -259,7 +234,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 Text("Loot boxes within this distance will appear in AR")
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -273,7 +248,7 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Maximum Objects in AR: \(locationManager.maxObjectLimit)")
                     .font(.headline)
-                
+
                 Slider(
                     value: Binding(
                         get: { Double(locationManager.maxObjectLimit) },
@@ -285,7 +260,7 @@ struct SettingsView: View {
                     in: 1...25,
                     step: 1
                 )
-                
+
                 HStack {
                     Text("1")
                         .font(.caption)
@@ -295,7 +270,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 Text("Maximum number of objects that can be placed in AR at once")
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -306,15 +281,17 @@ struct SettingsView: View {
     
     private var findableTypesSection: some View {
         Section("Findable Types") {
-            ForEach(Array(groupedFindableTypes.enumerated()), id: \.offset) { index, group in
+            ForEach(0..<groupedFindableTypes.count, id: \.self) { index in
+                let group = groupedFindableTypes[index]
                 if group.types.count > 1 {
-                    ForEach(Array(group.types.enumerated()), id: \.offset) { typeIndex, type in
+                    ForEach(0..<group.types.count, id: \.self) { typeIndex in
+                        let type = group.types[typeIndex]
                         HStack(spacing: 12) {
                             Image(systemName: iconName(for: type))
                                 .foregroundColor(Color(type.color))
                                 .font(.title3)
                                 .frame(width: 30)
-                            
+
                             if group.models.isEmpty {
                                 Text(type.displayName)
                                     .font(.body)
@@ -322,9 +299,9 @@ struct SettingsView: View {
                                 Text("\(type.displayName) (\(group.models.joined(separator: ", ")))")
                                     .font(.body)
                             }
-                            
+
                             Spacer()
-                            
+
                             Text("\(countForType(type))")
                                 .font(.body)
                                 .fontWeight(.semibold)
@@ -339,9 +316,9 @@ struct SettingsView: View {
                             .foregroundColor(Color(firstType.color))
                             .font(.title3)
                             .frame(width: 30)
-                        
+
                         let typeNames = group.types.map { $0.displayName }.joined(separator: ", ")
-                        
+
                         if group.models.isEmpty {
                             Text(typeNames)
                                 .font(.body)
@@ -349,9 +326,9 @@ struct SettingsView: View {
                             Text("\(typeNames) (\(group.models.joined(separator: ", ")))")
                                 .font(.body)
                         }
-                        
+
                         Spacer()
-                        
+
                         // Sum up counts for all types in this group
                         let totalCount = group.types.reduce(0) { $0 + countForType($1) }
                         Text("\(totalCount)")
@@ -375,8 +352,24 @@ struct SettingsView: View {
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("When enabled, found items appear in deep red and unfound items appear in green on the map")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+    }
+    
+    private var conversationSection: some View {
+        Section("Conversation") {
+            Toggle("Typewriter Effect", isOn: Binding(
+                get: { UserDefaults.standard.bool(forKey: "enableTypewriterEffect") },
+                set: { newValue in
+                    UserDefaults.standard.set(newValue, forKey: "enableTypewriterEffect")
+                }
+            ))
+            .padding(.vertical, 4)
+            
+            Text("When enabled, NPC messages will type out character by character with sound effects. When disabled, messages appear instantly.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }
@@ -385,21 +378,21 @@ struct SettingsView: View {
     private var arZoomSection: some View {
         Section("AR Zoom") {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Zoom Level: \(String(format: "%.1f", locationManager.arZoomLevel))x")
+                Text("Zoom Level: \(String(format: "%.1f", self.locationManager.arZoomLevel))x")
                     .font(.headline)
-                
+
                 Slider(
                     value: Binding(
-                        get: { locationManager.arZoomLevel },
+                        get: { self.locationManager.arZoomLevel },
                         set: { newValue in
-                            locationManager.arZoomLevel = newValue
-                            locationManager.saveARZoomLevel()
+                            self.locationManager.arZoomLevel = newValue
+                            self.locationManager.saveARZoomLevel()
                         }
                     ),
                     in: 0.5...3.0,
                     step: 0.1
                 )
-                
+
                 HStack {
                     Text("0.5x")
                         .font(.caption)
@@ -413,7 +406,7 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                
+
                 Text("Adjust the zoom level of the AR camera view. Lower values show more area, higher values zoom in closer.")
                     .font(.caption2)
                     .foregroundColor(.secondary)
@@ -425,75 +418,75 @@ struct SettingsView: View {
     var arDebugSection: some View {
         Section("AR Debug") {
             Toggle("Debug AR and Location", isOn: Binding(
-                get: { locationManager.showARDebugVisuals },
+                get: { self.locationManager.showARDebugVisuals },
                 set: { newValue in
-                    locationManager.showARDebugVisuals = newValue
-                    locationManager.saveDebugVisuals()
+                    self.locationManager.showARDebugVisuals = newValue
+                    self.locationManager.saveDebugVisuals()
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("Enable to see ARKit feature points (green triangles) and anchor origins for debugging. Also plays a submarine ping sound when location is sent to the server.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
-            
+
             Toggle("Disable Occlusion", isOn: Binding(
-                get: { locationManager.disableOcclusion },
+                get: { self.locationManager.disableOcclusion },
                 set: { newValue in
-                    locationManager.disableOcclusion = newValue
-                    locationManager.saveDisableOcclusion()
+                    self.locationManager.disableOcclusion = newValue
+                    self.locationManager.saveDisableOcclusion()
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("When enabled, objects will be visible even when behind walls. Useful for finding hidden objects.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
-            
+
             Toggle("Disable Ambient Light", isOn: Binding(
-                get: { locationManager.disableAmbientLight },
+                get: { self.locationManager.disableAmbientLight },
                 set: { newValue in
-                    locationManager.disableAmbientLight = newValue
-                    locationManager.saveDisableAmbientLight()
+                    self.locationManager.disableAmbientLight = newValue
+                    self.locationManager.saveDisableAmbientLight()
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("When enabled, objects will have uniform brightness regardless of real-world lighting conditions.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
-            
+
             Toggle("Enable Object Recognition", isOn: Binding(
-                get: { locationManager.enableObjectRecognition },
+                get: { self.locationManager.enableObjectRecognition },
                 set: { newValue in
-                    locationManager.enableObjectRecognition = newValue
-                    locationManager.saveEnableObjectRecognition()
+                    self.locationManager.enableObjectRecognition = newValue
+                    self.locationManager.saveEnableObjectRecognition()
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("When enabled, uses Vision framework to classify objects in camera view. Disabled by default to save battery and processing power.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
-            
+
             Toggle("Enable Audio Mode", isOn: Binding(
-                get: { locationManager.enableAudioMode },
+                get: { self.locationManager.enableAudioMode },
                 set: { newValue in
-                    locationManager.enableAudioMode = newValue
-                    locationManager.saveEnableAudioMode()
+                    self.locationManager.enableAudioMode = newValue
+                    self.locationManager.saveEnableAudioMode()
                 }
             ))
             .padding(.vertical, 4)
-            
+
             Text("When enabled, plays a ping sound once per second. The pitch increases as you get closer to objects, reaching maximum pitch when you're on top of them.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
 
             Toggle("Use Generic Doubloon Icons", isOn: Binding(
-                get: { locationManager.useGenericDoubloonIcons },
+                get: { self.locationManager.useGenericDoubloonIcons },
                 set: { newValue in
-                    locationManager.useGenericDoubloonIcons = newValue
-                    locationManager.saveUseGenericDoubloonIcons()
+                    self.locationManager.useGenericDoubloonIcons = newValue
+                    self.locationManager.saveUseGenericDoubloonIcons()
                 }
             ))
             .padding(.vertical, 4)
@@ -541,54 +534,68 @@ struct SettingsView: View {
     
     var leaderboardSection: some View {
         Section("Leaderboard") {
-            NavigationLink(destination: LeaderboardView()) {
-                HStack {
-                    Image(systemName: "trophy.fill")
-                        .foregroundColor(.yellow)
-                    Text("View Leaderboard")
-                    Spacer()
-                    if !viewModel.leaderboard.isEmpty {
-                        Text("\(viewModel.leaderboard.count) players")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            
-            if !viewModel.leaderboard.isEmpty {
-                ForEach(Array(viewModel.leaderboard.prefix(3).enumerated()), id: \.offset) { index, finder in
-                    HStack {
-                        ZStack {
-                            Circle()
-                                .fill(index < 3 ? Color.yellow.opacity(0.3) : Color.gray.opacity(0.3))
-                                .frame(width: 28, height: 28)
-                            
-                            if index == 0 {
-                                Image(systemName: "crown.fill")
-                                    .foregroundColor(.yellow)
-                                    .font(.caption2)
-                            } else {
-                                Text("\(index + 1)")
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(index < 3 ? .black : .primary)
-                            }
-                        }
-                        
-                        Text(finder.user)
-                            .font(.caption)
-                        
-                        Spacer()
-                        
-                        Text("\(finder.count)")
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.green)
-                    }
-                    .padding(.vertical, 2)
+            leaderboardNavigationLink
+            leaderboardTopPlayersView
+        }
+    }
+
+    private var leaderboardNavigationLink: some View {
+        NavigationLink(destination: LeaderboardView()) {
+            HStack {
+                Image(systemName: "trophy.fill")
+                    .foregroundColor(.yellow)
+                Text("View Leaderboard")
+                Spacer()
+                if !viewModel.leaderboard.isEmpty {
+                    Text("\(viewModel.leaderboard.count) players")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
             }
         }
+    }
+
+    private var leaderboardTopPlayersView: some View {
+        Group {
+            if !viewModel.leaderboard.isEmpty {
+                ForEach(Array(viewModel.leaderboard.prefix(3).enumerated()), id: \.offset) { index, finder in
+                    leaderboardRowView(index: index, finder: finder)
+                }
+            }
+        }
+    }
+
+    private func leaderboardRowView(index: Int, finder: TopFinder) -> some View {
+        HStack {
+            ZStack {
+                Circle()
+                    .fill(index < 3 ? Color.yellow.opacity(0.3) : Color.gray.opacity(0.3))
+                    .frame(width: 28, height: 28)
+
+                if index == 0 {
+                    Image(systemName: "crown.fill")
+                        .foregroundColor(.yellow)
+                        .font(.caption2)
+                } else {
+                    Text("\(index + 1)")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(index < 3 ? .black : .primary)
+                }
+            }
+            .padding(.leading, 2) // Ensure circle isn't clipped
+
+            Text(finder.display_name ?? finder.user_id)
+                .font(.caption)
+
+            Spacer()
+
+            Text("\(finder.find_count)")
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(.green)
+        }
+        .padding(.vertical, 2)
     }
     
     private var apiSyncSection: some View {
@@ -635,21 +642,21 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 
-                Spacer()
-                
                 Button(action: {
                     showQRScanner = true
                 }) {
                     HStack {
                         Image(systemName: "qrcode.viewfinder")
-                        Text("Scan QR Code")
+                        Text("Scan QR")
                     }
                 }
                 .buttonStyle(.bordered)
                 .tint(.blue)
+                
+                Spacer()
             }
             
-            Text("Enter your computer's local IP address (e.g., 192.168.1.100:5001). Find it with: ifconfig (Mac) or ipconfig (Windows). Or scan the QR code from the server admin page.")
+            Text("Enter your computer's local IP address (e.g., 192.168.1.100:5001) or scan a QR code. Find it with: ifconfig (Mac) or ipconfig (Windows).")
                 .font(.caption2)
                 .foregroundColor(.secondary)
             
@@ -680,6 +687,47 @@ struct SettingsView: View {
                     Text("Server: \(APIService.shared.baseURL)")
                         .font(.caption2)
                         .foregroundColor(.blue)
+                }
+            }
+            .padding(.vertical, 4)
+            
+            // Offline Mode Toggle
+            Divider()
+                .padding(.vertical, 4)
+            
+            Toggle("Offline Mode", isOn: Binding(
+                get: { OfflineModeManager.shared.isOfflineMode },
+                set: { newValue in
+                    OfflineModeManager.shared.isOfflineMode = newValue
+                }
+            ))
+            .padding(.vertical, 4)
+            
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(OfflineModeManager.shared.isOfflineMode ? Color.orange : Color.blue)
+                    .frame(width: 12, height: 12)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(OfflineModeManager.shared.statusMessage)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    
+                    if OfflineModeManager.shared.isOfflineMode {
+                        Text("Using local SQLite database. WebSocket and API calls disabled.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                        
+                        if OfflineModeManager.shared.pendingSyncCount > 0 {
+                            Text("\(OfflineModeManager.shared.pendingSyncCount) item(s) pending sync when you go online")
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        }
+                    } else {
+                        Text("Connected to server. WebSocket and API calls enabled.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             .padding(.vertical, 4)
@@ -864,32 +912,27 @@ struct SettingsView: View {
             .padding(.vertical, 4)
         }
         .padding(.vertical, 4)
-        .sheet(isPresented: $showQRScanner) {
-            QRCodeScannerView(scannedURL: $scannedURL)
-        }
         .sheet(isPresented: $showNetworkDiagnostics) {
             if let report = networkDiagnosticReport {
                 NetworkDiagnosticsView(report: report)
             }
         }
-        .onChange(of: scannedURL) { oldURL, newURL in
-            guard let url = newURL, url != oldURL else { return }
-            
-            // Defer state modification to next run loop to avoid "Modifying state during view update" warning
-            DispatchQueue.main.async {
-                // Update the form field immediately so user sees the URL
-                self.viewModel.apiURL = url
-                
-                // Save the URL and reconnect WebSocket
-                let saved = self.viewModel.saveAPIURL()
-                
-                if saved {
-                    // Reset scannedURL after processing to allow scanning again
-                    self.scannedURL = nil
-                } else {
-                    // If save failed, still reset to allow retry
-                    self.scannedURL = nil
+        .sheet(isPresented: $showQRScanner) {
+            QRCodeScannerView(scannedURL: $scannedURL)
+        }
+        .onChange(of: scannedURL) { _, newValue in
+            if let url = newValue {
+                viewModel.apiURL = url
+
+                // Auto-enable API Sync when QR code is scanned
+                // User intent is clear: they want to connect to this server
+                if !locationManager.useAPISync {
+                    print("📷 QR code scanned - auto-enabling API Sync")
+                    locationManager.useAPISync = true
                 }
+
+                _ = viewModel.saveAPIURL()
+                scannedURL = nil // Reset for next scan
             }
         }
     }
@@ -950,6 +993,7 @@ struct SettingsView: View {
             refreshFromAPIButton
             syncLocalItemsButton
             viewDatabaseContentsButton
+            viewLocalDatabaseContentsButton
             refreshDatabaseListButton
             Divider()
                 .padding(.vertical, 4)
@@ -961,17 +1005,14 @@ struct SettingsView: View {
         Button(action: {
             guard !viewModel.isLoading else { return }
             viewModel.isLoading = true
-            if let userLocation = userLocationManager.currentLocation {
-                Task {
-                    await locationManager.loadLocationsFromAPI(userLocation: userLocation)
-                    await MainActor.run {
-                        viewModel.displayAlert(title: "Success", message: "Refreshed locations from API. Check console for details.")
-                        viewModel.isLoading = false
-                    }
+            Task {
+                // Pass nil for userLocation to load ALL objects (no distance filter)
+                // This matches what the admin panel shows
+                await locationManager.loadLocationsFromAPI(userLocation: nil, includeFound: true)
+                await MainActor.run {
+                    viewModel.displayAlert(title: "Success", message: "Refreshed all locations from API. Check console for details.")
+                    viewModel.isLoading = false
                 }
-            } else {
-                viewModel.displayAlert(title: "Error", message: "No user location available. Please enable location services.")
-                viewModel.isLoading = false
             }
         }) {
             HStack {
@@ -1045,8 +1086,40 @@ struct SettingsView: View {
             }
             .disabled(viewModel.isLoading)
             .padding(.vertical, 4)
-            
+
             Text("View all objects in the shared database (check console for output)")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var viewLocalDatabaseContentsButton: some View {
+        Group {
+            Button(action: {
+                guard !viewModel.isLoading else { return }
+                viewModel.isLoading = true
+                Task {
+                    await locationManager.viewLocalDatabaseContents()
+                    await MainActor.run {
+                        viewModel.displayAlert(title: "Local Database Contents", message: "Local database contents logged to console. Check Xcode console for full details.")
+                        viewModel.isLoading = false
+                    }
+                }
+            }) {
+                HStack {
+                    if viewModel.isLoading {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "internaldrive.fill")
+                    }
+                    Text("View Local Database Contents")
+                }
+            }
+            .disabled(viewModel.isLoading)
+            .padding(.vertical, 4)
+
+            Text("View all objects in your local device database (check console for output)")
                 .font(.caption2)
                 .foregroundColor(.secondary)
         }
@@ -1293,6 +1366,4 @@ struct SettingsView: View {
             .padding(.vertical, 4)
         }
     }
-    
 }
-

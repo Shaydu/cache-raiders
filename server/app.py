@@ -11,12 +11,34 @@ import math
 import socket
 import io
 import qrcode
+import logging
+import threading
+import time
+import requests
+import traceback
 from datetime import datetime
 from typing import Optional, List, Dict
 from dotenv import load_dotenv
 
+# Set up file logging for map requests debugging
+log_dir = os.path.join(os.path.dirname(__file__), 'logs')
+os.makedirs(log_dir, exist_ok=True)
+map_log_file = os.path.join(log_dir, 'map_requests.log')
+
+# Configure map request logger
+map_logger = logging.getLogger('map_requests')
+map_logger.setLevel(logging.DEBUG)
+map_handler = logging.FileHandler(map_log_file, mode='a')
+map_handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+map_handler.setFormatter(formatter)
+map_logger.addHandler(map_handler)
+map_logger.propagate = False  # Don't propagate to root logger
+
 # Load environment variables from .env file (never commit this file!)
-load_dotenv()
+# But only if not running in a Docker container (container env vars take precedence)
+if not os.getenv("DOCKER_CONTAINER"):
+    load_dotenv()
 
 # Import LLM service
 try:
@@ -27,10 +49,39 @@ except ImportError as e:
     LLM_AVAILABLE = False
     llm_service = None
 
+# Import Treasure Map service
+try:
+    from treasure_map_service import treasure_map_service
+    TREASURE_MAP_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Treasure Map service not available: {e}")
+    TREASURE_MAP_AVAILABLE = False
+    treasure_map_service = None
+
+# Import Treasure Hunt Stages (Stage 2: IOU/Corgi storyline)
+try:
+    from treasure_hunt_stages import register_stages_blueprint
+    STAGES_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Treasure Hunt Stages not available: {e}")
+    STAGES_AVAILABLE = False
+    register_stages_blueprint = None
+
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 CORS(app)  # Enable CORS for iOS app
 # Use 'threading' instead of 'eventlet' for Python 3.12 compatibility
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')  # Enable WebSocket support
+# Configure Socket.IO with explicit ping/pong settings for better compatibility
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode='threading',
+    ping_interval=25,  # Server sends ping every 25 seconds
+    ping_timeout=30    # Increased to 30 seconds for slow networks
+)  # Enable WebSocket support
+
+# Register Treasure Hunt Stages blueprint (Stage 2: IOU/Corgi storyline)
+if STAGES_AVAILABLE and register_stages_blueprint:
+    register_stages_blueprint(app)
 
 # Database file path
 DB_PATH = os.path.join(os.path.dirname(__file__), 'cache_raiders.db')
@@ -39,53 +90,185 @@ DB_PATH = os.path.join(os.path.dirname(__file__), 'cache_raiders.db')
 # This allows the web map to show where users are currently located
 user_locations: Dict[str, Dict] = {}
 
+# Location update interval setting (in milliseconds, default 1000ms = 1 second)
+location_update_interval_ms: int = 1000
+
+# Game mode setting (default: "open", will be loaded from database on startup)
+game_mode: str = "open"
+
 # Track connected WebSocket clients (session_id -> device_uuid)
 # Also track reverse mapping (device_uuid -> set of session_ids) for multiple connections
 connected_clients: Dict[str, str] = {}  # session_id -> device_uuid
 client_sessions: Dict[str, set] = {}  # device_uuid -> set of session_ids
 
+def get_local_ip_dynamic(request_context=None):
+    """Get the local network IP address dynamically (always detects current IP).
+    Works across network changes (WiFi hotspots, network switching, etc.)
+    Filters out Docker internal IPs and localhost.
+    
+    Args:
+        request_context: Optional Flask request object to use request host as hint in Docker
+    """
+    import socket
+    
+    # Helper to check if IP is a Docker/internal network IP
+    def is_docker_or_internal_ip(ip):
+        """Check if IP is Docker internal or not a real network interface."""
+        if not ip or ip.startswith('127.'):
+            return True
+        # Docker bridge networks: 172.16-31.x.x
+        # Filter out common Docker/internal ranges
+        parts = ip.split('.')
+        if len(parts) == 4:
+            try:
+                first_octet = int(parts[0])
+                second_octet = int(parts[1])
+                # Docker bridge: 172.16.0.0 - 172.31.255.255
+                if first_octet == 172 and 16 <= second_octet <= 31:
+                    return True
+                # Docker Desktop on Mac: 192.168.65.x
+                if first_octet == 192 and second_octet == 168 and parts[2] == '65':
+                    return True
+            except ValueError:
+                pass
+        return False
+    
+    # Helper to check if IP is routable (not localhost, not Docker internal)
+    def is_routable_ip(ip):
+        """Check if IP is routable from other devices on the network."""
+        if not ip:
+            return False
+        # Must not be localhost
+        if ip.startswith('127.'):
+            return False
+        # Must not be Docker internal
+        if is_docker_or_internal_ip(ip):
+            return False
+        # Must be a valid IPv4 format
+        try:
+            socket.inet_aton(ip)
+            return True
+        except socket.error:
+            return False
+    
+    # Method 0: If we have a request context and we're in Docker, use the request host as hint
+    # This is especially useful when running in Docker - the request host tells us what IP was used to reach us
+    if request_context:
+        try:
+            host = request_context.host.split(':')[0] if ':' in request_context.host else request_context.host
+            # If host is a valid routable IP (not localhost, not Docker internal), use it
+            if is_routable_ip(host):
+                print(f"🌐 [Dynamic] Using request host as IP (Docker hint): {host}")
+                return host
+            # Also check remote_addr - if it's from the same network, we can infer our IP
+            remote_addr = request_context.remote_addr
+            if remote_addr and is_routable_ip(remote_addr):
+                # Remote addr is the client's IP, but if it's on same network, we might be able to infer
+                # For now, we'll use it as a last resort hint
+                pass
+        except Exception as e:
+            print(f"⚠️ Error using request context: {e}")
+    
+    # Method 1: Connect to external address to determine route (works in Docker and regular)
+    # This method finds the IP that would be used for external connections
+    detected_docker_ip = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            # Connect to a public DNS server (doesn't actually connect, just determines route)
+            s.connect(('8.8.8.8', 80))
+            ip = s.getsockname()[0]
+            if ip and is_routable_ip(ip):
+                print(f"🌐 [Dynamic] Detected IP via socket connection: {ip}")
+                return ip
+            # If we got a Docker IP, save it and try alternative methods
+            elif ip and is_docker_or_internal_ip(ip):
+                detected_docker_ip = ip
+                print(f"⚠️ [Dynamic] Socket method returned Docker/internal IP {ip}, trying alternatives...")
+        except Exception as e:
+            print(f"⚠️ Socket connection method error: {e}")
+        finally:
+            s.close()
+    except Exception as e:
+        print(f"⚠️ Error with socket connection method: {e}")
+    
+    # Method 2: Try netifaces if available (more reliable interface detection)
+    # This can work in Docker if host network interfaces are accessible
+    try:
+        import netifaces
+        interfaces = netifaces.interfaces()
+        # Prioritize common WiFi/Ethernet interfaces
+        priority_interfaces = ['en0', 'en1', 'wlan0', 'eth0', 'wlp']
+        all_interfaces = sorted(interfaces, key=lambda x: (
+            0 if any(x.startswith(prefix) for prefix in priority_interfaces) else 1,
+            x
+        ))
+        
+        for interface in all_interfaces:
+            # Skip loopback and Docker interfaces
+            if interface.startswith('lo') or interface.startswith('docker') or interface.startswith('veth'):
+                continue
+            try:
+                addrs = netifaces.ifaddresses(interface)
+                if netifaces.AF_INET in addrs:
+                    for addr_info in addrs[netifaces.AF_INET]:
+                        ip = addr_info.get('addr')
+                        if ip and is_routable_ip(ip):
+                            print(f"🌐 [Dynamic] Detected IP from interface {interface}: {ip}")
+                            return ip
+            except (ValueError, KeyError):
+                continue
+    except ImportError:
+        # netifaces not available, that's okay
+        pass
+    except Exception as e:
+        print(f"⚠️ Error checking network interfaces: {e}")
+    
+    # Method 3: Try hostname resolution (fallback)
+    try:
+        hostname = socket.gethostname()
+        ip = socket.gethostbyname(hostname)
+        if ip and is_routable_ip(ip):
+            print(f"🌐 [Dynamic] Detected IP from hostname {hostname}: {ip}")
+            return ip
+    except (socket.gaierror, Exception) as e:
+        pass
+    
+    # If we detected a Docker IP but couldn't find a routable one, warn but don't fail
+    if detected_docker_ip:
+        print(f"⚠️ Running in Docker (detected {detected_docker_ip}) but couldn't detect host network IP")
+        print(f"   Try accessing the admin panel via the host machine's IP address")
+        print(f"   Or set HOST_IP environment variable in docker-compose.yml")
+    
+    # Last resort: return localhost (but this won't work from other devices)
+    print("⚠️ Could not detect network IP dynamically, using 127.0.0.1 (not routable from other devices)")
+    return '127.0.0.1'
+
 def get_local_ip():
-    """Get the local network IP address."""
-    # First, check if HOST_IP environment variable is set (useful for Docker)
+    """Get the local network IP address.
+
+    Requires HOST_IP environment variable to be set explicitly.
+    No fallback detection - if HOST_IP is not set, raises an error.
+    """
+    # Check if HOST_IP environment variable is set (required)
     host_ip = os.environ.get('HOST_IP')
     if host_ip:
         print(f"🌐 Using HOST_IP from environment: {host_ip}")
         return host_ip
-    
-    # Try to get IP from all network interfaces using socket
-    try:
-        import socket
-        # Get hostname to determine local IP
-        hostname = socket.gethostname()
-        # Try to get IP from hostname
-        try:
-            ip = socket.gethostbyname(hostname)
-            if ip and not ip.startswith('127.'):
-                print(f"🌐 Detected IP from hostname {hostname}: {ip}")
-                return ip
-        except socket.gaierror:
-            pass
-        
-        # Fallback: Connect to a remote address to determine local IP
-        # This doesn't actually send data, just determines the route
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            # Connect to a public DNS server (doesn't actually connect)
-            s.connect(('8.8.8.8', 80))
-            ip = s.getsockname()[0]
-            if ip and not ip.startswith('127.'):
-                print(f"🌐 Detected IP via socket connection: {ip}")
-                return ip
-        except Exception:
-            pass
-        finally:
-            s.close()
-    except Exception as e:
-        print(f"⚠️ Error detecting IP: {e}")
-    
-    # Last resort: return localhost
-    print("⚠️ Could not detect network IP, using 127.0.0.1")
-    return '127.0.0.1'
+
+    # No fallback - raise error if HOST_IP is not set
+    error_msg = (
+        "❌ HOST_IP environment variable is not set!\n"
+        "The server cannot determine the network IP address for iOS devices to connect.\n\n"
+        "To fix this:\n"
+        "1. If using Docker, set HOST_IP in docker-compose.yml or environment\n"
+        "2. If running directly, set HOST_IP environment variable\n"
+        "3. Use start-server.sh which automatically detects and sets HOST_IP\n\n"
+        "Example: export HOST_IP=192.168.1.100\n"
+        "Find your IP with: ipconfig getifaddr en0 (on Mac)"
+    )
+    print(error_msg)
+    raise RuntimeError("HOST_IP environment variable must be set")
 
 def get_db_connection():
     """Get a database connection with timeout for handling concurrent access."""
@@ -123,12 +306,26 @@ def init_db():
         ('ar_offset_x', 'REAL'),
         ('ar_offset_y', 'REAL'),
         ('ar_offset_z', 'REAL'),
-        ('ar_placement_timestamp', 'TEXT')
+        ('ar_placement_timestamp', 'TEXT'),
+        ('ar_anchor_transform', 'TEXT')  # For millimeter-precise AR positioning
     ]
     
     for column_name, column_type in optional_columns:
         try:
-            cursor.execute(f'ALTER TABLE objects ADD COLUMN {column_name} {column_type}')
+            # Sanitize column_name and column_type to prevent SQL injection
+            if not all(c.isalnum() or c == '_' for c in column_name):
+                print(f"⚠️ Skipping invalid column name: {column_name}")
+                continue
+            if column_type.upper() not in ['TEXT', 'REAL', 'INTEGER', 'NUMERIC', 'BLOB']:
+                print(f"⚠️ Skipping invalid column type: {column_type}")
+                continue
+            # Use parameterized query to safely add columns
+            # Note: SQLite doesn't support parameterized DDL, so we have to use string formatting
+            # but with proper validation above to prevent SQL injection
+            safe_column_name = ''.join(c for c in column_name if c.isalnum() or c == '_')
+            safe_column_type = column_type.upper() if column_type.upper() in ['TEXT', 'REAL', 'INTEGER', 'NUMERIC', 'BLOB'] else 'TEXT'
+            # Quote column name to handle special characters properly
+            cursor.execute(f'ALTER TABLE objects ADD COLUMN "{safe_column_name}" {safe_column_type}')
         except sqlite3.OperationalError:
             pass  # Column already exists
     
@@ -208,6 +405,67 @@ def init_db():
         )
     ''')
     
+    # NPCs table - tracks all NPCs (Captain Bones, Corgi, etc.)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS npcs (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            npc_type TEXT NOT NULL,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by TEXT,
+            ar_origin_latitude REAL,
+            ar_origin_longitude REAL,
+            ar_offset_x REAL,
+            ar_offset_y REAL,
+            ar_offset_z REAL,
+            ar_placement_timestamp TEXT
+        )
+    ''')
+    
+    # Settings table - stores application settings (game mode, etc.)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    ''')
+    
+    # Treasure hunts table - stores generated treasure locations per user
+    # This ensures the X location and clues are generated ONCE and persist across requests
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS treasure_hunts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_uuid TEXT NOT NULL,
+            treasure_latitude REAL NOT NULL,
+            treasure_longitude REAL NOT NULL,
+            origin_latitude REAL NOT NULL,
+            origin_longitude REAL NOT NULL,
+            map_piece_1_json TEXT,
+            map_piece_2_json TEXT,
+            status TEXT DEFAULT 'active',
+            created_at TEXT NOT NULL,
+            completed_at TEXT
+        )
+    ''')
+    
+    # Create index for faster lookups by device_uuid and status
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_treasure_hunts_device_status 
+        ON treasure_hunts (device_uuid, status)
+    ''')
+    
+    # Initialize default game mode if not exists
+    cursor.execute('SELECT value FROM settings WHERE key = ?', ('game_mode',))
+    if not cursor.fetchone():
+        cursor.execute('''
+            INSERT INTO settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+        ''', ('game_mode', 'open', datetime.utcnow().isoformat()))
+        print("✅ Initialized default game mode: open")
+    
     conn.commit()
     conn.close()
     print("✅ Database initialized")
@@ -230,12 +488,13 @@ def health():
 
 @app.route('/api/objects', methods=['GET'])
 def get_objects():
-    """Get all objects, optionally filtered by location."""
+    """Get all objects, optionally filtered by location and user visibility."""
     try:
         latitude = request.args.get('latitude', type=float)
         longitude = request.args.get('longitude', type=float)
         radius = request.args.get('radius', type=float, default=10000.0)  # Default 10km
         include_found = request.args.get('include_found', 'false').lower() == 'true'
+        user_id = request.args.get('user_id', type=str)  # User ID to filter per-user visibility
         
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -247,27 +506,31 @@ def get_objects():
         
         # Build SELECT clause dynamically based on available columns
         base_columns = [
-            'o.id', 'o.name', 'o.type', 'o.latitude', 'o.longitude', 
+            'o.id', 'o.name', 'o.type', 'o.latitude', 'o.longitude',
             'o.radius', 'o.created_at', 'o.created_by', 'o.grounding_height'
         ]
         ar_columns = [
-            'ar_origin_latitude', 'ar_origin_longitude', 
-            'ar_offset_x', 'ar_offset_y', 'ar_offset_z', 'ar_placement_timestamp'
+            'ar_origin_latitude', 'ar_origin_longitude',
+            'ar_offset_x', 'ar_offset_y', 'ar_offset_z', 'ar_placement_timestamp',
+            'ar_anchor_transform', 'ar_world_transform', 'nfc_tag_id'
         ]
         
         select_columns = base_columns.copy()
+        # Add multifindable column if it exists
+        if 'multifindable' in column_names:
+            select_columns.append('o.multifindable')
         for ar_col in ar_columns:
             if ar_col in column_names:
                 select_columns.append(f'o.{ar_col}')
-        
+
         select_columns.extend([
             'CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected',
             'f.found_by',
             'f.found_at'
         ])
-        
+
         query = f'''
-            SELECT 
+            SELECT
                 {', '.join(select_columns)}
             FROM objects o
             LEFT JOIN finds f ON o.id = f.object_id
@@ -296,7 +559,19 @@ def get_objects():
         
         # Filter out found objects unless include_found is true
         if not include_found:
-            conditions.append('f.id IS NULL')
+            if user_id:
+                # Use multifindable flag for per-user visibility:
+                # - multifindable=1: hide only if this user found it
+                # - multifindable=0: hide if anyone found it (traditional behavior)
+                conditions.append('''
+                    (o.multifindable = 1 AND (f.id IS NULL OR f.found_by != ?))
+                    OR (o.multifindable = 0 AND f.id IS NULL)
+                    OR (o.multifindable IS NULL AND f.id IS NULL)
+                ''')
+                params.append(user_id)
+            else:
+                # Legacy behavior: hide all found objects if no user_id provided
+                conditions.append('f.id IS NULL')
         
         if conditions:
             query += ' WHERE ' + ' AND '.join(conditions)
@@ -322,6 +597,7 @@ def get_objects():
                     'created_at': row['created_at'],
                     'created_by': row['created_by'],
                     'grounding_height': row['grounding_height'],
+                    'multifindable': bool(row['multifindable']) if 'multifindable' in row.keys() else None,
                     'collected': bool(row['collected']),
                     'found_by': row['found_by'],
                     'found_at': row['found_at']
@@ -353,7 +629,7 @@ def get_object(object_id: str):
     cursor = conn.cursor()
     
     cursor.execute('''
-        SELECT 
+        SELECT
             o.id,
             o.name,
             o.type,
@@ -369,6 +645,9 @@ def get_object(object_id: str):
             o.ar_offset_y,
             o.ar_offset_z,
             o.ar_placement_timestamp,
+            o.ar_anchor_transform,  -- Include AR anchor transform for precise positioning
+            o.ar_world_transform,   -- Include full AR world transform for exact positioning
+            o.nfc_tag_id,          -- Include NFC tag ID
             CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
             f.found_by,
             f.found_at
@@ -421,8 +700,8 @@ def create_object():
             
             try:
                 cursor.execute('''
-                    INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height, ar_anchor_transform, ar_offset_x, ar_offset_y, ar_offset_z, ar_origin_latitude, ar_origin_longitude, ar_placement_timestamp, ar_world_transform, nfc_tag_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     data['id'],
                     data['name'],
@@ -432,7 +711,16 @@ def create_object():
                     data['radius'],
                     datetime.utcnow().isoformat(),
                     data.get('created_by', 'unknown'),
-                    data.get('grounding_height')  # Optional - can be None
+                    data.get('grounding_height'),  # Optional - can be None
+                    data.get('ar_anchor_transform'),  # Optional AR anchor transform
+                    data.get('ar_offset_x'),  # Optional AR offset X for <10cm accuracy
+                    data.get('ar_offset_y'),  # Optional AR offset Y for <10cm accuracy
+                    data.get('ar_offset_z'),  # Optional AR offset Z for <10cm accuracy
+                    data.get('ar_origin_latitude'),  # Optional AR origin GPS latitude
+                    data.get('ar_origin_longitude'),  # Optional AR origin GPS longitude
+                    data.get('ar_placement_timestamp'),  # Optional AR placement timestamp
+                    data.get('ar_world_transform'),  # Optional full AR world transform matrix
+                    data.get('nfc_tag_id')  # Optional NFC tag ID
                 ))
                 
                 conn.commit()
@@ -484,7 +772,7 @@ def create_object():
         
         # Get the created object to broadcast
         cursor.execute('''
-            SELECT 
+            SELECT
                 o.id,
                 o.name,
                 o.type,
@@ -500,6 +788,9 @@ def create_object():
                 o.ar_offset_y,
                 o.ar_offset_z,
                 o.ar_placement_timestamp,
+                o.ar_anchor_transform,
+                o.ar_world_transform,
+                o.nfc_tag_id,
                 CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
                 f.found_by,
                 f.found_at
@@ -540,6 +831,9 @@ def create_object():
                 'ar_offset_y': safe_get('ar_offset_y'),
                 'ar_offset_z': safe_get('ar_offset_z'),
                 'ar_placement_timestamp': safe_get('ar_placement_timestamp'),
+                'ar_anchor_transform': safe_get('ar_anchor_transform'),  # Include AR anchor transform
+                'ar_world_transform': safe_get('ar_world_transform'),  # Include full AR world transform
+                'nfc_tag_id': safe_get('nfc_tag_id'),  # Include NFC tag ID
                 'collected': bool(safe_get('collected', 0)),
                 'found_by': safe_get('found_by'),
                 'found_at': safe_get('found_at')
@@ -582,46 +876,9 @@ def mark_found(object_id: str):
             if not cursor.fetchone():
                 return jsonify({'error': 'Object not found'}), 404
             
-            # Check if already found
-            cursor.execute('SELECT id, found_by FROM finds WHERE object_id = ?', (object_id,))
-            existing_find = cursor.fetchone()
-            
-            if existing_find:
-                # Object is already found - update the found_by field if different
-                existing_found_by = existing_find[1] if len(existing_find) > 1 else None
-                if existing_found_by != found_by:
-                    # Update the found_by field
-                    found_at = datetime.utcnow().isoformat()
-                    cursor.execute('''
-                        UPDATE finds 
-                        SET found_by = ?, found_at = ?
-                        WHERE object_id = ?
-                    ''', (found_by, found_at, object_id))
-                    conn.commit()
-                    print(f"✅ Updated found_by for object {object_id}: {existing_found_by} -> {found_by}")
-                    
-                    # Broadcast update event
-                    try:
-                        socketio.emit('object_collected', {
-                            'object_id': object_id,
-                            'found_by': found_by,
-                            'found_at': found_at
-                        })
-                    except Exception as emit_error:
-                        print(f"⚠️ Warning: Failed to emit object_collected event: {emit_error}")
-                    
-                    return jsonify({
-                        'object_id': object_id,
-                        'found_by': found_by,
-                        'message': 'Object found_by updated (object was already found)'
-                    }), 200
-                else:
-                    # Already found by the same user - return success
-                    return jsonify({
-                        'object_id': object_id,
-                        'found_by': found_by,
-                        'message': 'Object already found by this user'
-                    }), 200
+            # MULTIPLE FINDS SUPPORT: Always create a new find record
+            # This allows tracking multiple visits/scans of the same object
+            # Previous logic only allowed one find per user per object
             
             # Record new find
             found_at = datetime.utcnow().isoformat()
@@ -922,35 +1179,57 @@ def get_user_finds(user_id: str):
 @app.route('/api/players', methods=['GET'])
 def get_all_players():
     """Get all players with their find counts."""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    # Get all players with their find counts
-    cursor.execute('''
-        SELECT 
-            p.device_uuid,
-            p.player_name,
-            p.created_at,
-            p.updated_at,
-            COUNT(f.id) as find_count
-        FROM players p
-        LEFT JOIN finds f ON p.device_uuid = f.found_by
-        GROUP BY p.device_uuid, p.player_name, p.created_at, p.updated_at
-        ORDER BY find_count DESC, p.updated_at DESC
-    ''')
-    
-    rows = cursor.fetchall()
-    conn.close()
-    
-    players = [{
-        'device_uuid': row['device_uuid'],
-        'player_name': row['player_name'],
-        'created_at': row['created_at'],
-        'updated_at': row['updated_at'],
-        'find_count': row['find_count']
-    } for row in rows]
-    
-    return jsonify(players)
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get all players with their find counts
+        cursor.execute('''
+            SELECT 
+                p.device_uuid,
+                p.player_name,
+                p.created_at,
+                p.updated_at,
+                COUNT(f.id) as find_count
+            FROM players p
+            LEFT JOIN finds f ON p.device_uuid = f.found_by
+            GROUP BY p.device_uuid, p.player_name, p.created_at, p.updated_at
+            ORDER BY find_count DESC, p.updated_at DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        
+        players = [{
+            'device_uuid': row['device_uuid'],
+            'player_name': row['player_name'],
+            'created_at': row['created_at'],
+            'updated_at': row['updated_at'],
+            'find_count': row['find_count']
+        } for row in rows]
+        
+        return jsonify(players)
+    except sqlite3.OperationalError as e:
+        error_msg = f"Database error in /api/players: {str(e)}"
+        print(f"❌ {error_msg}")
+        print(traceback.format_exc())
+        return jsonify({'error': 'Database operation failed', 'details': str(e)}), 500
+    except sqlite3.Error as e:
+        error_msg = f"SQLite error in /api/players: {str(e)}"
+        print(f"❌ {error_msg}")
+        print(traceback.format_exc())
+        return jsonify({'error': 'Database error', 'details': str(e)}), 500
+    except Exception as e:
+        error_msg = f"Unexpected error in /api/players: {str(e)}"
+        print(f"❌ {error_msg}")
+        print(traceback.format_exc())
+        return jsonify({'error': 'Internal server error', 'details': str(e)}), 500
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 @app.route('/api/players/<device_uuid>', methods=['GET'])
 def get_player(device_uuid: str):
@@ -1281,6 +1560,43 @@ def delete_player(device_uuid: str):
         'finds_deleted': finds_deleted
     }), 200
 
+@app.route('/api/players/<device_uuid>/kick', methods=['POST'])
+def kick_player(device_uuid: str):
+    """Kick/disconnect a player by closing their WebSocket connection."""
+    # Find all sessions for this device
+    target_sessions = client_sessions.get(device_uuid, set())
+    
+    if not target_sessions:
+        return jsonify({
+            'message': f'Player {device_uuid[:8]}... is not connected',
+            'kicked': False
+        }), 200
+    
+    # Disconnect all sessions for this device
+    disconnected_count = 0
+    for session_id in list(target_sessions):
+        try:
+            socketio.server.disconnect(session_id)
+            disconnected_count += 1
+        except Exception as e:
+            print(f"⚠️ Error disconnecting session {session_id[:8]}...: {e}")
+    
+    # Clean up tracking
+    for session_id in list(target_sessions):
+        connected_clients.pop(session_id, None)
+        client_sessions[device_uuid].discard(session_id)
+    
+    if not client_sessions[device_uuid]:
+        del client_sessions[device_uuid]
+    
+    print(f"👢 Kicked player {device_uuid[:8]}... ({disconnected_count} session(s) disconnected)")
+    
+    return jsonify({
+        'message': f'Player kicked successfully. {disconnected_count} connection(s) closed.',
+        'kicked': True,
+        'sessions_disconnected': disconnected_count
+    }), 200
+
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
     """Get statistics about objects and finds."""
@@ -1482,34 +1798,162 @@ def delete_object(object_id: str):
 @app.route('/admin/')
 def admin_ui():
     """Serve the admin web UI."""
-    return send_from_directory(os.path.dirname(__file__), 'admin.html')
+    response = send_from_directory(os.path.dirname(__file__), 'admin.html')
+    # Disable caching for admin panel during development
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+@app.route('/nfc/<nfc_id>')
+def nfc_details(nfc_id: str):
+    """Serve the NFC loot details page."""
+    response = send_from_directory(os.path.dirname(__file__), 'nfc_details.html')
+    # Disable caching for NFC details page during development
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+@app.route('/api/nfc/<nfc_id>', methods=['GET'])
+def get_nfc_details(nfc_id: str):
+    """Get detailed information about a loot item by NFC ID.
+
+    Supports multiple ID formats:
+    - Full UUID (e.g., '0B8DA041-AA9F-45B5-B481-EB063CB8A50C')
+    - Full NFC object ID (e.g., 'nfc_04a9ab961e6180_1764712047')
+    - Short NFC chip UID (e.g., '69423A79' or '04a9ab961e6180')
+    - Direct NFC tag ID (e.g., '970CC641' stored in nfc_tag_id field)
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Normalize the NFC ID to lowercase for case-insensitive matching
+        nfc_id_lower = nfc_id.lower()
+
+        # Try to find the object by:
+        # 1. Exact match on object ID (handles full UUID or full NFC object ID)
+        # 2. Pattern match for NFC chip UID (handles short chip IDs like '69423A79')
+        # 3. Exact match on NFC tag ID field (handles direct NFC chip UIDs like '970CC641')
+        cursor.execute('''
+            SELECT
+                o.id,
+                o.name,
+                o.type,
+                o.latitude,
+                o.longitude,
+                o.radius,
+                o.created_at,
+                o.created_by,
+                o.grounding_height,
+                o.ar_origin_latitude,
+                o.ar_origin_longitude,
+                o.ar_offset_x,
+                o.ar_offset_y,
+                o.ar_offset_z,
+                o.ar_placement_timestamp,
+                o.ar_anchor_transform
+            FROM objects o
+            WHERE LOWER(o.id) = ?
+               OR LOWER(o.id) LIKE 'nfc_' || ? || '_%'
+               OR LOWER(o.nfc_tag_id) = ?
+            ORDER BY o.created_at DESC
+            LIMIT 1
+        ''', (nfc_id_lower, nfc_id_lower, nfc_id_lower))
+
+        obj_row = cursor.fetchone()
+
+        if not obj_row:
+            conn.close()
+            return jsonify({'error': 'Object not found'}), 404
+
+        # Get player who placed it
+        placer_name = 'Unknown'
+        if obj_row['created_by']:
+            cursor.execute('SELECT player_name FROM players WHERE device_uuid = ?', (obj_row['created_by'],))
+            placer_row = cursor.fetchone()
+            if placer_row:
+                placer_name = placer_row['player_name']
+
+        # Get all finds for this object (use the actual object ID from the matched row)
+        cursor.execute('''
+            SELECT
+                f.id,
+                f.found_by,
+                f.found_at,
+                p.player_name
+            FROM finds f
+            LEFT JOIN players p ON f.found_by = p.device_uuid
+            WHERE f.object_id = ?
+            ORDER BY f.found_at DESC
+        ''', (obj_row['id'],))
+
+        finds_rows = cursor.fetchall()
+        finds_count = len(finds_rows)
+
+        # Build finds list with player names
+        finds_list = []
+        for find_row in finds_rows:
+            finds_list.append({
+                'id': find_row['id'],
+                'found_by': find_row['found_by'],
+                'found_at': find_row['found_at'],
+                'player_name': find_row['player_name'] or 'Unknown Player'
+            })
+
+        conn.close()
+
+        return jsonify({
+            'id': obj_row['id'],
+            'name': obj_row['name'],
+            'type': obj_row['type'],
+            'latitude': obj_row['latitude'],
+            'longitude': obj_row['longitude'],
+            'radius': obj_row['radius'],
+            'created_at': obj_row['created_at'],
+            'created_by': obj_row['created_by'],
+            'placed_by_name': placer_name,
+            'grounding_height': obj_row['grounding_height'],
+            'ar_origin_latitude': obj_row['ar_origin_latitude'],
+            'ar_origin_longitude': obj_row['ar_origin_longitude'],
+            'ar_offset_x': obj_row['ar_offset_x'],
+            'ar_offset_y': obj_row['ar_offset_y'],
+            'ar_offset_z': obj_row['ar_offset_z'],
+            'ar_placement_timestamp': obj_row['ar_placement_timestamp'],
+            'ar_anchor_transform': obj_row['ar_anchor_transform'],
+            'collection_count': finds_count,
+            'finds': finds_list
+        })
+
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/server-info', methods=['GET'])
 def get_server_info():
     """Get server network information including IP address."""
     # Log access for debugging
     print(f"📡 Server info requested from {request.remote_addr} (Host: {request.host})")
-    
+
     port = int(os.environ.get('PORT', 5001))
-    local_ip = get_local_ip()
-    
+    # Use get_local_ip() which checks HOST_IP env var first for consistency
+    # This ensures QR code and server-info always show the same IP
+    try:
+        local_ip = get_local_ip()
+    except RuntimeError as e:
+        return jsonify({
+            'error': str(e),
+            'status': 'error',
+            'message': 'HOST_IP environment variable is required for server operation'
+        }), 500
+
     # Get the host from the request to determine what URL was used
     host = request.host.split(':')[0] if ':' in request.host else request.host
-    
-    # If we got a Docker container IP, try to use the request's host if it's not localhost
-    if local_ip.startswith('172.') or (local_ip.startswith('10.') and local_ip != '127.0.0.1'):
-        # If accessed via a non-localhost address, use that
-        if host not in ['localhost', '127.0.0.1', '0.0.0.0']:
-            # Try to extract IP from host if it's an IP address
-            try:
-                socket.inet_aton(host)  # Validates IP address
-                local_ip = host
-            except:
-                pass
-    
+
     # Always use the network IP for the server URL (not localhost)
     server_url = f'http://{local_ip}:{port}'
-    
+
     return jsonify({
         'local_ip': local_ip,
         'host': host,
@@ -1563,8 +2007,27 @@ def connection_test():
         return interfaces
     
     port = int(os.environ.get('PORT', 5001))
-    local_ip = get_local_ip()
-    
+    try:
+        local_ip = get_local_ip()
+    except RuntimeError as e:
+        return jsonify({
+            'status': 'error',
+            'message': 'Connection test failed - HOST_IP not configured',
+            'error': str(e),
+            'server_info': {
+                'detected_ip': None,
+                'port': port,
+                'host': request.host,
+                'remote_addr': request.remote_addr,
+                'user_agent': request.headers.get('User-Agent', 'Unknown'),
+                'server_url': None,
+                'platform': platform.system(),
+                'python_version': platform.python_version()
+            },
+            'network_interfaces': get_all_network_interfaces(),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
     return jsonify({
         'status': 'success',
         'message': 'Connection test successful!',
@@ -1633,7 +2096,15 @@ def test_port():
 def test_ports():
     """Test multiple ports for connectivity."""
     ports_str = request.args.get('ports', '5001,5000,8080,3000,8000')
-    host = request.args.get('host', get_local_ip())
+    try:
+        default_host = get_local_ip()
+    except RuntimeError as e:
+        return jsonify({
+            'error': str(e),
+            'message': 'Cannot test ports - HOST_IP not configured'
+        }), 500
+
+    host = request.args.get('host', default_host)
     ports = [int(p.strip()) for p in ports_str.split(',') if p.strip().isdigit()]
     
     results = []
@@ -1735,11 +2206,39 @@ def network_info():
 @app.route('/api/qrcode', methods=['GET'])
 def generate_qrcode():
     """Generate a QR code for the server URL."""
-    
+
     port = int(os.environ.get('PORT', 5001))
-    local_ip = get_local_ip()
+
+    # Try to get IP: first check HOST_IP, then auto-detect
+    try:
+        # If HOST_IP is explicitly set, use it
+        if os.environ.get('HOST_IP'):
+            local_ip = get_local_ip()  # This will use the explicitly set HOST_IP
+        else:
+            # Auto-detect IP address for convenience
+            local_ip = get_local_ip_dynamic()
+            print(f"🌐 Auto-detected IP for QR code: {local_ip}")
+    except RuntimeError as e:
+        # Return error image instead of crashing
+        from PIL import Image, ImageDraw, ImageFont
+        img = Image.new('RGB', (300, 150), color='white')
+        draw = ImageDraw.Draw(img)
+        # Try to use a default font, fall back to basic if not available
+        try:
+            font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 16)
+        except:
+            font = ImageFont.load_default()
+
+        error_text = "Could not detect network IP!\nCheck Wi-Fi connection."
+        draw.text((10, 10), error_text, fill='red', font=font)
+
+        img_io = io.BytesIO()
+        img.save(img_io, 'PNG')
+        img_io.seek(0)
+        return Response(img_io.getvalue(), mimetype='image/png')
+
     server_url = f'http://{local_ip}:{port}'
-    
+
     # Generate QR code
     qr = qrcode.QRCode(
         version=1,
@@ -1749,15 +2248,15 @@ def generate_qrcode():
     )
     qr.add_data(server_url)
     qr.make(fit=True)
-    
+
     # Create image
     img = qr.make_image(fill_color="black", back_color="white")
-    
+
     # Convert to bytes
     img_io = io.BytesIO()
     img.save(img_io, 'PNG')
     img_io.seek(0)
-    
+
     return Response(img_io.getvalue(), mimetype='image/png')
 
 # WebSocket event handlers
@@ -1921,14 +2420,314 @@ def handle_get_connected_clients():
 # LLM Integration Endpoints
 # ============================================================================
 
-@app.route('/api/llm/test', methods=['GET'])
+@app.route('/api/llm/test', methods=['GET', 'POST'])
 def test_llm():
-    """Test if LLM service is working."""
+    """Test if LLM service is working. Accepts optional custom prompt via POST."""
     if not LLM_AVAILABLE:
         return jsonify({'error': 'LLM service not available'}), 503
     
-    result = llm_service.test_connection()
+    # Get custom prompt if provided via POST
+    custom_prompt = None
+    if request.method == 'POST' and request.json:
+        custom_prompt = request.json.get('prompt')
+    
+    # Log current provider/model before test
+    provider_info = llm_service.get_provider_info()
+    print(f"🧪 [API] test_llm called - Current provider: {provider_info.get('provider')}, model: {provider_info.get('model')}, custom_prompt: {bool(custom_prompt)}")
+    
+    result = llm_service.test_connection(custom_prompt=custom_prompt)
+    
+    # Log result
+    print(f"🧪 [API] test_llm result - Provider: {result.get('provider')}, model: {result.get('model')}, status: {result.get('status')}")
+    
     return jsonify(result), 200 if result['status'] == 'success' else 500
+
+@app.route('/api/llm/test-connection', methods=['GET'])
+def test_llm_connection():
+    """Test LLM connection (alias for /api/llm/test for consistency with error messages)."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    # For Ollama, also run diagnostics
+    provider_info = llm_service.get_provider_info()
+    if provider_info.get('provider') in ['ollama', 'local']:
+        # Run the test first
+        test_result = llm_service.test_connection()
+        
+        # Also get diagnostic info
+        diagnose_result = {
+            'ollama_base_url': llm_service.ollama_base_url,
+            'docker_container': bool(os.getenv('DOCKER_CONTAINER')),
+            'connection_test': None,
+            'models_available': [],
+            'error': None
+        }
+        
+        # Try to get models if connection works
+        try:
+            import requests
+            ollama_url = llm_service.ollama_base_url
+            response = requests.get(f"{ollama_url}/api/tags", timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                models = [m.get('name', m.get('model', '')) for m in data.get('models', [])]
+                diagnose_result['connection_test'] = 'success'
+                diagnose_result['models_available'] = models
+        except:
+            diagnose_result['connection_test'] = 'failed'
+        
+        # Merge results
+        combined = {
+            'status': test_result.get('status'),
+            'provider': test_result.get('provider'),
+            'model': test_result.get('model'),
+            'response': test_result.get('response'),
+            'error': test_result.get('error'),
+            'ollama_base_url': diagnose_result.get('ollama_base_url'),
+            'docker_container': diagnose_result.get('docker_container'),
+            'connection_test': diagnose_result.get('connection_test'),
+            'models_available': diagnose_result.get('models_available')
+        }
+        return jsonify(combined), 200 if test_result.get('status') == 'success' else 500
+    else:
+        # For non-Ollama providers, just run the test
+        return test_llm()
+
+@app.route('/api/llm/warmup', methods=['POST'])
+def warmup_llm():
+    """Warm up the LLM model (pre-loads into memory for faster responses)."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    result = llm_service.warmup_model()
+    status_code = 200 if result.get('status') == 'success' else 500
+    return jsonify(result), status_code
+
+@app.route('/api/llm/ollama/diagnose', methods=['GET'])
+def diagnose_ollama():
+    """Diagnose Ollama connectivity and model availability."""
+    result = {
+        'ollama_base_url': llm_service.ollama_base_url,
+        'docker_container': bool(os.getenv('DOCKER_CONTAINER')),
+        'connection_test': None,
+        'models_available': [],
+        'error': None
+    }
+    
+    try:
+        import requests
+        ollama_url = llm_service.ollama_base_url
+        
+        # Test basic connectivity
+        try:
+            response = requests.get(f"{ollama_url}/api/tags", timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                models = [m.get('name', m.get('model', '')) for m in data.get('models', [])]
+                result['connection_test'] = 'success'
+                result['models_available'] = models
+                result['message'] = f"✅ Connected to Ollama at {ollama_url}. Found {len(models)} model(s)."
+            else:
+                result['connection_test'] = 'failed'
+                result['error'] = f"Ollama returned status {response.status_code}"
+                result['message'] = f"⚠️ Ollama at {ollama_url} returned HTTP {response.status_code}"
+        except requests.exceptions.ConnectionError as e:
+            result['connection_test'] = 'failed'
+            result['error'] = f"Connection error: {str(e)}"
+            is_docker = os.getenv('DOCKER_CONTAINER', '').lower() in ('true', '1', 'yes')
+            if is_docker:
+                result['message'] = f"❌ Cannot connect to Ollama at {ollama_url}. Check if container is running: docker ps | grep ollama. If running, check container logs: docker logs cache-raiders-ollama"
+            else:
+                result['message'] = f"❌ Cannot connect to Ollama at {ollama_url}. Make sure Ollama is running locally: ollama serve (or check if Docker container is running: docker ps | grep ollama)"
+        except requests.exceptions.Timeout:
+            result['connection_test'] = 'failed'
+            result['error'] = "Request timed out"
+            result['message'] = f"⏱️ Ollama at {ollama_url} did not respond within 10 seconds"
+        except Exception as e:
+            result['connection_test'] = 'failed'
+            result['error'] = f"Unexpected error: {str(e)}"
+            result['message'] = f"❌ Error testing Ollama: {str(e)}"
+    except Exception as e:
+        result['connection_test'] = 'error'
+        result['error'] = f"Diagnostic error: {str(e)}"
+        result['message'] = f"❌ Failed to run diagnostic: {str(e)}"
+    
+    return jsonify(result), 200
+
+@app.route('/api/llm/provider', methods=['GET'])
+def get_llm_provider():
+    """Get current LLM provider configuration."""
+    print(f"📥 [API] GET /api/llm/provider called")
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    info = llm_service.get_provider_info()
+    print(f"📊 [API] Provider info: {info.get('provider')}, model: {info.get('model')}")
+    
+    # Don't modify ollama_base_url - it was already set correctly in __init__
+    # Just log what we're using
+    if info.get('provider') == 'ollama':
+        print(f"🔧 [API] Using Ollama at: {llm_service.ollama_base_url}")
+    
+    # If Ollama, also fetch available models
+    if info.get('provider') == 'ollama':
+        print(f"🔍 [API] Starting to fetch Ollama models...")
+        try:
+            import requests
+            ollama_url = llm_service.ollama_base_url
+            print(f"🔍 Fetching Ollama models from: {ollama_url}/api/tags")
+            # Quick timeout - if Ollama is slow, we'll show an error
+            response = requests.get(f"{ollama_url}/api/tags", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                models = [m.get('name', m.get('model', '')) for m in data.get('models', [])]
+                info['available_models'] = models
+                print(f"✅ Found {len(models)} Ollama models: {', '.join(models) if models else 'none'}")
+            else:
+                info['available_models'] = []
+                error_msg = f"Ollama API returned status {response.status_code}"
+                info['ollama_error'] = error_msg
+                print(f"⚠️ {error_msg}")
+        except requests.exceptions.ConnectionError as e:
+            info['available_models'] = []
+            ollama_url = llm_service.ollama_base_url
+            error_msg = f"Cannot connect to Ollama at {ollama_url}"
+            info['ollama_error'] = error_msg
+            info['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}: {e}")
+        except requests.exceptions.Timeout:
+            info['available_models'] = []
+            ollama_url = llm_service.ollama_base_url
+            error_msg = f"Ollama request timed out after 5s at {ollama_url}"
+            info['ollama_error'] = error_msg
+            info['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}")
+        except Exception as e:
+            info['available_models'] = []
+            ollama_url = llm_service.ollama_base_url
+            error_msg = f"Error fetching Ollama models from {ollama_url}: {str(e)}"
+            info['ollama_error'] = error_msg
+            info['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}")
+            import traceback
+            traceback.print_exc()
+    
+    return jsonify(info), 200
+
+@app.route('/api/llm/provider', methods=['POST'])
+def set_llm_provider():
+    """Switch LLM provider (openai, ollama, or local) and persist to database."""
+    if not LLM_AVAILABLE:
+        return jsonify({'error': 'LLM service not available'}), 503
+    
+    data = request.json
+    provider = data.get('provider')
+    model = data.get('model')  # Optional: can specify model for the provider
+    
+    if not provider:
+        return jsonify({'error': 'provider is required'}), 400
+    
+    # ollama_base_url was already set correctly in __init__ - don't modify it
+    
+    # Log the request for debugging
+    print(f"🔄 [API] Setting LLM provider: {provider}, model: {model}")
+    
+    result = llm_service.set_provider(provider, model)
+    
+    if 'error' in result:
+        return jsonify(result), 400
+    
+    # Persist to database
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Save provider
+        cursor.execute('''
+            INSERT OR REPLACE INTO settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+        ''', ('llm_provider', result.get('provider'), datetime.utcnow().isoformat()))
+        
+        # Save model
+        if result.get('model'):
+            cursor.execute('''
+                INSERT OR REPLACE INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            ''', ('llm_model', result.get('model'), datetime.utcnow().isoformat()))
+        
+        conn.commit()
+        conn.close()
+        print(f"💾 Persisted LLM settings to database: provider={result.get('provider')}, model={result.get('model')}")
+    except Exception as e:
+        print(f"⚠️ Error persisting LLM settings to database: {e}")
+        import traceback
+        traceback.print_exc()
+        # Continue anyway - in-memory value is set
+    
+    # Fetch available models if Ollama (same as GET endpoint)
+    if result.get('provider') == 'ollama':
+        try:
+            import requests
+            ollama_url = llm_service.ollama_base_url
+            print(f"🔍 [API] Fetching Ollama models from {ollama_url}/api/tags after provider change...")
+            response = requests.get(f"{ollama_url}/api/tags", timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                models = [m.get('name', m.get('model', '')) for m in data.get('models', [])]
+                result['available_models'] = models
+                result['ollama_base_url'] = ollama_url
+                print(f"✅ [API] Found {len(models)} Ollama models: {', '.join(models) if models else 'none'}")
+                
+                # Verify the selected model is actually available
+                selected_model = result.get('model')
+                if selected_model and models and selected_model not in models:
+                    # Check if model name matches (with or without tag)
+                    model_found = any(m.startswith(selected_model.split(':')[0]) for m in models)
+                    if not model_found:
+                        print(f"⚠️ [API] Selected model '{selected_model}' not in available models. Available: {models}")
+                        # Use first available model or default
+                        if models:
+                            result['model'] = models[0]
+                            result['model_warning'] = f"Selected model not available, switched to {models[0]}"
+                            print(f"🔄 [API] Switched to available model: {models[0]}")
+            else:
+                result['available_models'] = []
+                result['ollama_error'] = f"Ollama API returned status {response.status_code}"
+                result['ollama_base_url'] = ollama_url
+                print(f"⚠️ [API] Ollama API returned status {response.status_code}")
+        except requests.exceptions.ConnectionError as e:
+            result['available_models'] = []
+            ollama_url = llm_service.ollama_base_url
+            is_docker = os.getenv('DOCKER_CONTAINER', '').lower() in ('true', '1', 'yes')
+            print(f"🔍 [API] Connection error in POST - is_docker={is_docker}, DOCKER_CONTAINER={os.getenv('DOCKER_CONTAINER')}, ollama_url={ollama_url}")
+            if is_docker:
+                error_msg = f"Cannot connect to Ollama at {ollama_url}. Make sure the Ollama container is running: docker ps | grep ollama. If running, check container logs: docker logs cache-raiders-ollama"
+            else:
+                error_msg = f"Cannot connect to Ollama at {ollama_url}. Make sure Ollama is running locally: ollama serve (or check if Docker container is running: docker ps | grep ollama)"
+            result['ollama_error'] = error_msg
+            result['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}: {e}")
+        except requests.exceptions.Timeout:
+            result['available_models'] = []
+            ollama_url = llm_service.ollama_base_url
+            error_msg = f"Ollama request timed out at {ollama_url}. Check if Ollama is healthy."
+            result['ollama_error'] = error_msg
+            result['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}")
+        except Exception as e:
+            result['available_models'] = []
+            ollama_url = llm_service.ollama_base_url
+            error_msg = f"Error fetching Ollama models from {ollama_url}: {str(e)}"
+            result['ollama_error'] = error_msg
+            result['ollama_base_url'] = ollama_url
+            print(f"⚠️ {error_msg}")
+            import traceback
+            traceback.print_exc()
+    
+    # Log the result for debugging
+    print(f"✅ [API] LLM provider set to: {result.get('provider')}, model: {result.get('model')}")
+    
+    return jsonify(result), 200
 
 @app.route('/api/npcs/<npc_id>/interact', methods=['POST'])
 def interact_with_npc(npc_id: str):
@@ -1963,6 +2762,11 @@ def interact_with_npc(npc_id: str):
             user_location=user_location
         )
         
+        # Get current LLM provider info to include in response
+        provider_info = llm_service.get_provider_info()
+        model_name = provider_info.get('model', 'unknown')
+        provider = provider_info.get('provider', 'unknown')
+        
         # Handle both old string return and new dict return for backward compatibility
         if isinstance(result, dict):
             response_text = result.get('response', '')
@@ -1971,7 +2775,9 @@ def interact_with_npc(npc_id: str):
             response_data = {
                 'npc_id': npc_id,
                 'response': response_text,
-                'npc_name': npc_name
+                'npc_name': npc_name,
+                'model': model_name,
+                'provider': provider
             }
             
             if placement:
@@ -1983,7 +2789,9 @@ def interact_with_npc(npc_id: str):
             return jsonify({
                 'npc_id': npc_id,
                 'response': result,
-                'npc_name': npc_name
+                'npc_name': npc_name,
+                'model': model_name,
+                'provider': provider
             }), 200
     except Exception as e:
         return jsonify({'error': f'LLM error: {str(e)}'}), 500
@@ -2012,26 +2820,364 @@ def generate_clue():
     except Exception as e:
         return jsonify({'error': f'LLM error: {str(e)}'}), 500
 
+@app.route('/api/settings/location-update-interval', methods=['GET'])
+def get_location_update_interval():
+    """Get the current location update interval in milliseconds."""
+    return jsonify({
+        'interval_ms': location_update_interval_ms,
+        'interval_seconds': location_update_interval_ms / 1000.0
+    })
+
+@app.route('/api/settings/location-update-interval', methods=['POST', 'PUT'])
+def set_location_update_interval():
+    """Set the location update interval in milliseconds and persist to database."""
+    global location_update_interval_ms
+    
+    try:
+        data = request.get_json()
+        if not data or 'interval_ms' not in data:
+            return jsonify({'error': 'interval_ms is required'}), 400
+        
+        interval_ms = int(data['interval_ms'])
+        
+        # Validate interval (must be one of the allowed values: 500, 1000, 3000, 5000, 10000, 30000, 60000)
+        allowed_intervals = [500, 1000, 3000, 5000, 10000, 30000, 60000]
+        if interval_ms not in allowed_intervals:
+            return jsonify({
+                'error': f'Invalid interval. Must be one of: {[ms/1000 for ms in allowed_intervals]} seconds'
+            }), 400
+        
+        location_update_interval_ms = interval_ms
+        
+        # Persist to database - verify it was saved
+        db_save_success = False
+        db_error = None
+        try:
+            # Ensure database is initialized
+            if not os.path.exists(DB_PATH):
+                print(f"⚠️ Database file does not exist: {DB_PATH}, initializing...")
+                init_db()
+            
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            # Ensure settings table exists
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
+            
+            # Save the value
+            cursor.execute('''
+                INSERT OR REPLACE INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            ''', ('location_update_interval_ms', str(location_update_interval_ms), datetime.utcnow().isoformat()))
+            conn.commit()
+            
+            # Verify the save worked by reading it back
+            cursor.execute('SELECT value FROM settings WHERE key = ?', ('location_update_interval_ms',))
+            row = cursor.fetchone()
+            if row and int(row['value']) == location_update_interval_ms:
+                db_save_success = True
+                print(f"💾 Persisted location update interval to database: {location_update_interval_ms}ms (verified)")
+            else:
+                db_error = "Save verification failed - value mismatch"
+                print(f"⚠️ Warning: Location update interval may not have been saved correctly")
+            conn.close()
+        except sqlite3.OperationalError as e:
+            db_error = f"Database operational error: {str(e)}"
+            print(f"⚠️ Error persisting location update interval to database: {e}")
+            import traceback
+            traceback.print_exc()
+        except Exception as e:
+            db_error = f"Unexpected error: {str(e)}"
+            print(f"⚠️ Error persisting location update interval to database: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # If save failed, return error but still set in-memory value
+        if not db_save_success:
+            print(f"⚠️ Database save failed, but in-memory value is set to {location_update_interval_ms}ms")
+            # Don't return error - allow in-memory value to be used, but log the issue
+        
+        # Broadcast the new interval to all connected clients via WebSocket
+        # Note: emit without 'room' or 'to' broadcasts to all (broadcast=True is deprecated)
+        try:
+            socketio.emit('location_update_interval_changed', {
+                'interval_ms': location_update_interval_ms,
+                'interval_seconds': location_update_interval_ms / 1000.0
+            })
+        except Exception as e:
+            print(f"⚠️ Error broadcasting location update interval via WebSocket: {e}")
+            # Continue anyway - the value is set
+        
+        print(f"📍 Location update interval changed to {location_update_interval_ms}ms ({location_update_interval_ms/1000.0}s)")
+        
+        return jsonify({
+            'interval_ms': location_update_interval_ms,
+            'interval_seconds': location_update_interval_ms / 1000.0,
+            'message': f'Location update interval set to {location_update_interval_ms/1000.0} seconds'
+        })
+    except ValueError as e:
+        print(f"⚠️ Invalid value for location update interval: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Invalid value: {str(e)}'}), 400
+    except Exception as e:
+        print(f"⚠️ Error setting location update interval: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
+def load_location_update_interval_from_db():
+    """Load location update interval from database on startup."""
+    global location_update_interval_ms
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT value FROM settings WHERE key = ?', ('location_update_interval_ms',))
+        row = cursor.fetchone()
+        if row:
+            location_update_interval_ms = int(row['value'])
+            print(f"📍 Loaded location update interval from database: {location_update_interval_ms}ms")
+        else:
+            # Initialize with default if not found
+            cursor.execute('''
+                INSERT INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            ''', ('location_update_interval_ms', '1000', datetime.utcnow().isoformat()))
+            conn.commit()
+            location_update_interval_ms = 1000
+            print(f"📍 Initialized location update interval to default: {location_update_interval_ms}ms")
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Error loading location update interval from database: {e}, using default: 1000ms")
+        location_update_interval_ms = 1000
+
+def load_game_mode_from_db():
+    """Load game mode from database on startup."""
+    global game_mode
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('SELECT value FROM settings WHERE key = ?', ('game_mode',))
+        row = cursor.fetchone()
+        if row:
+            game_mode = row['value']
+            print(f"🎮 Loaded game mode from database: {game_mode}")
+        else:
+            # Initialize with default if not found
+            cursor.execute('''
+                INSERT INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            ''', ('game_mode', 'open', datetime.utcnow().isoformat()))
+            conn.commit()
+            game_mode = 'open'
+            print(f"🎮 Initialized game mode to default: {game_mode}")
+        conn.close()
+    except Exception as e:
+        print(f"⚠️ Error loading game mode from database: {e}, using default: open")
+        game_mode = 'open'
+
+def load_llm_settings_from_db():
+    """Load LLM provider and model from database on startup."""
+    if not LLM_AVAILABLE:
+        return
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Load provider
+        cursor.execute('SELECT value FROM settings WHERE key = ?', ('llm_provider',))
+        row = cursor.fetchone()
+        provider = row['value'] if row else None
+        
+        # Load model
+        cursor.execute('SELECT value FROM settings WHERE key = ?', ('llm_model',))
+        row = cursor.fetchone()
+        model = row['value'] if row else None
+        
+        conn.close()
+        
+        # Apply settings if found
+        if provider:
+            print(f"🤖 Loading LLM settings from database: provider={provider}, model={model or 'default'}")
+            result = llm_service.set_provider(provider, model)
+            if 'error' not in result:
+                print(f"✅ Loaded LLM settings: provider={result.get('provider')}, model={result.get('model')}")
+            else:
+                print(f"⚠️ Error loading LLM settings: {result.get('error')}")
+        else:
+            print(f"ℹ️ No LLM settings found in database, using defaults from environment")
+    except Exception as e:
+        print(f"⚠️ Error loading LLM settings from database: {e}, using defaults")
+        import traceback
+        traceback.print_exc()
+
+@app.route('/api/settings/game-mode', methods=['GET'])
+def get_game_mode():
+    """Get the current game mode."""
+    print(f"🎮 [DEBUG] get_game_mode() called from {request.remote_addr}", flush=True)
+    print(f"   Current game_mode value: '{game_mode}'", flush=True)
+    response_data = {
+        'game_mode': game_mode
+    }
+    print(f"   Returning: {response_data}", flush=True)
+    return jsonify(response_data)
+
+@app.route('/api/settings/game-mode', methods=['POST', 'PUT'])
+def set_game_mode():
+    """Set the game mode and persist to database."""
+    import sys
+    # DEBUG: Log every request to this endpoint
+    print(f"🔔 [DEBUG] set_game_mode endpoint called!", flush=True)
+    print(f"   Method: {request.method}", flush=True)
+    print(f"   Remote addr: {request.remote_addr}", flush=True)
+    sys.stdout.flush()
+    
+    try:
+        global game_mode
+        
+        data = request.get_json()
+        print(f"   Request data: {data}", flush=True)
+        sys.stdout.flush()
+        if not data or 'game_mode' not in data:
+            return jsonify({'error': 'game_mode is required'}), 400
+        
+        new_game_mode = str(data['game_mode'])
+        
+        # Validate game mode (must be one of: "open", "dead_mens_secrets")
+        allowed_modes = ["open", "dead_mens_secrets"]
+        if new_game_mode not in allowed_modes:
+            return jsonify({
+                'error': f'Invalid game mode. Must be one of: {allowed_modes}'
+            }), 400
+        
+        # Update in-memory variable
+        game_mode = new_game_mode
+        
+        # Persist to database
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+            ''', ('game_mode', game_mode, datetime.utcnow().isoformat()))
+            conn.commit()
+            conn.close()
+            print(f"💾 Persisted game mode to database: {game_mode}")
+        except Exception as e:
+            print(f"⚠️ Error persisting game mode to database: {e}")
+            import traceback
+            traceback.print_exc()
+            # Continue anyway - in-memory value is set
+        
+        # Broadcast the new game mode to all connected clients via WebSocket
+        try:
+            # Flask-SocketIO: emit without 'room' or 'to' broadcasts to all connected clients
+            # Note: 'broadcast=True' was removed as it's deprecated in newer python-socketio versions
+            event_data = {
+                'game_mode': game_mode
+            }
+            print(f"📡 [Game Mode] Broadcasting game_mode_changed event to all clients", flush=True)
+            print(f"   Event data: {event_data}", flush=True)
+            print(f"   Number of connected clients: {len(connected_clients)}", flush=True)
+            print(f"   WebSocket sessions (connected_clients dict): {list(connected_clients.keys())}", flush=True)
+            
+            # Emit to all connected clients (no room = broadcast to all)
+            # DEBUG: Log the exact emit call
+            print(f"   🔔 Calling socketio.emit('game_mode_changed', {event_data}, namespace='/')", flush=True)
+            socketio.emit('game_mode_changed', event_data, namespace='/')
+            print(f"✅ [Game Mode] Broadcasted game mode change to all connected clients: {game_mode}", flush=True)
+            
+            # Also try emitting without namespace to see if that helps
+            print(f"   🔔 Also trying emit without namespace...", flush=True)
+            socketio.emit('game_mode_changed', event_data)
+            print(f"   ✅ Second emit completed", flush=True)
+        except Exception as e:
+            print(f"❌ [Game Mode] Error broadcasting game mode change via WebSocket: {e}")
+            import traceback
+            traceback.print_exc()
+            # Continue anyway - game mode is still set
+        
+        print(f"🎮 Game mode changed to: {game_mode}")
+        
+        return jsonify({
+            'game_mode': game_mode,
+            'message': f'Game mode set to {game_mode}'
+        })
+    except Exception as e:
+        print(f"❌ Error in set_game_mode endpoint: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'error': f'Internal server error: {str(e)}'
+        }), 500
+
 @app.route('/api/npcs/<npc_id>/map-piece', methods=['GET', 'POST'])
 def get_npc_map_piece(npc_id: str):
-    """Get a treasure map piece from an NPC (skeleton has first half, corgi has second half)."""
+    """Get a treasure map piece from an NPC (skeleton has first half, corgi has second half).
+    
+    IMPORTANT: Treasure location (X marks the spot) is generated ONCE and saved to database.
+    Subsequent requests return the same treasure location for the user.
+    """
+    import time
+    import random
+    request_start_time = time.time()
+    request_id = f"{npc_id}_{int(time.time() * 1000)}"
+    
+    map_logger.info(f"[{request_id}] ========== MAP REQUEST STARTED ==========")
+    map_logger.info(f"[{request_id}] NPC ID: {npc_id}")
+    map_logger.info(f"[{request_id}] Method: {request.method}")
+    map_logger.info(f"[{request_id}] Headers: {dict(request.headers)}")
+    
     if not LLM_AVAILABLE:
+        map_logger.error(f"[{request_id}] LLM service not available")
         return jsonify({'error': 'LLM service not available'}), 503
     
     # Determine which NPC and which piece
     npc_type = "skeleton" if "skeleton" in npc_id.lower() else "corgi"
     piece_number = 1 if npc_type == "skeleton" else 2
+    map_logger.info(f"[{request_id}] NPC Type: {npc_type}, Piece Number: {piece_number}")
     
-    # Get target location from request (POST body or query params)
+    # Get device_uuid from request (required for treasure hunt persistence)
+    device_uuid = None
+    if request.json and 'device_uuid' in request.json:
+        device_uuid = request.json.get('device_uuid')
+    elif request.args.get('device_uuid'):
+        device_uuid = request.args.get('device_uuid')
+    
+    map_logger.info(f"[{request_id}] Device UUID: {device_uuid}")
+    
+    # Get target location from request (JSON body or query params)
     target_location = {}
-    if request.method == 'POST' and request.json:
+    # Try to get from JSON body first (works for both GET and POST)
+    # Note: Flask may not parse JSON body for GET requests, so we need to handle it manually
+    if request.method == 'GET' and request.content_length and request.content_length > 0:
+        # For GET requests with body, manually parse JSON
+        try:
+            import json
+            body_data = json.loads(request.get_data(as_text=True))
+            if 'target_location' in body_data:
+                target_location = body_data.get('target_location', {})
+                map_logger.info(f"[{request_id}] Target location from JSON body (GET): {target_location}")
+        except (json.JSONDecodeError, ValueError) as e:
+            map_logger.warning(f"[{request_id}] Failed to parse JSON body for GET request: {e}")
+    elif request.json and 'target_location' in request.json:
         target_location = request.json.get('target_location', {})
-    elif request.method == 'GET':
-        # Try to get from query params
+        map_logger.info(f"[{request_id}] Target location from JSON body: {target_location}")
+    # Fallback to query params for GET requests without body
+    if request.method == 'GET' and not target_location:
         lat = request.args.get('latitude')
         lon = request.args.get('longitude')
         if lat and lon:
             target_location = {'latitude': float(lat), 'longitude': float(lon)}
+            map_logger.info(f"[{request_id}] Target location from query params: {target_location}")
     
     # If no target provided, use a default location (for testing)
     if not target_location.get('latitude') or not target_location.get('longitude'):
@@ -2040,26 +3186,321 @@ def get_npc_map_piece(npc_id: str):
             'latitude': 37.7749,
             'longitude': -122.4194
         }
+        map_logger.warning(f"[{request_id}] No target location provided, using default: {target_location}")
+    
+    # Store the user's original location (before we potentially modify target_location)
+    user_location = {
+        'latitude': target_location.get('latitude'),
+        'longitude': target_location.get('longitude')
+    }
+    
+    # Check if user has an existing active treasure hunt
+    existing_hunt = None
+    if device_uuid:
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, treasure_latitude, treasure_longitude, origin_latitude, origin_longitude,
+                       map_piece_1_json, map_piece_2_json, created_at
+                FROM treasure_hunts 
+                WHERE device_uuid = ? AND status = 'active'
+                ORDER BY created_at DESC
+                LIMIT 1
+            ''', (device_uuid,))
+            row = cursor.fetchone()
+            if row:
+                existing_hunt = {
+                    'id': row[0],
+                    'treasure_latitude': row[1],
+                    'treasure_longitude': row[2],
+                    'origin_latitude': row[3],
+                    'origin_longitude': row[4],
+                    'map_piece_1_json': row[5],
+                    'map_piece_2_json': row[6],
+                    'created_at': row[7]
+                }
+                map_logger.info(f"[{request_id}] Found existing treasure hunt: id={existing_hunt['id']}, treasure=({existing_hunt['treasure_latitude']}, {existing_hunt['treasure_longitude']})")
+            conn.close()
+        except Exception as e:
+            map_logger.error(f"[{request_id}] Error checking existing treasure hunt: {e}")
+    
+    # If existing hunt found, return the saved map piece
+    if existing_hunt:
+        map_piece_key = f'map_piece_{piece_number}_json'
+        saved_piece_json = existing_hunt.get(map_piece_key)
+        
+        if saved_piece_json:
+            try:
+                import json
+                saved_piece = json.loads(saved_piece_json)
+                map_logger.info(f"[{request_id}] Returning saved map piece {piece_number} from database")
+                
+                total_duration = time.time() - request_start_time
+                map_logger.info(f"[{request_id}] ========== MAP REQUEST SUCCESS (CACHED) ==========")
+                map_logger.info(f"[{request_id}] Total duration: {total_duration:.2f}s")
+                
+                return jsonify({
+                    'npc_id': npc_id,
+                    'npc_type': npc_type,
+                    'map_piece': saved_piece,
+                    'message': f"Here's piece {piece_number} of the treasure map!",
+                    'from_cache': True,
+                    'treasure_hunt_id': existing_hunt['id']
+                }), 200
+            except json.JSONDecodeError as e:
+                map_logger.warning(f"[{request_id}] Failed to parse saved map piece: {e}")
+                # Continue to generate new piece
+        
+        # If we have an existing hunt but no saved piece for this NPC, use the saved treasure location
+        target_location = {
+            'latitude': existing_hunt['treasure_latitude'],
+            'longitude': existing_hunt['treasure_longitude']
+        }
+        map_logger.info(f"[{request_id}] Using existing treasure location: {target_location}")
+    else:
+        # NEW treasure hunt - generate treasure location within 10 meters of user
+        # This makes the treasure easy to find and test
+        import random
+        import math
+        
+        user_lat = user_location.get('latitude')
+        user_lon = user_location.get('longitude')
+        
+        if user_lat and user_lon:
+            # Generate random point within 10 meters
+            max_distance_m = 10.0
+            
+            # Convert meters to approximate degrees
+            # 1 degree latitude ≈ 111,000 meters
+            # 1 degree longitude ≈ 111,000 * cos(latitude) meters
+            lat_offset_per_meter = 1.0 / 111000.0
+            lon_offset_per_meter = 1.0 / (111000.0 * math.cos(math.radians(user_lat)))
+            
+            # Random distance between 5-10 meters (not too close, not too far)
+            distance = random.uniform(5.0, max_distance_m)
+            angle = random.uniform(0, 2 * math.pi)
+            
+            lat_offset = distance * math.cos(angle) * lat_offset_per_meter
+            lon_offset = distance * math.sin(angle) * lon_offset_per_meter
+            
+            target_location = {
+                'latitude': user_lat + lat_offset,
+                'longitude': user_lon + lon_offset
+            }
+            
+            map_logger.info(f"[{request_id}] Generated NEW treasure location within 10m of user: {target_location}")
+            print(f"🎯 New treasure hunt - X marks the spot {distance:.1f}m from user at ({target_location['latitude']:.6f}, {target_location['longitude']:.6f})")
+    
+    map_logger.info(f"[{request_id}] Final target location: lat={target_location.get('latitude')}, lon={target_location.get('longitude')}")
     
     try:
-        map_piece = llm_service.generate_map_piece(
+        map_logger.info(f"[{request_id}] Calling treasure_map_service.generate_map_piece()...")
+        call_start_time = time.time()
+        
+        map_piece = treasure_map_service.generate_map_piece(
             target_location=target_location,
             piece_number=piece_number,
             total_pieces=2,
             npc_type=npc_type
         )
         
-        if 'error' in map_piece:
-            return jsonify(map_piece), 400
+        call_duration = time.time() - call_start_time
+        map_logger.info(f"[{request_id}] generate_map_piece() completed in {call_duration:.2f}s")
         
-        return jsonify({
+        map_logger.info(f"[{request_id}] Map piece result keys: {list(map_piece.keys()) if isinstance(map_piece, dict) else 'not a dict'}")
+        
+        if 'error' in map_piece:
+            error_msg = map_piece.get('error', 'Unknown error')
+            map_logger.error(f"[{request_id}] Map piece generation returned error: {error_msg}")
+            # Check if it's a resource limit error - these should be handled gracefully
+            error_lower = str(error_msg).lower()
+            if 'too large' in error_lower or 'exceeded' in error_lower or 'maximum' in error_lower or 'resource' in error_lower:
+                # For resource limit errors, return a map piece without landmarks instead of an error
+                map_logger.warning(f"[{request_id}] Resource limit error - returning map piece without landmarks")
+                print(f"⚠️ Resource limit error caught in endpoint, returning map piece without landmarks")
+                # Generate a basic map piece without landmarks
+                lat = target_location.get('latitude', 37.7749)
+                lon = target_location.get('longitude', -122.4194)
+                import random
+                if piece_number == 1:
+                    approximate_lat = lat + (random.random() - 0.5) * 0.001
+                    approximate_lon = lon + (random.random() - 0.5) * 0.001
+                    map_piece = {
+                        "piece_number": 1,
+                        "hint": "Arr, here be the treasure map, matey! X marks the spot where me gold be buried!",
+                        "approximate_latitude": approximate_lat,
+                        "approximate_longitude": approximate_lon,
+                        "landmarks": [],
+                        "is_first_half": True
+                    }
+                    map_logger.info(f"[{request_id}] Generated fallback map piece (piece 1) without landmarks")
+                else:
+                    map_piece = {
+                        "piece_number": 2,
+                        "hint": "Woof! Here's the second half! The treasure is exactly at these coordinates!",
+                        "exact_latitude": lat,
+                        "exact_longitude": lon,
+                        "landmarks": [],
+                        "is_second_half": True
+                    }
+            else:
+                # For other errors, still try to return a basic map piece instead of error
+                map_logger.warning(f"[{request_id}] Other error in map piece - returning basic map piece without landmarks")
+                lat = target_location.get('latitude', 37.7749)
+                lon = target_location.get('longitude', -122.4194)
+                import random
+                if piece_number == 1:
+                    approximate_lat = lat + (random.random() - 0.5) * 0.001
+                    approximate_lon = lon + (random.random() - 0.5) * 0.001
+                    map_piece = {
+                        "piece_number": 1,
+                        "hint": "Arr, here be the treasure map, matey! X marks the spot where me gold be buried!",
+                        "approximate_latitude": approximate_lat,
+                        "approximate_longitude": approximate_lon,
+                        "landmarks": [],
+                        "is_first_half": True
+                    }
+                else:
+                    map_piece = {
+                        "piece_number": 2,
+                        "hint": "Woof! Here's the second half! The treasure is exactly at these coordinates!",
+                        "exact_latitude": lat,
+                        "exact_longitude": lon,
+                        "landmarks": [],
+                        "is_second_half": True
+                    }
+                map_logger.info(f"[{request_id}] Generated fallback map piece (piece {piece_number}) without landmarks")
+        
+        # Save treasure hunt to database if we have a device_uuid
+        treasure_hunt_id = existing_hunt['id'] if existing_hunt else None
+        
+        if device_uuid and not existing_hunt:
+            # This is a NEW treasure hunt - save it to the database
+            try:
+                import json as json_module
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                # Get the actual treasure coordinates from the map piece
+                treasure_lat = map_piece.get('exact_latitude') or map_piece.get('approximate_latitude')
+                treasure_lon = map_piece.get('exact_longitude') or map_piece.get('approximate_longitude')
+                
+                # If piece 1, the treasure location is the target (with slight offset added by generate_map_piece)
+                # Store the exact target as the treasure location
+                if piece_number == 1:
+                    treasure_lat = target_location.get('latitude')
+                    treasure_lon = target_location.get('longitude')
+                
+                # Prepare map piece JSON
+                map_piece_json = json_module.dumps(map_piece)
+                map_piece_1_json = map_piece_json if piece_number == 1 else None
+                map_piece_2_json = map_piece_json if piece_number == 2 else None
+                
+                cursor.execute('''
+                    INSERT INTO treasure_hunts (
+                        device_uuid, treasure_latitude, treasure_longitude,
+                        origin_latitude, origin_longitude,
+                        map_piece_1_json, map_piece_2_json,
+                        status, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
+                ''', (
+                    device_uuid,
+                    treasure_lat,
+                    treasure_lon,
+                    target_location.get('latitude'),
+                    target_location.get('longitude'),
+                    map_piece_1_json,
+                    map_piece_2_json,
+                    datetime.utcnow().isoformat()
+                ))
+                
+                treasure_hunt_id = cursor.lastrowid
+                conn.commit()
+                conn.close()
+                
+                map_logger.info(f"[{request_id}] Saved new treasure hunt: id={treasure_hunt_id}, device={device_uuid}, treasure=({treasure_lat}, {treasure_lon})")
+                print(f"🗺️ Created new treasure hunt #{treasure_hunt_id} for device {device_uuid[:8]}...")
+                
+            except Exception as e:
+                map_logger.error(f"[{request_id}] Error saving treasure hunt: {e}")
+                print(f"⚠️ Error saving treasure hunt: {e}")
+        
+        elif device_uuid and existing_hunt and not existing_hunt.get(f'map_piece_{piece_number}_json'):
+            # We have an existing hunt but this piece wasn't saved yet - update it
+            try:
+                import json as json_module
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                
+                map_piece_json = json_module.dumps(map_piece)
+                column_name = f'map_piece_{piece_number}_json'
+                
+                cursor.execute(f'''
+                    UPDATE treasure_hunts 
+                    SET {column_name} = ?
+                    WHERE id = ?
+                ''', (map_piece_json, existing_hunt['id']))
+                
+                conn.commit()
+                conn.close()
+                
+                map_logger.info(f"[{request_id}] Updated treasure hunt #{existing_hunt['id']} with piece {piece_number}")
+                
+            except Exception as e:
+                map_logger.error(f"[{request_id}] Error updating treasure hunt: {e}")
+        
+        response_data = {
             'npc_id': npc_id,
             'npc_type': npc_type,
             'map_piece': map_piece,
-            'message': f"Here's piece {piece_number} of the treasure map!"
-        }), 200
+            'message': f"Here's piece {piece_number} of the treasure map!",
+            'treasure_hunt_id': treasure_hunt_id
+        }
+        
+        total_duration = time.time() - request_start_time
+        map_logger.info(f"[{request_id}] ========== MAP REQUEST SUCCESS ==========")
+        map_logger.info(f"[{request_id}] Total duration: {total_duration:.2f}s")
+        map_logger.info(f"[{request_id}] Response size: {len(str(response_data))} bytes")
+        
+        return jsonify(response_data), 200
     except Exception as e:
-        return jsonify({'error': f'LLM error: {str(e)}'}), 500
+        error_msg = str(e).lower()
+        # Check if it's a resource limit error
+        if 'too large' in error_msg or 'exceeded' in error_msg or 'maximum' in error_msg or 'resource' in error_msg:
+            # Return a basic map piece instead of an error
+            print(f"⚠️ Resource limit exception caught in endpoint, returning map piece without landmarks")
+            lat = target_location.get('latitude', 37.7749)
+            lon = target_location.get('longitude', -122.4194)
+            import random
+            if piece_number == 1:
+                approximate_lat = lat + (random.random() - 0.5) * 0.001
+                approximate_lon = lon + (random.random() - 0.5) * 0.001
+                map_piece = {
+                    "piece_number": 1,
+                    "hint": "Arr, this be the first half o' the map, matey! The treasure be near these waters!",
+                    "approximate_latitude": approximate_lat,
+                    "approximate_longitude": approximate_lon,
+                    "landmarks": [],
+                    "is_first_half": True
+                }
+            else:
+                map_piece = {
+                    "piece_number": 2,
+                    "hint": "Woof! Here's the second half! The treasure is exactly at these coordinates!",
+                    "exact_latitude": lat,
+                    "exact_longitude": lon,
+                    "landmarks": [],
+                    "is_second_half": True
+                }
+            return jsonify({
+                'npc_id': npc_id,
+                'npc_type': npc_type,
+                'map_piece': map_piece,
+                'message': f"Here's piece {piece_number} of the treasure map!"
+            }), 200
+        else:
+            return jsonify({'error': f'LLM error: {str(e)}'}), 500
 
 @app.route('/api/map-pieces/combine', methods=['POST'])
 def combine_map_pieces():
@@ -2108,10 +3549,731 @@ def combine_map_pieces():
         'message': 'Map pieces combined! X marks the spot!'
     }), 200
 
+# ============================================================================
+# Admin Story Mode Elements (for admin panel map)
+# ============================================================================
+
+@app.route('/api/admin/story-mode-elements', methods=['GET'])
+def get_story_mode_elements():
+    """Get all story mode elements for the admin panel map.
+    
+    Returns all active treasure hunts with their story elements:
+    - 💀 Skeleton (Captain Bones) - at origin location
+    - 🐕 Corgi (Barnaby) - appears in Stage 2+
+    - ❌ Treasure X - the target treasure location
+    - 🏴‍☠️ Bandit Hideout - appears in Stage 2+
+    
+    Also includes player info for each hunt.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get all active treasure hunts with player info
+        cursor.execute('''
+            SELECT 
+                th.id,
+                th.device_uuid,
+                th.treasure_latitude,
+                th.treasure_longitude,
+                th.origin_latitude,
+                th.origin_longitude,
+                th.current_stage,
+                th.corgi_latitude,
+                th.corgi_longitude,
+                th.bandit_latitude,
+                th.bandit_longitude,
+                th.created_at,
+                th.status,
+                p.player_name
+            FROM treasure_hunts th
+            LEFT JOIN players p ON th.device_uuid = p.device_uuid
+            WHERE th.status = 'active'
+            ORDER BY th.created_at DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        story_elements = []
+        
+        for row in rows:
+            hunt_id = row[0]
+            device_uuid = row[1]
+            treasure_lat = row[2]
+            treasure_lon = row[3]
+            origin_lat = row[4]
+            origin_lon = row[5]
+            current_stage = row[6] or 'stage_1'
+            corgi_lat = row[7]
+            corgi_lon = row[8]
+            bandit_lat = row[9]
+            bandit_lon = row[10]
+            created_at = row[11]
+            status = row[12]
+            player_name = row[13] or f"Player {device_uuid[:8]}"
+            
+            hunt_elements = {
+                'hunt_id': hunt_id,
+                'device_uuid': device_uuid,
+                'player_name': player_name,
+                'current_stage': current_stage,
+                'status': status,
+                'created_at': created_at,
+                'elements': []
+            }
+            
+            # 💀 Skeleton (Captain Bones) - always at origin location
+            if origin_lat and origin_lon:
+                hunt_elements['elements'].append({
+                    'id': f'skeleton_{hunt_id}',
+                    'type': 'skeleton',
+                    'name': f'💀 Captain Bones ({player_name})',
+                    'latitude': origin_lat,
+                    'longitude': origin_lon,
+                    'icon': '💀',
+                    'description': 'Skeleton NPC - gives first map piece'
+                })
+            
+            # ❌ Treasure X - the target location
+            if treasure_lat and treasure_lon:
+                hunt_elements['elements'].append({
+                    'id': f'treasure_{hunt_id}',
+                    'type': 'treasure',
+                    'name': f'❌ Treasure X ({player_name})',
+                    'latitude': treasure_lat,
+                    'longitude': treasure_lon,
+                    'icon': '❌',
+                    'description': 'X marks the spot!'
+                })
+            
+            # 🐕 Corgi (Barnaby) - appears in Stage 2+
+            if current_stage in ['stage_2', 'completed'] and corgi_lat and corgi_lon:
+                hunt_elements['elements'].append({
+                    'id': f'corgi_{hunt_id}',
+                    'type': 'corgi',
+                    'name': f'🐕 Barnaby the Corgi ({player_name})',
+                    'latitude': corgi_lat,
+                    'longitude': corgi_lon,
+                    'icon': '🐕',
+                    'description': 'Corgi NPC - confesses to taking treasure'
+                })
+            
+            # 🏴‍☠️ Bandit Hideout - appears in Stage 2+
+            if current_stage in ['stage_2', 'completed'] and bandit_lat and bandit_lon:
+                hunt_elements['elements'].append({
+                    'id': f'bandit_{hunt_id}',
+                    'type': 'bandit',
+                    'name': f'🏴‍☠️ Bandit Hideout ({player_name})',
+                    'latitude': bandit_lat,
+                    'longitude': bandit_lon,
+                    'icon': '🏴‍☠️',
+                    'description': 'Where bandits fled with remaining treasure'
+                })
+            
+            story_elements.append(hunt_elements)
+        
+        # Flatten all elements for easy map display
+        all_elements = []
+        for hunt in story_elements:
+            all_elements.extend(hunt['elements'])
+        
+        return jsonify({
+            'story_elements': all_elements,
+            'hunts': story_elements,
+            'total_hunts': len(story_elements),
+            'total_elements': len(all_elements)
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error fetching story mode elements: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to fetch story elements: {str(e)}'}), 500
+
+
+# ============================================================================
+# Treasure Hunt Endpoints
+# ============================================================================
+
+@app.route('/api/treasure-hunts/<device_uuid>', methods=['GET'])
+def get_treasure_hunt(device_uuid: str):
+    """Get the active treasure hunt for a device/user.
+    
+    Returns the saved treasure location and map pieces so the iOS app
+    can restore the treasure hunt state without regenerating.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, treasure_latitude, treasure_longitude, 
+                   origin_latitude, origin_longitude,
+                   map_piece_1_json, map_piece_2_json,
+                   status, created_at, completed_at
+            FROM treasure_hunts 
+            WHERE device_uuid = ? AND status = 'active'
+            ORDER BY created_at DESC
+            LIMIT 1
+        ''', (device_uuid,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return jsonify({
+                'has_active_hunt': False,
+                'message': 'No active treasure hunt found for this device'
+            }), 200
+        
+        # Parse map pieces from JSON
+        import json
+        map_piece_1 = None
+        map_piece_2 = None
+        
+        if row[5]:  # map_piece_1_json
+            try:
+                map_piece_1 = json.loads(row[5])
+            except json.JSONDecodeError:
+                pass
+        
+        if row[6]:  # map_piece_2_json
+            try:
+                map_piece_2 = json.loads(row[6])
+            except json.JSONDecodeError:
+                pass
+        
+        return jsonify({
+            'has_active_hunt': True,
+            'treasure_hunt': {
+                'id': row[0],
+                'treasure_latitude': row[1],
+                'treasure_longitude': row[2],
+                'origin_latitude': row[3],
+                'origin_longitude': row[4],
+                'map_piece_1': map_piece_1,
+                'map_piece_2': map_piece_2,
+                'status': row[7],
+                'created_at': row[8],
+                'completed_at': row[9]
+            }
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error fetching treasure hunt: {e}")
+        return jsonify({'error': f'Failed to fetch treasure hunt: {str(e)}'}), 500
+
+
+@app.route('/api/treasure-hunts/<device_uuid>', methods=['DELETE'])
+def reset_treasure_hunt(device_uuid: str):
+    """Reset/delete the active treasure hunt for a device/user.
+    
+    This allows the user to start a new treasure hunt.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Mark existing active hunts as cancelled (soft delete)
+        cursor.execute('''
+            UPDATE treasure_hunts 
+            SET status = 'cancelled', completed_at = ?
+            WHERE device_uuid = ? AND status = 'active'
+        ''', (datetime.utcnow().isoformat(), device_uuid))
+        
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if affected > 0:
+            print(f"🗑️ Reset {affected} treasure hunt(s) for device {device_uuid[:8]}...")
+            return jsonify({
+                'success': True,
+                'message': f'Reset {affected} active treasure hunt(s)',
+                'hunts_reset': affected
+            }), 200
+        else:
+            return jsonify({
+                'success': True,
+                'message': 'No active treasure hunts to reset',
+                'hunts_reset': 0
+            }), 200
+        
+    except Exception as e:
+        print(f"❌ Error resetting treasure hunt: {e}")
+        return jsonify({'error': f'Failed to reset treasure hunt: {str(e)}'}), 500
+
+
+@app.route('/api/treasure-hunts/<device_uuid>/complete', methods=['POST'])
+def complete_treasure_hunt(device_uuid: str):
+    """Mark the active treasure hunt as completed (user found the treasure)."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            UPDATE treasure_hunts 
+            SET status = 'completed', completed_at = ?
+            WHERE device_uuid = ? AND status = 'active'
+        ''', (datetime.utcnow().isoformat(), device_uuid))
+        
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        if affected > 0:
+            print(f"🎉 Completed treasure hunt for device {device_uuid[:8]}!")
+            return jsonify({
+                'success': True,
+                'message': 'Congratulations! Treasure hunt completed!',
+                'hunts_completed': affected
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'message': 'No active treasure hunt to complete',
+                'hunts_completed': 0
+            }), 404
+        
+    except Exception as e:
+        print(f"❌ Error completing treasure hunt: {e}")
+        return jsonify({'error': f'Failed to complete treasure hunt: {str(e)}'}), 500
+
+
+# ============================================================================
+# NPC Management Endpoints
+# ============================================================================
+
+@app.route('/api/npcs', methods=['GET'])
+def get_npcs():
+    """Get all NPCs."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT 
+                id,
+                name,
+                npc_type,
+                latitude,
+                longitude,
+                created_at,
+                created_by,
+                ar_origin_latitude,
+                ar_origin_longitude,
+                ar_offset_x,
+                ar_offset_y,
+                ar_offset_z,
+                ar_placement_timestamp
+            FROM npcs
+            ORDER BY created_at DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        npcs = [{
+            'id': row['id'],
+            'name': row['name'],
+            'npc_type': row['npc_type'],
+            'latitude': row['latitude'],
+            'longitude': row['longitude'],
+            'created_at': row['created_at'],
+            'created_by': row['created_by'],
+            'ar_origin_latitude': row['ar_origin_latitude'],
+            'ar_origin_longitude': row['ar_origin_longitude'],
+            'ar_offset_x': row['ar_offset_x'],
+            'ar_offset_y': row['ar_offset_y'],
+            'ar_offset_z': row['ar_offset_z'],
+            'ar_placement_timestamp': row['ar_placement_timestamp']
+        } for row in rows]
+        
+        return jsonify(npcs)
+    
+    except Exception as e:
+        return jsonify({'error': str(e), 'type': type(e).__name__}), 500
+
+@app.route('/api/npcs/<npc_id>', methods=['GET'])
+def get_npc(npc_id: str):
+    """Get a specific NPC by ID."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT 
+            id,
+            name,
+            npc_type,
+            latitude,
+            longitude,
+            created_at,
+            created_by,
+            ar_origin_latitude,
+            ar_origin_longitude,
+            ar_offset_x,
+            ar_offset_y,
+            ar_offset_z,
+            ar_placement_timestamp
+        FROM npcs
+        WHERE id = ?
+    ''', (npc_id,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return jsonify({'error': 'NPC not found'}), 404
+    
+    return jsonify({
+        'id': row['id'],
+        'name': row['name'],
+        'npc_type': row['npc_type'],
+        'latitude': row['latitude'],
+        'longitude': row['longitude'],
+        'created_at': row['created_at'],
+        'created_by': row['created_by'],
+        'ar_origin_latitude': row['ar_origin_latitude'],
+        'ar_origin_longitude': row['ar_origin_longitude'],
+        'ar_offset_x': row['ar_offset_x'],
+        'ar_offset_y': row['ar_offset_y'],
+        'ar_offset_z': row['ar_offset_z'],
+        'ar_placement_timestamp': row['ar_placement_timestamp']
+    })
+
+@app.route('/api/npcs', methods=['POST'])
+def create_npc():
+    """Create a new NPC."""
+    data = request.json
+    
+    required_fields = ['id', 'name', 'npc_type', 'latitude', 'longitude']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO npcs (
+                id, name, npc_type, latitude, longitude, created_at, created_by,
+                ar_origin_latitude, ar_origin_longitude,
+                ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            data['id'],
+            data['name'],
+            data['npc_type'],
+            data['latitude'],
+            data['longitude'],
+            datetime.utcnow().isoformat(),
+            data.get('created_by', 'unknown'),
+            data.get('ar_origin_latitude'),
+            data.get('ar_origin_longitude'),
+            data.get('ar_offset_x'),
+            data.get('ar_offset_y'),
+            data.get('ar_offset_z'),
+            data.get('ar_placement_timestamp', datetime.utcnow().isoformat())
+        ))
+        
+        conn.commit()
+        
+        # Get the created NPC
+        cursor.execute('''
+            SELECT 
+                id, name, npc_type, latitude, longitude, created_at, created_by,
+                ar_origin_latitude, ar_origin_longitude,
+                ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp
+            FROM npcs
+            WHERE id = ?
+        ''', (data['id'],))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return jsonify({'error': 'Failed to retrieve created NPC'}), 500
+        
+        # Broadcast new NPC to all connected clients
+        npc_data = {
+            'id': row['id'],
+            'name': row['name'],
+            'npc_type': row['npc_type'],
+            'latitude': row['latitude'],
+            'longitude': row['longitude'],
+            'created_at': row['created_at'],
+            'created_by': row['created_by'],
+            'ar_origin_latitude': row['ar_origin_latitude'],
+            'ar_origin_longitude': row['ar_origin_longitude'],
+            'ar_offset_x': row['ar_offset_x'],
+            'ar_offset_y': row['ar_offset_y'],
+            'ar_offset_z': row['ar_offset_z'],
+            'ar_placement_timestamp': row['ar_placement_timestamp']
+        }
+        
+        socketio.emit('npc_created', npc_data)
+        
+        return jsonify({
+            'id': data['id'],
+            'message': 'NPC created successfully'
+        }), 201
+        
+    except sqlite3.IntegrityError as e:
+        conn.close()
+        return jsonify({'error': 'NPC with this ID already exists'}), 409
+    except Exception as e:
+        conn.close()
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"❌ Error creating NPC: {str(e)}")
+        print(f"Traceback: {error_trace}")
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
+@app.route('/api/npcs/<npc_id>', methods=['PUT', 'PATCH'])
+def update_npc(npc_id: str):
+    """Update an NPC's location or other properties."""
+    data = request.json
+    
+    if not data:
+        return jsonify({'error': 'No data provided'}), 400
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if NPC exists
+    cursor.execute('SELECT id FROM npcs WHERE id = ?', (npc_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'error': 'NPC not found'}), 404
+    
+    # Build update query dynamically based on provided fields
+    updates = []
+    params = []
+    
+    updateable_fields = [
+        'name', 'npc_type', 'latitude', 'longitude',
+        'ar_origin_latitude', 'ar_origin_longitude',
+        'ar_offset_x', 'ar_offset_y', 'ar_offset_z', 'ar_placement_timestamp'
+    ]
+    
+    for field in updateable_fields:
+        if field in data:
+            updates.append(f'{field} = ?')
+            params.append(data[field])
+    
+    if not updates:
+        conn.close()
+        return jsonify({'error': 'No valid fields to update'}), 400
+    
+    params.append(npc_id)
+    
+    cursor.execute(f'''
+        UPDATE npcs
+        SET {', '.join(updates)}
+        WHERE id = ?
+    ''', params)
+    
+    conn.commit()
+    
+    # Get updated NPC
+    cursor.execute('''
+        SELECT 
+            id, name, npc_type, latitude, longitude, created_at, created_by,
+            ar_origin_latitude, ar_origin_longitude,
+            ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp
+        FROM npcs
+        WHERE id = ?
+    ''', (npc_id,))
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        return jsonify({'error': 'Failed to retrieve updated NPC'}), 500
+    
+    # Broadcast NPC update to all connected clients
+    npc_data = {
+        'id': row['id'],
+        'name': row['name'],
+        'npc_type': row['npc_type'],
+        'latitude': row['latitude'],
+        'longitude': row['longitude'],
+        'created_at': row['created_at'],
+        'created_by': row['created_by'],
+        'ar_origin_latitude': row['ar_origin_latitude'],
+        'ar_origin_longitude': row['ar_origin_longitude'],
+        'ar_offset_x': row['ar_offset_x'],
+        'ar_offset_y': row['ar_offset_y'],
+        'ar_offset_z': row['ar_offset_z'],
+        'ar_placement_timestamp': row['ar_placement_timestamp']
+    }
+    
+    socketio.emit('npc_updated', npc_data)
+    
+    return jsonify({
+        'id': npc_id,
+        'message': 'NPC updated successfully'
+    }), 200
+
+@app.route('/api/npcs/<npc_id>', methods=['DELETE'])
+def delete_npc(npc_id: str):
+    """Delete an NPC."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Check if NPC exists
+    cursor.execute('SELECT id FROM npcs WHERE id = ?', (npc_id,))
+    if not cursor.fetchone():
+        conn.close()
+        return jsonify({'error': 'NPC not found'}), 404
+    
+    # Delete the NPC
+    cursor.execute('DELETE FROM npcs WHERE id = ?', (npc_id,))
+    deleted = cursor.rowcount
+    
+    conn.commit()
+    conn.close()
+    
+    if deleted == 0:
+        return jsonify({'error': 'Failed to delete NPC'}), 500
+    
+    # Broadcast NPC deletion to all connected clients
+    socketio.emit('npc_deleted', {
+        'npc_id': npc_id
+    })
+    
+    return jsonify({
+        'npc_id': npc_id,
+        'message': 'NPC deleted successfully'
+    }), 200
+
+def ollama_keepalive():
+    """Background thread to keep Ollama model loaded in memory.
+    Sends periodic requests to prevent model from being unloaded."""
+    # Get Ollama base URL from environment or use default
+    ollama_url = os.getenv("LLM_BASE_URL", "http://localhost:11434")
+    if not ollama_url or "localhost" in ollama_url or "127.0.0.1" in ollama_url:
+        # In Docker, use the service name
+        ollama_url = os.getenv("LLM_BASE_URL", "http://ollama:11434")
+    
+    model = os.getenv("LLM_MODEL", "llama3:8b")
+    keepalive_interval = 300  # Ping every 5 minutes to keep model loaded
+    
+    print(f"🔄 Starting Ollama keepalive thread (pinging {ollama_url} every {keepalive_interval}s)...")
+    
+    while True:
+        try:
+            time.sleep(keepalive_interval)
+            
+            # Send a lightweight request to keep the model loaded
+            # Use /api/generate with a minimal prompt
+            keepalive_payload = {
+                "model": model,
+                "prompt": "ping",
+                "stream": False,
+                "options": {
+                    "num_predict": 1  # Only generate 1 token
+                },
+                "keep_alive": -1  # Keep model in memory
+            }
+            
+            try:
+                response = requests.post(
+                    f"{ollama_url}/api/generate",
+                    json=keepalive_payload,
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    print(f"✅ Ollama keepalive: Model '{model}' kept alive")
+                else:
+                    print(f"⚠️ Ollama keepalive: Unexpected status {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                # Don't spam logs if Ollama is temporarily unavailable
+                # Only log if it's been failing for a while
+                pass
+                
+        except Exception as e:
+            # Log errors but continue keepalive loop
+            print(f"❌ Ollama keepalive error: {e}")
+            time.sleep(60)  # Wait 1 minute before retrying on error
+
+@app.route('/api/objects/<object_id>/mark-found', methods=['POST'])
+def mark_found_alias(object_id: str):
+    """Alias for /found endpoint that iOS client expects."""
+    return mark_found(object_id)
+
+@app.route('/api/objects/<object_id>/unmark-found', methods=['POST'])
+def unmark_found_alias(object_id: str):
+    """Alias for /unmark-found endpoint that iOS client expects."""
+    return unmark_found(object_id)
+
+@app.route('/api/objects/bulk', methods=['DELETE'])
+def delete_objects_bulk():
+    """Delete multiple objects in bulk."""
+    data = request.get_json()
+    if not data or 'ids' not in data:
+        return jsonify({'error': 'Missing ids array in request body'}), 400
+    
+    object_ids = data['ids']
+    if not isinstance(object_ids, list):
+        return jsonify({'error': 'ids must be an array'}), 400
+    
+    if len(object_ids) == 0:
+        return jsonify({'message': 'No objects to delete'}), 200
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        # Delete associated finds first (foreign key constraint)
+        placeholders = ','.join(['?'] * len(object_ids))
+        cursor.execute(f'DELETE FROM finds WHERE object_id IN ({placeholders})', object_ids)
+        finds_deleted = cursor.rowcount
+        
+        # Delete the objects
+        cursor.execute(f'DELETE FROM objects WHERE id IN ({placeholders})', object_ids)
+        objects_deleted = cursor.rowcount
+        
+        conn.commit()
+        
+        # Broadcast object deleted events to all connected clients
+        for object_id in object_ids:
+            socketio.emit('object_deleted', {
+                'object_id': object_id
+            })
+        
+        return jsonify({
+            'message': f'Successfully deleted {objects_deleted} object(s)',
+            'objects_deleted': objects_deleted,
+            'finds_deleted': finds_deleted
+        }), 200
+        
+    except sqlite3.Error as e:
+        conn.rollback()
+        return jsonify({'error': f'Database error: {str(e)}'}), 500
+        
+    finally:
+        conn.close()
+
 if __name__ == '__main__':
     init_db()
+    load_location_update_interval_from_db()  # Load persisted location update interval from database
+    load_game_mode_from_db()  # Load persisted game mode from database
+    load_llm_settings_from_db()  # Load persisted LLM provider/model from database
     port = int(os.environ.get('PORT', 5001))  # Use 5001 as default to avoid conflicts
+    # Use get_local_ip() which checks HOST_IP env var first for consistency
     local_ip = get_local_ip()
+    
+    # Start Ollama keepalive thread if using Ollama provider
+    # Check actual provider from llm_service (which may have been loaded from database)
+    provider = llm_service.provider.lower() if LLM_AVAILABLE else os.getenv("LLM_PROVIDER", "").lower()
+    if provider in ("ollama", "local") and LLM_AVAILABLE:
+        keepalive_thread = threading.Thread(target=ollama_keepalive, daemon=True)
+        keepalive_thread.start()
+        print("🔄 Ollama keepalive thread started")
     
     print("🚀 Starting CacheRaiders API server...")
     print(f"📁 Database: {DB_PATH}")

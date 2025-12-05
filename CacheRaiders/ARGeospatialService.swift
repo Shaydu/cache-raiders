@@ -131,7 +131,21 @@ class ARGeospatialService {
         
         return enu
     }
-    
+
+    /// Converts GPS coordinates directly to AR session coordinates
+    /// Combines GPS->ENU->AR conversion
+    /// - Parameter gpsLocation: GPS location to convert
+    /// - Returns: AR coordinates (X, Y, Z) in meters, or nil if origin not set
+    func convertGPStoAR(_ gpsLocation: CLLocation) -> SIMD3<Float>? {
+        // First convert GPS to ENU
+        guard let enu = convertGPSToENU(gpsLocation) else {
+            return nil
+        }
+
+        // Then convert ENU to AR coordinates
+        return convertENUToAR(enu)
+    }
+
     // MARK: - ENU to AR Coordinate Conversion
     
     /// Converts ENU coordinates to AR session coordinates

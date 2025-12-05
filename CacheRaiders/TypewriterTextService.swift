@@ -30,29 +30,55 @@ class TypewriterTextService: ObservableObject {
         displayedText = ""
         isRevealing = true
         
+        // If text is empty, just set it immediately
+        guard !text.isEmpty else {
+            displayedText = ""
+            isRevealing = false
+            onComplete?()
+            return
+        }
+        
         let baseDelayPerCharacter = 1.0 / charactersPerSecond
 
-        revealTask = Task { @MainActor in
+        revealTask = Task {
             var accumulatedText = ""
-            for character in text {
+            // PERFORMANCE: Update less frequently to prevent UI blocking
+            // For short messages (<50 chars), update every 2 characters
+            // For medium messages (50-100), update every 3 characters  
+            // For long messages (>100), update every 5 characters
+            let updateFrequency: Int
+            if text.count < 50 {
+                updateFrequency = 2
+            } else if text.count < 100 {
+                updateFrequency = 3
+            } else {
+                updateFrequency = 5
+            }
+            
+            for (index, character) in text.enumerated() {
                 // Check if cancelled
                 if Task.isCancelled {
-                    isRevealing = false
+                    await MainActor.run {
+                        isRevealing = false
+                    }
                     return
                 }
 
                 // Add character to accumulated text
                 accumulatedText.append(character)
                 
-                // PERFORMANCE: Update displayedText less frequently for long messages
-                // Update every character for short messages, every 2-3 characters for long ones
-                let updateFrequency = text.count > 100 ? 2 : 1
-                if accumulatedText.count % updateFrequency == 0 || character == text.last {
-                    displayedText = accumulatedText
+                // PERFORMANCE: Update displayedText less frequently to prevent UI blocking
+                // Always update on the last character to ensure complete text is shown
+                let isLastCharacter = index == text.count - 1
+                if accumulatedText.count % updateFrequency == 0 || isLastCharacter {
+                    // Update UI property on main thread, but do the loop work off main thread
+                    await MainActor.run {
+                        displayedText = accumulatedText
+                    }
                 }
 
                 // Play subtle audio tone for each character (based on settings)
-                // PERFORMANCE: Only play audio every 3rd character to prevent UI freezing
+                // PERFORMANCE: Only play audio every 5th character to prevent UI freezing
                 let shouldPlayAudio: Bool
                 if character.isWhitespace {
                     shouldPlayAudio = playAudioForSpaces
@@ -64,7 +90,8 @@ class TypewriterTextService: ObservableObject {
 
                 // PERFORMANCE: Only play audio every 5th character to prevent UI freezing
                 // For long messages, skip audio entirely to prevent blocking
-                if shouldPlayAudio && displayedText.count % 5 == 0 && text.count < 200 {
+                // Use accumulatedText.count instead of displayedText.count to avoid sync issues
+                if shouldPlayAudio && accumulatedText.count % 5 == 0 && text.count < 200 {
                     // Use a subtle system sound - play asynchronously to prevent blocking
                     let toneID = self.audioToneID
                     Task.detached(priority: .background) {
@@ -90,8 +117,11 @@ class TypewriterTextService: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(characterDelay * 1_000_000_000))
             }
             
-            // Reveal complete
-            isRevealing = false
+            // Ensure final text is always displayed (in case last update was missed)
+            await MainActor.run {
+                displayedText = text
+                isRevealing = false
+            }
             onComplete?()
         }
     }

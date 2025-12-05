@@ -180,3 +180,4 @@ The server binds to `0.0.0.0:5001` which means it accepts connections from:
 This is correct for local network access. If you need to restrict access, you can modify the `host` parameter in `app.py`.
 
 
+

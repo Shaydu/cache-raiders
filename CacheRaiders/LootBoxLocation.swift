@@ -6,17 +6,14 @@ import Combine
 /// Represents the game mode
 enum GameMode: String, Codable, CaseIterable {
     case open = "open"                    // Open mode - all treasures appear normally
-    case deadMensSecrets = "dead_mens_secrets"  // Dead Men's Secrets - skeleton guides you to treasure
-    case splitLegacy = "split_legacy"     // The Split Legacy - find both NPCs, get map halves, combine to find treasure
+    case deadMensSecrets = "dead_mens_secrets"  // Story Mode - skeleton guides you to treasure
     
     var displayName: String {
         switch self {
         case .open:
             return "Open"
         case .deadMensSecrets:
-            return "Dead Men's Secrets"
-        case .splitLegacy:
-            return "The Split Legacy"
+            return "Story Mode"
         }
     }
     
@@ -25,11 +22,14 @@ enum GameMode: String, Codable, CaseIterable {
         case .open:
             return "Open mode: All treasures appear normally. Find any treasure you want!"
         case .deadMensSecrets:
-            return "Dead Men's Secrets: Skeleton appears in AR to guide you. Follow the skeleton's clues to find the 200-year-old treasure."
-        case .splitLegacy:
-            return "The Split Legacy: Find the skeleton first, who will help you find the Corgi Traveller. Each NPC holds half of the treasure map. Combine both halves to find the treasure!"
+            return "Story Mode: Skeleton appears in AR to guide you. Follow the skeleton's clues to find the 200-year-old treasure."
         }
     }
+}
+
+// MARK: - Game Mode Response
+struct GameModeResponse: Codable {
+    let gameMode: String
 }
 
 // MARK: - Item Source Enum
@@ -88,6 +88,10 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     var collected: Bool = false
     var grounding_height: Double? // Optional: stored grounding height in meters (AR world space Y coordinate)
     var source: ItemSource = .api // Default to API source for backward compatibility
+    var created_by: String? // User ID who created this object
+    var needs_sync: Bool = false // Whether this item needs to be synced to API
+    var last_modified: Date? // Timestamp of last modification for conflict resolution
+    var server_version: Int64? // Server version for conflict resolution
 
     // AR-offset based positioning for centimeter-level accuracy
     var ar_origin_latitude: Double? // GPS location where AR session originated
@@ -96,6 +100,10 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     var ar_offset_y: Double? // Y offset from AR origin in meters (height)
     var ar_offset_z: Double? // Z offset from AR origin in meters
     var ar_placement_timestamp: Date? // When the object was placed in AR
+    var ar_anchor_transform: String? // Base64-encoded AR anchor transform for mm precision
+    var ar_world_transform: Data? // Full AR world transform matrix for exact tap positioning
+    var nfc_tag_id: String? // NFC tag ID if this object was placed via NFC
+    var multifindable: Bool? // Whether this item is multifindable (nil = use default based on placement type)
     
     var coordinate: CLLocationCoordinate2D {
         CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
@@ -119,6 +127,10 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     
     /// Whether this item should sync to API
     var shouldSyncToAPI: Bool {
+        // NPCs should not be synced as objects - they use the NPC API instead
+        if id.starts(with: "npc_") {
+            return false
+        }
         return source.shouldSyncToAPI
     }
     
@@ -140,7 +152,7 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     // MARK: - Initializers
     
     /// Normal initializer for creating new locations
-    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api) {
+    init(id: String, name: String, type: LootBoxType, latitude: Double, longitude: Double, radius: Double, collected: Bool = false, grounding_height: Double? = nil, source: ItemSource = .api, created_by: String? = nil, needs_sync: Bool = false, last_modified: Date? = nil, server_version: Int64? = nil, ar_origin_latitude: Double? = nil, ar_origin_longitude: Double? = nil, ar_offset_x: Double? = nil, ar_offset_y: Double? = nil, ar_offset_z: Double? = nil, ar_placement_timestamp: Date? = nil, ar_anchor_transform: String? = nil, ar_world_transform: Data? = nil, nfc_tag_id: String? = nil, multifindable: Bool? = nil) {
         self.id = id
         self.name = name
         self.type = type
@@ -150,6 +162,20 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         self.collected = collected
         self.grounding_height = grounding_height
         self.source = source
+        self.created_by = created_by
+        self.needs_sync = needs_sync
+        self.last_modified = last_modified
+        self.server_version = server_version
+        self.ar_origin_latitude = ar_origin_latitude
+        self.ar_origin_longitude = ar_origin_longitude
+        self.ar_offset_x = ar_offset_x
+        self.ar_offset_y = ar_offset_y
+        self.ar_offset_z = ar_offset_z
+        self.ar_placement_timestamp = ar_placement_timestamp
+        self.ar_anchor_transform = ar_anchor_transform
+        self.ar_world_transform = ar_world_transform
+        self.nfc_tag_id = nfc_tag_id
+        self.multifindable = multifindable
     }
     
     // MARK: - Custom Decoding (backward compatibility with prefix-based IDs)
@@ -165,7 +191,11 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
         radius = try container.decode(Double.self, forKey: .radius)
         collected = try container.decodeIfPresent(Bool.self, forKey: .collected) ?? false
         grounding_height = try container.decodeIfPresent(Double.self, forKey: .grounding_height)
-        
+        created_by = try container.decodeIfPresent(String.self, forKey: .created_by)
+        needs_sync = try container.decodeIfPresent(Bool.self, forKey: .needs_sync) ?? false
+        last_modified = try container.decodeIfPresent(Date.self, forKey: .last_modified)
+        server_version = try container.decodeIfPresent(Int64.self, forKey: .server_version)
+
         // Try to decode source, but if not present, infer from ID prefix (backward compatibility)
         if let decodedSource = try? container.decode(ItemSource.self, forKey: .source) {
             source = decodedSource
@@ -183,10 +213,20 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
                 source = .api // Default to API for regular IDs
             }
         }
+        
+        // Decode AR positioning data if present
+        ar_origin_latitude = try container.decodeIfPresent(Double.self, forKey: .ar_origin_latitude)
+        ar_origin_longitude = try container.decodeIfPresent(Double.self, forKey: .ar_origin_longitude)
+        ar_offset_x = try container.decodeIfPresent(Double.self, forKey: .ar_offset_x)
+        ar_offset_y = try container.decodeIfPresent(Double.self, forKey: .ar_offset_y)
+        ar_offset_z = try container.decodeIfPresent(Double.self, forKey: .ar_offset_z)
+        ar_placement_timestamp = try container.decodeIfPresent(Date.self, forKey: .ar_placement_timestamp)
+        ar_anchor_transform = try container.decodeIfPresent(String.self, forKey: .ar_anchor_transform)
+        ar_world_transform = try container.decodeIfPresent(Data.self, forKey: .ar_world_transform)
     }
     
     enum CodingKeys: String, CodingKey {
-        case id, name, type, latitude, longitude, radius, collected, grounding_height, source
+        case id, name, type, latitude, longitude, radius, collected, grounding_height, source, created_by, needs_sync, last_modified, server_version, ar_origin_latitude, ar_origin_longitude, ar_offset_x, ar_offset_y, ar_offset_z, ar_placement_timestamp, ar_anchor_transform, ar_world_transform
     }
 }
 
@@ -229,10 +269,12 @@ class LootBoxLocationManager: ObservableObject {
     @Published var databaseStats: DatabaseStats? = nil // Database stats for loot box counter
     @Published var showOnlyNextItem: Bool = false // Show only the next unfound item in the list
     @Published var useGenericDoubloonIcons: Bool = false // When enabled, show generic doubloon icons and reveal real objects with animation
-    @Published var gameMode: GameMode = .open { // Game mode: Open, Dead Men's Secrets, or The Split Legacy
+    @Published var gameMode: GameMode = .open { // Game mode: Open or Story Mode
         didSet {
+            print("🎮 [LootBoxLocationManager] gameMode didSet: \(oldValue.displayName) → \(gameMode.displayName)")
+            
             // STORY MODE: Remove all API objects when entering story mode (only NPCs should remain)
-            if (gameMode == .deadMensSecrets || gameMode == .splitLegacy) && oldValue != gameMode {
+            if gameMode == .deadMensSecrets && oldValue != gameMode {
                 let objectsToRemove = locations.filter { location in
                     // Remove all API-sourced objects (keep AR-manual and AR-randomized for now)
                     return location.source == .api || location.source == .map
@@ -244,24 +286,42 @@ class LootBoxLocationManager: ObservableObject {
                     Swift.print("🗑️ Story mode activated: Removed \(objectsToRemove.count) API/map objects (only NPCs will be shown)")
                     saveLocations() // Persist the change
                 }
-                
+
                 // Stop API refresh timer in story mode (no API objects needed)
                 stopAPIRefreshTimer()
                 Swift.print("⏹️ Stopped API refresh timer (story mode - no API objects needed)")
+
+                // STORY MODE: Automatically spawn Captain Bones (skeleton NPC) when entering story mode
+                // This allows players to start the treasure hunt by talking to him
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                    // Post notification to spawn skeleton NPC after a short delay
+                    Swift.print("📢 Posting SpawnSkeletonNPC notification...")
+                    NotificationCenter.default.post(name: NSNotification.Name("SpawnSkeletonNPC"), object: nil)
+                    Swift.print("💀 Story mode activated: Automatically spawning Captain Bones (skeleton NPC)")
+                }
             }
             
             // OPEN MODE: Restart API refresh timer when switching back to open mode
-            if gameMode == .open && (oldValue == .deadMensSecrets || oldValue == .splitLegacy) {
+            if gameMode == .open && oldValue == .deadMensSecrets {
                 startAPIRefreshTimer()
                 Swift.print("▶️ Restarted API refresh timer (open mode - API objects enabled)")
             }
+            
+            // Notify that game mode changed (for UI updates)
+            objectWillChange.send()
+
+            // Post notification for ARCoordinator to handle NPC spawning
+            NotificationCenter.default.post(name: NSNotification.Name("GameModeChanged"), object: nil)
         }
     }
     var onSizeChanged: (() -> Void)? // Callback when size settings change
-    var onObjectCollectedByOtherUser: ((String) -> Void)? // Callback when object is collected by another user (to remove from AR)
+    var onObjectCollectedByOtherUser: ((String) -> Void)? // Callback when object is collected (by any user, to remove from AR)
     var onObjectUncollected: ((String) -> Void)? // Callback when object is uncollected (to re-place in AR)
+    var onAllObjectsCleared: (() -> Void)? // Callback when all objects should be cleared (e.g., game mode change)
     private let locationsFileName = "lootBoxLocations.json"
     private let maxDistanceKey = "maxSearchDistance"
+    private let dataService = GameItemDataService.shared
+    private let hasMigratedToCoreDataKey = "hasMigratedToCoreData"
     private let maxObjectLimitKey = "maxObjectLimit"
     private let debugVisualsKey = "showARDebugVisuals"
     private let showFoundOnMapKey = "showFoundOnMap"
@@ -303,14 +363,32 @@ class LootBoxLocationManager: ObservableObject {
         loadUseGenericDoubloonIcons()
         loadGameMode()
         
+        // Migrate from JSON to Core Data if needed (one-time migration)
+        migrateFromJSONIfNeeded()
+        
         // API sync is always enabled - start refresh timer
         startAPIRefreshTimer()
         
-        // Auto-connect to WebSocket
-        WebSocketService.shared.connect()
-        
-        // Set up WebSocket event handlers for real-time updates
+        // CRITICAL: Set up WebSocket event handlers BEFORE connecting
+        // This ensures we catch game mode changes that may come during/after connection
         setupWebSocketCallbacks()
+        
+        // Auto-connect to WebSocket (only if not in offline mode)
+        // WebSocket provides pub/sub for real-time game mode changes (no polling needed)
+        if !OfflineModeManager.shared.isOfflineMode {
+            // Connect to WebSocket (callbacks are already set up above)
+            WebSocketService.shared.connect()
+            
+            // Fetch initial game mode from server after a brief delay to ensure API is ready
+            // This ensures we get the current server state on startup
+            // After this, all changes will come via WebSocket pub/sub (game_mode_changed event)
+            Task {
+                // Shorter initial delay - API should be ready quickly
+                try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
+                print("🎮 [LootBoxLocationManager] Initial game mode fetch from server (startup)...")
+                await fetchGameModeFromServer(retryCount: 5) // More retries for reliability
+            }
+        }
     }
     
     /// Set up WebSocket callbacks to handle real-time collection events from other users
@@ -389,24 +467,337 @@ class LootBoxLocationManager: ObservableObject {
                 }
             }
         }
+        
+        WebSocketService.shared.onGameModeChanged = { [weak self] gameModeString in
+            print("🎮🎮🎮 [LootBoxLocationManager] onGameModeChanged callback INVOKED with: \(gameModeString)")
+            print("   Thread: \(Thread.current)")
+            print("   Callback timestamp: \(Date())")
+            
+            guard let self = self else {
+                print("⚠️ [LootBoxLocationManager] onGameModeChanged callback: self is nil")
+                return
+            }
+            
+            print("🎮 [LootBoxLocationManager] Game mode changed callback received: \(gameModeString)")
+            print("   Current game mode before update: \(self.gameMode.rawValue) (\(self.gameMode.displayName))")
+            print("   Callback executed on thread: \(Thread.current)")
+            
+            // Update game mode from server
+            if let newMode = GameMode(rawValue: gameModeString) {
+                Task { @MainActor in
+                    let oldMode = self.gameMode
+                    
+                    print("   New game mode from server: \(newMode.rawValue) (\(newMode.displayName))")
+                    print("   Old game mode: \(oldMode.rawValue) (\(oldMode.displayName))")
+                    
+                    // If game mode actually changed, update it and reset
+                    if oldMode != newMode {
+                        print("   🎮 Game mode changed from \(oldMode.displayName) to \(newMode.displayName) - updating and resetting")
+                        
+                        // Update game mode first - this will trigger the notification
+                        self.gameMode = newMode
+                        // Don't save to UserDefaults - server is the source of truth
+                        print("✅ [LootBoxLocationManager] Game mode updated to: \(newMode.displayName)")
+                        
+                        // Give a small delay to ensure notification appears before clearing objects
+                        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                        
+                        // Now reset and reload
+                        await self.resetAndReloadGameItems()
+                    } else {
+                        print("   ℹ️ Game mode unchanged (already \(newMode.displayName))")
+                        // Still update to ensure sync
+                        self.gameMode = newMode
+                    }
+                }
+            } else {
+                print("⚠️ [LootBoxLocationManager] Invalid game mode received from server: \(gameModeString)")
+                print("   Valid game modes are: \(GameMode.allCases.map { $0.rawValue }.joined(separator: ", "))")
+            }
+        }
+        
+        print("✅ [LootBoxLocationManager] onGameModeChanged callback registered")
+        print("   Callback address: \(String(describing: WebSocketService.shared.onGameModeChanged))")
+        
+        // Set up object updated callback
+        WebSocketService.shared.onObjectUpdated = { [weak self] objectData in
+            guard let self = self else { return }
+            
+            print("🔄 WebSocket: Object updated - data: \(objectData)")
+            
+            Task { @MainActor in
+                // Convert the WebSocket data to a LootBoxLocation
+                guard let lootBoxLocation = APIService.shared.convertWebSocketDataToLootBoxLocation(objectData) else {
+                    print("⚠️ Failed to convert WebSocket object update data to LootBoxLocation")
+                    return
+                }
+                
+                print("🔄 Real-time object update: '\(lootBoxLocation.name)' (ID: \(lootBoxLocation.id))")
+                
+                // Update the location in our array
+                if let index = self.locations.firstIndex(where: { $0.id == lootBoxLocation.id }) {
+                    self.locations[index] = lootBoxLocation
+                    print("✅ Updated object in locations array")
+                } else {
+                    // Add if not found (shouldn't happen, but handle gracefully)
+                    self.locations.append(lootBoxLocation)
+                    print("⚠️ Object not found in local array, added as new")
+                }
+                
+                // Notify observers that locations have changed
+                self.objectWillChange.send()
+                
+                // Save to Core Data for offline access
+                Task.detached(priority: .utility) { [weak self] in
+                    guard let self = self else { return }
+                    do {
+                        try await self.dataService.saveLocations([lootBoxLocation])
+                        print("💾 Saved updated object to Core Data")
+                    } catch {
+                        print("⚠️ Failed to save updated object to Core Data: \(error)")
+                    }
+                }
+                
+                // Notify AR coordinator to update the object
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("ObjectUpdatedRealtime"),
+                    object: nil,
+                    userInfo: ["location": lootBoxLocation]
+                )
+            }
+        }
+        
+        // Fetch game mode when WebSocket connects (in case it changed while disconnected)
+        WebSocketService.shared.onConnected = { [weak self] in
+            guard let self = self else { return }
+
+            print("🔌 WebSocket connected - fetching current game mode from server")
+            print("   Current local game mode: \(self.gameMode.rawValue) (\(self.gameMode.displayName))")
+
+            // Fetch current game mode to ensure we're in sync with server (with retries)
+            Task {
+                await self.fetchGameModeFromServer(retryCount: 2)
+            }
+        }
+
+        // Set up NotificationCenter observer for real-time object creation
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWebSocketObjectCreated(_:)),
+            name: NSNotification.Name("WebSocketObjectCreated"),
+            object: nil
+        )
+    }
+
+    /// Handle real-time object creation via WebSocket
+    @objc private func handleWebSocketObjectCreated(_ notification: Notification) {
+        guard let objectData = notification.userInfo as? [String: Any] else {
+            print("⚠️ WebSocketObjectCreated notification missing userInfo or invalid format")
+            return
+        }
+
+        print("📦 Handling real-time object creation: \(objectData)")
+
+        Task { @MainActor in
+            // Convert the WebSocket data to a LootBoxLocation
+            guard let lootBoxLocation = APIService.shared.convertWebSocketDataToLootBoxLocation(objectData) else {
+                print("⚠️ Failed to convert WebSocket object data to LootBoxLocation")
+                return
+            }
+
+            print("📦 Real-time object created: '\(lootBoxLocation.name)' (ID: \(lootBoxLocation.id)) at (\(lootBoxLocation.latitude), \(lootBoxLocation.longitude))")
+
+            // Check if this object already exists (avoid duplicates)
+            if let existingIndex = self.locations.firstIndex(where: { $0.id == lootBoxLocation.id }) {
+                print("⚠️ Object '\(lootBoxLocation.id)' already exists, updating instead")
+                self.locations[existingIndex] = lootBoxLocation
+            } else {
+                // Add the new object to our locations array
+                self.locations.append(lootBoxLocation)
+                print("✅ Added new object to locations array (total: \(self.locations.count))")
+            }
+
+            // Notify observers that locations have changed
+            self.objectWillChange.send()
+
+            // Save to Core Data for offline access
+            Task.detached(priority: .utility) { [weak self] in
+                guard let self = self else { return }
+                do {
+                    try await self.dataService.saveLocations([lootBoxLocation])
+                    print("💾 Saved real-time object to Core Data")
+                } catch {
+                    print("⚠️ Failed to save real-time object to Core Data: \(error)")
+                }
+            }
+
+            // Notify any listeners that a new object was created
+            // This allows the AR view to immediately place the new object
+            NotificationCenter.default.post(
+                name: NSNotification.Name("ObjectCreatedRealtime"),
+                object: nil,
+                userInfo: ["location": lootBoxLocation]
+            )
+        }
+    }
+    
+    /// Fetch game mode from server (public method for manual refresh)
+    /// Call this when the app becomes active or after QR code scan to ensure sync with server
+    func refreshGameMode() async {
+        await fetchGameModeFromServer(retryCount: 3)
+    }
+    
+    /// Fetch game mode from server with retry logic
+    private func fetchGameModeFromServer(retryCount: Int = 1) async {
+        // Skip if offline mode is enabled
+        if OfflineModeManager.shared.isOfflineMode {
+            print("📴 [LootBoxLocationManager] Offline mode - skipping game mode fetch from server")
+            return
+        }
+        
+        print("🔄 [LootBoxLocationManager] Fetching game mode from server...")
+        
+        var lastError: Error?
+        
+        for attempt in 1...retryCount {
+            do {
+                let gameModeString = try await APIService.shared.getGameMode()
+                
+                print("   Server returned game mode: \(gameModeString)")
+                
+                await MainActor.run {
+                    if let newMode = GameMode(rawValue: gameModeString) {
+                        let oldMode = self.gameMode
+                        
+                        print("   Current local game mode: \(oldMode.rawValue) (\(oldMode.displayName))")
+                        print("   Server game mode: \(newMode.rawValue) (\(newMode.displayName))")
+                        
+                        // If game mode actually changed, update it and reset
+                        if oldMode != newMode {
+                            print("✅ [LootBoxLocationManager] Game mode changed from server: \(oldMode.displayName) → \(newMode.displayName)")
+                            
+                            // Update game mode first - this will trigger the notification
+                            self.gameMode = newMode
+                            
+                            // Give a small delay to ensure notification appears before clearing objects
+                            Task {
+                                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                                await self.resetAndReloadGameItems()
+                            }
+                        } else {
+                            print("✅ [LootBoxLocationManager] Game mode fetched from server: \(newMode.displayName) (unchanged)")
+                            // Still update to ensure sync
+                            self.gameMode = newMode
+                        }
+                    } else {
+                        print("⚠️ [LootBoxLocationManager] Invalid game mode from server: \(gameModeString)")
+                        print("   Valid game modes are: \(GameMode.allCases.map { $0.rawValue }.joined(separator: ", "))")
+                    }
+                }
+                return // Success - exit the retry loop
+            } catch {
+                lastError = error
+                print("⚠️ [LootBoxLocationManager] Attempt \(attempt)/\(retryCount) failed to fetch game mode: \(error.localizedDescription)")
+                
+                if attempt < retryCount {
+                    // Wait before retry (exponential backoff)
+                    let delaySeconds = Double(attempt)
+                    print("   Retrying in \(delaySeconds)s...")
+                    try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+                }
+            }
+        }
+        
+        // All retries failed
+        if let error = lastError {
+            print("❌ [LootBoxLocationManager] All \(retryCount) attempts failed to fetch game mode: \(error.localizedDescription)")
+            print("   Using local value: \(gameMode.displayName)")
+        }
+    }
+    
+    /// Reset and reload all game items when game mode changes
+    /// This clears all locations and AR objects, then reloads from server based on new game mode
+    func resetAndReloadGameItems() async {
+        print("🔄 Resetting and reloading game items due to game mode change...")
+        
+        await MainActor.run {
+            // Clear all locations
+            let clearedCount = self.locations.count
+            self.locations.removeAll()
+            print("🗑️ Cleared \(clearedCount) locations")
+            
+            // Notify AR coordinator to clear all AR objects
+            self.onAllObjectsCleared?()
+            
+            // Save the cleared state
+            self.saveLocations()
+        }
+        
+        // Reload from server based on current game mode
+        if let userLocation = self.lastKnownUserLocation {
+            await self.loadLocationsFromAPI(userLocation: userLocation, includeFound: true)
+            print("✅ Reloaded game items from server for game mode: \(self.gameMode.displayName)")
+        } else {
+            print("⚠️ No user location available - game items will load when location is available")
+        }
     }
     
     deinit {
         stopAPIRefreshTimer()
     }
     
-    // Load locations from JSON file
-    // PERFORMANCE: Run on background thread to prevent UI blocking
-    func loadLocations(userLocation: CLLocation? = nil) {
-        guard let url = getLocationsFileURL() else { return }
+    // MARK: - Migration from JSON to Core Data
+    
+    /// Migrate locations from JSON file to Core Data (one-time migration)
+    private func migrateFromJSONIfNeeded() {
+        // Check if migration has already been done
+        if UserDefaults.standard.bool(forKey: hasMigratedToCoreDataKey) {
+            return
+        }
         
-        // Perform file I/O on background thread
-        Task.detached(priority: .userInitiated) { [weak self] in
+        // Check if JSON file exists
+        guard let url = getLocationsFileURL(),
+              FileManager.default.fileExists(atPath: url.path) else {
+            // No JSON file to migrate - mark as migrated
+            UserDefaults.standard.set(true, forKey: hasMigratedToCoreDataKey)
+            return
+        }
+        
+        // Perform migration on background thread
+        Task.detached(priority: .utility) { [weak self] in
             guard let self = self else { return }
             
             do {
                 let data = try Data(contentsOf: url)
-                let loadedLocations = try JSONDecoder().decode([LootBoxLocation].self, from: data)
+                let jsonLocations = try JSONDecoder().decode([LootBoxLocation].self, from: data)
+                
+                // Save to Core Data
+                try await self.dataService.saveLocations(jsonLocations)
+                
+                // Mark migration as complete
+                UserDefaults.standard.set(true, forKey: self.hasMigratedToCoreDataKey)
+                
+                print("✅ Migrated \(jsonLocations.count) locations from JSON to Core Data")
+                
+                // Optionally: Delete JSON file after successful migration (keep as backup for now)
+                // try? FileManager.default.removeItem(at: url)
+                
+            } catch {
+                print("⚠️ Error migrating from JSON to Core Data: \(error.localizedDescription)")
+                // Don't mark as migrated if there was an error - will retry next time
+            }
+        }
+    }
+    
+    // Load locations from Core Data (SQLite)
+    // PERFORMANCE: Run on background thread to prevent UI blocking
+    func loadLocations(userLocation: CLLocation? = nil) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self = self else { return }
+            
+            do {
+                // Load from Core Data
+                let loadedLocations = try await self.dataService.loadAllLocationsAsync()
                 
                 // Check if we have a user location and if loaded locations are too far away
                 if let userLocation = userLocation {
@@ -430,15 +821,10 @@ class LootBoxLocationManager: ObservableObject {
                 await MainActor.run {
                     self.locations = loadedLocations
                     let collectedCount = self.locations.filter { $0.collected }.count
-                    print("✅ Loaded \(self.locations.count) loot box locations (\(collectedCount) collected)")
+                    print("✅ Loaded \(self.locations.count) loot box locations from Core Data (\(collectedCount) collected)")
                 }
             } catch {
-                // This is expected on first run - no saved locations file exists yet
-                if (error as NSError).code == 260 { // File not found
-                    print("ℹ️ No saved locations found (first run) - will create default locations when GPS is available")
-                } else {
-                    print("⚠️ Could not load locations: \(error.localizedDescription)")
-                }
+                print("⚠️ Could not load locations from Core Data: \(error.localizedDescription)")
                 // Only create defaults if we have a user location
                 if let userLocation = userLocation {
                     await MainActor.run {
@@ -464,30 +850,41 @@ class LootBoxLocationManager: ObservableObject {
     // Reset all locations to not collected (for testing/debugging)
     func resetAllLocations() {
         for i in 0..<locations.count {
-            locations[i].collected = false
+            var location = locations[i]
+            location.collected = false
+            locations[i] = location
+            
+            // Update in Core Data if should persist
+            if location.shouldPersist {
+                do {
+                    try dataService.markUncollected(location.id)
+                } catch {
+                    print("⚠️ Error resetting location in Core Data: \(error)")
+                }
+            }
         }
-        saveLocations()
         print("🔄 Reset all \(locations.count) loot boxes to not collected")
         
         // Trigger AR object removal so they can be re-placed at proper GPS locations
         shouldResetARObjects = true
     }
     
-    // Save locations to JSON file
+    // Save locations to Core Data (SQLite)
     // PERFORMANCE: Run on background thread to prevent UI blocking
     func saveLocations() {
         // Capture current locations on main thread (since @Published property)
-        let locationsToSave = locations
-        guard let url = getLocationsFileURL() else { return }
+        // Only save items that should be persisted (exclude temporary AR-only items)
+        let locationsToSave = locations.filter { $0.shouldPersist }
         
-        // Perform file I/O on background thread
-        Task.detached(priority: .utility) {
+        // Perform save on background thread
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self = self else { return }
+            
             do {
-                let data = try JSONEncoder().encode(locationsToSave)
-                try data.write(to: url)
-                print("✅ Saved \(locationsToSave.count) loot box locations")
+                try await self.dataService.saveLocations(locationsToSave)
+                print("✅ Saved \(locationsToSave.count) loot box locations to Core Data")
             } catch {
-                print("❌ Error saving locations: \(error)")
+                print("❌ Error saving locations to Core Data: \(error)")
             }
         }
     }
@@ -537,17 +934,34 @@ class LootBoxLocationManager: ObservableObject {
             // Pick random type and name
             let randomIndex = Int.random(in: 0..<lootBoxTypes.count)
             
-            locations.append(LootBoxLocation(
+            let newLocation = LootBoxLocation(
                 id: UUID().uuidString,
                 name: lootBoxNames[randomIndex],
                 type: lootBoxTypes[randomIndex],
                 latitude: newLat,
                 longitude: newLon,
-                radius: 5.0 // 5 meter radius
-            ))
+                radius: 5.0, // 5 meter radius
+                collected: false,
+                grounding_height: nil,
+                source: .arRandomized, // These are auto-generated, not synced to API
+                ar_origin_latitude: nil,
+                ar_origin_longitude: nil,
+                ar_offset_x: nil,
+                ar_offset_y: nil,
+                ar_offset_z: nil,
+                ar_placement_timestamp: nil,
+                ar_anchor_transform: nil
+            )
+            locations.append(newLocation)
+            
+            // Save each location to Core Data
+            do {
+                try dataService.saveLocation(newLocation)
+            } catch {
+                print("⚠️ Error saving default location to Core Data: \(error)")
+            }
         }
         
-        saveLocations()
         print("✅ Created 3 random loot boxes within \(maxSearchDistance)m of your location")
     }
     
@@ -560,10 +974,20 @@ class LootBoxLocationManager: ObservableObject {
             return
         }
         locations.append(location)
-        saveLocations()
+        
+        // Save to Core Data if should persist
+        if location.shouldPersist {
+            do {
+                try dataService.saveLocation(location)
+                print("💾 Saved location '\(location.name)' to Core Data")
+            } catch {
+                print("❌ Error saving location to Core Data: \(error)")
+            }
+        }
         
         // Sync to shared API database if enabled (manual additions are shared)
-        if useAPISync {
+        // Will queue for sync if offline
+        if useAPISync && location.shouldSyncToAPI {
             Task {
                 await saveLocationToAPI(location)
                 print("✅ Synced manually added object '\(location.name)' to shared API database")
@@ -583,7 +1007,16 @@ class LootBoxLocationManager: ObservableObject {
     func updateLocation(_ location: LootBoxLocation) {
         if let index = locations.firstIndex(where: { $0.id == location.id }) {
             locations[index] = location
-            saveLocations()
+            
+            // Save to Core Data if should persist
+            if location.shouldPersist {
+                do {
+                    try dataService.saveLocation(location)
+                    print("💾 Updated location '\(location.name)' in Core Data")
+                } catch {
+                    print("❌ Error updating location in Core Data: \(error)")
+                }
+            }
         }
     }
     
@@ -596,12 +1029,16 @@ class LootBoxLocationManager: ObservableObject {
             updatedLocation.collected = true
             locations[index] = updatedLocation
 
-            // Save all locations except temporary AR-only items
+            // Save to Core Data if should persist
             if updatedLocation.shouldPersist {
-                saveLocations()
-                print("💾 Saved locations (including collected status for \(locationId))")
-                
-                // Also sync to API if enabled
+                do {
+                    try dataService.markCollected(locationId)
+                    print("💾 Saved collected status to Core Data for \(locationId)")
+                } catch {
+                    print("❌ Error saving collected status to Core Data: \(error)")
+                }
+
+                // Also sync to API if enabled (will queue if offline)
                 if useAPISync {
                     Task {
                         await markCollectedInAPI(locationId)
@@ -610,6 +1047,10 @@ class LootBoxLocationManager: ObservableObject {
             } else {
                 print("⏭️ Skipping save for temporary AR item: \(locationId)")
             }
+
+            // Notify AR coordinator to remove the object from AR scene
+            // This callback is used for both current user and other users collecting objects
+            onObjectCollectedByOtherUser?(locationId)
 
             // Explicitly notify observers (in case @Published doesn't catch the change)
             objectWillChange.send()
@@ -627,12 +1068,16 @@ class LootBoxLocationManager: ObservableObject {
             updatedLocation.collected = false
             locations[index] = updatedLocation
 
-            // Save all locations except temporary AR-only items
+            // Save to Core Data if should persist
             if updatedLocation.shouldPersist {
-                saveLocations()
-                print("💾 Saved locations (including uncollected status for \(locationId))")
+                do {
+                    try dataService.markUncollected(locationId)
+                    print("💾 Saved uncollected status to Core Data for \(locationId)")
+                } catch {
+                    print("❌ Error saving uncollected status to Core Data: \(error)")
+                }
                 
-                // Also sync to API if enabled
+                // Also sync to API if enabled (will queue if offline)
                 if useAPISync {
                     Task {
                         await unmarkCollectedInAPI(locationId)
@@ -663,11 +1108,22 @@ class LootBoxLocationManager: ObservableObject {
     
     // Unmark collected in API
     private func unmarkCollectedInAPI(_ locationId: String) async {
+        // Don't sync to API if offline mode is enabled
+        if OfflineModeManager.shared.isOfflineMode {
+            print("📴 Offline mode enabled - location unmarked in local database, will sync when online")
+            return
+        }
+        
         do {
             try await APIService.shared.unmarkFound(objectId: locationId)
             print("✅ Successfully unmarked \(locationId) as not collected in API")
+            
+            // Mark as synced in Core Data
+            try? dataService.markAsSynced(locationId)
         } catch {
             print("❌ Failed to unmark \(locationId) as not collected in API: \(error.localizedDescription)")
+            print("   Will sync when connection is restored")
+            // Item is already marked as needing sync in Core Data (from unmarkCollected)
         }
     }
     
@@ -699,17 +1155,15 @@ class LootBoxLocationManager: ObservableObject {
 
                 // Story Mode: Only show story-relevant treasures (treasure map, clues, final treasure)
                 // In story modes, filter out regular loot boxes - only NPCs and story items
-                if currentGameMode == .deadMensSecrets || currentGameMode == .splitLegacy {
+                if currentGameMode == .deadMensSecrets {
                     // In story modes, we don't show regular loot boxes from the API
                     // Only NPCs (skeleton, corgi) are shown, and they're placed by ARCoordinator
                     // So we filter out ALL API objects in story modes
-                    Swift.print("   📖 Story mode: Skipping API object '\(location.name)' (only NPCs shown in story mode)")
-                    return false
-                }
-
-                // Exclude AR-only locations (no GPS coordinates) - they're placed in AR space, not GPS space
-                // AR-placed objects with GPS coordinates should be treated the same as admin-placed objects
-                if location.isAROnly {
+                    // Note: API calls are prevented in story mode, so this should rarely be hit
+                    // Only logs if debug mode is enabled to reduce log spam
+                    if UserDefaults.standard.bool(forKey: "showARDebugVisuals") {
+                        Swift.print("   📖 Story mode: Skipping API object '\(location.name)' (only NPCs shown in story mode)")
+                    }
                     return false
                 }
 
@@ -933,19 +1387,30 @@ class LootBoxLocationManager: ObservableObject {
         useGenericDoubloonIcons = UserDefaults.standard.bool(forKey: useGenericDoubloonIconsKey)
     }
     
-    // Save game mode preference
+    // Save game mode preference - DISABLED: Game mode is server-authoritative
+    // This function is kept for backwards compatibility but does nothing
     func saveGameMode() {
-        UserDefaults.standard.set(gameMode.rawValue, forKey: gameModeKey)
+        // NO-OP: Game mode is controlled by server, not saved locally
+        print("⚠️ [LootBoxLocationManager] saveGameMode() called but game mode is server-authoritative - not saving locally")
     }
     
-    // Load game mode preference
+    // Load game mode preference - ALWAYS default to open mode
+    // Game mode is server-authoritative, so we don't load from UserDefaults
+    // The server value will be fetched shortly after startup via WebSocket/API
     private func loadGameMode() {
-        if let savedMode = UserDefaults.standard.string(forKey: gameModeKey),
-           let mode = GameMode(rawValue: savedMode) {
-            gameMode = mode // didSet will handle cleanup if needed
-        } else {
-            gameMode = .open // Default to open mode
+        // DEBUG: Check what was previously stored (but don't use it)
+        if let savedMode = UserDefaults.standard.string(forKey: gameModeKey) {
+            print("⚠️ [LootBoxLocationManager] Found stale UserDefaults gameMode: '\(savedMode)' - IGNORING (server is authoritative)")
+            // Clear the stale value
+            UserDefaults.standard.removeObject(forKey: gameModeKey)
+            print("🗑️ [LootBoxLocationManager] Cleared stale gameMode from UserDefaults")
         }
+        
+        // Always start with open mode - server will update us via fetchGameModeFromServer()
+        // This prevents the app from using stale local values when admin has changed the mode
+        gameMode = .open
+        print("🎮 [LootBoxLocationManager] Defaulting to OPEN mode - will sync with server shortly")
+        print("   Current gameMode value: \(gameMode.rawValue) (\(gameMode.displayName))")
     }
     
     // Save selected AR lens preference
@@ -998,8 +1463,14 @@ class LootBoxLocationManager: ObservableObject {
     private func startAPIRefreshTimer() {
         stopAPIRefreshTimer() // Stop any existing timer first
         
+        // Don't start timer in offline mode (use local database)
+        if OfflineModeManager.shared.isOfflineMode {
+            print("⏭️ Skipping API refresh timer start (offline mode - using local database)")
+            return
+        }
+        
         // Don't start timer in story mode (no API objects needed)
-        if gameMode == .deadMensSecrets || gameMode == .splitLegacy {
+        if gameMode == .deadMensSecrets {
             print("⏭️ Skipping API refresh timer start (story mode - no API objects needed)")
             return
         }
@@ -1011,8 +1482,14 @@ class LootBoxLocationManager: ObservableObject {
                 return
             }
             
+            // Check offline mode in timer callback (in case mode changed while timer was running)
+            if OfflineModeManager.shared.isOfflineMode {
+                print("⏭️ Skipping API refresh (offline mode active)")
+                return
+            }
+            
             // Check game mode in timer callback (in case mode changed while timer was running)
-            if self.gameMode == .deadMensSecrets || self.gameMode == .splitLegacy {
+            if self.gameMode == .deadMensSecrets {
                 print("⏭️ Skipping API refresh (story mode active)")
                 return
             }
@@ -1064,14 +1541,21 @@ class LootBoxLocationManager: ObservableObject {
     /// Load locations from API instead of local file
     /// Note: includeFound defaults to true to ensure all objects (including found ones) are loaded for accurate counting
     func loadLocationsFromAPI(userLocation: CLLocation? = nil, includeFound: Bool = true) async {
+        // OFFLINE MODE: Use local Core Data if offline mode is enabled
+        if OfflineModeManager.shared.isOfflineMode {
+            print("📴 Offline mode enabled - loading from local SQLite database")
+            loadLocations(userLocation: userLocation)
+            return
+        }
+        
         guard useAPISync else {
             print("ℹ️ API sync is disabled, using local storage")
             return
         }
         
-        // STORY MODE: Skip API calls entirely in story modes (deadMensSecrets, splitLegacy)
-        // Story modes only show NPCs, not API objects, so fetching them wastes bandwidth and performance
-        if gameMode == .deadMensSecrets || gameMode == .splitLegacy {
+        // STORY MODE: Skip API calls entirely in story mode
+        // Story mode only shows NPCs, not API objects, so fetching them wastes bandwidth and performance
+        if gameMode == .deadMensSecrets {
             print("📖 Story mode active (\(gameMode.displayName)) - skipping API fetch (only NPCs shown, no API objects needed)")
             return
         }
@@ -1183,6 +1667,19 @@ class LootBoxLocationManager: ObservableObject {
                 // This ensures locationManager.locations contains all objects for accurate counting
                 self.locations = allLocationsForStats + localOnlyItems
                 
+                // Save all API-loaded locations to Core Data for offline access
+                // Only save items that should be persisted (exclude temporary AR-only items)
+                let locationsToSave = allLocationsForStats.filter { $0.shouldPersist }
+                Task.detached(priority: .utility) { [weak self] in
+                    guard let self = self else { return }
+                    do {
+                        try await self.dataService.saveLocations(locationsToSave)
+                        print("💾 Saved \(locationsToSave.count) API locations to Core Data for offline access")
+                    } catch {
+                        print("⚠️ Error saving API locations to Core Data: \(error)")
+                    }
+                }
+                
                 let collectedCount = loadedLocations.filter { $0.collected }.count
                 let unfoundCount = loadedLocations.count - collectedCount
                 print("✅ Loaded \(loadedLocations.count) loot box locations from API for AR (\(collectedCount) collected, \(unfoundCount) unfound)")
@@ -1224,14 +1721,80 @@ class LootBoxLocationManager: ObservableObject {
             // Suppress detailed connection errors - they're noisy
             // Just show a simple message and fall back to local storage
             print("⚠️ Cannot connect to API server at \(APIService.shared.baseURL)")
-            print("   Falling back to local storage")
-            // Fallback to local storage
+            print("   Falling back to Core Data (offline mode)")
+            // Fallback to Core Data - load from local SQLite database
             loadLocations(userLocation: userLocation)
+        }
+    }
+    
+    /// Sync pending changes to API when connection is restored
+    /// This method should be called when the app detects it's back online
+    func syncPendingChangesToAPI() async {
+        guard useAPISync else { return }
+        
+        do {
+            // Get items that need syncing
+            let itemsNeedingSync = try dataService.getItemsNeedingSync()
+            
+            if itemsNeedingSync.isEmpty {
+                print("ℹ️ No pending changes to sync")
+                return
+            }
+            
+            print("🔄 Syncing \(itemsNeedingSync.count) pending changes to API...")
+            
+            // Check API health first
+            let isHealthy = try await APIService.shared.checkHealth()
+            guard isHealthy else {
+                print("⚠️ API server not available - will retry later")
+                return
+            }
+            
+            var syncedCount = 0
+            var errorCount = 0
+            
+            for location in itemsNeedingSync {
+                do {
+                    // Check if item exists in API
+                    let existingObject = try? await APIService.shared.getObject(id: location.id)
+                    
+                    if existingObject == nil {
+                        // Item doesn't exist - create it
+                        await saveLocationToAPI(location)
+                    } else {
+                        // Item exists - update collected status if changed
+                        if location.collected {
+                            await markCollectedInAPI(location.id)
+                        } else {
+                            await unmarkCollectedInAPI(location.id)
+                        }
+                    }
+                    
+                    // Mark as synced in Core Data
+                    try dataService.markAsSynced(location.id)
+                    syncedCount += 1
+                    
+                } catch {
+                    print("⚠️ Error syncing item \(location.id): \(error.localizedDescription)")
+                    errorCount += 1
+                }
+            }
+            
+            print("✅ Synced \(syncedCount) items, \(errorCount) errors")
+            
+        } catch {
+            print("❌ Error getting items needing sync: \(error.localizedDescription)")
         }
     }
     
     /// Save location to API
     func saveLocationToAPI(_ location: LootBoxLocation) async {
+        // Don't sync to API if offline mode is enabled
+        if OfflineModeManager.shared.isOfflineMode {
+            print("📴 Offline mode enabled - location '\(location.name)' saved to local database, will sync when online")
+            return
+        }
+        
         guard useAPISync else {
             print("⚠️ API sync is disabled - location '\(location.name)' (ID: \(location.id)) not synced to shared database")
             return
@@ -1250,9 +1813,21 @@ class LootBoxLocationManager: ObservableObject {
             let createdObject = try await APIService.shared.createObject(location)
             print("✅ Successfully synced location '\(location.name)' (ID: \(location.id)) to shared API database")
             print("   API returned object ID: \(createdObject.id)")
+            
+            // Mark as synced in Core Data
+            try? dataService.markAsSynced(location.id)
         } catch {
             print("❌ Error saving location '\(location.name)' (ID: \(location.id)) to API: \(error.localizedDescription)")
-            print("   Location saved locally but NOT in shared database")
+            print("   Location saved to Core Data - will sync when online")
+            
+            // Mark as needing sync in Core Data (if not already marked)
+            do {
+                // Re-save to ensure needs_sync flag is set
+                try dataService.saveLocation(location)
+            } catch {
+                print("⚠️ Error marking location for sync: \(error)")
+            }
+            
             if let apiError = error as? APIError {
                 print("   API Error details: \(apiError)")
             }
@@ -1261,6 +1836,12 @@ class LootBoxLocationManager: ObservableObject {
     
     /// Mark location as found in API
     func markCollectedInAPI(_ locationId: String) async {
+        // Don't sync to API if offline mode is enabled
+        if OfflineModeManager.shared.isOfflineMode {
+            print("📴 Offline mode enabled - location marked as collected in local database, will sync when online")
+            return
+        }
+        
         guard useAPISync else {
             print("⚠️ API sync is disabled - not marking location \(locationId) as found in API")
             return
@@ -1280,15 +1861,21 @@ class LootBoxLocationManager: ObservableObject {
         do {
             try await APIService.shared.markFound(objectId: locationId)
             print("✅ Successfully marked location '\(locationName)' (ID: \(locationId)) as found in API")
+            
+            // Mark as synced in Core Data
+            try? dataService.markAsSynced(locationId)
         } catch {
             // Check if the error is "Object already found" - this is actually a success case
             let errorDescription = error.localizedDescription
             if errorDescription.contains("Object already found") || errorDescription.contains("already found") {
                 print("ℹ️ Object '\(locationName)' (ID: \(locationId)) was already marked as found in API - treating as success")
-                // This is fine - the object is in the desired state (found)
+                // Mark as synced since it's already in the correct state
+                try? dataService.markAsSynced(locationId)
             } else {
-                // This is a real error
+                // This is a real error - mark as needing sync
                 print("❌ Error marking location '\(locationName)' (ID: \(locationId)) as found in API: \(errorDescription)")
+                print("   Will sync when connection is restored")
+                // Item is already marked as needing sync in Core Data (from markCollected)
                 if let apiError = error as? APIError {
                     print("   API Error details: \(apiError)")
                 }
@@ -1411,7 +1998,7 @@ class LootBoxLocationManager: ObservableObject {
                 if !stats.top_finders.isEmpty {
                     print("   Top finders:")
                     for finder in stats.top_finders {
-                        print("      - \(finder.user): \(finder.count) finds")
+                        print("      - \(finder.display_name ?? finder.user_id): \(finder.find_count) finds")
                     }
                 }
             } catch {
@@ -1424,6 +2011,65 @@ class LootBoxLocationManager: ObservableObject {
                 print("   API Error details: \(apiError)")
             }
         }
+    }
+
+    /// View all objects in the local Core Data database
+    func viewLocalDatabaseContents() async {
+        print("📱 Querying local Core Data database contents...")
+
+        do {
+            // Get all items from local Core Data
+            let localItems = try dataService.getAllItems()
+
+            print("📱 Local Database Contents:")
+            print("   Total objects: \(localItems.count)")
+
+            let foundCount = localItems.filter { $0.collected }.count
+            let unfoundCount = localItems.count - foundCount
+
+            print("   Found: \(foundCount)")
+            print("   Unfound: \(unfoundCount)")
+            print("")
+
+            if localItems.isEmpty {
+                print("   (Local database is empty)")
+            } else {
+                print("   Objects:")
+                for (index, location) in localItems.enumerated() {
+                    let status = location.collected ? "✅ FOUND" : "🔍 UNFOUND"
+                    let syncStatus = location.needs_sync ? " (needs sync)" : ""
+
+                    print("   \(index + 1). \(location.name) (\(location.type.displayName))")
+                    print("      ID: \(location.id)")
+                    print("      Status: \(status)\(syncStatus)")
+                    print("      Location: (\(String(format: "%.8f", location.latitude)), \(String(format: "%.8f", location.longitude)))")
+                    print("      Radius: \(location.radius)m")
+                    print("      Source: \(location.source.rawValue)")
+                    print("")
+                }
+            }
+
+            // Also get stats
+            do {
+                let dataService = GameItemDataService.shared
+                let itemsNeedingSync = try dataService.getItemsNeedingSync()
+                print("   Items needing sync to API: \(itemsNeedingSync.count)")
+            } catch {
+                print("⚠️ Error getting sync stats: \(error.localizedDescription)")
+            }
+
+        } catch {
+            print("❌ Error querying local database: \(error.localizedDescription)")
+        }
+    }
+
+    /// Clear collected status for all loot boxes (reset found state)
+    func clearCollectedLootBoxes() {
+        for index in locations.indices {
+            locations[index].collected = false
+        }
+        print("🧹 Cleared collected status for all \(locations.count) loot boxes")
+        saveLocations() // Persist the changes
     }
 }
 

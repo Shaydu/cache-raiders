@@ -5,9 +5,9 @@ const Config = {
     API_BASE: window.location.origin,
     MAP_DEFAULT_CENTER: [40.0758, -105.3008],
     MAP_DEFAULT_ZOOM: 15,
-    MAP_MAX_ZOOM: 22,
+    MAP_MAX_ZOOM: 24,
     MAP_MAX_NATIVE_ZOOM: 19,
-    USER_LOCATION_UPDATE_INTERVAL: 5000, // 5 seconds
+    USER_LOCATION_UPDATE_INTERVAL: 5000, // 5 seconds - reduced from 1s to minimize server load
     CONNECTION_CHECK_INTERVAL: 5000, // 5 seconds
     DISCONNECTED_THRESHOLD: 60000, // 60 seconds
     AUTO_REFRESH_INTERVAL: 30000, // 30 seconds

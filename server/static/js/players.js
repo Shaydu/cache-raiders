@@ -61,7 +61,9 @@ const PlayersManager = {
                 const connectionIndicator = `<span class="connection-indicator ${connectionClass}" title="${isConnected ? 'Connected via WebSocket' : 'Disconnected'}"></span>`;
 
                 return `
-                    <div class="object-item player-item ${connectionClass}">
+                    <div class="object-item player-item ${connectionClass}" 
+                         data-device-uuid="${player.device_uuid}"
+                         oncontextmenu="event.preventDefault(); PlayersManager.showContextMenu(event, '${player.device_uuid}');">
                         <h3>${connectionIndicator}${player.player_name || 'Unnamed Player'}</h3>
                         <div class="meta">
                             Device ID: ${shortUuid}<br>
@@ -139,50 +141,6 @@ const PlayersManager = {
     },
 
     /**
-     * Create a new player
-     */
-    async createNewPlayer() {
-        const deviceUuidInput = document.getElementById('newPlayerDeviceUuid');
-        const nameInput = document.getElementById('newPlayerName');
-        
-        if (!deviceUuidInput || !nameInput) return;
-
-        const deviceUuid = deviceUuidInput.value.trim();
-        const playerName = nameInput.value.trim();
-
-        if (!deviceUuid) {
-            UI.showStatus('Device UUID is required', 'error');
-            return;
-        }
-
-        if (!playerName) {
-            UI.showStatus('Player name is required', 'error');
-            return;
-        }
-
-        // Validate UUID format (basic check - should be a valid UUID string)
-        if (deviceUuid.length < 8) {
-            UI.showStatus('Device UUID appears to be invalid (too short)', 'error');
-            return;
-        }
-
-        try {
-            await ApiService.players.updateName(deviceUuid, playerName);
-            UI.showStatus(`Player "${playerName}" created/updated successfully`, 'success');
-            
-            // Clear form
-            deviceUuidInput.value = '';
-            nameInput.value = '';
-            
-            // Reload players and stats to reflect changes
-            await this.loadPlayers();
-            await StatsManager.refreshStats();
-        } catch (error) {
-            UI.showStatus('Error creating player: ' + error.message, 'error');
-        }
-    },
-
-    /**
      * Update player name
      */
     async updatePlayerName(deviceUuid) {
@@ -224,6 +182,115 @@ const PlayersManager = {
             await StatsManager.refreshStats();
         } catch (error) {
             UI.showStatus('Error deleting player: ' + error.message, 'error');
+        }
+    },
+
+    /**
+     * Kick/disconnect player
+     */
+    async kickPlayer(deviceUuid) {
+        if (!confirm('Are you sure you want to kick this player? This will disconnect them from the server.')) {
+            return;
+        }
+
+        try {
+            const result = await ApiService.players.kick(deviceUuid);
+            UI.showStatus(result.message || 'Player kicked successfully', 'success');
+            // Reload players to reflect connection status changes
+            await this.loadPlayers();
+        } catch (error) {
+            UI.showStatus('Error kicking player: ' + error.message, 'error');
+        }
+    },
+
+    /**
+     * Show context menu on right-click
+     */
+    showContextMenu(event, deviceUuid) {
+        // Remove any existing context menu
+        const existingMenu = document.getElementById('playerContextMenu');
+        if (existingMenu) {
+            existingMenu.remove();
+        }
+
+        // Create context menu
+        const menu = document.createElement('div');
+        menu.id = 'playerContextMenu';
+        menu.className = 'context-menu';
+        menu.style.position = 'fixed';
+        
+        // Calculate position, ensuring menu doesn't go off-screen
+        const menuWidth = 180;
+        const menuHeight = 90; // Approximate height
+        let left = event.clientX;
+        let top = event.clientY;
+        
+        // Adjust if menu would go off right edge
+        if (left + menuWidth > window.innerWidth) {
+            left = window.innerWidth - menuWidth - 10;
+        }
+        
+        // Adjust if menu would go off bottom edge
+        if (top + menuHeight > window.innerHeight) {
+            top = window.innerHeight - menuHeight - 10;
+        }
+        
+        // Ensure menu doesn't go off left or top edges
+        left = Math.max(10, left);
+        top = Math.max(10, top);
+        
+        menu.style.left = `${left}px`;
+        menu.style.top = `${top}px`;
+        menu.style.zIndex = '10000';
+
+        menu.innerHTML = `
+            <div class="context-menu-item" onclick="PlayersManager.showRenameDialog('${deviceUuid}'); PlayersManager.hideContextMenu();">
+                <span>✏️ Change Name</span>
+            </div>
+            <div class="context-menu-item" onclick="PlayersManager.kickPlayer('${deviceUuid}'); PlayersManager.hideContextMenu();">
+                <span>👢 Kick Player</span>
+            </div>
+        `;
+
+        document.body.appendChild(menu);
+
+        // Close menu when clicking outside or on right-click
+        const closeMenu = (e) => {
+            if (!menu.contains(e.target)) {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+                document.removeEventListener('contextmenu', closeMenu);
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('click', closeMenu);
+            document.addEventListener('contextmenu', closeMenu);
+        }, 0);
+    },
+
+    /**
+     * Hide context menu
+     */
+    hideContextMenu() {
+        const menu = document.getElementById('playerContextMenu');
+        if (menu) {
+            menu.remove();
+        }
+    },
+
+    /**
+     * Show rename dialog
+     */
+    showRenameDialog(deviceUuid) {
+        const nameInput = document.getElementById(`player-name-${deviceUuid}`);
+        if (!nameInput) return;
+
+        const currentName = nameInput.value || '';
+        const newName = prompt('Enter new player name:', currentName);
+        
+        if (newName !== null && newName.trim() !== '') {
+            nameInput.value = newName.trim();
+            this.updatePlayerName(deviceUuid);
         }
     }
 };

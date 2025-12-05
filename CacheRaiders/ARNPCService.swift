@@ -3,43 +3,7 @@ import RealityKit
 import ARKit
 import UIKit
 
-// MARK: - NPC Types
-enum NPCType: String, CaseIterable {
-    case skeleton = "skeleton"
-    case corgi = "corgi"
-    
-    var modelName: String {
-        switch self {
-        case .skeleton: return "Curious_skeleton"
-        case .corgi: return "Corgi_Traveller"
-        }
-    }
-    
-    var npcId: String {
-        switch self {
-        case .skeleton: return "skeleton-1"
-        case .corgi: return "corgi-1"
-        }
-    }
-    
-    var defaultName: String {
-        switch self {
-        case .skeleton: return "Captain Bones"
-        case .corgi: return "Corgi Traveller"
-        }
-    }
-    
-    var npcType: String {
-        switch self {
-        case .skeleton: return "skeleton"
-        case .corgi: return "traveller"
-        }
-    }
-    
-    var isSkeleton: Bool {
-        return self == .skeleton
-    }
-}
+// NPCType is now defined in NPCType.swift
 
 // MARK: - NPC Size Constants
 struct ARNPCConstants {
@@ -69,16 +33,22 @@ class ARNPCService {
     var conversationNPCBinding: Binding<ConversationNPC?>?
     var collectionNotificationBinding: Binding<String?>?
     
-    init(arView: ARView?,
+    weak var arCoordinator: ARCoordinatorCore?
+
+    init(arCoordinator: ARCoordinatorCore?,
+         arView: ARView?,
          locationManager: LootBoxLocationManager?,
          groundingService: ARGroundingService?,
          tapHandler: ARTapHandler?,
-         conversationManager: ARConversationManager?) {
+         conversationManager: ARConversationManager?,
+         conversationNPCBinding: Binding<ConversationNPC?>?) {
+        self.arCoordinator = arCoordinator
         self.arView = arView
         self.locationManager = locationManager
         self.groundingService = groundingService
         self.tapHandler = tapHandler
         self.conversationManager = conversationManager
+        self.conversationNPCBinding = conversationNPCBinding
     }
     
     /// Place an NPC in the AR scene
@@ -94,9 +64,13 @@ class ARNPCService {
             return
         }
         
-        Swift.print("💬 Placing \(type.defaultName) NPC for story mode...")
+        Swift.print("💬 ========== PLACING NPC ==========")
+        Swift.print("   NPC Type: \(type.rawValue)")
+        Swift.print("   NPC Name: \(type.defaultName)")
+        Swift.print("   NPC ID: \(type.npcId)")
         Swift.print("   Game mode: \(locationManager?.gameMode.displayName ?? "unknown")")
         Swift.print("   Model: \(type.modelName).usdz")
+        Swift.print("   Already placed? \(placedNPCs[type.npcId] != nil)")
         
         // Load the NPC model
         guard let modelURL = Bundle.main.url(forResource: type.modelName, withExtension: "usdz") else {
@@ -111,13 +85,26 @@ class ARNPCService {
         do {
             // Load the NPC model
             let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
-            
+
+            // Check for built-in animations (like turkey model)
+            var builtInAnimation: AnimationResource? = nil
+            if let modelEntity = loadedEntity as? ModelEntity {
+                let availableAnimations = modelEntity.availableAnimations
+                if !availableAnimations.isEmpty {
+                    // Use the first available animation (typically the main animation)
+                    builtInAnimation = availableAnimations[0]
+                    Swift.print("✅ Found \(availableAnimations.count) built-in animation(s) in \(type.defaultName) model - will loop continuously")
+                } else {
+                    Swift.print("ℹ️ No built-in animations found in \(type.defaultName) model")
+                }
+            }
+
             // Wrap in ModelEntity for proper scaling
             let npcEntity = ModelEntity()
             npcEntity.addChild(loadedEntity)
             
             // Scale NPC to reasonable size
-            let npcScale: Float = type == .skeleton ? ARNPCConstants.SKELETON_SCALE : 0.5
+            let npcScale: Float = type == .skeleton ? ARNPCConstants.SKELETON_SCALE : 5.0
             npcEntity.scale = SIMD3<Float>(repeating: npcScale)
             
             // Position NPC in front of camera
@@ -132,11 +119,15 @@ class ARNPCService {
             let right = SIMD3<Float>(-cameraTransform.columns.0.x, -cameraTransform.columns.0.y, -cameraTransform.columns.0.z)
             let targetPosition = cameraPos + forward * baseDistance + right * sideOffset
             
-            // Use grounding service to properly ground the NPC on surfaces
-            let npcPosition: SIMD3<Float>
+            // Use grounding service to properly ground the NPC on surfaces (same as loot boxes)
+            let surfaceY: Float
             if let groundingService = groundingService {
-                npcPosition = groundingService.groundPosition(targetPosition, cameraPos: cameraPos)
-                Swift.print("✅ \(type.defaultName) grounded using ARGroundingService at Y: \(String(format: "%.2f", npcPosition.y))")
+                surfaceY = groundingService.findSurfaceOrDefaultForNPC(
+                    x: targetPosition.x,
+                    z: targetPosition.z,
+                    cameraPos: cameraPos,
+                    npcName: type.defaultName
+                )
             } else {
                 // Fallback: use simple raycast if grounding service not available
                 let raycastQuery = ARRaycastQuery(
@@ -145,25 +136,39 @@ class ARNPCService {
                     allowing: .estimatedPlane,
                     alignment: .horizontal
                 )
-                
+
                 let raycastResults = arView.session.raycast(raycastQuery)
-                
+
                 if let firstResult = raycastResults.first {
-                    npcPosition = SIMD3<Float>(
-                        firstResult.worldTransform.columns.3.x,
-                        firstResult.worldTransform.columns.3.y,
-                        firstResult.worldTransform.columns.3.z
-                    )
+                    surfaceY = firstResult.worldTransform.columns.3.y
                 } else {
                     // Final fallback: use camera Y position (assume ground level)
-                    npcPosition = SIMD3<Float>(
-                        targetPosition.x,
-                        cameraPos.y - (type == .skeleton ? ARNPCConstants.SKELETON_HEIGHT_OFFSET : 1.2),
-                        targetPosition.z
-                    )
-                    Swift.print("⚠️ \(type.defaultName) using fallback ground height: Y=\(String(format: "%.2f", npcPosition.y))")
+                    surfaceY = cameraPos.y - (type == .skeleton ? ARNPCConstants.SKELETON_HEIGHT_OFFSET : 1.2)
+                    Swift.print("⚠️ \(type.defaultName) using fallback ground height: Y=\(String(format: "%.2f", surfaceY))")
                 }
             }
+
+            // Apply foot offset for proper placement
+            let footOffset: Float
+            switch type {
+            case .skeleton:
+                // Skeleton: model pivot is likely at bottom, minimal offset
+                footOffset = 0.0
+            case .corgi:
+                // Corgi: small model, place slightly above surface for better visibility
+                footOffset = 0.1
+            }
+
+            let npcPosition = SIMD3<Float>(
+                targetPosition.x,
+                surfaceY + footOffset,
+                targetPosition.z
+            )
+
+            Swift.print("✅ \(type.defaultName) grounded using ARGroundingService")
+            Swift.print("   Surface Y: \(String(format: "%.2f", surfaceY))")
+            Swift.print("   Foot offset: \(String(format: "%.2f", footOffset))m")
+            Swift.print("   Final position Y: \(String(format: "%.2f", npcPosition.y))")
             
             // Create anchor for NPC
             let anchor = AnchorEntity(world: npcPosition)
@@ -198,10 +203,26 @@ class ARNPCService {
             
             anchor.addChild(npcEntity)
             arView.scene.addAnchor(anchor)
-            
+
+            // Play built-in animation if available (continuous loop)
+            if let animation = builtInAnimation {
+                Swift.print("🎬 Starting built-in animation for \(type.defaultName)")
+                let _ = npcEntity.playAnimation(
+                    animation,
+                    transitionDuration: 0.2,
+                    startsPaused: false
+                )
+            }
+
             // Track NPC
             placedNPCs[type.npcId] = anchor
+            Swift.print("📝 Added \(type.npcId) to local placedNPCs dictionary")
             tapHandler?.placedNPCs = placedNPCs
+            Swift.print("🎯 Updated tap handler with \(placedNPCs.count) NPCs: \(placedNPCs.keys.sorted())")
+
+            // Also update the main ARCoordinatorCore placedNPCs dictionary
+            arCoordinator?.placedNPCs[type.npcId] = anchor
+            Swift.print("📝 Added \(type.npcId) to ARCoordinatorCore placedNPCs dictionary")
             
             if type == .skeleton {
                 skeletonAnchor = anchor
@@ -224,6 +245,7 @@ class ARNPCService {
         Swift.print("   NPC Type: \(type.rawValue)")
         Swift.print("   NPC Name: \(type.defaultName)")
         Swift.print("   NPC ID: \(type.npcId)")
+        Swift.print("   conversationNPCBinding: \(conversationNPCBinding != nil ? "SET" : "NIL")")
 
         DispatchQueue.main.async { [weak self] in
             Swift.print("   📞 Calling showNPCConversation on main thread")
@@ -246,12 +268,33 @@ class ARNPCService {
         // For skeleton, always open the conversation view
         if type == .skeleton {
             Swift.print("   📱 Opening SkeletonConversationView (full-screen dialog)")
+            Swift.print("   conversationNPCBinding exists: \(conversationNPCBinding != nil)")
+            DispatchQueue.main.async { [weak self] in
+                guard let binding = self?.conversationNPCBinding else {
+                    Swift.print("   ❌ conversationNPCBinding is nil!")
+                    return
+                }
+                let npc = ConversationNPC(
+                    id: type.npcId,
+                    name: type.defaultName
+                )
+                binding.wrappedValue = npc
+                Swift.print("   ✅ ConversationNPC binding set: \(npc.id) - \(npc.name)")
+            }
+        }
+        // For corgi, open the same full-screen conversation view as skeleton
+        else if type == .corgi {
+            Swift.print("   🐕 Opening Corgi conversation view (same as skeleton)")
+            // CRITICAL: Clear binding first to ensure onChange fires even if it was previously set
+            // This allows re-tapping after the dialog is dismissed
+            self.conversationNPCBinding?.wrappedValue = nil
+            // Small delay to ensure the nil value is processed before setting the new value
             DispatchQueue.main.async { [weak self] in
                 self?.conversationNPCBinding?.wrappedValue = ConversationNPC(
                     id: type.npcId,
                     name: type.defaultName
                 )
-                Swift.print("   ✅ ConversationNPC binding set")
+                Swift.print("   ✅ ConversationNPC binding set for corgi: id=\(type.npcId), name=\(type.defaultName)")
             }
         }
 
@@ -271,46 +314,10 @@ class ARNPCService {
                 Swift.print("   ❌ AR sign NOT triggered - conditions not met")
             }
             
-        case .splitLegacy:
-            // Split Legacy: Each NPC gives half the map
-            if type == .skeleton {
-                if !collectedMapPieces.contains(1) {
-                    collectionNotificationBinding?.wrappedValue = "💀 Captain Bones: I have the first half of the map! The Corgi Traveller has the other half. Find them near the old oak tree!"
-                    collectedMapPieces.insert(1)
-                    
-                    // Spawn corgi after getting first map piece
-                    if !corgiPlaced, let arView = arView {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                            self?.placeNPC(type: .corgi, in: arView)
-                        }
-                    }
-                } else {
-                    collectionNotificationBinding?.wrappedValue = "💀 Captain Bones: Ye already have me half of the map, matey! Find the Corgi for the other half!"
-                }
-            } else if type == .corgi {
-                if !collectedMapPieces.contains(2) {
-                    collectionNotificationBinding?.wrappedValue = "🐕 Corgi Traveller: Woof! Here's the second half of the map! Combine both halves to find the treasure!"
-                    collectedMapPieces.insert(2)
-                    
-                    // If player has both pieces, combine them
-                    if collectedMapPieces.contains(1) && collectedMapPieces.contains(2) {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                            self?.combineMapPieces()
-                        }
-                    }
-                } else {
-                    collectionNotificationBinding?.wrappedValue = "🐕 Corgi Traveller: You already have my half! Combine both pieces to see where X marks the spot!"
-                }
-            }
-            
-            // Hide notification after 5 seconds
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-                self?.collectionNotificationBinding?.wrappedValue = nil
-            }
         }
     }
     
-    /// Combine map pieces to reveal treasure location (Split Legacy mode)
+    /// Combine map pieces to reveal treasure location
     func combineMapPieces() {
         Swift.print("🗺️ Combining map pieces - revealing treasure location!")
         
@@ -443,5 +450,6 @@ class ARNPCService {
             }
         }
     }
+
 }
 

@@ -95,3 +95,4 @@ UI freezing occurs when heavy operations block the main thread. This document ou
 - Monitor frame rate during heavy operations
 - Log when operations take >16ms (one frame at 60fps)
 
+

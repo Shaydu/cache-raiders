@@ -9,31 +9,40 @@ import UIKit
 class ARTapHandler {
     weak var arView: ARView?
     weak var locationManager: LootBoxLocationManager?
-    
+    weak var userLocationManager: UserLocationManager? // Add reference to user location manager
+
     var placedBoxes: [String: AnchorEntity] = [:]
     var findableObjects: [String: FindableObject] = [:]
     var foundLootBoxes: Set<String> = []
     var distanceTextEntities: [String: ModelEntity] = [:]
     var collectionNotificationBinding: Binding<String?>?
     var sphereModeActive: Bool = false
-    
+
     var lastTapPlacementTime: Date?
-    
+
     // Callback for finding loot boxes
     var onFindLootBox: ((String, AnchorEntity, SIMD3<Float>, ModelEntity?) -> Void)?
-    
+
     // Callback for placing loot box at tap location
     var onPlaceLootBoxAtTap: ((LootBoxLocation, ARRaycastResult) -> Void)?
-    
+
     // Callback for NPC taps (takes NPC ID string, ARCoordinator will convert to NPCType)
     var onNPCTap: ((String) -> Void)?
-    
+
+    // Callback for showing info panel for user's own objects
+    var onShowObjectInfo: ((LootBoxLocation) -> Void)?
+
     // Reference to placed NPCs for tap detection
-    var placedNPCs: [String: AnchorEntity] = [:]
-    
-    init(arView: ARView?, locationManager: LootBoxLocationManager?) {
+    var placedNPCs: [String: AnchorEntity] = [:] {
+        didSet {
+            Swift.print("🎯 ARTapHandler.placedNPCs updated: \(placedNPCs.count) NPCs - \(placedNPCs.keys.sorted())")
+        }
+    }
+
+    init(arView: ARView?, locationManager: LootBoxLocationManager?, userLocationManager: UserLocationManager?) {
         self.arView = arView
         self.locationManager = locationManager
+        self.userLocationManager = userLocationManager
     }
     
     @objc func handleTap(_ sender: UITapGestureRecognizer) {
@@ -126,6 +135,17 @@ class ARTapHandler {
                     let parentKey = "\(ObjectIdentifier(parent))"
                     if !checkedEntities.contains(parentKey) {
                         checkedEntities.insert(parentKey)
+                        
+                        // FIRST: Check if parent is an NPC
+                        if placedNPCs[parentName] != nil {
+                            Swift.print("💬 ✅ NPC TAPPED via parent (ID: \(parentName)) - triggering onNPCTap callback")
+                            Swift.print("   onNPCTap callback exists: \(onNPCTap != nil)")
+                            onNPCTap?(parentName)
+                            Swift.print("   ✅ onNPCTap callback invoked")
+                            return // Don't process as regular object - NPCs are not loot boxes
+                        }
+                        
+                        // Then check if parent is a loot box
                         if placedBoxes[parentName] != nil {
                             locationId = parentName
                             Swift.print("🎯 Found matching placed box ID via parent: \(parentName)")
@@ -306,23 +326,40 @@ class ARTapHandler {
             }
         }
         
-        // UNIFIED FINDABLE BEHAVIOR: All objects in placedBoxes are findable and clickable
-        // If we found a location ID (tapped on any findable object), trigger find behavior
+        // UNIFIED FINDABLE BEHAVIOR: Handle different tap behaviors based on object type and creator
         Swift.print("🎯 Tap result: locationId = \(locationId ?? "nil")")
         if let idString = locationId {
             Swift.print("🎯 Processing tap on: \(idString)")
-            
+
+            // Get the location object to check its properties
+            guard let location = locationManager.locations.first(where: { $0.id == idString }) else {
+                Swift.print("⚠️ Location not found in locationManager for \(idString)")
+                return
+            }
+
             // CRITICAL: Check if object is already collected - this is the primary check
             // If collected, don't allow tapping (object should have been removed from AR)
-            let isLocationCollected = locationManager.locations.first(where: { $0.id == idString })?.collected ?? false
-            
-            if isLocationCollected {
+            if location.collected {
                 Swift.print("⚠️ \(idString) has already been collected - ignoring tap")
+                return
+            }
+
+            // Check if this is an NFC object created by the current user
+            let currentUserId = APIService.shared.currentUserID
+            let isNFCObject = idString.hasPrefix("nfc_")
+            let isCreatedByCurrentUser = location.created_by == currentUserId
+
+            Swift.print("🎯 Object analysis: NFC=\(isNFCObject), created_by_current_user=\(isCreatedByCurrentUser), current_user=\(currentUserId)")
+
+            // SPECIAL HANDLING FOR NFC OBJECTS CREATED BY CURRENT USER
+            if isNFCObject && isCreatedByCurrentUser {
+                Swift.print("ℹ️ NFC object created by current user - showing info panel instead of collecting")
+                onShowObjectInfo?(location)
                 return
             }
             
             // Clear from foundLootBoxes if location was reset (allows re-tapping after reset)
-            if foundLootBoxes.contains(idString) && !isLocationCollected {
+            if foundLootBoxes.contains(idString) && !location.collected {
                 foundLootBoxes.remove(idString)
                 Swift.print("🔄 Object \(idString) was reset - clearing from found set, allowing tap again")
             }
@@ -389,16 +426,42 @@ class ARTapHandler {
             Swift.print("🎯 Raycast hit surface at Y=\(String(format: "%.2f", hitY)), camera Y=\(String(format: "%.2f", cameraY))")
 
             if hitY <= cameraY - 0.2 {
+                // CRITICAL: Capture AR offset coordinates for <10cm accuracy
+                // Get the hit position in AR world coordinates (where user tapped)
+                let hitTransform = result.worldTransform
+                let arOffsetX = Double(hitTransform.columns.3.x)
+                let arOffsetY = Double(hitTransform.columns.3.y)
+                let arOffsetZ = Double(hitTransform.columns.3.z)
+
+                // Get user's current GPS location for AR origin
+                guard let userLocation = userLocationManager?.currentLocation else {
+                    Swift.print("⚠️ No user location available - cannot save AR tap placement")
+                    return
+                }
+
+                let arOriginLat = userLocation.coordinate.latitude
+                let arOriginLon = userLocation.coordinate.longitude
+
+                Swift.print("✅ Captured AR tap placement with <10cm accuracy:")
+                Swift.print("   AR Origin GPS: (\(String(format: "%.8f", arOriginLat)), \(String(format: "%.8f", arOriginLon)))")
+                Swift.print("   AR Offsets: X=\(String(format: "%.4f", arOffsetX))m, Y=\(String(format: "%.4f", arOffsetY))m, Z=\(String(format: "%.4f", arOffsetZ))m")
+
                 // Generate unique name for tap-placed artifact
                 let tapCount = placedBoxes.count + 1
                 let testLocation = LootBoxLocation(
                     id: UUID().uuidString,
                     name: "Test Artifact #\(tapCount)",
                     type: .templeRelic,
-                    latitude: 0,
-                    longitude: 0,
-                    radius: 100,
-                    source: .arManual  // CRITICAL: Mark as AR-manually placed so it persists
+                    latitude: arOriginLat,  // Use GPS location, not 0
+                    longitude: arOriginLon,  // Use GPS location, not 0
+                    radius: 3.0,  // Smaller radius since we have precise AR coordinates
+                    source: .arManual,  // CRITICAL: Mark as AR-manually placed so it persists
+                    ar_origin_latitude: arOriginLat,
+                    ar_origin_longitude: arOriginLon,
+                    ar_offset_x: arOffsetX,
+                    ar_offset_y: arOffsetY,
+                    ar_offset_z: arOffsetZ,
+                    ar_placement_timestamp: Date()
                 )
                 // For manual tap placement, allow closer placement (1-2m instead of 3-5m)
                 // Add to locationManager FIRST so it's tracked, then place it

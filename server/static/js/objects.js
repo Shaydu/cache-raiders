@@ -4,6 +4,7 @@
 const ObjectsManager = {
     markers: {},
     markerData: {}, // Store marker data for resizing
+    storyMarkers: {}, // Store story mode markers separately
 
     /**
      * Load all objects and display on map
@@ -19,16 +20,20 @@ const ObjectsManager = {
             this.markers = {};
             this.markerData = {};
 
+            // ADMIN PANEL: Always show all objects regardless of game mode
+            // (Story mode filtering only applies to iOS app, not admin panel)
+            const filteredObjects = objects;
+
             // Get current zoom level
             const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
 
             // Add markers for each object
-            objects.forEach(obj => {
+            filteredObjects.forEach(obj => {
                 this.addObjectMarker(obj, currentZoom);
             });
 
-            // Update objects list in sidebar
-            this.updateObjectsList(objects);
+            // Update objects list in sidebar (use filtered objects)
+            this.updateObjectsList(filteredObjects);
         } catch (error) {
             console.error('Error loading objects:', error);
             UI.showStatus('Error loading objects: ' + error.message, 'error');
@@ -44,7 +49,7 @@ const ObjectsManager = {
 
         // Calculate marker size based on zoom
         const markerSize = MapManager.calculateMarkerSize(zoom, obj.collected);
-        
+
         // Store marker data for resizing
         this.markerData[obj.id] = {
             collected: obj.collected,
@@ -53,7 +58,7 @@ const ObjectsManager = {
         };
 
         // Create icon based on calculated size
-        const icon = this.createMarkerIcon(obj.collected, markerSize);
+        const icon = this.createMarkerIcon(obj.collected, markerSize, obj);
 
         const marker = L.marker([obj.latitude, obj.longitude], { icon })
             .addTo(MapManager.getMap())
@@ -62,7 +67,17 @@ const ObjectsManager = {
                 Type: ${obj.type}<br>
                 Radius: ${obj.radius}m<br>
                 ${obj.collected ? `<span style="color: #ff6b6b; font-weight: bold;">✓ Collected</span><br>Found by: ${obj.found_by || 'Unknown'}` : '<span style="color: #ffd700; font-weight: bold;">● Available</span>'}
+                ${obj.id.startsWith('nfc_') ? `<br><a href="/nfc/${obj.id}" target="_blank" style="color: #4a90e2; text-decoration: none; font-weight: 500; font-size: 12px;">📊 View Find Sheet →</a>` : ''}
             `);
+
+        // Add tooltip for NFC objects
+        if (obj.id.startsWith('nfc_')) {
+            marker.bindTooltip('Click for details • <a href="/nfc/' + obj.id + '" target="_blank" style="color: #4a90e2;">📊 Find Sheet</a>', {
+                permanent: false,
+                direction: 'top',
+                offset: [0, -10]
+            });
+        }
 
         // Add click handler to open modal
         marker.on('click', () => {
@@ -75,27 +90,130 @@ const ObjectsManager = {
     /**
      * Create marker icon with specified size
      */
-    createMarkerIcon(isCollected, size) {
+    createMarkerIcon(isCollected, size, obj = null) {
         let iconHtml;
         const anchorOffset = size / 2;
-        
-        if (isCollected) {
+
+        // Check if this is an NPC (Dead Men's Secrets mode)
+        const isNPC = obj && obj.id && obj.id.startsWith('npc_');
+        const isSkeleton = isNPC && (obj.name && (obj.name.includes('Bones') || obj.name.includes('skeleton')));
+
+        // Check if this is an NFC-placed object
+        const isNFCObject = obj && obj.id && obj.id.startsWith('nfc_');
+
+        // Check if this is an AR-placed object (not created by admin web UI)
+        const isARObject = obj && obj.created_by && obj.created_by !== 'admin-web-ui';
+
+        // Check if this is an admin-placed object (created by admin web UI)
+        const isAdminObject = obj && obj.created_by && obj.created_by === 'admin-web-ui';
+
+        if (isNPC) {
+            // NPC icon - black background with gray border, skull for skeleton, person for others
+            const iconColor = '#000000'; // Black color for NPCs
+            const borderColor = '#666666'; // Gray border
+            const borderWidth = Math.max(2, Math.min(4, size / 6));
+            const iconSymbol = isSkeleton ? '💀' : '👤';
+            iconHtml = `
+                <div style="
+                    background: ${iconColor};
+                    width: ${size}px;
+                    height: ${size}px;
+                    border-radius: 50%;
+                    border: ${borderWidth}px solid ${borderColor};
+                    box-shadow: 0 0 ${size/2}px rgba(0, 0, 0, 0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: ${size * 0.6}px;
+                    color: white;
+                ">${iconSymbol}</div>
+            `;
+        } else if (isNFCObject) {
+            // NFC object icon - blue circle with white 'N'
+            const markerColor = isCollected ? '#ff6b6b' : '#4a90e2'; // Red if found, blue if unfound
+            const borderColor = isCollected ? '#c62828' : '#1565c0';
+            const borderWidth = Math.max(2, Math.min(4, size / 6));
+            const fontSize = size * 0.6;
+            iconHtml = `
+                <div style="
+                    background: ${markerColor};
+                    width: ${size}px;
+                    height: ${size}px;
+                    border-radius: 50%;
+                    border: ${borderWidth}px solid ${borderColor};
+                    box-shadow: 0 0 ${size/2}px rgba(74, 144, 226, 0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: ${fontSize}px;
+                    color: white;
+                    font-weight: bold;
+                    position: relative;
+                ">N${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">N</div>` : ''}</div>
+            `;
+        } else if (isARObject) {
+            // AR object icon - purple circle with white 'AR'
+            const markerColor = isCollected ? '#ff6b6b' : '#9c27b0'; // Red if found, purple if unfound
+            const borderColor = isCollected ? '#c62828' : '#7b1fa2';
+            const borderWidth = Math.max(2, Math.min(4, size / 6));
+            const fontSize = size * 0.4; // Smaller font for 'AR'
+            iconHtml = `
+                <div style="
+                    background: ${markerColor};
+                    width: ${size}px;
+                    height: ${size}px;
+                    border-radius: 50%;
+                    border: ${borderWidth}px solid ${borderColor};
+                    box-shadow: 0 0 ${size/2}px rgba(156, 39, 176, 0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: ${fontSize}px;
+                    color: white;
+                    font-weight: bold;
+                    position: relative;
+                ">AR${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">AR</div>` : ''}</div>
+            `;
+        } else if (isAdminObject) {
+            // Admin object icon - green circle with white 'A'
+            const markerColor = isCollected ? '#ff6b6b' : '#4caf50'; // Red if found, green if unfound
+            const borderColor = isCollected ? '#c62828' : '#2e7d32';
+            const borderWidth = Math.max(2, Math.min(4, size / 6));
+            const fontSize = size * 0.6;
+            iconHtml = `
+                <div style="
+                    background: ${markerColor};
+                    width: ${size}px;
+                    height: ${size}px;
+                    border-radius: 50%;
+                    border: ${borderWidth}px solid ${borderColor};
+                    box-shadow: 0 0 ${size/2}px rgba(76, 175, 80, 0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: ${fontSize}px;
+                    color: white;
+                    font-weight: bold;
+                    position: relative;
+                ">A${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">A</div>` : ''}</div>
+            `;
+        } else if (isCollected) {
             // Stylized red X for found treasure
             // Adjust stroke width based on size to keep proportions
             const strokeWidth = Math.max(2, Math.min(5, size / 6));
             iconHtml = `
                 <div style="
-                    width: ${size}px; 
-                    height: ${size}px; 
+                    width: ${size}px;
+                    height: ${size}px;
                     position: relative;
                     display: flex;
                     align-items: center;
                     justify-content: center;
                 ">
                     <svg width="${size}" height="${size}" viewBox="0 0 24 24" style="filter: drop-shadow(0 0 ${size/6}px rgba(255, 0, 0, 0.8));">
-                        <path d="M2 2 L22 22 M22 2 L2 22" 
-                              stroke="#ff0000" 
-                              stroke-width="${strokeWidth}" 
+                        <path d="M2 2 L22 22 M22 2 L2 22"
+                              stroke="#ff0000"
+                              stroke-width="${strokeWidth}"
                               stroke-linecap="round"
                               stroke-linejoin="round"/>
                     </svg>
@@ -124,15 +242,15 @@ const ObjectsManager = {
         Object.keys(this.markers).forEach(markerId => {
             const marker = this.markers[markerId];
             const markerInfo = this.markerData[markerId];
-            
+
             if (!marker || !markerInfo) return;
 
             // Calculate new size
             const newSize = MapManager.calculateMarkerSize(zoom, markerInfo.collected);
-            
+
             // Create new icon with updated size
-            const newIcon = this.createMarkerIcon(markerInfo.collected, newSize);
-            
+            const newIcon = this.createMarkerIcon(markerInfo.collected, newSize, markerInfo.obj);
+
             // Update marker icon
             marker.setIcon(newIcon);
         });
@@ -165,7 +283,7 @@ const ObjectsManager = {
                         ${obj.collected ? `Found by: ${obj.found_by || 'Unknown'}<br>Found at: ${new Date(obj.found_at).toLocaleString()}` : 'Status: Available'}
                     </div>
                     <div style="display: flex; gap: 8px; margin-top: 8px;">
-                        ${obj.collected 
+                        ${obj.collected
                             ? `<button onclick="ObjectsManager.markUnfound('${obj.id}')" style="background: #ff9800; flex: 1;">Mark Unfound</button>`
                             : `<button onclick="ObjectsManager.markFound('${obj.id}')" style="background: #4caf50; flex: 1;">Mark Found</button>`
                         }
@@ -231,12 +349,12 @@ const ObjectsManager = {
             delete this.markerData[objectId];
             console.log(`🗑️ Removed marker for object: ${objectId}`);
         }
-        
+
         // Reload objects list to update sidebar
         this.loadObjects().catch(err => {
             console.error('Error reloading objects after marker removal:', err);
         });
-        
+
         // Refresh stats
         if (StatsManager && typeof StatsManager.refreshStats === 'function') {
             StatsManager.refreshStats();
@@ -254,7 +372,7 @@ const ObjectsManager = {
         try {
             // Remove marker immediately for instant feedback
             this.removeObjectMarker(objectId);
-            
+
             await ApiService.objects.delete(objectId);
             UI.showStatus('Object deleted successfully', 'success');
             await StatsManager.refreshStats();
@@ -291,9 +409,253 @@ const ObjectsManager = {
         } catch (error) {
             UI.showStatus('Error marking object as unfound: ' + error.message, 'error');
         }
+    },
+
+    // ============================================================================
+    // Story Mode Elements (for Dead Men's Secrets mode)
+    // ============================================================================
+
+    /**
+     * Load and display story mode elements on the map
+     */
+    async loadStoryElements() {
+        try {
+            const response = await ApiService.storyElements.getAll();
+            const elements = response.story_elements || [];
+
+            // Clear existing story markers
+            this.clearStoryMarkers();
+
+            if (elements.length === 0) {
+                console.log('📖 No active story mode elements to display');
+                return;
+            }
+
+            // Get current zoom level
+            const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
+
+            // Add markers for each story element
+            elements.forEach(element => {
+                this.addStoryMarker(element, currentZoom);
+            });
+
+            console.log(`📖 Loaded ${elements.length} story mode elements on map`);
+        } catch (error) {
+            console.error('Error loading story elements:', error);
+        }
+    },
+
+    /**
+     * Clear all story mode markers from the map
+     */
+    clearStoryMarkers() {
+        Object.values(this.storyMarkers).forEach(marker => {
+            if (MapManager.getMap()) {
+                MapManager.getMap().removeLayer(marker);
+            }
+        });
+        this.storyMarkers = {};
+    },
+
+    /**
+     * Add a story mode marker to the map
+     */
+    addStoryMarker(element, zoom = 15) {
+        const markerSize = this.calculateStoryMarkerSize(zoom, element.type);
+        const icon = this.createStoryMarkerIcon(element, markerSize);
+
+        const marker = L.marker([element.latitude, element.longitude], { icon })
+            .addTo(MapManager.getMap())
+            .bindPopup(`
+                <strong>${element.name}</strong><br>
+                <em>${element.description}</em><br>
+                <span style="color: #666; font-size: 11px;">
+                    Type: ${element.type}<br>
+                    Location: ${element.latitude.toFixed(6)}, ${element.longitude.toFixed(6)}
+                </span>
+            `);
+
+        this.storyMarkers[element.id] = marker;
+    },
+
+    /**
+     * Calculate story marker size based on zoom and type
+     */
+    calculateStoryMarkerSize(zoom, type) {
+        const baseSize = 28;
+        const zoomFactor = Math.pow(1.15, zoom - 15);
+        return Math.max(18, Math.min(40, baseSize * zoomFactor));
+    },
+
+    /**
+     * Create story marker icon based on element type
+     */
+    createStoryMarkerIcon(element, size) {
+        let bgColor, borderColor, iconEmoji;
+
+        switch (element.type) {
+            case 'skeleton':
+                bgColor = '#ffd700';     // Gold
+                borderColor = '#b8860b';
+                iconEmoji = '💀';
+                break;
+            case 'corgi':
+                bgColor = '#ff8c00';     // Dark orange
+                borderColor = '#cc7000';
+                iconEmoji = '🐕';
+                break;
+            case 'treasure':
+                bgColor = '#ff0000';     // Red
+                borderColor = '#cc0000';
+                iconEmoji = '❌';
+                break;
+            case 'bandit':
+                bgColor = '#8b0000';     // Dark red
+                borderColor = '#5c0000';
+                iconEmoji = '🏴‍☠️';
+                break;
+            default:
+                bgColor = '#9932cc';     // Purple
+                borderColor = '#7a28a3';
+                iconEmoji = '❓';
+        }
+
+        const borderWidth = Math.max(2, Math.min(4, size / 8));
+        const fontSize = size * 0.6;
+
+        const iconHtml = `
+            <div style="
+                background: ${bgColor};
+                width: ${size}px;
+                height: ${size}px;
+                border-radius: 50%;
+                border: ${borderWidth}px solid ${borderColor};
+                box-shadow: 0 0 ${size/2}px rgba(0, 0, 0, 0.3);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: ${fontSize}px;
+            ">${iconEmoji}</div>
+        `;
+
+        return L.divIcon({
+            className: 'story-marker',
+            html: iconHtml,
+            iconSize: [size, size],
+            iconAnchor: [size / 2, size / 2]
+        });
+    },
+
+    /**
+     * Update story marker sizes based on zoom level
+     */
+    updateStoryMarkerSizes(zoom) {
+        // This would need to store element data like markerData
+        // For now, we can reload story elements on zoom change
+        // which is less efficient but simpler
+    },
+
+    /**
+     * Refresh a single object marker with updated data from server
+     */
+    refreshObjectMarker(objectId) {
+        if (this.markers[objectId] && this.markerData[objectId]) {
+            // Get updated object data from server FIRST
+            ApiService.objects.get(objectId).then(obj => {
+                const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
+                
+                // Remove the old marker
+                if (MapManager.getMap()) {
+                    MapManager.getMap().removeLayer(this.markers[objectId]);
+                }
+                
+                // Add the updated marker
+                this.addObjectMarker(obj, currentZoom);
+                console.log('✅ Object marker refreshed:', objectId);
+            }).catch(error => {
+                console.error('Error refreshing object marker:', error);
+                // Fallback: reload all objects
+                this.loadObjects();
+            });
+        } else {
+            console.log('⚠️ Object marker not found for refresh:', objectId);
+            // Fallback: reload all objects
+            this.loadObjects();
+        }
+    },
+
+    /**
+     * Refresh the map based on current game mode
+     * Called when game mode changes
+     */
+    async refreshForGameMode(gameMode) {
+        if (gameMode === 'dead_mens_secrets') {
+            // Story mode: Load story elements
+            await this.loadStoryElements();
+            console.log('📖 Story mode: Refreshed map with story elements');
+        } else {
+            // Open mode: Clear story markers
+            this.clearStoryMarkers();
+            console.log('🗺️ Open mode: Cleared story markers');
+        }
+
+        // Always reload regular objects
+        await this.loadObjects();
+    },
+
+    /**
+     * Remove all objects within the current map view
+     */
+    async removeObjectsInView() {
+        const map = MapManager.getMap();
+        if (!map) {
+            UI.showStatus('Map not available', 'error');
+            return;
+        }
+
+        try {
+            // Get all objects
+            const objects = await ApiService.objects.getAll(true);
+            
+            // Get current map bounds
+            const bounds = map.getBounds();
+            
+            // Filter objects within visible bounds
+            const objectsInView = objects.filter(obj => 
+                bounds.contains([obj.latitude, obj.longitude])
+            );
+
+            if (objectsInView.length === 0) {
+                UI.showStatus('No objects found in current view', 'info');
+                return;
+            }
+
+            // Show confirmation dialog
+            const confirmed = confirm(`Are you sure you want to delete ${objectsInView.length} object(s) in the current view?\n\nThis action cannot be undone.`);
+            if (!confirmed) {
+                return;
+            }
+
+            UI.showStatus(`Deleting ${objectsInView.length} object(s)...`, 'info');
+
+            // Extract object IDs
+            const objectIds = objectsInView.map(obj => obj.id);
+
+            // Call bulk delete API
+            await ApiService.objects.deleteBulk(objectIds);
+
+            // Remove markers from map immediately
+            objectIds.forEach(id => this.removeObjectMarker(id));
+
+            UI.showStatus(`Successfully deleted ${objectsInView.length} object(s)`, 'success');
+            await StatsManager.refreshStats();
+
+        } catch (error) {
+            console.error('Error removing objects in view:', error);
+            UI.showStatus('Error removing objects: ' + error.message, 'error');
+        }
     }
 };
 
 // Make ObjectsManager available globally
 window.ObjectsManager = ObjectsManager;
-

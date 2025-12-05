@@ -1,47 +1,24 @@
 import SwiftUI
 import CoreLocation
 
-// MARK: - NPC Info
-struct ConversationNPC: Equatable {
-    let id: String
-    let name: String
-}
-
 // MARK: - Main Content View
 struct ContentView: View {
     @StateObject private var locationManager = LootBoxLocationManager()
     @StateObject private var userLocationManager = UserLocationManager()
     @StateObject private var treasureHuntService = TreasureHuntService()
     @StateObject private var gridTreasureMapService = GridTreasureMapService()
+    @StateObject private var inventoryService = InventoryService()
     
     // Grid treasure map modal state (separate from sheets)
     @State private var showGridTreasureMap = false
     
-    // QR Scanner state for automatic connection failure handling
+    // QR Scanner state (manually triggered from Settings)
     @State private var showQRScanner = false
     @State private var scannedURL: String?
-    @State private var hasCheckedHealth = false
+
+    // Action sheet state for + menu
+    @State private var showPlusMenu = false
     
-    // Use enum-based sheet state to prevent multiple sheets being presented simultaneously
-    enum SheetType: Identifiable {
-        case locationConfig
-        case arPlacement
-        case settings
-        case leaderboard
-        case skeletonConversation(npcId: String, npcName: String)
-        case treasureMap
-        
-        var id: String {
-            switch self {
-            case .locationConfig: return "locationConfig"
-            case .arPlacement: return "arPlacement"
-            case .settings: return "settings"
-            case .leaderboard: return "leaderboard"
-            case .skeletonConversation(let npcId, _): return "skeletonConversation_\(npcId)"
-            case .treasureMap: return "treasureMap"
-            }
-        }
-    }
     
     @State private var presentedSheet: SheetType? = nil
     @State private var conversationNPC: ConversationNPC? = nil
@@ -95,15 +72,18 @@ struct ContentView: View {
     // MARK: - View Components
     
     private var topOverlayView: some View {
-        VStack {
-            topToolbarView
-            
-            locationDisplayView
-            
-            Spacer()
-            
-            notificationsView
-        }
+        TopOverlayView(
+            showPlusMenu: $showPlusMenu,
+            showGridTreasureMap: $showGridTreasureMap,
+            presentedSheet: $presentedSheet,
+            isGPSConnected: isGPSConnected,
+            formatDistanceInFeetInches: formatDistanceInFeetInches,
+            collectionNotification: collectionNotification,
+            temperatureStatus: temperatureStatus,
+            directionIndicatorView: AnyView(directionIndicatorView),
+            locationManager: locationManager,
+            userLocationManager: userLocationManager
+        )
     }
     
     private var topToolbarView: some View {
@@ -125,7 +105,12 @@ struct ContentView: View {
             Button(action: {
                 // Use async to avoid modifying state during view update
                 Task { @MainActor in
-                    presentedSheet = .locationConfig
+                    // Show different map views based on game mode
+                    if locationManager.gameMode == .deadMensSecrets {
+                        presentedSheet = .treasureMap
+                    } else {
+                        presentedSheet = .mapView
+                    }
                 }
             }) {
                 Image(systemName: "map")
@@ -135,15 +120,37 @@ struct ContentView: View {
             }
             
             Button(action: {
-                // Use async to avoid modifying state during view update
-                Task { @MainActor in
-                    presentedSheet = .arPlacement
-                }
+                // Show action sheet with + menu options
+                showPlusMenu = true
             }) {
                 Image(systemName: "plus")
                     .padding()
                     .background(.ultraThinMaterial)
                     .cornerRadius(10)
+            }
+            .actionSheet(isPresented: $showPlusMenu) {
+                ActionSheet(
+                    title: Text("Create"),
+                    message: Text("Choose what to create"),
+                    buttons: [
+                        .default(Text("Place AR Object")) {
+                            Task { @MainActor in
+                                presentedSheet = .arPlacement
+                            }
+                        },
+                        .default(Text("Place NFC Token")) {
+                            Task { @MainActor in
+                                presentedSheet = .nfcWriting
+                            }
+                        },
+                        .default(Text("Scan NFC Token")) {
+                            Task { @MainActor in
+                                presentedSheet = .nfcScanner
+                            }
+                        },
+                        .cancel()
+                    ]
+                )
             }
         }
         .padding(.top)
@@ -168,7 +175,7 @@ struct ContentView: View {
                        let treasureLocation = treasureHuntService.treasureLocation,
                        let mapPiece = treasureHuntService.mapPiece {
                         // Update grid map service with current data
-                        let landmarks = mapPiece.landmarks.map { landmarkData in
+                        let landmarks: [LandmarkAnnotation] = (mapPiece.landmarks ?? []).map { landmarkData in
                             let landmarkType: LandmarkType
                             switch landmarkData.type.lowercased() {
                             case "water": landmarkType = .water
@@ -191,7 +198,8 @@ struct ContentView: View {
                         gridTreasureMapService.updateMapData(
                             treasureLocation: treasureLocation.coordinate,
                             landmarks: landmarks,
-                            userLocation: userLocationManager.currentLocation?.coordinate
+                            userLocation: userLocationManager.currentLocation?.coordinate,
+                            userLocationManager: userLocationManager
                         )
                         showGridTreasureMap = true
                     } else {
@@ -274,7 +282,43 @@ struct ContentView: View {
                     .background(.ultraThinMaterial)
                     .cornerRadius(10)
             }
-            
+
+            Button(action: {
+                // Use async to avoid modifying state during view update
+                Task { @MainActor in
+                    presentedSheet = .inventory
+                }
+            }) {
+                ZStack {
+                    Image(systemName: "backpack.fill")
+                        .foregroundColor(.orange)
+                        .padding()
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(10)
+
+                    // Show notification dot if there are new items
+                    if inventoryService.hasNewItems {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 8, height: 8)
+                            .offset(x: 8, y: -8)
+                    }
+                }
+            }
+
+            Button(action: {
+                // Use async to avoid modifying state during view update
+                Task { @MainActor in
+                    presentedSheet = .simpleNFCScanner
+                }
+            }) {
+                Image(systemName: "wave.3.right.circle")
+                    .foregroundColor(.cyan)
+                    .padding()
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(10)
+            }
+
             Button(action: {
                 // Use async to avoid modifying state during view update
                 Task { @MainActor in
@@ -356,255 +400,217 @@ struct ContentView: View {
         }
     }
     
+    // Helper to build sheet content - breaks up complex expression
+    @ViewBuilder
     var body: some View {
-        ZStack {
-            ARLootBoxView(
-                locationManager: locationManager,
-                userLocationManager: userLocationManager,
-                nearbyLocations: $nearbyLocations,
-                distanceToNearest: $distanceToNearest,
-                temperatureStatus: $temperatureStatus,
-                collectionNotification: $collectionNotification,
-                nearestObjectDirection: $nearestObjectDirection,
-                conversationNPC: $conversationNPC,
-                treasureHuntService: treasureHuntService
-            )
-            .ignoresSafeArea()
-            
+        mainContentView
+            .onAppear(perform: handleAppear)
+            .onChange(of: presentedSheet) { oldSheet, newSheet in
+                handleSheetChange(oldSheet: oldSheet, newSheet: newSheet)
+                // Clear conversationNPC when skeleton conversation sheet is dismissed
+                if oldSheet != nil, newSheet == nil {
+                    // Sheet was dismissed - check if it was a skeleton conversation
+                    if case .skeletonConversation = oldSheet {
+                        conversationNPC = nil
+                    }
+                }
+            }
+            .onChange(of: showGridTreasureMap) { oldValue, newValue in
+                handleGridMapChange(oldValue: oldValue, newValue: newValue)
+            }
+            .fullScreenCover(isPresented: $showGridTreasureMap) {
+                GridTreasureMapView(mapService: gridTreasureMapService)
+            }
+            .sheet(item: $presentedSheet) { sheetType in
+                SheetContentView(
+                    sheetType: sheetType,
+                    locationManager: locationManager,
+                    userLocationManager: userLocationManager,
+                    treasureHuntService: treasureHuntService,
+                    gridTreasureMapService: gridTreasureMapService,
+                    inventoryService: inventoryService,
+                    dismiss: { presentedSheet = nil }
+                )
+                    .onAppear {
+                        NotificationCenter.default.post(name: NSNotification.Name("DialogOpened"), object: nil)
+                    }
+                    .onDisappear {
+                        NotificationCenter.default.post(name: NSNotification.Name("DialogClosed"), object: nil)
+                    }
+            }
+            .onChange(of: conversationNPC) { oldNPC, newNPC in
+                // Only open sheet if there's a new NPC and we don't already have that sheet open
+                if let npc = newNPC {
+                    // Check if we need to open the sheet (either it's a new NPC or the sheet isn't currently showing)
+                    let shouldOpen = oldNPC?.id != npc.id || presentedSheet == nil
+                    if shouldOpen {
+                        presentedSheet = .skeletonConversation(npcId: npc.id, npcName: npc.name)
+                    }
+                }
+            }
+            .sheet(isPresented: $showQRScanner) {
+                QRCodeScannerView(scannedURL: $scannedURL)
+            }
+            .onChange(of: showQRScanner) { oldValue, newValue in
+                handleQRScannerChange(oldValue: oldValue, newValue: newValue)
+            }
+            .onChange(of: scannedURL) { oldURL, newURL in
+                handleScannedURLChange(oldURL: oldURL, newURL: newURL)
+            }
+            .onChange(of: userLocationManager.currentLocation) { oldLocation, newLocation in
+                handleLocationChange(oldLocation: oldLocation, newLocation: newLocation)
+            }
+    }
+    
+    // Break up body into smaller computed properties
+    private var mainContentView: some View {
+        let arView = ARLootBoxView(
+            locationManager: locationManager,
+            userLocationManager: userLocationManager,
+            nearbyLocations: $nearbyLocations,
+            distanceToNearest: $distanceToNearest,
+            temperatureStatus: $temperatureStatus,
+            collectionNotification: $collectionNotification,
+            nearestObjectDirection: $nearestObjectDirection,
+            conversationNPC: $conversationNPC,
+            treasureHuntService: treasureHuntService
+        )
+        .ignoresSafeArea()
+
+        return ZStack {
+            arView
             topOverlayView
-            
             bottomCounterView
         }
-        .fullScreenCover(isPresented: $showGridTreasureMap) {
-            GridTreasureMapView(mapService: gridTreasureMapService)
-        }
-        .sheet(item: $presentedSheet) { sheetType in
-            Group {
-                switch sheetType {
-                case .locationConfig:
-                    LocationConfigView(locationManager: locationManager)
-                case .arPlacement:
-                    ARPlacementView(locationManager: locationManager, userLocationManager: userLocationManager)
-                case .settings:
-                    SettingsView(locationManager: locationManager, userLocationManager: userLocationManager)
-                case .leaderboard:
-                    NavigationView {
-                        LeaderboardView()
-                            .navigationTitle("Leaderboard")
-                            .navigationBarTitleDisplayMode(.inline)
-                            .toolbar {
-                                ToolbarItem(placement: .navigationBarTrailing) {
-                                    Button("Done") {
-                                        presentedSheet = nil
-                                    }
-                                }
-                            }
-                    }
-                case .skeletonConversation(let npcId, let npcName):
-                    SkeletonConversationView(
-                        npcName: npcName,
-                        npcId: npcId,
-                        onMapMentioned: {
-                            // Close conversation and open treasure map
-                            presentedSheet = nil
-                            // Small delay to allow conversation to close smoothly
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                                presentedSheet = .treasureMap
-                            }
-                        },
-                        treasureHuntService: treasureHuntService,
-                        userLocationManager: userLocationManager
-                    )
-                    .presentationDetents([.medium])
-                    .presentationDragIndicator(.visible)
-                    .presentationBackground(.clear)
-                case .treasureMap:
-                    // Show treasure map if we have map data
-                    if let mapPiece = treasureHuntService.mapPiece,
-                       let treasureLocation = treasureHuntService.treasureLocation {
-                        // Create treasure map data from map piece
-                        let landmarks = mapPiece.landmarks.map { landmarkData in
-                            let landmarkType: LandmarkType
-                            switch landmarkData.type.lowercased() {
-                            case "water": landmarkType = .water
-                            case "tree": landmarkType = .tree
-                            case "building": landmarkType = .building
-                            case "mountain": landmarkType = .mountain
-                            case "path": landmarkType = .path
-                            default: landmarkType = .building
-                            }
-                            
-                            return LandmarkAnnotation(
-                                id: UUID().uuidString,
-                                coordinate: CLLocationCoordinate2D(latitude: landmarkData.latitude, longitude: landmarkData.longitude),
-                                name: landmarkData.name,
-                                type: landmarkType,
-                                iconName: landmarkType.iconName
-                            )
-                        }
-                        
-                        let mapData = TreasureMapData(
-                            mapName: "Captain Bones' Treasure Map",
-                            xMarksTheSpot: treasureLocation.coordinate,
-                            landmarks: landmarks,
-                            clueCoordinates: []
-                        )
-                        
-                        TreasureMapView(
-                            mapData: mapData,
-                            userLocationManager: userLocationManager
-                        )
-                    } else {
-                        // Fallback: show regular map if treasure map not available
-                        LocationConfigView(locationManager: locationManager)
-                    }
-                }
-            }
-            .onAppear {
-                // Notify AR coordinator that dialog is open
-                NotificationCenter.default.post(name: NSNotification.Name("DialogOpened"), object: nil)
-            }
-            .onDisappear {
-                // Notify AR coordinator that dialog is closed
-                NotificationCenter.default.post(name: NSNotification.Name("DialogClosed"), object: nil)
-            }
-        }
-        .onChange(of: conversationNPC) { _, newNPC in
-            if let npc = newNPC {
-                presentedSheet = .skeletonConversation(npcId: npc.id, npcName: npc.name)
-            }
-        }
-        .onAppear {
-            userLocationManager.requestLocationPermission()
+    }
+    
+    // Break up onChange handlers into separate functions
+    private func handleAppear() {
+        // Set location manager reference in user location manager for game mode checks
+        userLocationManager.lootBoxLocationManager = locationManager
+        
+        userLocationManager.requestLocationPermission()
 
-            // Auto-connect WebSocket on app start
+        // Initialize offline mode manager with location manager reference
+        OfflineModeManager.shared.setLocationManager(locationManager)
+
+        // Auto-connect WebSocket on app start (only if not in offline mode)
+        if !OfflineModeManager.shared.isOfflineMode {
+            WebSocketService.shared.connect()
+        } else {
+            print("📴 Offline mode enabled - skipping WebSocket connection")
+        }
+        
+        // Sync saved user name to server on app startup (only if not offline)
+        if !OfflineModeManager.shared.isOfflineMode {
+            APIService.shared.syncSavedUserNameToServer()
+        }
+        
+        // Note: QR scanner is now only available manually from Settings
+        // Offline mode is supported, so we don't automatically show QR scanner on connection failures
+    }
+    
+    private func handleSheetChange(oldSheet: SheetType?, newSheet: SheetType?) {
+        // Notify AR coordinator when sheets are presented/dismissed
+        if newSheet != nil && oldSheet == nil {
+            // Sheet was presented
+            NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
+        } else if newSheet == nil && oldSheet != nil {
+            // Sheet was dismissed
+            NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
+        }
+    }
+    
+    private func handleGridMapChange(oldValue: Bool, newValue: Bool) {
+        // Handle fullScreenCover presentation
+        if newValue && !oldValue {
+            NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
+        } else if !newValue && oldValue {
+            NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
+        }
+    }
+    
+    private func handleQRScannerChange(oldValue: Bool, newValue: Bool) {
+        // Handle QR scanner sheet presentation
+        if newValue && !oldValue {
+            NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
+        } else if !newValue && oldValue {
+            NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
+        }
+    }
+    
+    private func handleScannedURLChange(oldURL: String?, newURL: String?) {
+        guard let url = newURL, url != oldURL else { return }
+        
+        // Update API URL with scanned QR code
+        DispatchQueue.main.async {
+            // Save the scanned URL
+            UserDefaults.standard.set(url, forKey: "apiBaseURL")
+            
+            // Reset scannedURL after processing to allow scanning again
+            self.scannedURL = nil
+            
+            // Try to reconnect
+            WebSocketService.shared.disconnect()
             WebSocketService.shared.connect()
             
-            // Sync saved user name to server on app startup
-            // This ensures the name persists between sessions
-            APIService.shared.syncSavedUserNameToServer()
-            
-            // Check API health on startup and show QR scanner if connection fails
-            if !hasCheckedHealth {
-                hasCheckedHealth = true
-                Task {
-                    do {
-                        let isHealthy = try await APIService.shared.checkHealth()
-                        if !isHealthy {
-                            // Connection failed - show QR scanner automatically
-                            await MainActor.run {
-                                showQRScanner = true
-                            }
-                        }
-                    } catch {
-                        // Connection error - show QR scanner automatically
+            // Verify connection
+            Task {
+                do {
+                    let isHealthy = try await APIService.shared.checkHealth()
+                    if isHealthy {
+                        // Connection successful - close QR scanner
                         await MainActor.run {
-                            showQRScanner = true
+                            self.showQRScanner = false
                         }
                     }
+                } catch {
+                    // Still failed - keep QR scanner open
+                    print("⚠️ Connection still failed after scanning QR code")
                 }
             }
         }
-        .sheet(isPresented: $showQRScanner) {
-            QRCodeScannerView(scannedURL: $scannedURL)
+    }
+    
+    private func handleLocationChange(oldLocation: CLLocation?, newLocation: CLLocation?) {
+        // PERFORMANCE: Debounce location updates to prevent excessive API calls
+        // Cancel previous task if still pending
+        locationUpdateTask?.cancel()
+        
+        // When we get a GPS fix, automatically load shared objects from API
+        // SKIP in story modes - we only show NPCs, no loot boxes
+        guard locationManager.gameMode == .open else {
+            Swift.print("📖 Story mode active - skipping API object loading (NPCs only)")
+            return
         }
-        .onChange(of: scannedURL) { oldURL, newURL in
-            guard let url = newURL, url != oldURL else { return }
-            
-            // Update API URL with scanned QR code
-            DispatchQueue.main.async {
-                // Save the scanned URL
-                UserDefaults.standard.set(url, forKey: "apiBaseURL")
-                
-                // Reset scannedURL after processing to allow scanning again
-                self.scannedURL = nil
-                
-                // Try to reconnect
-                WebSocketService.shared.disconnect()
-                WebSocketService.shared.connect()
-                
-                // Verify connection
-                Task {
-                    do {
-                        let isHealthy = try await APIService.shared.checkHealth()
-                        if isHealthy {
-                            // Connection successful - close QR scanner
-                            await MainActor.run {
-                                self.showQRScanner = false
-                            }
-                        }
-                    } catch {
-                        // Still failed - keep QR scanner open
-                        print("⚠️ Connection still failed after scanning QR code")
-                    }
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("APIConnectionFailed"))) { _ in
-            // Show QR scanner when API connection fails
-            if !showQRScanner {
-                showQRScanner = true
-            }
-        }
-        .onChange(of: userLocationManager.currentLocation) { _, newLocation in
-            // PERFORMANCE: Debounce location updates to prevent excessive API calls
-            // Cancel previous task if still pending
-            locationUpdateTask?.cancel()
-            
-            // When we get a GPS fix, automatically load shared objects from API
-            // SKIP in story modes - we only show NPCs, no loot boxes
-            guard locationManager.gameMode == .open else {
-                Swift.print("📖 Story mode active - skipping API object loading (NPCs only)")
+
+        if let location = newLocation {
+            // Check if we have a valid GPS fix
+            guard location.horizontalAccuracy >= 0 && location.horizontalAccuracy < 100 else {
                 return
             }
 
-            if let location = newLocation {
-                // Check if we have a valid GPS fix
-                guard location.horizontalAccuracy >= 0 && location.horizontalAccuracy < 100 else {
-                    return
-                }
-
-                // PERFORMANCE: Debounce - wait 2 seconds before making API call
-                // This prevents rapid-fire API calls when GPS updates frequently
-                locationUpdateTask = Task {
-                    do {
-                        // Wait 2 seconds before making the call
-                        try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-                        
-                        // Check if task was cancelled
-                        guard !Task.isCancelled else { return }
-                        
-                        // Auto-load shared objects from API on background thread
-                        await locationManager.loadLocationsFromAPI(userLocation: location)
-                    } catch {
-                        // Task was cancelled or sleep failed - ignore
-                        if !(error is CancellationError) {
-                            Swift.print("⚠️ Location update task error: \(error)")
-                        }
+            // PERFORMANCE: Debounce - wait 2 seconds before making API call
+            // This prevents rapid-fire API calls when GPS updates frequently
+            locationUpdateTask = Task {
+                do {
+                    // Wait 2 seconds before making the call
+                    try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                    
+                    // Check if task was cancelled
+                    guard !Task.isCancelled else { return }
+                    
+                    // Auto-load shared objects from API on background thread
+                    await locationManager.loadLocationsFromAPI(userLocation: location)
+                } catch {
+                    // Task was cancelled or sleep failed - ignore
+                    if !(error is CancellationError) {
+                        Swift.print("⚠️ Location update task error: \(error)")
                     }
                 }
             }
         }
-        // Counter is now a computed property, so no onChange handlers needed
-        // It will automatically update when locationManager.locations or locationManager.databaseStats change
-        // No automatic GPS box creation - user must add items manually via map
-        // .onChange(of: userLocationManager.currentLocation) { _, newLocation in
-        //     // When we get a GPS fix, check if we need to create/regenerate locations
-        //     if let location = newLocation {
-        //         // Check if we have a valid GPS fix
-        //         guard location.horizontalAccuracy >= 0 && location.horizontalAccuracy < 100 else {
-        //             return
-        //         }
-        //
-        //         // If no locations, or if we need to check/regenerate, reload with user location
-        //         if locationManager.locations.isEmpty {
-        //             locationManager.loadLocations(userLocation: location)
-        //         } else {
-        //             // Check if existing locations are too far away
-        //             locationManager.loadLocations(userLocation: location)
-        //         }
-        //     }
-        // }
     }
 }
 
+    

@@ -312,6 +312,25 @@ class ARGroundingService {
         }
     }
 
+    /// Returns a default ground height for NPCs when no surface is detected
+    /// - Parameters:
+    ///   - npcName: The name/type of NPC being placed ("skeleton" or "corgi")
+    ///   - cameraPos: Current camera position
+    /// - Returns: A default Y coordinate for placing the NPC
+    func getDefaultGroundHeightForNPC(npcName: String, cameraPos: SIMD3<Float>) -> Float {
+        switch npcName.lowercased() {
+        case "skeleton":
+            // Skeleton: tall character, place on floor
+            return cameraPos.y - 1.5
+        case "corgi", "traveller":
+            // Corgi: small character, place slightly above floor for better visibility
+            return cameraPos.y - 0.8
+        default:
+            // Default for unknown NPCs
+            return cameraPos.y - 1.2
+        }
+    }
+
     /// Finds surface or returns default ground height
     /// This is the ultimate fallback - always returns a valid Y coordinate
     /// - Parameters:
@@ -335,6 +354,32 @@ class ARGroundingService {
         // Use default height for object type
         let defaultY = getDefaultGroundHeight(for: objectType, cameraPos: cameraPos)
         Swift.print("⚠️ ARGroundingService: No surface detected - using default height for \(objectType.displayName): Y=\(String(format: "%.2f", defaultY))")
+        return defaultY
+    }
+
+    /// Finds surface or returns default ground height for NPCs
+    /// This is the ultimate fallback - always returns a valid Y coordinate
+    /// - Parameters:
+    ///   - x: X coordinate in AR world space
+    ///   - z: Z coordinate in AR world space
+    ///   - cameraPos: Current camera position
+    ///   - npcName: The name/type of NPC being placed (for default height)
+    /// - Returns: The Y coordinate to place the NPC at
+    func findSurfaceOrDefaultForNPC(x: Float, z: Float, cameraPos: SIMD3<Float>, npcName: String) -> Float {
+        // Try to find actual surface (silent mode to reduce log spam)
+        if let surfaceY = findHighestBlockingSurface(x: x, z: z, cameraPos: cameraPos, silent: true) {
+            return surfaceY
+        }
+
+        // Try wider search (already uses silent mode internally)
+        if let surfaceY = findSurfaceWithFallback(centerX: x, centerZ: z, cameraPos: cameraPos) {
+            Swift.print("✅ ARGroundingService: Found surface via fallback search for \(npcName)")
+            return surfaceY
+        }
+
+        // Use default height for NPC type
+        let defaultY = getDefaultGroundHeightForNPC(npcName: npcName, cameraPos: cameraPos)
+        Swift.print("⚠️ ARGroundingService: No surface detected - using default height for \(npcName): Y=\(String(format: "%.2f", defaultY))")
         return defaultY
     }
     

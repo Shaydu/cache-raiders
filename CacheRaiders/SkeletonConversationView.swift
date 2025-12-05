@@ -29,7 +29,7 @@ struct SkeletonConversationView: View {
     @FocusState private var isTextFieldFocused: Bool
     
     // Initial greeting from skeleton
-    private let initialGreeting = "Arr, ye've found me, matey! I be Captain Bones, a skeleton from 200 years ago. I know where the treasure be buried! Ask me anything, and I'll help ye find it!"
+    private let initialGreeting = "Arr, ye've found me, matey! I be Captain Bones, the skeleton of a pirate who died 200 years ago today on this very spot. I know where the treasure be buried! Ask me anything, and I'll help ye find it!"
     
     var body: some View {
         VStack(spacing: 0) {
@@ -90,15 +90,21 @@ struct SkeletonConversationView: View {
                     .padding(.vertical, 4)
                 }
                 .frame(maxHeight: .infinity)
-                .onChange(of: messages.count) { _, _ in
+                .onChange(of: messages.count) { oldCount, newCount in
+                    // Only scroll if a new message was actually added (not removed)
+                    guard newCount > oldCount else { return }
+                    
                     // Scroll to bottom when new message arrives
-                    if let lastMessage = messages.last {
-                        withAnimation {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                        }
-                    } else if messages.isEmpty {
-                        withAnimation {
-                            proxy.scrollTo("greeting", anchor: .top)
+                    // Use async to avoid blocking during view updates
+                    Task { @MainActor in
+                        if let lastMessage = messages.last {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                            }
+                        } else if messages.isEmpty {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo("greeting", anchor: .top)
+                            }
                         }
                     }
                 }
@@ -120,6 +126,7 @@ struct SkeletonConversationView: View {
                     .font(.caption)
                     .disabled(isSending)
                     .focused($isTextFieldFocused)
+                    .submitLabel(.send)
                     .onSubmit {
                         sendMessage()
                     }
@@ -140,11 +147,20 @@ struct SkeletonConversationView: View {
             .padding(.vertical, 6)
             .background(.ultraThinMaterial)
         }
-        .background(Color.black.opacity(0.95))
         .onAppear {
             // Auto-focus the text field when the view appears
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            // Use a longer delay to ensure the sheet is fully presented and interactive
+            // The delay ensures the sheet animation completes and the view is ready for input
+            Task { @MainActor in
+                // Wait for sheet presentation animation to complete
+                try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
+                // Ensure we're still on the main thread and view is ready
                 isTextFieldFocused = true
+                // If focus didn't work, try again after a brief moment
+                try? await Task.sleep(nanoseconds: 200_000_000) // 0.2 seconds
+                if !isTextFieldFocused {
+                    isTextFieldFocused = true
+                }
             }
         }
     }
@@ -167,15 +183,17 @@ struct SkeletonConversationView: View {
             // Fetch treasure map from NPC if we have the required services
             if let userLocation = userLocationManager.currentLocation {
                 isSending = true
-                Task {
+                // Perform API call off main thread to prevent UI blocking
+                Task.detached(priority: .userInitiated) { [npcId, npcName, userLocation] in
                     do {
-                        // Fetch the treasure map (this will NOT call the LLM API)
+                        // Perform API call on background thread
                         try await treasureHuntService.handleMapRequest(
                             npcId: npcId,
                             npcName: npcName,
                             userLocation: userLocation
                         )
                         
+                        // Update UI on main thread
                         await MainActor.run {
                             // Add NPC response about the map (local response, not from LLM)
                             let npcMsg = ConversationMessage(
@@ -183,7 +201,6 @@ struct SkeletonConversationView: View {
                                 isFromUser: false
                             )
                             messages.append(npcMsg)
-                            
                             isSending = false
                             
                             // Open the treasure map view after a brief delay
@@ -192,8 +209,8 @@ struct SkeletonConversationView: View {
                             }
                         }
                     } catch {
+                        // Show error message on main thread
                         await MainActor.run {
-                            // Show error message
                             if let apiError = error as? APIError {
                                 switch apiError {
                                 case .serverError(let message):
@@ -226,8 +243,11 @@ struct SkeletonConversationView: View {
         isSending = true
         errorMessage = nil
         
-        Task {
+        // Perform API call off main thread to prevent UI blocking
+        // Use Task.detached to run on background thread, then update UI on main actor
+        Task.detached(priority: .userInitiated) { [npcId, userMessage, npcName] in
             do {
+                // Perform API call on background thread
                 let response = try await APIService.shared.interactWithNPC(
                     npcId: npcId,
                     message: userMessage,
@@ -236,6 +256,7 @@ struct SkeletonConversationView: View {
                     isSkeleton: true
                 )
                 
+                // Update UI on main thread
                 await MainActor.run {
                     // Add NPC message - it will display with typewriter effect
                     let npcMsg = ConversationMessage(text: response.response, isFromUser: false)
@@ -243,8 +264,8 @@ struct SkeletonConversationView: View {
                     isSending = false
                 }
             } catch {
+                // Provide user-friendly error messages on main thread
                 await MainActor.run {
-                    // Provide user-friendly error messages
                     if let apiError = error as? APIError {
                         switch apiError {
                         case .serverError(let message):
@@ -286,6 +307,7 @@ struct ShadowgateMessageBox: View {
     let npcName: String
     
     @StateObject private var typewriterService = TypewriterTextService()
+    @AppStorage("enableTypewriterEffect") private var enableTypewriterEffect: Bool = true
     
     var body: some View {
         HStack {
@@ -333,25 +355,22 @@ struct ShadowgateMessageBox: View {
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
                         } else {
-                            // NPC messages: typewriter effect with audio
-                            Text(typewriterService.displayedText)
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundColor(.yellow.opacity(0.95))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .onAppear {
-                                    // Configure typewriter service
-                                    typewriterService.charactersPerSecond = 30.0
-                                    typewriterService.audioToneID = 1103 // Subtle notification sound
-                                    typewriterService.playAudioForSpaces = false
-                                    typewriterService.playAudioForPunctuation = false
-                                    
-                                    // Start reveal
-                                    typewriterService.startReveal(text: text)
-                                }
-                                .onDisappear {
-                                    typewriterService.cancel()
-                                }
+                            // NPC messages: use typewriter effect with sound if enabled
+                            if enableTypewriterEffect {
+                                // Show typewriter text (or empty string if not started yet)
+                                Text(typewriterService.displayedText.isEmpty ? "" : typewriterService.displayedText)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(.yellow.opacity(0.95))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                            } else {
+                                // Show full text immediately when typewriter is disabled
+                                Text(text)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundColor(.yellow.opacity(0.95))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                            }
                         }
                     }
                 }
@@ -360,6 +379,60 @@ struct ShadowgateMessageBox: View {
             
             if !isFromUser {
                 Spacer()
+            }
+        }
+        .onAppear {
+            // Start typewriter effect for NPC messages if enabled
+            // Use async to prevent blocking the main thread
+            if !isFromUser && enableTypewriterEffect {
+                // Configure typewriter service with same settings as ARConversationOverlay
+                typewriterService.charactersPerSecond = 30.0
+                typewriterService.audioToneID = 1104 // Keyboard clack sound
+                typewriterService.playAudioForSpaces = false
+                typewriterService.playAudioForPunctuation = false
+                typewriterService.randomVariation = 0.3
+                typewriterService.punctuationPauseMultiplier = 3.0
+                
+                // Start revealing text with typewriter effect (non-blocking)
+                // Use Task to ensure it doesn't block the main thread during view rendering
+                Task { @MainActor [text, typewriterService] in
+                    typewriterService.startReveal(text: text)
+                }
+            }
+            // If disabled, do nothing - text will display immediately via the Text(text) path
+        }
+        .onDisappear {
+            // Cancel typewriter effect when view disappears
+            if !isFromUser {
+                typewriterService.cancel()
+            }
+        }
+        .onChange(of: text) { oldText, newText in
+            // Restart typewriter effect if text changes (for new messages) and enabled
+            if !isFromUser && newText != oldText && enableTypewriterEffect {
+                Task { @MainActor in
+                    typewriterService.startReveal(text: newText)
+                }
+            }
+        }
+        .onChange(of: enableTypewriterEffect) { oldValue, newValue in
+            // Handle toggle change (non-blocking)
+            if !isFromUser {
+                Task { @MainActor in
+                    if newValue {
+                        // Enable: start typewriter effect
+                        typewriterService.charactersPerSecond = 30.0
+                        typewriterService.audioToneID = 1104
+                        typewriterService.playAudioForSpaces = false
+                        typewriterService.playAudioForPunctuation = false
+                        typewriterService.randomVariation = 0.3
+                        typewriterService.punctuationPauseMultiplier = 3.0
+                        typewriterService.startReveal(text: text)
+                    } else {
+                        // Disable: cancel and show full text immediately
+                        typewriterService.cancel()
+                    }
+                }
             }
         }
     }

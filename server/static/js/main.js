@@ -24,10 +24,6 @@ const App = {
         // Set up event handlers first (these don't modify DOM)
         this.setupFormHandler();
         this.setupModalHandlers();
-        // Initialize admin settings UI (e.g., generic cache icon toggle)
-        if (window.SettingsManager && typeof SettingsManager.init === 'function') {
-            SettingsManager.init();
-        }
 
         // Defer all DOM modifications to next tick
         setTimeout(async () => {
@@ -39,14 +35,17 @@ const App = {
                 await ObjectsManager.loadObjects();
                 await StatsManager.refreshStats();
                 
+                // Initialize settings manager (loads location update interval from server)
+                await SettingsManager.init();
+                
                 // Load user locations FIRST so connection status is accurate when players list loads
                 await UserLocationsManager.loadUserLocations();
                 
                 // Then load players list (which will check connection status based on locations)
                 await PlayersManager.loadPlayers();
                 
-                // Set up periodic location updates
-                setInterval(() => {
+                // Set up periodic location updates (interval is set by SettingsManager)
+                App.locationUpdateIntervalId = setInterval(() => {
                     UserLocationsManager.loadUserLocations();
                 }, Config.USER_LOCATION_UPDATE_INTERVAL);
 
@@ -169,4 +168,113 @@ initializeApp();
 
 // Make App available globally
 window.App = App;
+
+/**
+ * Legend Manager - Handles map legend functionality
+ */
+const LegendManager = {
+    isExpanded: false,
+
+    /**
+     * Initialize legend
+     */
+    init() {
+        console.log('🗺️ Legend initialized');
+        this.setupEventListeners();
+        // Start minimized by default
+        this.collapseLegend();
+    },
+
+    /**
+     * Setup event listeners
+     */
+    setupEventListeners() {
+        const legend = document.getElementById('mapLegend');
+        if (legend) {
+            // Click anywhere on minimized legend to expand
+            legend.addEventListener('click', (e) => {
+                if (!this.isExpanded && !e.target.closest('.legend-toggle')) {
+                    this.expandLegend();
+                }
+            });
+
+            // Prevent clicks inside expanded legend from collapsing
+            legend.addEventListener('click', (e) => {
+                if (this.isExpanded) {
+                    e.stopPropagation();
+                }
+            });
+        }
+
+        // Click anywhere outside expanded legend to collapse
+        document.addEventListener('click', (e) => {
+            const legend = document.getElementById('mapLegend');
+            if (this.isExpanded && legend && !legend.contains(e.target)) {
+                this.collapseLegend();
+            }
+        });
+    },
+
+    /**
+     * Toggle legend visibility
+     */
+    toggleLegend() {
+        if (this.isExpanded) {
+            this.collapseLegend();
+        } else {
+            this.expandLegend();
+        }
+    },
+
+    /**
+     * Expand legend
+     */
+    expandLegend() {
+        const legend = document.getElementById('mapLegend');
+        if (!legend) return;
+
+        this.isExpanded = true;
+        legend.classList.add('expanded');
+        
+        // Update toggle button text
+        const toggleBtn = legend.querySelector('.legend-toggle');
+        if (toggleBtn) {
+            toggleBtn.textContent = '−';
+        }
+    },
+
+    /**
+     * Collapse legend
+     */
+    collapseLegend() {
+        const legend = document.getElementById('mapLegend');
+        if (!legend) return;
+
+        this.isExpanded = false;
+        legend.classList.remove('expanded');
+        
+        // Update toggle button text
+        const toggleBtn = legend.querySelector('.legend-toggle');
+        if (toggleBtn) {
+            toggleBtn.textContent = '+';
+        }
+    },
+
+    /**
+     * Update legend based on current map state
+     */
+    updateLegend() {
+        // This can be expanded to dynamically update legend items
+        // based on what's currently visible on the map
+        console.log('🗺️ Legend updated');
+    }
+};
+
+// Make LegendManager available globally
+window.LegendManager = LegendManager;
+
+// Initialize legend when DOM is loaded
+document.addEventListener('DOMContentLoaded', function() {
+    LegendManager.init();
+});
 

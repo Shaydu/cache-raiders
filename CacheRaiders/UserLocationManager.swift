@@ -2,6 +2,7 @@ import Foundation
 import CoreLocation
 import Combine
 import AVFoundation
+import UIKit
 
 // MARK: - User Location Manager
 class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
@@ -13,7 +14,10 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     @Published var lastLocationSentSuccessfully: Date? // Track when location was successfully received by server
     private var isSendingInProgress: Bool = false // Prevent concurrent sends
     weak var arCoordinator: ARCoordinator? // Reference to AR coordinator for enhanced location
+    weak var lootBoxLocationManager: LootBoxLocationManager? // Reference to loot box location manager for game mode checks
+    weak var treasureHuntService: TreasureHuntService? // Reference to treasure hunt service for discovery logic
     private var locationUpdateTimer: Timer? // Timer for automatic periodic location updates
+    private var locationUpdateInterval: TimeInterval = 5.0 // Default 5 seconds, will be fetched from server (admin panel setting)
     
     override init() {
         super.init()
@@ -21,6 +25,23 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
         // Use best accuracy for AR precision, but optimize with distance filter
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 10.0 // Update every 10 meters (optimized for battery life)
+        
+        // Listen for location update interval changes via WebSocket
+        WebSocketService.shared.onLocationUpdateIntervalChanged = { [weak self] intervalSeconds in
+            self?.updateLocationInterval(intervalSeconds)
+        }
+    }
+    
+    /// Update location update interval (called when server changes it)
+    private func updateLocationInterval(_ intervalSeconds: Double) {
+        locationUpdateInterval = intervalSeconds
+        print("📍 Location update interval updated via WebSocket: \(intervalSeconds)s")
+        
+        // Restart timer with new interval if it's already running
+        if locationUpdateTimer != nil {
+            stopAutomaticLocationUpdates()
+            startAutomaticLocationUpdates()
+        }
     }
     
     func requestLocationPermission() {
@@ -34,8 +55,29 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
         }
         locationManager.startUpdatingLocation()
         
-        // Start automatic periodic location updates for admin panel (every 5 seconds)
-        startAutomaticLocationUpdates()
+        // Fetch location update interval from server, then start automatic updates
+        Task {
+            await fetchLocationUpdateInterval()
+            await MainActor.run {
+                startAutomaticLocationUpdates()
+            }
+        }
+    }
+    
+    /// Fetch location update interval from server
+    private func fetchLocationUpdateInterval() async {
+        do {
+            let intervalSeconds = try await APIService.shared.getLocationUpdateInterval()
+            await MainActor.run {
+                self.locationUpdateInterval = intervalSeconds
+                print("📍 Location update interval fetched from server: \(intervalSeconds)s")
+            }
+        } catch {
+            print("⚠️ Failed to fetch location update interval from server, using default 5.0s: \(error)")
+            await MainActor.run {
+                self.locationUpdateInterval = 5.0 // Default 5 seconds
+            }
+        }
     }
     
     func stopUpdatingLocation() {
@@ -48,14 +90,15 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
         // Stop any existing timer
         stopAutomaticLocationUpdates()
         
-        // Send location every 5 seconds automatically (matches admin panel polling interval)
+        // Send location at the configured interval (fetched from server)
         // Run on main thread to ensure UI updates work correctly
         DispatchQueue.main.async { [weak self] in
-            self?.locationUpdateTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.locationUpdateTimer = Timer.scheduledTimer(withTimeInterval: self.locationUpdateInterval, repeats: true) { [weak self] _ in
                 self?.sendCurrentLocationToServer()
             }
             // Add timer to common run loop modes so it works even when scrolling
-            if let timer = self?.locationUpdateTimer {
+            if let timer = self.locationUpdateTimer {
                 RunLoop.current.add(timer, forMode: .common)
             }
         }
@@ -68,7 +111,8 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     }
     
     // Send current location to server (for admin map display)
-    // Called automatically every 5 seconds, and also manually when user taps the GPS direction box
+    // Called automatically at the configured interval, and also manually when user taps the GPS direction box
+    // Note: Location updates continue in story mode for admin tracking, using the frequency set in admin panel
     func sendCurrentLocationToServer() {
         // Prevent concurrent sends
         guard !isSendingInProgress else {
@@ -156,20 +200,75 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     // MARK: - CLLocationManagerDelegate
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
-        
+
         // Only update local state - server updates are sent manually when user taps GPS direction box
         currentLocation = location
-        
+
         // Extract heading from location's course (direction of travel)
         // Course is in degrees: 0 = north, 90 = east, 180 = south, 270 = west
         // Only use course if it's valid (>= 0 means valid direction)
         if location.course >= 0 {
             heading = location.course
         }
-        
+
+        // Check for treasure discovery (Dead Men's Secrets mode)
+        checkForTreasureDiscovery(at: location)
+
         // Note: Server updates are sent manually when user taps the GPS direction box
     }
-    
+
+    /// Check if player has arrived at treasure location and trigger IOU discovery
+    private func checkForTreasureDiscovery(at currentLocation: CLLocation) {
+        guard let treasureHuntService = treasureHuntService,
+              let treasureLocation = treasureHuntService.treasureLocation,
+              treasureHuntService.hasMap else {
+            return // No active treasure hunt or no treasure location set
+        }
+
+        // Check if already discovered IOU (don't trigger again)
+        // We'll use the server state for this check, but for now assume we can trigger it
+
+        // Calculate distance to treasure
+        let distanceToTreasure = currentLocation.distance(from: treasureLocation)
+        let discoveryThreshold: Double = 10.0 // 10 meters - close enough to "arrive" at treasure X
+
+        if distanceToTreasure <= discoveryThreshold {
+            print("🎯 Player arrived at treasure location! Distance: \(String(format: "%.1f", distanceToTreasure))m")
+            print("📜 Triggering IOU discovery...")
+
+            // Trigger IOU discovery
+            Task {
+                do {
+                    try await triggerIOUDiscovery(at: currentLocation)
+                } catch {
+                    print("❌ Failed to trigger IOU discovery: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    /// Trigger the IOU discovery by calling the server API
+    private func triggerIOUDiscovery(at currentLocation: CLLocation) async throws {
+        guard let deviceUUID = UIDevice.current.identifierForVendor?.uuidString else {
+            throw NSError(domain: "TreasureHunt", code: 1, userInfo: [NSLocalizedDescriptionKey: "No device UUID available"])
+        }
+
+        print("📡 Calling IOU discovery API...")
+
+        // Call the API to discover IOU using the public APIService method
+        try await APIService.shared.discoverIOU(
+            deviceUUID: deviceUUID,
+            currentLatitude: currentLocation.coordinate.latitude,
+            currentLongitude: currentLocation.coordinate.longitude
+        )
+
+        print("✅ IOU discovery API response received")
+
+        // The API response should contain the IOU note and trigger the corgi spawn
+        // The corgi spawn is handled by the notification posted from the TreasureHuntService
+        // when it processes the API response
+    }
+
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         if let clError = error as? CLError {
             let errorCode = clError.code.rawValue

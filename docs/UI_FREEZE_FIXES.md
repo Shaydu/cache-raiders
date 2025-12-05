@@ -125,3 +125,4 @@ The UI was freezing due to blocking operations on the main thread, including:
    - Load locations on-demand rather than all at once
    - Reduce initial load time
 
+

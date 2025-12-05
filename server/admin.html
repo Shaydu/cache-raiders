@@ -25,11 +25,6 @@
             <h2>Create New Object</h2>
             <form id="objectForm">
                 <div class="form-group">
-                    <label for="objectName">Name</label>
-                    <input type="text" id="objectName" placeholder="Will auto-fill when type is selected" required>
-                </div>
-                
-                <div class="form-group">
                     <label for="objectType">Loot Type</label>
                     <select id="objectType" class="loot-type-select" required>
                         <option value="">Select type...</option>
@@ -45,7 +40,21 @@
                 </div>
                 
                 <div class="form-group">
-                    <label for="objectRadius">Radius (meters)</label>
+                    <label for="objectName">Name</label>
+                    <input type="text" id="objectName" placeholder="Will auto-fill when type is selected" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="objectRadius">
+                        Radius (meters)
+                        <span class="tooltip-trigger" style="position: relative; display: inline-block; margin-left: 6px; cursor: help;">
+                            <span style="color: #999; font-size: 14px; font-weight: normal;">ℹ️</span>
+                            <span class="tooltip-text" style="position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); margin-bottom: 8px; padding: 8px 12px; background: #333; color: #fff; border-radius: 4px; font-size: 11px; white-space: normal; width: 200px; text-align: left; opacity: 0; pointer-events: none; transition: opacity 0.2s; z-index: 1000; border: 1px solid #555; box-shadow: 0 2px 8px rgba(0,0,0,0.3);">
+                                How close the player needs to be (in meters) to find this object. Smaller radius = harder to find.
+                                <span style="position: absolute; top: 100%; left: 50%; transform: translateX(-50%); width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent; border-top: 6px solid #333;"></span>
+                            </span>
+                        </span>
+                    </label>
                     <input type="number" id="objectRadius" value="5.0" min="1" max="100" step="0.5" required>
                 </div>
                 
@@ -79,8 +88,8 @@
                     <div class="stat-label">Unfound</div>
                 </div>
                 <div class="stat-item">
-                    <div class="stat-value" id="totalFinds">-</div>
-                    <div class="stat-label">Total Finds</div>
+                    <div class="stat-value" id="avgFinds">-</div>
+                    <div class="stat-label">AVG Finds</div>
                 </div>
             </div>
             
@@ -108,35 +117,6 @@
                 <button class="btn-refresh" onclick="PlayersManager.loadPlayers()" title="Refresh Players">🔄</button>
             </div>
             
-            <!-- Create New Player Form -->
-            <div style="margin-bottom: 15px; padding: 12px; background: #1a1a1a; border-radius: 4px; border: 1px solid #444;">
-                <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #ccc;">Create New Player</h3>
-                <div style="display: flex; gap: 8px; align-items: flex-end;">
-                    <div style="flex: 1;">
-                        <label style="display: block; margin-bottom: 4px; font-size: 12px; color: #999;">Device UUID</label>
-                        <input type="text" id="newPlayerDeviceUuid" 
-                               placeholder="Enter device UUID (e.g., from iOS app)"
-                               onkeypress="if(event.key === 'Enter') document.getElementById('newPlayerName').focus()"
-                               style="width: 100%; padding: 6px; border: 1px solid #444; border-radius: 4px; background: #2a2a2a; color: #fff; font-size: 12px; font-family: monospace;">
-                    </div>
-                    <div style="flex: 1;">
-                        <label style="display: block; margin-bottom: 4px; font-size: 12px; color: #999;">Player Name</label>
-                        <input type="text" id="newPlayerName" 
-                               placeholder="Enter player name"
-                               onkeypress="if(event.key === 'Enter') PlayersManager.createNewPlayer()"
-                               style="width: 100%; padding: 6px; border: 1px solid #444; border-radius: 4px; background: #2a2a2a; color: #fff; font-size: 12px;">
-                    </div>
-                    <button onclick="PlayersManager.createNewPlayer()" 
-                            onkeypress="if(event.key === 'Enter') PlayersManager.createNewPlayer()"
-                            style="background: #4caf50; color: #fff; border: none; border-radius: 4px; padding: 6px 12px; font-size: 12px; font-weight: bold; cursor: pointer; white-space: nowrap; height: fit-content;">
-                        Create
-                    </button>
-                </div>
-                <p style="margin: 8px 0 0 0; font-size: 11px; color: #666; font-style: italic;">
-                    Tip: You can also update existing player names using the input fields below.
-                </p>
-            </div>
-            
             <div class="filter-controls">
                 <label>
                     <input type="checkbox" id="showDisconnectedPlayers" checked onchange="PlayersManager.loadPlayers()">
@@ -151,7 +131,10 @@
         <div class="section">
             <div class="section-header">
                 <h2>Loot Management</h2>
-                <button class="btn-refresh" onclick="ObjectsManager.loadObjects()" title="Refresh List">🔄</button>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-refresh" onclick="ObjectsManager.loadObjects()" title="Refresh List">🔄</button>
+                    <button class="btn-danger" onclick="ObjectsManager.removeObjectsInView()" title="Remove all objects in current view">🗑️ View</button>
+                </div>
             </div>
             <div class="objects-list" id="objectsList">
                 <div class="loading">Loading objects...</div>
@@ -160,13 +143,72 @@
 
         <div class="section">
             <div class="section-header">
+                <h2>⚙️ Settings</h2>
+            </div>
+            <div class="form-group">
+                <label for="gameMode">Game Mode</label>
+                <select id="gameMode" class="loot-type-select">
+                    <option value="open">Open</option>
+                    <option value="dead_mens_secrets">Story Mode</option>
+                </select>
+                <p style="color: #999; font-size: 11px; margin-top: 5px;">Controls the game mode for all connected players. All players will use the same game mode.</p>
+            </div>
+            <div class="form-group" style="margin-top: 15px;">
+                <label for="locationUpdateInterval">Location Update Frequency</label>
+                <select id="locationUpdateInterval" class="loot-type-select">
+                    <option value="500">0.5 seconds</option>
+                    <option value="1000" selected>1 second</option>
+                    <option value="3000">3 seconds</option>
+                    <option value="5000">5 seconds</option>
+                    <option value="10000">10 seconds</option>
+                    <option value="30000">30 seconds</option>
+                    <option value="60000">60 seconds</option>
+                </select>
+                <p style="color: #999; font-size: 11px; margin-top: 5px;">Controls how often iOS devices send location updates and admin panel polls for updates</p>
+            </div>
+            
+            <div class="form-group" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #444;">
+                <label for="llmProvider">🤖 LLM Provider</label>
+                <select id="llmProvider" class="loot-type-select">
+                    <option value="openai">OpenAI (Cloud)</option>
+                    <option value="ollama">Ollama</option>
+                </select>
+                
+                <label for="llmModel" style="margin-top: 10px; display: block;">Model</label>
+                <select id="llmModel" class="loot-type-select">
+                    <option value="gpt-4o-mini">gpt-4o-mini (OpenAI)</option>
+                    <option value="gpt-4o">gpt-4o (OpenAI)</option>
+                    <option value="gpt-4-turbo">gpt-4-turbo (OpenAI)</option>
+                </select>
+                
+                <p style="color: #999; font-size: 11px; margin-top: 5px;" id="llmProviderInfo">
+                    Current: Loading...
+                </p>
+                <div id="llmProviderStatus" style="margin-top: 8px; padding: 8px; border-radius: 4px; font-size: 11px; display: none;"></div>
+                
+                <div style="margin-top: 10px;">
+                    <label for="llmTestPrompt" style="font-size: 11px; color: #999;">Test Prompt:</label>
+                    <input type="text" id="llmTestPrompt" 
+                           placeholder="Enter a custom prompt to test..." 
+                           value="Say 'Ahoy!' in pirate speak."
+                           style="width: 100%; margin-top: 4px; padding: 8px; background: #333; color: #fff; border: 1px solid #555; border-radius: 4px; font-size: 12px; box-sizing: border-box;">
+                </div>
+                
+                <button id="testLLMButton" style="width: 100%; margin-top: 8px; padding: 8px; background: #444; color: #fff; border: 1px solid #666; border-radius: 4px; cursor: pointer; font-size: 12px;" onmouseover="this.style.background='#555'" onmouseout="this.style.background='#444'">
+                    🧪 Test LLM Connection
+                </button>
+            </div>
+        </div>
+        
+        <div class="section">
+            <div class="section-header">
                 <h2>📱 Server Connection</h2>
                 <button class="btn-refresh" onclick="QRCodeManager.initQRCode()" title="Refresh QR Code">🔄</button>
             </div>
             <p style="color: #ccc; font-size: 12px; margin-bottom: 10px;">Scan this QR code with your iOS app to connect:</p>
             <div id="qrcodeContainer" style="text-align: center; margin: 15px 0; min-height: 220px; display: flex; align-items: center; justify-content: center; position: relative;">
                 <div style="position: relative; display: inline-block;">
-                    <img id="qrcode" src="/api/qrcode" alt="Server QR Code" style="background: white; padding: 10px; border-radius: 8px; display: inline-block; max-width: 100%;" onerror="QRCodeManager.handleQRCodeError()">
+                    <img id="qrcode" src="/api/qrcode?t=0" alt="Server QR Code" style="background: white; padding: 10px; border-radius: 8px; display: inline-block; max-width: 100%;" onerror="QRCodeManager.handleQRCodeError()">
                     <button onclick="QRCodeManager.initQRCode()" style="position: absolute; bottom: 8px; right: 8px; background: rgba(0, 0, 0, 0.7); border: 1px solid #666; color: #fff; padding: 4px 6px; border-radius: 4px; cursor: pointer; font-size: 10px; display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; backdrop-filter: blur(4px);" title="Regenerate QR Code">
                         <span style="font-size: 12px;">🔄</span>
                     </button>
@@ -241,29 +283,59 @@
             </div>
         </div>
 
-        <div class="section">
-            <h2>⚙️ Map Settings</h2>
-            <div class="form-group">
-                <label style="display: block; margin-bottom: 8px; color: #ccc; font-size: 14px;">Map Style</label>
-                <div style="display: flex; flex-direction: column; gap: 8px;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; background: #1a1a1a; border-radius: 4px; transition: background 0.2s;" 
-                           onmouseover="this.style.background='#2a2a2a'" 
-                           onmouseout="this.style.background='#1a1a1a'">
-                        <input type="radio" name="mapStyle" value="standard" id="mapStyleStandard" checked onchange="MapManager.setMapStyle('standard')">
-                        <span>🗺️ Standard (Google Maps style)</span>
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 8px; background: #1a1a1a; border-radius: 4px; transition: background 0.2s;" 
-                           onmouseover="this.style.background='#2a2a2a'" 
-                           onmouseout="this.style.background='#1a1a1a'">
-                        <input type="radio" name="mapStyle" value="pirate" id="mapStylePirate" onchange="MapManager.setMapStyle('pirate')">
-                        <span>🏴‍☠️ Pirate Map (Treasure Map style)</span>
-                    </label>
-                </div>
-            </div>
-        </div>
     </div>
     
     <div id="map"></div>
+    
+    <!-- Map Legend -->
+    <div id="mapLegend" class="map-legend">
+        <div class="legend-header">
+            <h3>Legend</h3>
+            <button class="legend-toggle" onclick="LegendManager.toggleLegend()" title="Toggle Legend">−</button>
+        </div>
+        <div class="legend-content">
+            <div class="legend-item">
+                <div class="legend-icon user-icon">👤</div>
+                <span>Player</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon ar-unfound-icon">AR</div>
+                <span>AR Item (Unfound)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon ar-found-icon">AR</div>
+                <span>AR Item (Found)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon nfc-unfound-icon">N</div>
+                <span>NFC Item (Unfound)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon nfc-found-icon">N</div>
+                <span>NFC Item (Found)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon admin-unfound-icon">A</div>
+                <span>Admin Item (Unfound)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon admin-found-icon">A</div>
+                <span>Admin Item (Found)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon regular-unfound-icon"></div>
+                <span>Regular Item (Unfound)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon regular-found-icon"></div>
+                <span>Regular Item (Found)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-icon npc-icon">💀</div>
+                <span>NPC</span>
+            </div>
+        </div>
+    </div>
     
     <!-- Modal for object details -->
     <div id="objectModal" class="modal-overlay">
@@ -279,13 +351,13 @@
     </div>
     
     <!-- Leaflet JS -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" onerror="console.error('Failed to load Leaflet library')"></script>
     
     <!-- Google Maps JavaScript API -->
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBFw0Qbyq9zTFTd-tUY6d-s6U4ZUwwQZb8"></script>
     
     <!-- Leaflet Google Mutant Plugin (for Google Maps integration with Leaflet) -->
-    <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@latest/dist/Leaflet.GoogleMutant.js"></script>
+    <script src="https://unpkg.com/leaflet.gridlayer.googlemutant@latest/dist/Leaflet.GoogleMutant.js" onerror="console.error('Failed to load Leaflet Google Mutant plugin')"></script>
     
     <!-- Socket.IO Client -->
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
@@ -294,18 +366,21 @@
     
     <!-- Application JavaScript Modules -->
     <!-- Load in dependency order -->
-    <script src="/static/js/config.js"></script>
-    <script src="/static/js/api.js"></script>
-    <script src="/static/js/ui.js"></script>
-    <script src="/static/js/map.js"></script>
-    <script src="/static/js/websocket.js"></script>
-    <script src="/static/js/userLocations.js"></script>
-    <script src="/static/js/stats.js"></script>
-    <script src="/static/js/players.js"></script>
-    <script src="/static/js/qrCode.js"></script>
-    <script src="/static/js/modal.js"></script>
-    <script src="/static/js/objects.js"></script>
-    <script src="/static/js/diagnostics.js"></script>
-    <script src="/static/js/main.js"></script>
+    <script src="/static/js/config.js?v=2"></script>
+    <script src="/static/js/api.js?v=2"></script>
+    <script src="/static/js/ui.js?v=2"></script>
+    <script src="/static/js/game_mode.js?v=2"></script>
+    <script src="/static/js/llm_settings.js?v=2"></script>
+    <script src="/static/js/settings.js?v=2"></script>
+    <script src="/static/js/objects.js?v=2"></script>
+    <script src="/static/js/websocket.js?v=2"></script>
+    <script src="/static/js/map.js?v=2"></script>
+    <script src="/static/js/userLocations.js?v=2"></script>
+    <script src="/static/js/stats.js?v=2"></script>
+    <script src="/static/js/players.js?v=2"></script>
+    <script src="/static/js/qrCode.js?v=2"></script>
+    <script src="/static/js/modal.js?v=2"></script>
+    <script src="/static/js/diagnostics.js?v=2"></script>
+    <script src="/static/js/main.js?v=2"></script>
 </body>
 </html>

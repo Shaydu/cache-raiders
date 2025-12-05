@@ -164,3 +164,4 @@ curl -X POST http://localhost:5001/api/npcs/skeleton-1/interact \
 - **API Key Security**: API keys stored on server, never exposed to client
 - **Real Map Data**: Server fetches OpenStreetMap features for location-based clues
 
+

@@ -257,6 +257,9 @@ const UserLocationsManager = {
      */
     createUserLocationIcon(heading) {
         if (heading !== null && heading !== undefined) {
+            // Fix 180-degree offset: iOS uses course (direction of travel) which needs to be rotated 180° to match map orientation
+            // iOS shows heading correctly, so we add 180° to admin rotation to align with iOS display
+            const adjustedHeading = (heading + 180) % 360;
             return `
                 <div style="
                     width: 22px;
@@ -266,7 +269,7 @@ const UserLocationsManager = {
                     border-radius: 50%;
                     box-shadow: 0 0 12px rgba(33, 150, 243, 0.8), 0 0 6px rgba(33, 150, 243, 0.4);
                     position: relative;
-                    transform: rotate(${heading}deg);
+                    transform: rotate(${adjustedHeading}deg);
                     z-index: 1000;
                 ">
                     <div style="

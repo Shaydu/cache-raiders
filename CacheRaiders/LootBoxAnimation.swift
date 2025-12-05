@@ -10,6 +10,22 @@ class LootBoxAnimation {
     // Static reusable audio player for level-up sound
     private static var audioPlayer: AVAudioPlayer?
     
+    /// Play the happy jig sound (level up sound) for treasure map acquisition
+    static func playOpeningSound() {
+        Swift.print("🎵 Playing happy jig sound for treasure map!")
+
+        // Try to play the level-up sound if available
+        if let player = initializeAudioPlayer() {
+            player.currentTime = 0 // Reset to beginning
+            player.volume = 0.8 // Slightly quieter than full volume
+            player.play()
+        } else {
+            // Fallback: Play a system sound
+            AudioServicesPlaySystemSound(1057) // SMS received sound as happy notification
+            Swift.print("🔊 Played system sound (level-up sound not available)")
+        }
+    }
+
     /// Initializes the static audio player if not already initialized
     private static func initializeAudioPlayer() -> AVAudioPlayer? {
         // Return existing player if already initialized
@@ -448,7 +464,7 @@ class LootBoxAnimation {
     }
     
     /// Plays the opening sound effect and haptic feedback
-    static func playOpeningSound() {
+    static func playOpeningSoundWithHaptics() {
         // Configure audio session for playback
         do {
             let audioSession = AVAudioSession.sharedInstance()

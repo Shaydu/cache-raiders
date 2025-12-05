@@ -71,16 +71,17 @@ struct LeaderboardView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 12) {
-                        ForEach(Array(leaderboard.enumerated()), id: \.offset) { index, finder in
+                        ForEach(Array(leaderboard.enumerated()), id: \.offset) { (index, finder) in
                             LeaderboardRow(
                                 rank: index + 1,
-                                userName: finder.user,
-                                count: finder.count,
+                                userName: finder.display_name ?? finder.user_id,
+                                count: finder.find_count,
                                 isTopThree: index < 3
                             )
                         }
                     }
                     .padding()
+                    .padding(.leading, 8) // Extra padding for rank circles
                 }
             }
         }
@@ -97,18 +98,14 @@ struct LeaderboardView: View {
         errorMessage = nil
 
         // Run on background thread to avoid blocking UI
-        Task.detached(priority: .userInitiated) {
+        Task {
             do {
                 let stats = try await APIService.shared.getStats()
-                await MainActor.run {
-                    self.leaderboard = stats.top_finders
-                    self.isLoading = false
-                }
+                self.leaderboard = stats.top_finders
+                self.isLoading = false
             } catch {
-                await MainActor.run {
-                    self.errorMessage = "Failed to load leaderboard: \(error.localizedDescription)"
-                    self.isLoading = false
-                }
+                self.errorMessage = "Failed to load leaderboard: \(error.localizedDescription)"
+                self.isLoading = false
             }
         }
     }
@@ -128,7 +125,7 @@ struct LeaderboardRow: View {
                 Circle()
                     .fill(rankBadgeColor)
                     .frame(width: 44, height: 44)
-                
+
                 if rank == 1 {
                     Image(systemName: "crown.fill")
                         .foregroundColor(.yellow)
@@ -140,6 +137,7 @@ struct LeaderboardRow: View {
                         .foregroundColor(rankTextColor)
                 }
             }
+            .padding(.leading, 4) // Ensure circle isn't clipped
             
             // User name
             VStack(alignment: .leading, spacing: 4) {
@@ -203,6 +201,7 @@ struct LeaderboardRow: View {
 #Preview {
     LeaderboardView()
 }
+
 
 
 

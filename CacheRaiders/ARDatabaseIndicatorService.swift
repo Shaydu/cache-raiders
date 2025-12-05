@@ -12,15 +12,21 @@ class ARDatabaseIndicatorService {
         // Check if this object exists in the API database
         Task {
             do {
-                let _ = try await APIService.shared.getObject(id: location.id)
-                // Object exists in database - add fuchsia indicator
-                await MainActor.run {
-                    self.createIndicatorEntity(for: location, on: anchor)
-                    Swift.print("🟣 Added database indicator above '\(location.name)' (ID: \(location.id))")
+                let objects = try await APIService.shared.getObjects()
+                // Check if this specific object exists in the database
+                if objects.contains(where: { $0.id == location.id }) {
+                    // Object exists in database - add fuchsia indicator
+                    await MainActor.run {
+                        self.createIndicatorEntity(for: location, on: anchor)
+                        Swift.print("🟣 Added database indicator above '\(location.name)' (ID: \(location.id))")
+                    }
+                } else {
+                    // Object doesn't exist in database - no indicator
+                    // This is expected for local-only objects
                 }
             } catch {
-                // Object doesn't exist in database or API check failed - no indicator
-                // This is expected for local-only objects
+                // API check failed - no indicator
+                // This is expected for local-only objects or network issues
             }
         }
     }

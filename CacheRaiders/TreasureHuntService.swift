@@ -9,7 +9,7 @@ class TreasureHuntService: ObservableObject {
     // MARK: - Published State
 
     @Published var hasMap: Bool = false
-    @Published var mapPiece: APIService.MapPiece?
+    @Published var mapPiece: MapPiece?
     @Published var treasureLocation: CLLocation?
     @Published var showMapModal: Bool = false
 
@@ -82,8 +82,9 @@ class TreasureHuntService: ObservableObject {
             self.hasMap = true
 
             // Extract treasure location from map piece
-            if let lat = mapResponse.map_piece.approximate_latitude,
-               let lon = mapResponse.map_piece.approximate_longitude {
+            if let piece = mapResponse.map_piece {
+                let lat = piece.approximate_latitude
+                let lon = piece.approximate_longitude
                 self.treasureLocation = CLLocation(latitude: lat, longitude: lon)
                 print("🗺️ Treasure location set: \(lat), \(lon)")
             }
@@ -170,7 +171,7 @@ class TreasureHuntService: ObservableObject {
         hasMap = UserDefaults.standard.bool(forKey: hasMapKey)
 
         if let data = UserDefaults.standard.data(forKey: mapPieceKey),
-           let decoded = try? JSONDecoder().decode(APIService.MapPiece.self, from: data) {
+           let decoded = try? JSONDecoder().decode(MapPiece.self, from: data) {
             mapPiece = decoded
         }
 
@@ -195,3 +196,4 @@ class TreasureHuntService: ObservableObject {
         print("🗑️ Treasure hunt state reset")
     }
 }
+
