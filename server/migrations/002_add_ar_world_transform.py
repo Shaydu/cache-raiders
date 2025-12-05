@@ -63,3 +63,4 @@ def migrate_down():
 if __name__ == "__main__":
     migrate_up()
 
+

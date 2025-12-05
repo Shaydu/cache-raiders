@@ -103,11 +103,15 @@ struct ARPlacementView: View {
                             print("   AR Origin: \(arOrigin != nil ? "available" : "nil")")
                             
                             Task {
+                                // Determine the object ID to use for placement
+                                let objectId: String
+
                                 if let selected = selectedObject {
                                     print("📝 [Placement] Updating existing object: \(selected.name) (ID: \(selected.id))")
+                                    objectId = selected.id
                                     // Update existing object
                                     await updateObjectLocation(
-                                        objectId: selected.id,
+                                        objectId: objectId,
                                         coordinate: gpsCoordinate,
                                         arPosition: arPosition,
                                         arOrigin: arOrigin,
@@ -117,8 +121,8 @@ struct ARPlacementView: View {
                                     print("✅ [Placement] Object location updated successfully")
                                 } else {
                                     print("➕ [Placement] Creating new object of type: \(selectedObjectType.displayName)")
-                                    // Create new object
-                                    await createNewObject(
+                                    // Create new object and get the ID returned from API
+                                    objectId = await createNewObject(
                                         type: selectedObjectType,
                                         coordinate: gpsCoordinate,
                                         arPosition: arPosition,
@@ -126,13 +130,12 @@ struct ARPlacementView: View {
                                         groundingHeight: groundingHeight,
                                         scale: scale
                                     )
-                                    print("✅ [Placement] New object created successfully")
+                                    print("✅ [Placement] New object created successfully with ID: \(objectId)")
                                 }
 
                                 // CRITICAL FIX: Instead of reloading and hoping AR offsets are saved,
                                 // directly notify the main AR view with the placement data
                                 // This ensures immediate placement without waiting for API roundtrip
-                                let objectId = selectedObject?.id ?? UUID().uuidString
                                 let placementData: [String: Any] = [
                                     "objectId": objectId,
                                     "gpsCoordinate": CLLocationCoordinate2D(latitude: gpsCoordinate.latitude, longitude: gpsCoordinate.longitude),
@@ -190,6 +193,10 @@ struct ARPlacementView: View {
                 }
             }
             .onDisappear {
+                print("🟢 [AR Placement] View dismissed - returning to main AR view")
+                print("   Main AR view should now restore all placed objects")
+                print("   Main AR view will run checkAndPlaceBoxes to restore objects")
+
                 // When view disappears, save any placed object if one exists
                 // This handles swipe-to-dismiss and navigation bar Done button
                 if placementMode == .placing {
@@ -299,7 +306,7 @@ struct ARPlacementView: View {
         }
     }
 
-    private func createNewObject(type: LootBoxType, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async {
+    private func createNewObject(type: LootBoxType, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async -> String {
         let objectId = UUID().uuidString
 
         // CRITICAL: Include AR offset coordinates in initial object creation for <10cm accuracy
@@ -371,8 +378,13 @@ struct ARPlacementView: View {
             try await APIService.shared.updateGroundingHeight(objectId: createdAPIObject.id, height: groundingHeight)
             // Note: Scale is stored locally or could be added to API in the future
             print("📏 [Placement] Object scale set to \(scale)x (stored locally)")
+
+            // Return the ID from the API (it might be different from the local UUID)
+            return createdAPIObject.id
         } catch {
             print("❌ Failed to create object: \(error)")
+            // Return the original ID even if creation failed (for error handling)
+            return objectId
         }
     }
 }
@@ -470,40 +482,56 @@ struct ARPlacementARView: UIViewRepresentable {
     @Binding var coordinatorBinding: Coordinator?
     
     func makeUIView(context: Context) -> ARView {
-        let arView = ARView(frame: .zero)
-        
-        let config = ARWorldTrackingConfiguration()
-        config.planeDetection = [.horizontal, .vertical]
-        config.environmentTexturing = .automatic
-        
-        // Apply selected lens if available
-        if let selectedLensId = locationManager.selectedARLens,
-           let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
-            config.videoFormat = videoFormat
-            print("📷 Using selected AR lens in placement view: \(selectedLensId)")
+        // CRITICAL: Use shared ARView from main AR view if available
+        // This prevents session reset and maintains the same coordinate system
+        let arView: ARView
+
+        if let sharedARView = locationManager.sharedARView {
+            print("✅ [AR Placement] Using shared ARView from main AR view")
+            print("   AR session will NOT be reset - all placed objects will remain")
+            print("   Coordinate system is shared - precise placement guaranteed")
+            arView = sharedARView
+        } else {
+            print("⚠️ [AR Placement] Shared ARView not available - creating new AR session")
+            print("   This should only happen if placement view is opened before main AR view")
+            print("   WARNING: This will create a different coordinate system")
+
+            // Fallback: Create new ARView if shared one isn't available
+            arView = ARView(frame: .zero)
+
+            let config = ARWorldTrackingConfiguration()
+            config.planeDetection = [.horizontal, .vertical]
+            config.environmentTexturing = .automatic
+
+            // Apply selected lens if available
+            if let selectedLensId = locationManager.selectedARLens,
+               let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
+                config.videoFormat = videoFormat
+                print("📷 [AR Placement] Using selected AR lens: \(selectedLensId)")
+            }
+
+            arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
         }
-        
-        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
-        
+
         // Add tap gesture for placement
         let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleTap(_:)))
         arView.addGestureRecognizer(tapGesture)
-        
+
         // Add long press gesture for drag-to-place
         let longPressGesture = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleLongPress(_:)))
         longPressGesture.minimumPressDuration = 0.3 // 300ms to activate
         arView.addGestureRecognizer(longPressGesture)
-        
+
         // Make tap gesture require long press to fail (so tap still works for quick placement)
         tapGesture.require(toFail: longPressGesture)
 
         context.coordinator.setup(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, selectedObject: selectedObject, objectType: objectType, isNewObject: isNewObject, placementReticle: placementReticle)
         context.coordinator.onPlace = onPlace
         context.coordinator.scaleMultiplier = scaleMultiplier
-        
+
         // Expose coordinator to parent view
         coordinatorBinding = context.coordinator
-        
+
         return arView
     }
     

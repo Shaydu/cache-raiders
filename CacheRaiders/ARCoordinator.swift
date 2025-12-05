@@ -796,6 +796,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
     func checkAndPlaceBoxes(userLocation: CLLocation, nearbyLocations: [LootBoxLocation]) {
+        print("🟢 [checkAndPlaceBoxes] Called with \(nearbyLocations.count) nearby locations")
+        print("   Currently placed objects: \(placedBoxes.count)")
+        print("   User location: (\(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude))")
+
         // STORY MODE: Remove all findables and prevent new placements
         let gameMode = locationManager?.gameMode ?? .open
         let isStoryMode = gameMode == .deadMensSecrets
@@ -4615,6 +4619,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             Swift.print("🔔 [Placement Notification] Direct placement for object: \(objectId)")
             Swift.print("   AR Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))")
             Swift.print("   AR Origin: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
+            Swift.print("   Scale: \(String(format: "%.2f", scale))x")
 
             // CRITICAL: Try to get the actual location from locationManager (it should have AR coordinates already saved)
             // If found, use it directly. Otherwise create a temporary location.
@@ -4657,8 +4662,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 locationToPlace = tempLocation
             }
 
-            // Place immediately at the exact AR coordinates
-            placeObjectAtARPosition(locationToPlace, arPosition: arPosition, userLocation: userLocation)
+            // Place immediately at the exact AR coordinates WITH the scale from placement view
+            placeObjectAtARPosition(locationToPlace, arPosition: arPosition, userLocation: userLocation, scale: scale)
 
         } else {
             // Fallback to old method (reload and check nearby)
@@ -4676,7 +4681,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
 
     /// Place an object directly at specified AR coordinates (for immediate placement after AR creation)
-    private func placeObjectAtARPosition(_ location: LootBoxLocation, arPosition: SIMD3<Float>, userLocation: CLLocation) {
+    private func placeObjectAtARPosition(_ location: LootBoxLocation, arPosition: SIMD3<Float>, userLocation: CLLocation, scale: Float = 1.0) {
         guard let arView = arView else {
             Swift.print("⚠️ Cannot place object: No AR view")
             return
@@ -4761,7 +4766,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Get factory and create entity
             let factory = LootBoxFactoryRegistry.factory(for: location.type)
             // CRITICAL: Use the findableObject returned by factory - it has proper sphere/container references
-            let (entity, findableObject) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: 1.0)
+            // Use the scale parameter from the placement view to maintain consistent size
+            let (entity, findableObject) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: scale)
 
             // Ensure entity is visible and enabled
             entity.isEnabled = true

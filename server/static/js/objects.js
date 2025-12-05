@@ -278,7 +278,7 @@ const ObjectsManager = {
                     <h3>${displayName}</h3>
                     <div class="meta">
                         Type: ${obj.type}<br>
-                        Location: ${obj.latitude.toFixed(6)}, ${obj.longitude.toFixed(6)}<br>
+                        Location: <span onclick="ObjectsManager.centerMapOnCoordinates(${obj.latitude}, ${obj.longitude})" style="color: #4a90e2; cursor: pointer; text-decoration: underline;" title="Click to center map on this location">${obj.latitude.toFixed(6)}, ${obj.longitude.toFixed(6)}</span><br>
                         Radius: ${obj.radius}m<br>
                         ${obj.collected ? `Found by: ${obj.found_by || 'Unknown'}<br>Found at: ${new Date(obj.found_at).toLocaleString()}` : 'Status: Available'}
                     </div>
@@ -471,7 +471,7 @@ const ObjectsManager = {
                 <em>${element.description}</em><br>
                 <span style="color: #666; font-size: 11px;">
                     Type: ${element.type}<br>
-                    Location: ${element.latitude.toFixed(6)}, ${element.longitude.toFixed(6)}
+                    Location: <span onclick="ObjectsManager.centerMapOnCoordinates(${element.latitude}, ${element.longitude})" style="color: #4a90e2; cursor: pointer; text-decoration: underline;" title="Click to center map on this location">${element.latitude.toFixed(6)}, ${element.longitude.toFixed(6)}</span>
                 </span>
             `);
 
@@ -604,6 +604,18 @@ const ObjectsManager = {
     },
 
     /**
+     * Center map on specific coordinates
+     */
+    centerMapOnCoordinates(latitude, longitude, zoom = 18) {
+        if (MapManager && typeof MapManager.setView === 'function') {
+            MapManager.setView([latitude, longitude], zoom);
+            console.log(`🎯 Centered map on coordinates: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+        } else {
+            console.warn('MapManager not available for centering');
+        }
+    },
+
+    /**
      * Remove all objects within the current map view
      */
     async removeObjectsInView() {
@@ -616,12 +628,12 @@ const ObjectsManager = {
         try {
             // Get all objects
             const objects = await ApiService.objects.getAll(true);
-            
+
             // Get current map bounds
             const bounds = map.getBounds();
-            
+
             // Filter objects within visible bounds
-            const objectsInView = objects.filter(obj => 
+            const objectsInView = objects.filter(obj =>
                 bounds.contains([obj.latitude, obj.longitude])
             );
 

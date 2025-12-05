@@ -237,17 +237,32 @@ struct ARViewContainer: UIViewRepresentable {
         // This ensures session(_:didUpdate:) delegate methods are received from the very first frame
         context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, conversationNPC: $conversationNPC, conversationManager: conversationManager, treasureHuntService: treasureHuntService)
 
+        // CRITICAL: Store shared ARView reference in locationManager for placement view
+        // This allows the placement view to use the same AR session instead of creating a new one
+        locationManager.sharedARView = arView
+        print("🎯 [MAKEVIEW] Set sharedARView in locationManager for coordinate consistency")
+
         // CRITICAL: Initialize lastAppliedLensId to prevent updateUIView from thinking lens changed on first call
         context.coordinator.lastAppliedLensId = locationManager.selectedARLens
         print("🎯 [MAKEVIEW] Initialized lastAppliedLensId to: \(context.coordinator.lastAppliedLensId ?? "nil")")
 
         // Run the session AFTER setting up the coordinator and delegate
-        print("🎯 [MAKEVIEW] Starting AR session...")
-        print("🎯 [MAKEVIEW] Delegate before run: \(arView.session.delegate != nil ? "SET" : "NIL")")
-        arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
-        print("🎯 [MAKEVIEW] AR session.run() called")
-        print("🎯 [MAKEVIEW] Delegate after run: \(arView.session.delegate != nil ? "SET" : "NIL")")
-        print("🎯 [MAKEVIEW] Session configuration: \(arView.session.configuration != nil ? "SET" : "NIL")")
+        // CRITICAL: Check if session is already running to avoid reset when returning from placement view
+        let isSessionRunning = arView.session.configuration != nil
+
+        if isSessionRunning {
+            print("✅ [MAIN AR] makeUIView called - Session already running, skipping reset")
+            print("   This preserves all placed objects when returning from placement mode")
+            print("🎯 [MAKEVIEW] Delegate is: \(arView.session.delegate != nil ? "SET" : "NIL")")
+        } else {
+            print("🔴 [MAIN AR] makeUIView called - Starting new AR session")
+            print("🎯 [MAKEVIEW] Starting AR session...")
+            print("🎯 [MAKEVIEW] Delegate before run: \(arView.session.delegate != nil ? "SET" : "NIL")")
+            arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+            print("🎯 [MAKEVIEW] AR session.run() called with RESET options")
+            print("🎯 [MAKEVIEW] Delegate after run: \(arView.session.delegate != nil ? "SET" : "NIL")")
+            print("🎯 [MAKEVIEW] Session configuration: \(arView.session.configuration != nil ? "SET" : "NIL")")
+        }
 
         // Verify delegate is still set after a brief delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

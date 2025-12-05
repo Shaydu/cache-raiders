@@ -512,11 +512,15 @@ struct ContentView: View {
     
     private func handleSheetChange(oldSheet: SheetType?, newSheet: SheetType?) {
         // Notify AR coordinator when sheets are presented/dismissed
-        if newSheet != nil && oldSheet == nil {
-            // Sheet was presented
+        // CRITICAL: Skip pause/resume for AR placement view since it shares the same ARView
+        // Pausing/resuming causes the camera to go black
+        let isARPlacementView = (newSheet == .arPlacement || oldSheet == .arPlacement)
+
+        if newSheet != nil && oldSheet == nil && !isARPlacementView {
+            // Sheet was presented (but not AR placement)
             NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
-        } else if newSheet == nil && oldSheet != nil {
-            // Sheet was dismissed
+        } else if newSheet == nil && oldSheet != nil && !isARPlacementView {
+            // Sheet was dismissed (but not AR placement)
             NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
         }
     }

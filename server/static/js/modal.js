@@ -47,7 +47,7 @@ const ModalManager = {
                 <div class="modal-field">
                     <div class="modal-field-label">Location</div>
                     <div class="modal-field-value">
-                        ${obj.latitude.toFixed(6)}, ${obj.longitude.toFixed(6)}
+                        <span onclick="ObjectsManager.centerMapOnCoordinates(${obj.latitude}, ${obj.longitude})" style="color: #4a90e2; cursor: pointer; text-decoration: underline;" title="Click to center map on this location">${obj.latitude.toFixed(6)}, ${obj.longitude.toFixed(6)}</span>
                     </div>
                 </div>
                 

@@ -16,8 +16,8 @@
             endingColumnNumber = "9223372036854775807"
             startingLineNumber = "1242"
             endingLineNumber = "1242"
-            landmarkName = "randomizeLootBoxes()"
-            landmarkType = "7">
+            landmarkName = "ARCoordinator"
+            landmarkType = "3">
          </BreakpointContent>
       </BreakpointProxy>
    </Breakpoints>

@@ -1,6 +1,7 @@
 import Foundation
 import CoreLocation
 import Combine
+import RealityKit
 
 // MARK: - Game Mode Enum
 /// Represents the game mode
@@ -270,6 +271,7 @@ class LootBoxLocationManager: ObservableObject {
     @Published var showOnlyNextItem: Bool = false // Show only the next unfound item in the list
     @Published var useGenericDoubloonIcons: Bool = false // When enabled, show generic doubloon icons and reveal real objects with animation
     @Published var sharedAROrigin: CLLocation? = nil // Shared AR origin between main AR view and placement view for coordinate consistency
+    weak var sharedARView: ARView? = nil // Shared ARView instance to prevent session resets and maintain coordinate system
     @Published var gameMode: GameMode = .open { // Game mode: Open or Story Mode
         didSet {
             print("🎮 [LootBoxLocationManager] gameMode didSet: \(oldValue.displayName) → \(gameMode.displayName)")
