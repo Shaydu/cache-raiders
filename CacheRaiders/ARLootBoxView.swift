@@ -255,10 +255,18 @@ struct ARViewContainer: UIViewRepresentable {
         // Run the session AFTER setting up the coordinator and delegate
         // CRITICAL: Check if session is already running to avoid reset when returning from placement view
         let isSessionRunning = arView.session.configuration != nil
-        print("🔍 [AR SESSION CHECK] isSessionRunning: \(isSessionRunning)")
+        print("🔍 [AR SESSION CHECK] makeUIView called")
+        print("   ARView ID: \(ObjectIdentifier(arView))")
+        print("   isSessionRunning: \(isSessionRunning)")
         print("   Session state: \(arView.session.configuration != nil ? "CONFIGURED" : "NOT CONFIGURED")")
         print("   ARView frame: \(arView.frame)")
         print("   ARView bounds: \(arView.bounds)")
+        print("   Shared ARView exists: \(locationManager.sharedARView != nil)")
+        if let shared = locationManager.sharedARView {
+            print("   Shared ARView ID: \(ObjectIdentifier(shared))")
+            print("   Same ARView object: \(arView === shared)")
+            print("   Shared session state: \(shared.session.configuration != nil ? "CONFIGURED" : "NOT CONFIGURED")")
+        }
 
         if isSessionRunning {
             print("✅ [MAIN AR] makeUIView called - Session already running, skipping reset")
