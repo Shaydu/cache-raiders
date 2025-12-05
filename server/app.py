@@ -850,46 +850,9 @@ def mark_found(object_id: str):
             if not cursor.fetchone():
                 return jsonify({'error': 'Object not found'}), 404
             
-            # Check if already found
-            cursor.execute('SELECT id, found_by FROM finds WHERE object_id = ?', (object_id,))
-            existing_find = cursor.fetchone()
-            
-            if existing_find:
-                # Object is already found - update the found_by field if different
-                existing_found_by = existing_find[1] if len(existing_find) > 1 else None
-                if existing_found_by != found_by:
-                    # Update the found_by field
-                    found_at = datetime.utcnow().isoformat()
-                    cursor.execute('''
-                        UPDATE finds 
-                        SET found_by = ?, found_at = ?
-                        WHERE object_id = ?
-                    ''', (found_by, found_at, object_id))
-                    conn.commit()
-                    print(f"✅ Updated found_by for object {object_id}: {existing_found_by} -> {found_by}")
-                    
-                    # Broadcast update event
-                    try:
-                        socketio.emit('object_collected', {
-                            'object_id': object_id,
-                            'found_by': found_by,
-                            'found_at': found_at
-                        })
-                    except Exception as emit_error:
-                        print(f"⚠️ Warning: Failed to emit object_collected event: {emit_error}")
-                    
-                    return jsonify({
-                        'object_id': object_id,
-                        'found_by': found_by,
-                        'message': 'Object found_by updated (object was already found)'
-                    }), 200
-                else:
-                    # Already found by the same user - return success
-                    return jsonify({
-                        'object_id': object_id,
-                        'found_by': found_by,
-                        'message': 'Object already found by this user'
-                    }), 200
+            # MULTIPLE FINDS SUPPORT: Always create a new find record
+            # This allows tracking multiple visits/scans of the same object
+            # Previous logic only allowed one find per user per object
             
             # Record new find
             found_at = datetime.utcnow().isoformat()

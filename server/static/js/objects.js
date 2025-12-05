@@ -67,7 +67,17 @@ const ObjectsManager = {
                 Type: ${obj.type}<br>
                 Radius: ${obj.radius}m<br>
                 ${obj.collected ? `<span style="color: #ff6b6b; font-weight: bold;">✓ Collected</span><br>Found by: ${obj.found_by || 'Unknown'}` : '<span style="color: #ffd700; font-weight: bold;">● Available</span>'}
+                ${obj.id.startsWith('nfc_') ? `<br><a href="/nfc/${obj.id}" target="_blank" style="color: #4a90e2; text-decoration: none; font-weight: 500; font-size: 12px;">📊 View Find Sheet →</a>` : ''}
             `);
+
+        // Add tooltip for NFC objects
+        if (obj.id.startsWith('nfc_')) {
+            marker.bindTooltip('Click for details • <a href="/nfc/' + obj.id + '" target="_blank" style="color: #4a90e2;">📊 Find Sheet</a>', {
+                permanent: false,
+                direction: 'top',
+                offset: [0, -10]
+            });
+        }
 
         // Add click handler to open modal
         marker.on('click', () => {

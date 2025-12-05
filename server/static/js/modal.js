@@ -92,6 +92,18 @@ const ModalManager = {
                     <div class="modal-field-value" style="font-size: 12px; font-family: monospace; word-break: break-all;">${obj.id}</div>
                 </div>
 
+                ${obj.id.startsWith('nfc_') ? `
+                <div class="modal-field">
+                    <div class="modal-field-label">NFC Details</div>
+                    <div class="modal-field-value">
+                        <a href="/nfc/${obj.id}" target="_blank" style="color: #4a90e2; text-decoration: none; font-weight: 500;">
+                            📊 View Find Sheet
+                            <span style="font-size: 11px; color: #999; margin-left: 8px;">(opens in new tab)</span>
+                        </a>
+                    </div>
+                </div>
+                ` : ''}
+
                 <!-- Placement Type Information -->
                 ${obj.ar_origin_latitude && obj.ar_origin_longitude
                     ? `
