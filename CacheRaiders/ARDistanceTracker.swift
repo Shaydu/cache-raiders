@@ -234,7 +234,8 @@ class ARDistanceTracker: ObservableObject {
         // Only check placed boxes if we have any, and if no selected object is being tracked
         if targetPosition == nil && !placedBoxes.isEmpty {
             var nearestDistance: Float = .infinity
-            
+            var nearestObjectName: String? = nil
+
             for (locationId, anchor) in placedBoxes {
                 // Skip if already collected
                 guard locationManager.locations.first(where: { $0.id == locationId && !$0.collected }) != nil else {
@@ -275,13 +276,24 @@ class ARDistanceTracker: ObservableObject {
                 if distance < nearestDistance {
                     nearestDistance = distance
                     targetPosition = objectPos
+                    nearestObjectName = locationManager.locations.first(where: { $0.id == locationId && !$0.collected })?.name
                 }
+            }
+
+            // Set the target object name for nearest object
+            if targetPosition != nil {
+                currentTargetObjectName = nearestObjectName
             }
         }
 
         guard let targetPos = targetPosition else {
             nearestObjectDirection = nil
             currentTargetObjectName = nil
+            // Update binding
+            DispatchQueue.main.async { [weak self] in
+                self?.nearestObjectDirectionBinding?.wrappedValue = nil
+                self?.currentTargetObjectNameBinding?.wrappedValue = nil
+            }
             return
         }
 
@@ -341,9 +353,10 @@ class ARDistanceTracker: ObservableObject {
 
         nearestObjectDirection = Double(angle)
         
-        // Update binding
+        // Update bindings
         DispatchQueue.main.async { [weak self] in
             self?.nearestObjectDirectionBinding?.wrappedValue = self?.nearestObjectDirection
+            self?.currentTargetObjectNameBinding?.wrappedValue = self?.currentTargetObjectName
         }
     }
     

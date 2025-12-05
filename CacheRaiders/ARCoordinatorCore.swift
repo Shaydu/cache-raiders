@@ -72,6 +72,7 @@ class ARCoordinatorCore: NSObject {
     var temperatureStatusBinding: Binding<String?>?
     var collectionNotificationBinding: Binding<String?>?
     var nearestObjectDirectionBinding: Binding<Double?>?
+    var currentTargetObjectNameBinding: Binding<String?>?
     var conversationNPCBinding: Binding<ConversationNPC?>?
 
     // Placement state
@@ -86,6 +87,7 @@ class ARCoordinatorCore: NSObject {
 
     // Arrow direction tracking
     @Published var nearestObjectDirection: Double? = nil // Direction in degrees (0 = north, 90 = east, etc.)
+    @Published var currentTargetObjectName: String? = nil // Name of the object the arrow is pointing to
 
     // Viewport visibility tracking for chime sounds
     var objectsInViewport: Set<String> = [] // Track which objects are currently visible
@@ -121,6 +123,7 @@ class ARCoordinatorCore: NSObject {
     ///   - temperatureStatus: Binding for temperature status
     ///   - collectionNotification: Binding for collection notifications
     ///   - nearestObjectDirection: Binding for nearest object direction
+    ///   - currentTargetObjectName: Binding for name of object arrow is pointing to
     ///   - conversationNPC: Binding for conversation NPC
     ///   - conversationManager: AR conversation manager
     ///   - treasureHuntService: Treasure hunt service
@@ -132,6 +135,7 @@ class ARCoordinatorCore: NSObject {
                      temperatureStatus: Binding<String?>,
                      collectionNotification: Binding<String?>,
                      nearestObjectDirection: Binding<Double?>,
+                     currentTargetObjectName: Binding<String?>,
                      conversationNPC: Binding<ConversationNPC?>,
                      conversationManager: ARConversationManager,
                      treasureHuntService: TreasureHuntService? = nil) {
@@ -144,6 +148,7 @@ class ARCoordinatorCore: NSObject {
         self.temperatureStatusBinding = temperatureStatus
         self.collectionNotificationBinding = collectionNotification
         self.nearestObjectDirectionBinding = nearestObjectDirection
+        self.currentTargetObjectNameBinding = currentTargetObjectName
         self.conversationNPCBinding = conversationNPC
         self.conversationManager = conversationManager
         self.treasureHuntService = treasureHuntService
