@@ -4824,11 +4824,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
     /// Handle dialog opened notification - pause AR session
     @objc private func handleDialogOpened(_ notification: Notification) {
+        Swift.print("🔴 [AR SESSION] handleDialogOpened called - PAUSING AR SESSION")
+        Swift.print("   Notification: \(notification.name.rawValue)")
+        Swift.print("   Timestamp: \(Date())")
         isDialogOpen = true
     }
-    
+
     /// Handle dialog closed notification - resume AR session
     @objc private func handleDialogClosed(_ notification: Notification) {
+        Swift.print("🟢 [AR SESSION] handleDialogClosed called - RESUMING AR SESSION")
+        Swift.print("   Notification: \(notification.name.rawValue)")
+        Swift.print("   Timestamp: \(Date())")
         isDialogOpen = false
         // Clear conversationNPC binding to allow re-tapping
         DispatchQueue.main.async { [weak self] in
@@ -4838,22 +4844,30 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     /// Pause AR session when sheet is shown (saves battery and prevents UI freezes)
     private func pauseARSession() {
+        Swift.print("⏸️ [AR SESSION] pauseARSession called")
+        Swift.print("   Thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
+        Swift.print("   Timestamp: \(Date())")
+
         guard let arView = arView else {
             Swift.print("⚠️ Cannot pause AR session: AR view not available")
             return
         }
-        
+
+        Swift.print("   ARView ID: \(ObjectIdentifier(arView))")
+
         // Only pause if session is currently running
         guard arView.session.configuration != nil else {
             Swift.print("ℹ️ AR session not running, skipping pause")
             return
         }
-        
+
         // Save current configuration for resuming
         if let config = arView.session.configuration as? ARWorldTrackingConfiguration {
             savedARConfiguration = config
             Swift.print("⏸️ Pausing AR session (sheet shown)")
+            Swift.print("   Config saved for resume")
             arView.session.pause()
+            Swift.print("   ✅ Session paused")
         } else {
             Swift.print("⚠️ Could not save AR configuration for resuming")
         }
@@ -4861,11 +4875,18 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     /// Resume AR session when sheet is dismissed
     private func resumeARSession() {
+        Swift.print("▶️ [AR SESSION] resumeARSession called")
+        Swift.print("   Thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
+        Swift.print("   Timestamp: \(Date())")
+
         guard let arView = arView else {
             Swift.print("⚠️ Cannot resume AR session: AR view not available")
             return
         }
-        
+
+        Swift.print("   ARView ID: \(ObjectIdentifier(arView))")
+        Swift.print("   Session state before resume: \(arView.session.configuration != nil ? "CONFIGURED" : "NOT CONFIGURED")")
+
         guard let config = savedARConfiguration else {
             Swift.print("⚠️ Cannot resume AR session: No saved configuration")
             // Try to create a default configuration
@@ -4875,13 +4896,19 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 defaultConfig.sceneReconstruction = .mesh
             }
             defaultConfig.environmentTexturing = .automatic
+            Swift.print("   Creating default config and running with empty options")
             arView.session.run(defaultConfig, options: [])
+            Swift.print("   ⚠️ POTENTIAL BLACK SCREEN: Running session.run() without saved config")
             return
         }
-        
+
         Swift.print("▶️ Resuming AR session (sheet dismissed)")
+        Swift.print("   Using saved configuration")
+        Swift.print("   Calling session.run() with empty options")
         // Resume with saved configuration
         arView.session.run(config, options: [])
+        Swift.print("   ✅ Session resumed")
+        Swift.print("   Session state after resume: \(arView.session.configuration != nil ? "CONFIGURED" : "NOT CONFIGURED")")
         savedARConfiguration = nil // Clear saved config after resuming
     }
     

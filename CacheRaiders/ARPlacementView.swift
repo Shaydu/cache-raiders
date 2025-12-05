@@ -192,8 +192,13 @@ struct ARPlacementView: View {
                     }
                 }
             }
+            .onAppear {
+                print("🟢 [AR PLACEMENT LIFECYCLE] View appeared")
+                print("   Timestamp: \(Date())")
+            }
             .onDisappear {
-                print("🟢 [AR Placement] View dismissed - returning to main AR view")
+                print("🟢 [AR PLACEMENT LIFECYCLE] View dismissed - returning to main AR view")
+                print("   Timestamp: \(Date())")
                 print("   Main AR view should now restore all placed objects")
                 print("   Main AR view will run checkAndPlaceBoxes to restore objects")
 
@@ -482,23 +487,33 @@ struct ARPlacementARView: UIViewRepresentable {
     @Binding var coordinatorBinding: Coordinator?
     
     func makeUIView(context: Context) -> ARView {
-        // CRITICAL: Use shared ARView from main AR view if available
-        // This prevents session reset and maintains the same coordinate system
-        let arView: ARView
+        // CRITICAL FIX: DO NOT share the ARView object itself - this causes SwiftUI to move it between view hierarchies
+        // Instead, create a NEW ARView but use the SAME AR session from the shared ARView
+        // This keeps the coordinate system consistent without breaking SwiftUI's view management
 
-        if let sharedARView = locationManager.sharedARView {
-            print("✅ [AR Placement] Using shared ARView from main AR view")
-            print("   AR session will NOT be reset - all placed objects will remain")
-            print("   Coordinate system is shared - precise placement guaranteed")
-            arView = sharedARView
+        print("🎯 [AR Placement] makeUIView called - creating placement ARView")
+
+        // Always create a new ARView for the placement view
+        let arView = ARView(frame: .zero)
+
+        // If main AR view exists and has an active session, use that session
+        // This shares the coordinate system without sharing the actual view
+        if let sharedARView = locationManager.sharedARView,
+           let existingSession = sharedARView.session.configuration {
+            print("✅ [AR Placement] Reusing AR session from main view (coordinate system preserved)")
+            print("   This is a NEW ARView but uses the SAME AR session")
+
+            // Use the existing session from the main AR view
+            // This preserves all tracking data and coordinate system
+            arView.session = sharedARView.session
+
+            print("   AR session shared - all placed objects will remain")
+            print("   Coordinate system is consistent")
         } else {
-            print("⚠️ [AR Placement] Shared ARView not available - creating new AR session")
+            print("⚠️ [AR Placement] No active AR session found - creating new session")
             print("   This should only happen if placement view is opened before main AR view")
-            print("   WARNING: This will create a different coordinate system")
 
-            // Fallback: Create new ARView if shared one isn't available
-            arView = ARView(frame: .zero)
-
+            // Create new session if no shared session exists
             let config = ARWorldTrackingConfiguration()
             config.planeDetection = [.horizontal, .vertical]
             config.environmentTexturing = .automatic
@@ -544,7 +559,19 @@ struct ARPlacementARView: UIViewRepresentable {
             context.coordinator.updateWireframeScale()
         }
     }
-    
+
+    func dismantleUIView(_ uiView: ARView, coordinator: Coordinator) {
+        print("🔴 [AR Placement] dismantleUIView called - cleaning up placement view")
+
+        // CRITICAL: Clean up all wireframe anchors and preview objects we added
+        // This prevents them from persisting in the shared ARView after placement view dismisses
+        coordinator.cleanupPlacementView()
+
+        // CRITICAL: DO NOT call arView.session.pause() or remove the ARView from the scene
+        // This is a SHARED ARView with the main AR view - we just need to clean up our additions
+        print("✅ [AR Placement] Cleanup complete - shared ARView preserved for main AR view")
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(onPlace: onPlace, onCancel: onCancel)
     }
@@ -595,7 +622,46 @@ struct ARPlacementARView: UIViewRepresentable {
         deinit {
             NotificationCenter.default.removeObserver(self)
         }
-        
+
+        /// Clean up all placement view additions (wireframes, previews, crosshairs)
+        /// Called when placement view is dismissed to prevent artifacts in main AR view
+        func cleanupPlacementView() {
+            print("🧹 [Placement] Cleaning up placement view artifacts...")
+
+            // Remove all wireframe anchors (existing objects shown during placement)
+            for (id, anchor) in wireframeAnchors {
+                anchor.removeFromParent()
+                print("   Removed wireframe for object: \(id)")
+            }
+            wireframeAnchors.removeAll()
+
+            // Remove crosshair anchor
+            if let crosshair = crosshairAnchor {
+                crosshair.removeFromParent()
+                crosshairAnchor = nil
+                print("   Removed crosshair anchor")
+            }
+
+            // Remove any dragging wireframe
+            if let draggingAnchor = draggingAnchor {
+                draggingAnchor.removeFromParent()
+                self.draggingAnchor = nil
+                self.draggingWireframeEntity = nil
+                print("   Removed dragging wireframe")
+            }
+
+            // Remove placement reticle
+            placementReticle?.hide()
+            print("   Hidden placement reticle")
+
+            // NOTE: We intentionally do NOT remove placedObjectAnchor here because:
+            // 1. We removed the call to placeObjectImmediately, so there's no preview object anymore
+            // 2. If there were a placed object, removing it here would cause it to disappear
+            //    before the main AR view can re-place it at the saved coordinates
+
+            print("✅ [Placement] Cleanup complete - \(wireframeAnchors.count) wireframes removed")
+        }
+
         var wireframeAnchors: [String: AnchorEntity] = [:]
         var precisionPositioningService: ARPrecisionPositioningService?
         
@@ -1070,23 +1136,7 @@ struct ARPlacementARView: UIViewRepresentable {
             // GPS is only for fallback when AR session restarts
             let surfaceY = Double(adjustedPosition.y)
             print("✅ Placing object at AR position: \(adjustedPosition) (mm-precision, adjusted for reticle offset), GPS fallback: \(gpsCoordinate?.latitude ?? 0), \(gpsCoordinate?.longitude ?? 0), Y: \(surfaceY)m, scale: \(scaleMultiplier)x")
-            
-            // Immediately place the object in AR scene so user can see it
-            let objectId = selectedObject?.id ?? UUID().uuidString
-            let locationName = selectedObject?.name ?? "New \(objectType.displayName)"
-            let tempLocation = LootBoxLocation(
-                id: objectId,
-                name: locationName,
-                type: objectType,
-                latitude: gpsCoordinate?.latitude ?? arOrigin.coordinate.latitude,
-                longitude: gpsCoordinate?.longitude ?? arOrigin.coordinate.longitude,
-                radius: 5.0,
-                grounding_height: surfaceY,
-                source: .map // Use .map so object shows on map immediately
-            )
-            
-            placeObjectImmediately(at: adjustedPosition, location: tempLocation, in: arView)
-            
+
             // Store placement data for potential later save (if user presses Done instead of Place)
             pendingPlacementData = (
                 gpsCoordinate: gpsCoordinate ?? arOrigin.coordinate,
@@ -1095,8 +1145,13 @@ struct ARPlacementARView: UIViewRepresentable {
                 groundingHeight: surfaceY,
                 scale: scaleMultiplier
             )
-            
-            // Then save to API and dismiss (object already visible)
+
+            // CRITICAL FIX: Don't call placeObjectImmediately here - it causes duplicate placement
+            // and the ground snap adjustment compounds, making the object grow.
+            // Instead, just save to API and let the main AR view handle placement after dismiss.
+            // The object will appear in the main AR view via checkAndPlaceBoxes after the placement view dismisses.
+
+            // Save to API and dismiss
             onPlace(gpsCoordinate ?? arOrigin.coordinate, adjustedPosition, arOrigin, surfaceY, scaleMultiplier)
         }
         

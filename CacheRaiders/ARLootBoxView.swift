@@ -176,7 +176,12 @@ struct ARViewContainer: UIViewRepresentable {
     @ObservedObject var treasureHuntService: TreasureHuntService
     
     func makeUIView(context: Context) -> ARView {
+        print("🔵 [AR LIFECYCLE] makeUIView called")
+        print("   Thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
+        print("   Timestamp: \(Date())")
+
         let arView = ARView(frame: .zero)
+        print("   Created new ARView instance: \(ObjectIdentifier(arView))")
 
         // CRITICAL: Load latest locations from API when entering AR mode
         // This ensures any objects placed via admin interface appear immediately
@@ -241,6 +246,7 @@ struct ARViewContainer: UIViewRepresentable {
         // This allows the placement view to use the same AR session instead of creating a new one
         locationManager.sharedARView = arView
         print("🎯 [MAKEVIEW] Set sharedARView in locationManager for coordinate consistency")
+        print("   Shared ARView ID: \(ObjectIdentifier(arView))")
 
         // CRITICAL: Initialize lastAppliedLensId to prevent updateUIView from thinking lens changed on first call
         context.coordinator.lastAppliedLensId = locationManager.selectedARLens
@@ -249,11 +255,20 @@ struct ARViewContainer: UIViewRepresentable {
         // Run the session AFTER setting up the coordinator and delegate
         // CRITICAL: Check if session is already running to avoid reset when returning from placement view
         let isSessionRunning = arView.session.configuration != nil
+        print("🔍 [AR SESSION CHECK] isSessionRunning: \(isSessionRunning)")
+        print("   Session state: \(arView.session.configuration != nil ? "CONFIGURED" : "NOT CONFIGURED")")
+        print("   ARView frame: \(arView.frame)")
+        print("   ARView bounds: \(arView.bounds)")
 
         if isSessionRunning {
             print("✅ [MAIN AR] makeUIView called - Session already running, skipping reset")
             print("   This preserves all placed objects when returning from placement mode")
             print("🎯 [MAKEVIEW] Delegate is: \(arView.session.delegate != nil ? "SET" : "NIL")")
+            if let frame = arView.session.currentFrame {
+                print("   Current tracking state: \(frame.camera.trackingState)")
+            } else {
+                print("   Current tracking state: NO FRAME")
+            }
         } else {
             print("🔴 [MAIN AR] makeUIView called - Starting new AR session")
             print("🎯 [MAKEVIEW] Starting AR session...")
@@ -288,6 +303,11 @@ struct ARViewContainer: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: ARView, context: Context) {
+        print("🔄 [AR LIFECYCLE] updateUIView called")
+        print("   ARView ID: \(ObjectIdentifier(uiView))")
+        print("   Session running: \(uiView.session.configuration != nil)")
+        print("   Thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
+
         let coordinator = context.coordinator
         
         // Throttle updateUIView to prevent excessive calls and freezing
