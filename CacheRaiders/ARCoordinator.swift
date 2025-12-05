@@ -39,6 +39,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var placedBoxesSet: Set<String> = [] // Track IDs of placed boxes
     private var activeAnchors: [String: ARAnchor] = [:] // Track active AR anchors
     let objectPlaced = PassthroughSubject<String, Never>() // Publisher for object placement events
+    // MARK: - Helper Methods
+    private func updateManagerReferences() {
+        // Update all managers that reference placedBoxes
+        occlusionManager?.placedBoxes = placedBoxes
+        distanceTracker?.placedBoxes = placedBoxes
+        tapHandler?.placedBoxes = placedBoxes
+    }
+
     // MARK: - NPC Types
     enum NPCType: String, CaseIterable {
         case skeleton = "skeleton"
@@ -1490,6 +1498,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // The tap handler checks both placedBoxes and findableObjects for tap detection
         tapHandler?.placedBoxes[item.id] = anchor
         tapHandler?.findableObjects[item.id] = findable
+
+        // Update all manager references
+        updateManagerReferences()
 
         Swift.print("✅ Placed AR item '\(item.name)' at camera-relative position")
     }
@@ -4632,11 +4643,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 locationToPlace = actualLocation
             } else {
                 Swift.print("⚠️ Location not found in locationManager, creating temporary location")
+
+                // CRITICAL: Get object type from notification data, or default to chalice
+                let objectTypeString = notification.userInfo?["objectType"] as? String ?? "chalice"
+                let objectType = LootBoxType(rawValue: objectTypeString) ?? .chalice
+                Swift.print("   Using object type from notification: \(objectType.displayName)")
+
                 // Create temporary location for immediate placement
                 var tempLocation = LootBoxLocation(
                     id: objectId,
                     name: "New AR Object", // Will be updated when locations reload
-                    type: .chalice, // Will be updated when locations reload
+                    type: objectType, // Use type from notification
                     latitude: gpsCoordinate.latitude,
                     longitude: gpsCoordinate.longitude,
                     radius: 5.0,
@@ -4660,6 +4677,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 )
 
                 locationToPlace = tempLocation
+
+                // CRITICAL FIX: Add temporary location to locationManager so tap detection works
+                // Without this, the object is placed in AR but tap handler can't find it
+                locationManager?.addLocation(tempLocation)
+                Swift.print("✅ Added temporary location to locationManager for tap detection")
             }
 
             // Place immediately at the exact AR coordinates WITH the scale from placement view
@@ -4824,17 +4846,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
     /// Handle dialog opened notification - pause AR session
     @objc private func handleDialogOpened(_ notification: Notification) {
-        Swift.print("🔴 [AR SESSION] handleDialogOpened called - PAUSING AR SESSION")
-        Swift.print("   Notification: \(notification.name.rawValue)")
-        Swift.print("   Timestamp: \(Date())")
         isDialogOpen = true
     }
 
     /// Handle dialog closed notification - resume AR session
     @objc private func handleDialogClosed(_ notification: Notification) {
-        Swift.print("🟢 [AR SESSION] handleDialogClosed called - RESUMING AR SESSION")
-        Swift.print("   Notification: \(notification.name.rawValue)")
-        Swift.print("   Timestamp: \(Date())")
         isDialogOpen = false
         // Clear conversationNPC binding to allow re-tapping
         DispatchQueue.main.async { [weak self] in
@@ -4910,6 +4926,25 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("   ✅ Session resumed")
         Swift.print("   Session state after resume: \(arView.session.configuration != nil ? "CONFIGURED" : "NOT CONFIGURED")")
         savedARConfiguration = nil // Clear saved config after resuming
+
+        // CRITICAL FIX: Re-place all objects after resuming AR session
+        // When the AR session is paused/resumed, world anchors may lose tracking or shift
+        // Re-placing objects ensures they appear at their stored AR coordinates
+        Swift.print("🔄 Re-placing objects after AR session resume...")
+        if let userLocation = userLocationManager?.currentLocation,
+           let locationManager = locationManager {
+            let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
+            Swift.print("   Found \(nearby.count) nearby locations to re-place")
+
+            // Give AR session a brief moment to stabilize before re-placing objects
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self = self else { return }
+                Swift.print("   Calling checkAndPlaceBoxes to restore objects...")
+                self.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearby)
+            }
+        } else {
+            Swift.print("   ⚠️ Cannot re-place objects: No user location available")
+        }
     }
     
     /// Clear all placed objects from AR scene (loot boxes and NPCs)

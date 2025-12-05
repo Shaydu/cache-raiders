@@ -25,3 +25,4 @@ struct NFCScanOnlyView: View {
         case notFound       // NFC tag scanned but极
 
 
+

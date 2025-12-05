@@ -14,6 +14,10 @@ class ARPlacementReticle: ObservableObject {
 
     private var isActive: Bool = false
 
+    // Smoothing/easing for reticle movement
+    private var targetPosition: SIMD3<Float>?
+    private let smoothingFactor: Float = 0.15 // Lower = smoother but slower (0.0-1.0)
+
     // Published properties for SwiftUI binding
     @Published var currentPosition: SIMD3<Float>?
     @Published var distanceFromCamera: Float?
@@ -215,19 +219,29 @@ class ARPlacementReticle: ObservableObject {
     private func updateReticlePosition(_ position: SIMD3<Float>, cameraPos: SIMD3<Float>) {
         guard let anchor = reticleAnchor else { return }
 
-        // Update anchor position
-        anchor.transform.translation = position
+        // Store target position for smooth interpolation
+        targetPosition = position
 
-        // Calculate distance
-        let distance = length(position - cameraPos)
+        // Get current position
+        let currentPos = anchor.transform.translation
+
+        // Smooth interpolation (lerp) between current and target
+        // This creates an easing effect that follows the camera smoothly
+        let smoothedPosition = currentPos + (position - currentPos) * smoothingFactor
+
+        // Update anchor position with smoothed value
+        anchor.transform.translation = smoothedPosition
+
+        // Calculate distance using smoothed position for consistency
+        let distance = length(smoothedPosition - cameraPos)
 
         // Calculate height from ground (assuming camera is at eye level, ground is ~1.5m below)
         let estimatedGroundY = cameraPos.y - 1.5
-        let heightFromGround = position.y - estimatedGroundY
+        let heightFromGround = smoothedPosition.y - estimatedGroundY
 
-        // Publish updated values for SwiftUI
+        // Publish updated values for SwiftUI using smoothed position
         DispatchQueue.main.async { [weak self] in
-            self?.currentPosition = position
+            self?.currentPosition = smoothedPosition
             self?.distanceFromCamera = distance
             self?.heightFromGround = heightFromGround
         }

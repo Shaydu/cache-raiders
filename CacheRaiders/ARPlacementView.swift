@@ -103,12 +103,14 @@ struct ARPlacementView: View {
                             print("   AR Origin: \(arOrigin != nil ? "available" : "nil")")
                             
                             Task {
-                                // Determine the object ID to use for placement
+                                // Determine the object ID and type to use for placement
                                 let objectId: String
+                                let objectType: LootBoxType
 
                                 if let selected = selectedObject {
                                     print("📝 [Placement] Updating existing object: \(selected.name) (ID: \(selected.id))")
                                     objectId = selected.id
+                                    objectType = selected.type // Use existing object's type
                                     // Update existing object
                                     await updateObjectLocation(
                                         objectId: objectId,
@@ -121,9 +123,10 @@ struct ARPlacementView: View {
                                     print("✅ [Placement] Object location updated successfully")
                                 } else {
                                     print("➕ [Placement] Creating new object of type: \(selectedObjectType.displayName)")
+                                    objectType = selectedObjectType // Use selected type for new object
                                     // Create new object and get the ID returned from API
                                     objectId = await createNewObject(
-                                        type: selectedObjectType,
+                                        type: objectType,
                                         coordinate: gpsCoordinate,
                                         arPosition: arPosition,
                                         arOrigin: arOrigin,
@@ -138,6 +141,7 @@ struct ARPlacementView: View {
                                 // This ensures immediate placement without waiting for API roundtrip
                                 let placementData: [String: Any] = [
                                     "objectId": objectId,
+                                    "objectType": objectType.rawValue, // CRITICAL: Include type for fallback case
                                     "gpsCoordinate": CLLocationCoordinate2D(latitude: gpsCoordinate.latitude, longitude: gpsCoordinate.longitude),
                                     "arPosition": [arPosition.x, arPosition.y, arPosition.z],
                                     "arOrigin": [arOrigin!.coordinate.latitude, arOrigin!.coordinate.longitude],
@@ -502,6 +506,9 @@ struct ARPlacementARView: UIViewRepresentable {
            let existingSession = sharedARView.session.configuration {
             print("✅ [AR Placement] Reusing AR session from main view (coordinate system preserved)")
             print("   This is a NEW ARView but uses the SAME AR session")
+            print("   Main ARView ID: \(ObjectIdentifier(sharedARView))")
+            print("   Placement ARView ID: \(ObjectIdentifier(arView))")
+            print("   Session ID: \(ObjectIdentifier(sharedARView.session))")
 
             // Use the existing session from the main AR view
             // This preserves all tracking data and coordinate system
@@ -509,6 +516,7 @@ struct ARPlacementARView: UIViewRepresentable {
 
             print("   AR session shared - all placed objects will remain")
             print("   Coordinate system is consistent")
+            print("   Shared session tracking state: \(sharedARView.session.currentFrame?.camera.trackingState ?? .notAvailable)")
         } else {
             print("⚠️ [AR Placement] No active AR session found - creating new session")
             print("   This should only happen if placement view is opened before main AR view")
@@ -628,6 +636,10 @@ struct ARPlacementARView: UIViewRepresentable {
         func cleanupPlacementView() {
             print("🧹 [Placement] Cleaning up placement view artifacts...")
 
+            // Stop display link for reticle updates
+            stopDisplayLink()
+            print("   Stopped display link")
+
             // Remove all wireframe anchors (existing objects shown during placement)
             for (id, anchor) in wireframeAnchors {
                 anchor.removeFromParent()
@@ -670,6 +682,9 @@ struct ARPlacementARView: UIViewRepresentable {
         var draggingAnchor: AnchorEntity?
         var isDragging = false
         var draggingShadowEntity: ModelEntity?
+
+        // Display link for continuous reticle updates
+        var displayLink: CADisplayLink?
 
         func setup(arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, selectedObject: LootBoxLocation?, objectType: LootBoxType, isNewObject: Bool, placementReticle: ARPlacementReticle) {
             self.arView = arView
@@ -719,14 +734,57 @@ struct ARPlacementARView: UIViewRepresentable {
                 }
             }
 
-            // Set up AR session delegate to update crosshair position and reticle
-            arView.session.delegate = self
+            // CRITICAL FIX: Do NOT set session delegate when sharing session from main AR view
+            // Setting the delegate breaks the main AR view's session updates
+            // Instead, update crosshair and reticle manually when needed
+            if locationManager.sharedARView == nil {
+                // Only set delegate if we created our own session (fallback case)
+                arView.session.delegate = self
+                print("🎯 [Placement] Set session delegate (fallback case)")
+            } else {
+                print("🎯 [Placement] Skipping session delegate setup (sharing session from main AR view)")
+
+                // CRITICAL: When sharing session, we can't use session delegate
+                // Instead, use a display link to update reticle continuously
+                startDisplayLink()
+            }
 
             // Create crosshairs (keeping old system for now)
             createCrosshairs()
 
             // Place all existing objects as wireframes
             placeAllObjectsAsWireframes()
+
+            // Update crosshair and reticle positions after setup
+            updateCrosshairPosition()
+            placementReticle.update()
+        }
+
+        /// Start display link for continuous reticle updates when session delegate isn't available
+        func startDisplayLink() {
+            // Stop any existing display link
+            stopDisplayLink()
+
+            // Create display link that calls update method every frame
+            let link = CADisplayLink(target: self, selector: #selector(updateReticleFromDisplayLink))
+            link.add(to: .main, forMode: .common)
+            displayLink = link
+            print("🎯 [Placement] Started display link for continuous reticle updates")
+        }
+
+        /// Stop display link
+        func stopDisplayLink() {
+            displayLink?.invalidate()
+            displayLink = nil
+        }
+
+        /// Called by display link to update reticle position every frame
+        @objc func updateReticleFromDisplayLink() {
+            // Update crosshair position as camera moves
+            updateCrosshairPosition()
+
+            // Update placement reticle position
+            placementReticle?.update()
         }
         
         func placeAllObjectsAsWireframes() {
@@ -1485,6 +1543,9 @@ struct ARPlacementARView: UIViewRepresentable {
         }
         
         // MARK: - ARSessionDelegate
+        // NOTE: This delegate method is only used when the placement view creates its own AR session
+        // (fallback case when shared session is not available). When sharing the session from the main
+        // AR view, we don't set this delegate to avoid conflicts.
         func session(_ session: ARSession, didUpdate frame: ARFrame) {
             // Update crosshair position as camera moves
             updateCrosshairPosition()

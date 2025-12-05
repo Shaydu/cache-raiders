@@ -511,35 +511,19 @@ struct ContentView: View {
     }
     
     private func handleSheetChange(oldSheet: SheetType?, newSheet: SheetType?) {
-        print("📋 [SHEET CHANGE] Sheet state changed")
-        print("   Old sheet: \(String(describing: oldSheet))")
-        print("   New sheet: \(String(describing: newSheet))")
-
         // Notify AR coordinator when sheets are presented/dismissed
         // CRITICAL: Skip pause/resume for AR placement view since it shares the same ARView
         // Pausing/resuming causes the camera to go black
         let isARPlacementView = (newSheet == .arPlacement || oldSheet == .arPlacement)
-        print("   Is AR placement view: \(isARPlacementView)")
-        if isARPlacementView {
-            print("   🎯 AR PLACEMENT VIEW DETECTED - should skip AR session pause/resume")
-        }
 
         if newSheet != nil && oldSheet == nil && !isARPlacementView {
             // Sheet was presented (but not AR placement)
-            print("   ➡️ Posting SheetPresented notification")
             NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
         } else if newSheet == nil && oldSheet != nil && !isARPlacementView {
             // Sheet was dismissed (but not AR placement)
-            print("   ⬅️ Posting SheetDismissed notification")
             NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
-        } else if isARPlacementView {
-            print("   ⏭️ Skipping pause/resume for AR placement view")
-            if newSheet == .arPlacement {
-                print("   📍 AR PLACEMENT VIEW OPENED - AR session should remain active")
-            } else if oldSheet == .arPlacement {
-                print("   📍 AR PLACEMENT VIEW CLOSED - AR session should be restored")
-            }
         }
+        // AR placement view: no pause/resume needed (shares AR session)
     }
     
     private func handleGridMapChange(oldValue: Bool, newValue: Bool) {
