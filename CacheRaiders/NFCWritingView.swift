@@ -592,7 +592,17 @@ struct NFCWritingView: View {
         }
     }
 
-    private func createObjectWithCompleteData(type: LootBoxType, location: CLLocation, arAnchorData: Data?, nfcResult: NFCService.NFCResult, compactMessage: String) async {
+    private func createObjectWithCompleteData(
+        type: LootBoxType,
+        location: CLLocation,
+        arOffsetX: Double?,
+        arOffsetY: Double?,
+        arOffsetZ: Double?,
+        arOriginLat: Double?,
+        arOriginLon: Double?,
+        nfcResult: NFCService.NFCResult,
+        compactMessage: String
+    ) async {
         currentStep = .creating
 
         do {
@@ -600,8 +610,19 @@ struct NFCWritingView: View {
             let deviceUUID = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
             let username = UserDefaults.standard.string(forKey: "username") ?? "Player"
 
-            // Create object ID based on NFC tag
-            let objectId = "nfc_\(nfcResult.tagId)_\(Int(Date().timeIntervalSince1970))"
+            // CRITICAL FIX: Extract the object ID from the compact message URL
+            // The compactMessage is in format: "baseURL/nfc/<objectId>"
+            // We need to use the SAME objectId that was written to the NFC tag
+            let objectId: String
+            if let url = URL(string: compactMessage),
+               let lastComponent = url.pathComponents.last {
+                objectId = lastComponent
+                print("✅ Extracted object ID from NFC URL: \(objectId)")
+            } else {
+                // Fallback to old method if URL parsing fails
+                objectId = "nfc_\(nfcResult.tagId)_\(Int(Date().timeIntervalSince1970))"
+                print("⚠️ Failed to extract ID from URL, using fallback: \(objectId)")
+            }
 
             // COMPREHENSIVE database object - store all metadata here
             // This matches what was previously written to NFC but now lives in DB
@@ -619,19 +640,28 @@ struct NFCWritingView: View {
                 "created_by": username
             ]
 
-            // Add AR anchor data if available (for precise positioning when nearby)
-            if let anchorData = arAnchorData {
-                // Use ARPositioningService to encode the anchor transform properly
-                let arService = ARPositioningService.shared
-                // Note: anchorData is already base64 encoded, so we use it directly
-                // In the future, this should be converted to a proper transform matrix
-                objectData["ar_anchor_transform"] = anchorData.base64EncodedString()
-                print("✅ Including AR anchor data in database object (\(anchorData.count) bytes)")
+            // CRITICAL: Add AR offset coordinates if captured from active AR session
+            // This enables centimeter-level precision when users are nearby
+            if let arX = arOffsetX, let arY = arOffsetY, let arZ = arOffsetZ,
+               let originLat = arOriginLat, let originLon = arOriginLon {
+                objectData["ar_offset_x"] = arX
+                objectData["ar_offset_y"] = arY
+                objectData["ar_offset_z"] = arZ
+                objectData["ar_origin_latitude"] = originLat
+                objectData["ar_origin_longitude"] = originLon
+                objectData["ar_placement_timestamp"] = ISO8601DateFormatter().string(from: Date())
+
+                print("✅ Including AR offset coordinates for PRECISION placement:")
+                print("   AR Origin: (\(String(format: "%.8f", originLat)), \(String(format: "%.8f", originLon)))")
+                print("   AR Offsets: X=\(String(format: "%.4f", arX))m, Y=\(String(format: "%.4f", arY))m, Z=\(String(format: "%.4f", arZ))m")
+                print("   💎 Objects will appear at EXACT placement location (cm accuracy)!")
+            } else {
+                print("ℹ️ No AR offsets - using GPS-only positioning (~\(String(format: "%.1f", location.horizontalAccuracy))m accuracy)")
             }
 
             print("📤 Creating comprehensive database object for NFC loot")
             print("   NFC tag contains: \(compactMessage)")
-            print("   Database contains: Full coordinates, timestamps, user info, AR anchors")
+            print("   Database contains: Full coordinates, timestamps, user info, AR offsets")
 
             let jsonData = try JSONSerialization.data(withJSONObject: objectData)
 
@@ -674,10 +704,11 @@ struct NFCWritingView: View {
                     self.createdObject = object
                     self.currentStep = .success
 
-                    // Add object to location manager immediately so it appears in AR
-                    self.locationManager.addLocation(object)
-                    print("✅ Added object via locationManager.addLocation() (\(self.locationManager.locations.count) total)")
-                    print("   Object details: \(object.name) at (\(object.latitude), \(object.longitude))")
+                    // CRITICAL: Do NOT add to locationManager here - it will be loaded from API on next refresh
+                    // Adding it here causes potential race conditions and duplicate placement
+                    // The AR view auto-refreshes from API when entering (ARLootBoxView.swift:184)
+                    print("✅ Object saved to database: \(object.name) at (\(object.latitude), \(object.longitude))")
+                    print("   Will appear in AR on next API refresh")
 
                     // Notify other parts of the app to refresh
                     NotificationCenter.default.post(
@@ -711,27 +742,6 @@ struct NFCWritingView: View {
                 self.currentStep = .error
                 self.showARPlacement = false
             }
-        }
-    }
-
-    private func getCurrentARCameraTransform() async throws -> simd_float4x4 {
-        // CRITICAL: Capture the actual AR camera position when NFC tag is tapped
-        // This provides centimeter-level accuracy for object placement
-        print("🎯 Capturing AR camera transform for precise NFC object placement...")
-
-        // Access the AR session from the existing AR view (if available)
-        // We need to get the camera transform from the active AR session
-        if let arSession = arIntegrationService.getCurrentARSession(),
-           let frame = arSession.currentFrame {
-            let cameraTransform = frame.camera.transform
-            print("✅ Captured AR camera transform at NFC tap location")
-            print("   Position: x=\(String(format: "%.4f", cameraTransform.columns.3.x)), y=\(String(format: "%.4f", cameraTransform.columns.3.y)), z=\(String(format: "%.4f", cameraTransform.columns.3.z))")
-            return cameraTransform
-        } else {
-            print("⚠️ No active AR session - falling back to GPS-only positioning")
-            print("   For best accuracy, use NFC placement while in AR mode")
-            // Return identity matrix as fallback
-            return matrix_identity_float4x4
         }
     }
 

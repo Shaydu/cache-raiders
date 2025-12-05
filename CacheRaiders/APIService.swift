@@ -557,7 +557,7 @@ class APIService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "id": location.id,
             "name": location.name,
             "type": location.type.rawValue,
@@ -567,6 +567,25 @@ class APIService {
             "created_by": currentUserID,
             "grounding_height": location.grounding_height
         ]
+
+        // CRITICAL: Add AR offset coordinates for <10cm accuracy if available
+        if let arOffsetX = location.ar_offset_x,
+           let arOffsetY = location.ar_offset_y,
+           let arOffsetZ = location.ar_offset_z,
+           let arOriginLat = location.ar_origin_latitude,
+           let arOriginLon = location.ar_origin_longitude {
+            body["ar_offset_x"] = arOffsetX
+            body["ar_offset_y"] = arOffsetY
+            body["ar_offset_z"] = arOffsetZ
+            body["ar_origin_latitude"] = arOriginLat
+            body["ar_origin_longitude"] = arOriginLon
+            if let arPlacementTimestamp = location.ar_placement_timestamp {
+                body["ar_placement_timestamp"] = ISO8601DateFormatter().string(from: arPlacementTimestamp)
+            }
+            print("✅ [APIService] Sending AR offset coordinates for <10cm accuracy placement")
+            print("   AR Origin: (\(String(format: "%.8f", arOriginLat)), \(String(format: "%.8f", arOriginLon)))")
+            print("   AR Offsets: X=\(String(format: "%.4f", arOffsetX))m, Y=\(String(format: "%.4f", arOffsetY))m, Z=\(String(format: "%.4f", arOffsetZ))m")
+        }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 

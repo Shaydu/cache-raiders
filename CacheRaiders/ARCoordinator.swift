@@ -101,6 +101,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     var shouldForceReplacement: Bool = false // Force re-placement after reset when AR is ready
     var lastAppliedLensId: String? = nil // Track last applied AR lens to prevent redundant session resets
 
+    // Debug frame counter for session delegate logging
+    private var sessionFrameCount: Int = 0
+
     // PERFORMANCE: Disable verbose placement logging (causes freezing when many objects)
     private let verbosePlacementLogging = false // Set to true only when debugging placement issues
 
@@ -362,6 +365,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private weak var conversationManager: ARConversationManager?
 
     func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>, nearestObjectDirection: Binding<Double?>, conversationNPC: Binding<ConversationNPC?>, conversationManager: ARConversationManager, treasureHuntService: TreasureHuntService? = nil) {
+        Swift.print("🎯 [SETUP] setupARView called")
         self.arView = arView
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
@@ -397,8 +401,19 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         setupNPCSyncHandlers()
         
         // Store the GPS location when AR starts (this becomes our AR world origin)
-        arOriginLocation = userLocationManager.currentLocation
-        
+        // CRITICAL: Only set AR origin if we have a valid GPS location (not 0,0)
+        // If GPS is not ready yet, session(_:didUpdate:) will set it when GPS becomes available
+        if let currentLocation = userLocationManager.currentLocation,
+           currentLocation.coordinate.latitude != 0.0 || currentLocation.coordinate.longitude != 0.0 {
+            arOriginLocation = currentLocation
+            Swift.print("🎯 [SETUP] Setting initial AR origin from userLocationManager")
+            Swift.print("   Location: \(currentLocation.coordinate.latitude), \(currentLocation.coordinate.longitude)")
+            Swift.print("   Accuracy: \(currentLocation.horizontalAccuracy)m")
+        } else {
+            Swift.print("🎯 [SETUP] GPS not ready yet (0,0 or nil), will set AR origin in session(_:didUpdate:)")
+            arOriginLocation = nil
+        }
+
         // Set AR coordinator reference in user location manager for enhanced location tracking
         userLocationManager.arCoordinator = self
         
@@ -452,7 +467,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         distanceTracker = ARDistanceTracker(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, treasureHuntService: treasureHuntService)
         occlusionManager = AROcclusionManager(arView: arView, locationManager: locationManager, distanceTracker: distanceTracker)
-        tapHandler = ARTapHandler(arView: arView, locationManager: locationManager)
+        tapHandler = ARTapHandler(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager)
         databaseIndicatorService = ARDatabaseIndicatorService()
         groundingService = ARGroundingService(arView: arView)
         precisionPositioningService = ARPrecisionPositioningService(arView: arView) // Legacy
@@ -496,9 +511,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         tapHandler?.onShowObjectInfo = { [weak self] location in
             self?.showObjectInfoPanel(location: location)
         }
-        
+
         // Monitor AR session
+        Swift.print("🎯 [SETUP] Setting arView.session.delegate = self")
+        Swift.print("🎯 [SETUP] Self is: \(type(of: self))")
         arView.session.delegate = self
+        Swift.print("🎯 [SETUP] Delegate set. Delegate is: \(arView.session.delegate != nil ? "NOT NIL" : "NIL")")
+        if let delegate = arView.session.delegate {
+            Swift.print("🎯 [SETUP] Delegate type is: \(type(of: delegate))")
+        }
         
         // Start distance logging
         distanceTracker?.startDistanceLogging()
@@ -1567,14 +1588,22 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
     // MARK: - Object Recognition (delegated to ARObjectRecognizer)
     // MARK: - ARSessionDelegate
+
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        // Log every 60 frames (roughly once per second at 60fps) to avoid spam
+        sessionFrameCount += 1
+        if sessionFrameCount % 60 == 0 {
+            Swift.print("🎯 [SESSION] didUpdate called (frame \(sessionFrameCount)), arOrigin: \(arOriginLocation != nil)")
+        }
+
         // CRITICAL: Set AR origin on first frame if not set - NEVER change it after
         // Changing the AR origin causes all objects to drift/shift position
         // Supports two modes:
         // 1. Accurate mode: Wait for GPS with good accuracy (< 7.5m) for precise AR-to-GPS conversion
         // 2. Degraded mode: Use AR-only positioning if GPS unavailable after timeout
-        
+
         if arOriginLocation == nil {
+            Swift.print("🎯 [SESSION] AR origin is nil, attempting to set it")
             let cameraTransform = frame.camera.transform
             let cameraPos = SIMD3<Float>(
                 cameraTransform.columns.3.x,
@@ -1584,14 +1613,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             
             // Try to get GPS location
             if let userLocation = userLocationManager?.currentLocation {
+                Swift.print("🎯 [SESSION] User location available: (\(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)), accuracy: \(userLocation.horizontalAccuracy)m")
                 // Check GPS accuracy - for < 7.5m resolution, we need < 7.5m GPS accuracy
                 if userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 7.5 {
+                    Swift.print("🎯 [SESSION] GPS accuracy good (< 7.5m), setting AR origin")
                     // ACCURATE MODE: GPS available with good accuracy
                     // Step 1: Set ENU origin from GPS (geospatial coordinate frame)
                     if geospatialService?.setENUOrigin(from: userLocation) == true {
                         arOriginLocation = userLocation
                         arOriginSetTime = Date()
                         isDegradedMode = false
+                        Swift.print("✅ [SESSION] AR origin successfully set!")
                         
                         // Step 2: Set AR session origin (VIO tracking origin at 0,0,0)
                         // Set fixed ground level at AR origin (using surface detection if available)
@@ -2116,6 +2148,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     // Handle AR anchor updates - remove any unwanted plane anchors (especially ceilings)
     // Also re-ground objects when new horizontal planes are detected
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+        Swift.print("🎯 [DELEGATE] session(_:didAdd:) called with \(anchors.count) anchors - delegate IS working!")
         guard let arView = arView, let frame = arView.session.currentFrame else { return }
 
         let cameraTransform = frame.camera.transform
@@ -2178,6 +2211,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
     
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        Swift.print("🎯 [DELEGATE-ANCHORS] session(_:didUpdate anchors:) called with \(anchors.count) anchors")
         // Disabled: No longer updating occlusion planes (was causing dark boxes)
         // guard let arView = arView else { return }
         //
@@ -2198,6 +2232,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     
     
     func session(_ session: ARSession, didFailWithError error: Error) {
+        Swift.print("🎯 [DELEGATE-ERROR] session(_:didFailWithError:) called: \(error.localizedDescription)")
         if let arError = error as? ARError {
             let errorCode = arError.code
             var errorDescription = "Unknown AR error"

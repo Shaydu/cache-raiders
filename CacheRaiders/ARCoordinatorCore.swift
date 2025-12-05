@@ -198,7 +198,7 @@ class ARCoordinatorCore: NSObject {
         distanceTracker = ARDistanceTracker(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, treasureHuntService: treasureHuntService)
 
         // Configure tap handler
-        tapHandler = ARTapHandler(arView: arView, locationManager: locationManager)
+        tapHandler = ARTapHandler(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager)
 
         // Configure grounding service
         groundingService = ARGroundingService(arView: arView)

@@ -232,9 +232,27 @@ struct ARViewContainer: UIViewRepresentable {
             print("❌ AR World Tracking is not supported on this device")
             return arView
         }
-        
-        // Run the session
+
+        // CRITICAL: Setup ARView and set delegate BEFORE running the session
+        // This ensures session(_:didUpdate:) delegate methods are received from the very first frame
+        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, conversationNPC: $conversationNPC, conversationManager: conversationManager, treasureHuntService: treasureHuntService)
+
+        // CRITICAL: Initialize lastAppliedLensId to prevent updateUIView from thinking lens changed on first call
+        context.coordinator.lastAppliedLensId = locationManager.selectedARLens
+        print("🎯 [MAKEVIEW] Initialized lastAppliedLensId to: \(context.coordinator.lastAppliedLensId ?? "nil")")
+
+        // Run the session AFTER setting up the coordinator and delegate
+        print("🎯 [MAKEVIEW] Starting AR session...")
+        print("🎯 [MAKEVIEW] Delegate before run: \(arView.session.delegate != nil ? "SET" : "NIL")")
         arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+        print("🎯 [MAKEVIEW] AR session.run() called")
+        print("🎯 [MAKEVIEW] Delegate after run: \(arView.session.delegate != nil ? "SET" : "NIL")")
+        print("🎯 [MAKEVIEW] Session configuration: \(arView.session.configuration != nil ? "SET" : "NIL")")
+
+        // Verify delegate is still set after a brief delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            print("🎯 [MAKEVIEW] Delegate after 0.5s: \(arView.session.delegate != nil ? "SET (\(type(of: arView.session.delegate!)))" : "NIL - DELEGATE WAS CLEARED!")")
+        }
 
         // IMPORTANT: Automatic environment lighting is controlled through the AR session configuration
         // The config.environmentTexturing = .automatic above ensures virtual objects are lit by real-world lighting
@@ -244,7 +262,9 @@ struct ARViewContainer: UIViewRepresentable {
         // Uncomment the line below to enable debug visuals (green feature points, anchor origins)
         // arView.debugOptions = [.showFeaturePoints, .showAnchorOrigins]
 
-        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, conversationNPC: $conversationNPC, conversationManager: conversationManager, treasureHuntService: treasureHuntService)
+        // CRITICAL: Set up NFC-AR integration service so NFC placement can capture AR positions
+        // This allows centimeter-level accuracy when tapping NFC tags while in AR mode
+        NFCARIntegrationService.shared.setup(with: arView)
 
         // Tap gesture for placing and collecting loot boxes - ADD AFTER setupARView so tapHandler is initialized
         let tapGesture = UITapGestureRecognizer(target: context.coordinator.tapHandler, action: #selector(ARTapHandler.handleTap(_:)))
@@ -277,8 +297,15 @@ struct ARViewContainer: UIViewRepresentable {
         context.coordinator.stateManager?.lastViewUpdateTime = now
         
         // Check if lens has changed and update AR configuration if needed
-        // Ensure AR session is running or update if lens changed
-        if uiView.session.configuration == nil || needsLensUpdate {
+        // CRITICAL: Don't re-run session if configuration is nil - this means makeUIView is still running
+        // Only re-run if there's an actual lens update and the session is already running
+        let configIsNil = uiView.session.configuration == nil
+        print("🎯 [UPDATEVIEW] Checking session status: config nil=\(configIsNil), needsLensUpdate=\(needsLensUpdate)")
+
+        // Only proceed if session is already running AND lens needs update
+        // Skip if config is nil (session not fully started yet)
+        if !configIsNil && needsLensUpdate {
+            print("🎯 [UPDATEVIEW] Lens changed - re-running AR session with new configuration")
             let config = ARWorldTrackingConfiguration()
             config.planeDetection = [.horizontal, .vertical] // Horizontal for ground, vertical for walls (occlusion)
             // Note: environmentTexturing may produce harmless warnings about internal RealityKit materials

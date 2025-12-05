@@ -145,31 +145,15 @@ class PreciseARPositioningService: ObservableObject {
     private func configureARSession() {
         guard let arView = arView else { return }
 
-        // Use standard AR configuration to avoid background location issues
-        let config = ARWorldTrackingConfiguration()
-        config.worldAlignment = .gravityAndHeading
+        // CRITICAL: DO NOT re-run the AR session - it's already running from ARLootBoxView
+        // Re-running the session here would reset tracking and interfere with ARCoordinator
+        // The session is configured in ARLootBoxView.makeUIView() before this is called
 
-        // Enable all available features for best precision
-            if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-                config.sceneReconstruction = .mesh
-            }
-
-            config.planeDetection = [.horizontal, .vertical]
-            config.environmentTexturing = .automatic
-
-            // Enable frame semantics for better tracking
-            if #available(iOS 15.0, *) {
-                config.frameSemantics = [.sceneDepth, .smoothedSceneDepth]
-            }
-
-            arView.session.run(config)
-            print("🎯 Using enhanced ARWorldTrackingConfiguration")
-
-            // Configure session for continuous high-precision tracking
-            arView.session.delegate = arSessionDelegate
-            arView.renderOptions = [.disableMotionBlur, .disableDepthOfField] // Maximum precision rendering
-        }
+        // Just set render options for precision (don't touch session or delegate)
+        arView.renderOptions = [.disableMotionBlur, .disableDepthOfField] // Maximum precision rendering
+        print("🎯 PreciseARPositioningService: Configured render options (session already running)")
     }
+}
 
 // MARK: - Macro Positioning (GPS + Map Anchors)
 extension PreciseARPositioningService {

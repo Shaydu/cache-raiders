@@ -1156,12 +1156,6 @@ class LootBoxLocationManager: ObservableObject {
                     return false
                 }
 
-                // Exclude AR-only locations (no GPS coordinates) - they're placed in AR space, not GPS space
-                // AR-placed objects with GPS coordinates should be treated the same as admin-placed objects
-                if location.isAROnly {
-                    return false
-                }
-
                 // CRITICAL: If a specific object is selected, ALWAYS include it regardless of distance
                 // This ensures the selected object appears in AR even if it's far away
                 if let selectedId = currentSelectedId, location.id == selectedId {

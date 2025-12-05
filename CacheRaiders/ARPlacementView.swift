@@ -261,43 +261,36 @@ struct ARPlacementView: View {
 
     private func createNewObject(type: LootBoxType, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async {
         let objectId = UUID().uuidString
+
+        // CRITICAL: Include AR offset coordinates in initial object creation for <10cm accuracy
         let newLocation = LootBoxLocation(
             id: objectId,
             name: "New \(type.displayName)",
             type: type,
             latitude: coordinate.latitude,
             longitude: coordinate.longitude,
-            radius: 5.0,
+            radius: 3.0, // Smaller radius since we have precise AR coordinates
             grounding_height: groundingHeight,
-            source: .arManual
+            source: .arManual,
+            ar_origin_latitude: arOrigin?.coordinate.latitude,
+            ar_origin_longitude: arOrigin?.coordinate.longitude,
+            ar_offset_x: Double(arPosition.x),
+            ar_offset_y: Double(arPosition.y),
+            ar_offset_z: Double(arPosition.z),
+            ar_placement_timestamp: Date()
         )
 
         do {
             let createdObject = try await APIService.shared.createObject(newLocation)
 
-            // CRITICAL: Save AR offset coordinates so the main AR view can place the object
-            // The AR position is relative to the AR origin (0,0,0), so it IS the offset
-            // Make this non-blocking - if it fails, placement should still continue
+            // AR offset coordinates were already included in the initial creation above
+            print("✅ [Placement] Created object with AR coordinates:")
+            print("   Object ID: \(createdObject.id)")
+            print("   Type: \(createdObject.type)")
             if let arOrigin = arOrigin {
-                do {
-                    try await APIService.shared.updateAROffset(
-                        objectId: createdObject.id,
-                        arOriginLatitude: arOrigin.coordinate.latitude,
-                        arOriginLongitude: arOrigin.coordinate.longitude,
-                        offsetX: Double(arPosition.x),
-                        offsetY: Double(arPosition.y),
-                        offsetZ: Double(arPosition.z)
-                    )
-                    print("✅ [Placement] Saved AR coordinates to API:")
-                    print("   Object ID: \(createdObject.id)")
-                    print("   AR Origin: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
-                    print("   AR Offset: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
-                } catch {
-                    print("⚠️ [Placement] Failed to save AR coordinates (non-blocking): \(error)")
-                    print("   Placement will continue - object will be placed using GPS coordinates")
-                }
-            } else {
-                print("⚠️ [Placement] No AR origin available - cannot save AR coordinates")
+                print("   AR Origin: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
+                print("   AR Offset: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
+                print("   💎 Object will appear at EXACT placement location (<10cm accuracy)!")
             }
 
             // Store the intended AR position from ARPlacementView in UserDefaults
