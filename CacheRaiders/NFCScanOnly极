@@ -1,0 +1,7 @@
+import SwiftUI
+import CoreNFC
+
+// MARK: - NFC Scan Only View
+/// View for scanning existing NFC tokens and registering them as finds
+/// This is different from OpenGameNFCScannerView which creates NEW objects
+/// This view ONLY scans existing tokens and marks them as极

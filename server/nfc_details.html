@@ -165,27 +165,108 @@
 
         .finds-list {
             margin-top: 20px;
-            max-height: 300px;
+            max-height: 400px;
             overflow-y: auto;
         }
 
         .find-item {
-            background: #1a1a1a;
-            padding: 12px 15px;
-            border-radius: 8px;
-            margin-bottom: 10px;
+            background: linear-gradient(135deg, #1a1a1a 0%, #2a2a2a 100%);
+            padding: 16px 18px;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            border: 1px solid #333;
+            transition: all 0.2s ease;
+            position: relative;
+        }
+
+        .find-item:hover {
+            border-color: #ffd700;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(255, 215, 0, 0.1);
+        }
+
+        .find-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .find-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+
+        .find-player {
+            font-weight: 600;
+            font-size: 16px;
+            color: #ffd700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .find-player::before {
+            content: '👤';
+            font-size: 14px;
+        }
+
+        .find-timestamp {
+            font-size: 14px;
+            color: #bbb;
+            font-weight: 500;
+        }
+
+        .find-details {
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
 
-        .find-player {
-            font-weight: 500;
+        .find-time {
+            font-size: 13px;
+            color: #888;
+            font-style: italic;
         }
 
-        .find-time {
+        .find-absolute-time {
             font-size: 12px;
-            color: #999;
+            color: #666;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-family: monospace;
+        }
+
+        .find-number {
+            position: absolute;
+            top: -8px;
+            left: -8px;
+            background: #ffd700;
+            color: #000;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: bold;
+            border: 2px solid #1a1a1a;
+        }
+
+        .no-finds {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+            font-style: italic;
+        }
+
+        .no-finds::before {
+            content: '🔍';
+            font-size: 32px;
+            display: block;
+            margin-bottom: 16px;
+            opacity: 0.5;
         }
 
         .model-type-badge {
@@ -288,19 +369,31 @@
                 </div>
             </div>
 
-            <!-- Collection Statistics -->
+            <!-- Find Log -->
             <div class="card">
-                <h2>Collection Statistics</h2>
-                <div style="margin-bottom: 20px;">
-                    <div class="detail-label" style="margin-bottom: 10px;">Times Collected</div>
-                    <span class="stat-badge" id="collectionCount">0</span>
+                <h2>📋 Find Log</h2>
+
+                <!-- Find Statistics -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 25px;">
+                    <div>
+                        <div class="detail-label" style="margin-bottom: 5px;">Total Finds</div>
+                        <span class="stat-badge" id="collectionCount">0</span>
+                    </div>
+                    <div>
+                        <div class="detail-label" style="margin-bottom: 5px;">Unique Players</div>
+                        <span class="stat-badge" id="uniquePlayersCount">0</span>
+                    </div>
+                    <div>
+                        <div class="detail-label" style="margin-bottom: 5px;">Last Found</div>
+                        <span class="stat-badge" id="lastFoundTime">-</span>
+                    </div>
                 </div>
 
                 <div id="findsContainer">
-                    <div class="detail-label" style="margin-bottom: 10px;">Collection History</div>
+                    <div class="detail-label" style="margin-bottom: 15px;">Complete Find History</div>
                     <div class="finds-list" id="findsList">
-                        <div style="color: #666; text-align: center; padding: 20px;">
-                            No collections yet
+                        <div class="no-finds">
+                            No finds recorded yet
                         </div>
                     </div>
                 </div>
@@ -478,22 +571,39 @@
                 locationLink.textContent = `${data.latitude.toFixed(6)}, ${data.longitude.toFixed(6)}`;
 
                 // Update collection statistics
-                document.getElementById('collectionCount').textContent = data.collection_count || 0;
+                const collectionCount = data.collection_count || 0;
+                document.getElementById('collectionCount').textContent = collectionCount;
+
+                // Calculate unique players and last found time
+                if (data.finds && data.finds.length > 0) {
+                    const uniquePlayers = new Set(data.finds.map(find => find.found_by)).size;
+                    document.getElementById('uniquePlayersCount').textContent = uniquePlayers;
+
+                    const lastFind = data.finds[0]; // Already sorted by found_at DESC
+                    document.getElementById('lastFoundTime').textContent = formatRelativeTime(lastFind.found_at);
+                } else {
+                    document.getElementById('uniquePlayersCount').textContent = '0';
+                    document.getElementById('lastFoundTime').textContent = '-';
+                }
 
                 // Update finds list
                 const findsList = document.getElementById('findsList');
                 if (data.finds && data.finds.length > 0) {
-                    findsList.innerHTML = data.finds.map(find => `
+                    findsList.innerHTML = data.finds.map((find, index) => `
                         <div class="find-item">
-                            <div>
+                            <div class="find-number">${index + 1}</div>
+                            <div class="find-header">
                                 <div class="find-player">${find.player_name}</div>
-                                <div class="find-time">${formatDate(find.found_at)}</div>
+                                <div class="find-timestamp">${formatDate(find.found_at)}</div>
                             </div>
-                            <div class="find-time">${formatRelativeTime(find.found_at)}</div>
+                            <div class="find-details">
+                                <div class="find-time">${formatRelativeTime(find.found_at)}</div>
+                                <div class="find-absolute-time">${new Date(find.found_at).toLocaleString()}</div>
+                            </div>
                         </div>
                     `).join('');
                 } else {
-                    findsList.innerHTML = '<div style="color: #666; text-align: center; padding: 20px;">No collections yet</div>';
+                    findsList.innerHTML = '<div class="no-finds">No finds recorded yet</div>';
                 }
 
                 // Load 3D model

@@ -13,6 +13,7 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
     private var writeCompletion: ((Result<NFCResult, NFCError>) -> Void)?
     private var writeMessage: String?
     private var writeNDEFMessage: NFCNDEFMessage?
+    private var shouldLockTag: Bool = false
 
     // MARK: - NFC Result
     struct NFCResult {
@@ -88,7 +89,7 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
     }
 
     @available(iOS 13.0, *)
-    func writeNFC(message: String, completion: @escaping (Result<NFCResult, NFCError>) -> Void) {
+    func writeNFC(message: String, lockTag: Bool = false, completion: @escaping (Result<NFCResult, NFCError>) -> Void) {
         print("🎯 NFCService.writeNFC called with message: \(message)")
         print("   iOS Version: \(UIDevice.current.systemVersion)")
         print("   Device Model: \(UIDevice.current.model)")
@@ -120,6 +121,7 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
         self.writeCompletion = completion
         self.writeMessage = message
         self.writeNDEFMessage = ndefMessage
+        self.shouldLockTag = lockTag
 
         // Create new writer session with NFCTagReaderSession to get write access
         writerSession = NFCTagReaderSession(pollingOption: [.iso14443], delegate: self, queue: nil)
@@ -577,27 +579,66 @@ class NFCService: NSObject, NFCNDEFReaderSessionDelegate, NFCTagReaderSessionDel
                         completion?(.failure(.readError("Write failed: \(error.localizedDescription)")))
                     } else {
                         print("✅ Successfully wrote NDEF message to tag")
-                        let tagId = tag.identifier.hexString
-                        let result = NFCResult(
-                            tagId: tagId,
-                            ndefMessage: ndefMessage,
-                            payload: self.writeMessage,
-                            timestamp: Date()
-                        )
-                        session.alertMessage = "Loot data written successfully!"
 
-                        // Call completion handler BEFORE invalidating
-                        // and clear it immediately so the invalidation handler doesn't call it again
-                        let completion = self.writeCompletion
-                        self.writeCompletion = nil
-                        self.writeMessage = nil
-                        self.writeNDEFMessage = nil
+                        // Check if we should lock the tag after writing
+                        if self.shouldLockTag {
+                            print("🔒 Attempting to lock the tag...")
+                            tag.lockNDEF { lockError in
+                                if let lockError = lockError {
+                                    print("❌ Failed to lock tag: \(lockError.localizedDescription)")
+                                    // Still consider the write successful, but log the locking failure
+                                    print("⚠️ Tag was written but not locked")
+                                } else {
+                                    print("✅ Tag successfully locked - now read-only")
+                                }
 
-                        // Now invalidate the session (this will trigger didInvalidateWithError)
-                        session.invalidate()
+                                // Continue with completion regardless of locking result
+                                let tagId = tag.identifier.hexString
+                                let result = NFCResult(
+                                    tagId: tagId,
+                                    ndefMessage: ndefMessage,
+                                    payload: self.writeMessage,
+                                    timestamp: Date()
+                                )
+                                session.alertMessage = self.shouldLockTag ?
+                                    "Loot data written and tag locked!" : "Loot data written successfully!"
 
-                        // Call the completion handler
-                        completion?(.success(result))
+                                // Call completion handler BEFORE invalidating
+                                let completion = self.writeCompletion
+                                self.writeCompletion = nil
+                                self.writeMessage = nil
+                                self.writeNDEFMessage = nil
+                                self.shouldLockTag = false
+
+                                // Now invalidate the session
+                                session.invalidate()
+
+                                // Call the completion handler
+                                completion?(.success(result))
+                            }
+                        } else {
+                            // No locking needed, complete immediately
+                            let tagId = tag.identifier.hexString
+                            let result = NFCResult(
+                                tagId: tagId,
+                                ndefMessage: ndefMessage,
+                                payload: self.writeMessage,
+                                timestamp: Date()
+                            )
+                            session.alertMessage = "Loot data written successfully!"
+
+                            // Call completion handler BEFORE invalidating
+                            let completion = self.writeCompletion
+                            self.writeCompletion = nil
+                            self.writeMessage = nil
+                            self.writeNDEFMessage = nil
+
+                            // Now invalidate the session
+                            session.invalidate()
+
+                            // Call the completion handler
+                            completion?(.success(result))
+                        }
                     }
                 }
             @unknown default:

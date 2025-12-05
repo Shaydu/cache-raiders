@@ -1,0 +1,25 @@
+"""
+Find Log Module - Support for multiple finds per object (find log functionality)
+"""
+
+from flask import Blueprint, jsonify, request
+import sqlite3
+from datetime import datetime
+from .app import get_db_connection, socketio
+
+find_log_bp = Blueprint('find_log', __name__)
+
+@find_log_bp.route('/api/objects/<object_id>/mark-found', methods=['POST'])
+def mark_found(object_id: str):
+    """Mark an object as found by a user (supports multiple finds per object)."""
+    try:
+        data = request.json
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+        
+        found_by = data.get('found_by', 'unknown')
+        if not found_by or found_by == 'unknown':
+            return jsonify({'error': 'found_by field is required'}), 400
+        
+        conn = get_db_connection()
+        cursor极

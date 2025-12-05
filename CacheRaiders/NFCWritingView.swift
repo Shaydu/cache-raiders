@@ -28,6 +28,7 @@ struct NFCWritingView: View {
     @State private var arView: ARView?
     @State private var showARPlacement = false
     @State private var showNFCDiagnostics = false
+    @State private var shouldLockTag = false
 
     enum WritingStep {
         case selecting      // User selecting loot type
@@ -221,6 +222,31 @@ struct NFCWritingView: View {
                     .font(.body)
                     .foregroundColor(.secondary)
                     .italic()
+            } else {
+                // Permanently Write checkbox
+                VStack(spacing: 8) {
+                    Toggle(isOn: $shouldLockTag) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "lock.fill")
+                                .foregroundColor(.orange)
+                            Text("Lock Tag Permanently")
+                                .font(.body)
+                                .foregroundColor(.primary)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .background(Color(.secondarySystemBackground))
+                    .cornerRadius(8)
+                    .toggleStyle(SwitchToggleStyle(tint: .orange))
+
+                    Text("Lock the NFC tag after writing to prevent further modifications")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                .padding(.top, 8)
             }
         }
     }
@@ -425,6 +451,7 @@ struct NFCWritingView: View {
         selectedLootType = nil
         writeResult = nil
         errorMessage = nil
+        shouldLockTag = false
     }
 
     private func createLootMessage(for lootType: LootBoxType, with location: CLLocation? = nil, arAnchorData: Data? = nil) -> String {
@@ -558,7 +585,7 @@ struct NFCWritingView: View {
         print("   Message contains only object ID (detailed data in database)")
         print("   Message length: \(compactMessage.count) characters")
 
-        nfcService.writeNFC(message: compactMessage) { result in
+        nfcService.writeNFC(message: compactMessage, lockTag: shouldLockTag) { result in
             DispatchQueue.main.async {
                 self.isWriting = false
 
