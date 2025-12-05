@@ -509,8 +509,9 @@ def get_objects():
             'o.radius', 'o.created_at', 'o.created_by', 'o.grounding_height'
         ]
         ar_columns = [
-            'ar_origin_latitude', 'ar_origin_longitude', 
-            'ar_offset_x', 'ar_offset_y', 'ar_offset_z', 'ar_placement_timestamp'
+            'ar_origin_latitude', 'ar_origin_longitude',
+            'ar_offset_x', 'ar_offset_y', 'ar_offset_z', 'ar_placement_timestamp',
+            'ar_anchor_transform', 'ar_world_transform', 'nfc_tag_id'
         ]
         
         select_columns = base_columns.copy()
@@ -611,7 +612,7 @@ def get_object(object_id: str):
     cursor = conn.cursor()
     
     cursor.execute('''
-        SELECT 
+        SELECT
             o.id,
             o.name,
             o.type,
@@ -628,6 +629,8 @@ def get_object(object_id: str):
             o.ar_offset_z,
             o.ar_placement_timestamp,
             o.ar_anchor_transform,  -- Include AR anchor transform for precise positioning
+            o.ar_world_transform,   -- Include full AR world transform for exact positioning
+            o.nfc_tag_id,          -- Include NFC tag ID
             CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
             f.found_by,
             f.found_at
@@ -680,8 +683,8 @@ def create_object():
             
             try:
                 cursor.execute('''
-                    INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height, ar_anchor_transform, ar_offset_x, ar_offset_y, ar_offset_z, ar_origin_latitude, ar_origin_longitude, ar_placement_timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height, ar_anchor_transform, ar_offset_x, ar_offset_y, ar_offset_z, ar_origin_latitude, ar_origin_longitude, ar_placement_timestamp, ar_world_transform, nfc_tag_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     data['id'],
                     data['name'],
@@ -698,7 +701,9 @@ def create_object():
                     data.get('ar_offset_z'),  # Optional AR offset Z for <10cm accuracy
                     data.get('ar_origin_latitude'),  # Optional AR origin GPS latitude
                     data.get('ar_origin_longitude'),  # Optional AR origin GPS longitude
-                    data.get('ar_placement_timestamp')  # Optional AR placement timestamp
+                    data.get('ar_placement_timestamp'),  # Optional AR placement timestamp
+                    data.get('ar_world_transform'),  # Optional full AR world transform matrix
+                    data.get('nfc_tag_id')  # Optional NFC tag ID
                 ))
                 
                 conn.commit()
@@ -767,6 +772,8 @@ def create_object():
                 o.ar_offset_z,
                 o.ar_placement_timestamp,
                 o.ar_anchor_transform,
+                o.ar_world_transform,
+                o.nfc_tag_id,
                 CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected,
                 f.found_by,
                 f.found_at
@@ -808,6 +815,8 @@ def create_object():
                 'ar_offset_z': safe_get('ar_offset_z'),
                 'ar_placement_timestamp': safe_get('ar_placement_timestamp'),
                 'ar_anchor_transform': safe_get('ar_anchor_transform'),  # Include AR anchor transform
+                'ar_world_transform': safe_get('ar_world_transform'),  # Include full AR world transform
+                'nfc_tag_id': safe_get('nfc_tag_id'),  # Include NFC tag ID
                 'collected': bool(safe_get('collected', 0)),
                 'found_by': safe_get('found_by'),
                 'found_at': safe_get('found_at')
@@ -1797,6 +1806,7 @@ def get_nfc_details(nfc_id: str):
     - Full UUID (e.g., '0B8DA041-AA9F-45B5-B481-EB063CB8A50C')
     - Full NFC object ID (e.g., 'nfc_04a9ab961e6180_1764712047')
     - Short NFC chip UID (e.g., '69423A79' or '04a9ab961e6180')
+    - Direct NFC tag ID (e.g., '970CC641' stored in nfc_tag_id field)
     """
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -1808,6 +1818,7 @@ def get_nfc_details(nfc_id: str):
         # Try to find the object by:
         # 1. Exact match on object ID (handles full UUID or full NFC object ID)
         # 2. Pattern match for NFC chip UID (handles short chip IDs like '69423A79')
+        # 3. Exact match on NFC tag ID field (handles direct NFC chip UIDs like '970CC641')
         cursor.execute('''
             SELECT
                 o.id,
@@ -1829,9 +1840,10 @@ def get_nfc_details(nfc_id: str):
             FROM objects o
             WHERE LOWER(o.id) = ?
                OR LOWER(o.id) LIKE 'nfc_' || ? || '_%'
+               OR LOWER(o.nfc_tag_id) = ?
             ORDER BY o.created_at DESC
             LIMIT 1
-        ''', (nfc_id_lower, nfc_id_lower))
+        ''', (nfc_id_lower, nfc_id_lower, nfc_id_lower))
 
         obj_row = cursor.fetchone()
 
