@@ -680,8 +680,8 @@ def create_object():
             
             try:
                 cursor.execute('''
-                    INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height, ar_anchor_transform)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height, ar_anchor_transform, ar_offset_x, ar_offset_y, ar_offset_z, ar_origin_latitude, ar_origin_longitude, ar_placement_timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     data['id'],
                     data['name'],
@@ -692,7 +692,13 @@ def create_object():
                     datetime.utcnow().isoformat(),
                     data.get('created_by', 'unknown'),
                     data.get('grounding_height'),  # Optional - can be None
-                    data.get('ar_anchor_transform')  # Optional AR anchor transform
+                    data.get('ar_anchor_transform'),  # Optional AR anchor transform
+                    data.get('ar_offset_x'),  # Optional AR offset X for <10cm accuracy
+                    data.get('ar_offset_y'),  # Optional AR offset Y for <10cm accuracy
+                    data.get('ar_offset_z'),  # Optional AR offset Z for <10cm accuracy
+                    data.get('ar_origin_latitude'),  # Optional AR origin GPS latitude
+                    data.get('ar_origin_longitude'),  # Optional AR origin GPS longitude
+                    data.get('ar_placement_timestamp')  # Optional AR placement timestamp
                 ))
                 
                 conn.commit()
@@ -1809,6 +1815,128 @@ def admin_ui():
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
     return response
+
+@app.route('/nfc/<nfc_id>')
+def nfc_details(nfc_id: str):
+    """Serve the NFC loot details page."""
+    response = send_from_directory(os.path.dirname(__file__), 'nfc_details.html')
+    # Disable caching for NFC details page during development
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+@app.route('/api/nfc/<nfc_id>', methods=['GET'])
+def get_nfc_details(nfc_id: str):
+    """Get detailed information about a loot item by NFC ID.
+
+    Supports multiple ID formats:
+    - Full UUID (e.g., '0B8DA041-AA9F-45B5-B481-EB063CB8A50C')
+    - Full NFC object ID (e.g., 'nfc_04a9ab961e6180_1764712047')
+    - Short NFC chip UID (e.g., '69423A79' or '04a9ab961e6180')
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Normalize the NFC ID to lowercase for case-insensitive matching
+        nfc_id_lower = nfc_id.lower()
+
+        # Try to find the object by:
+        # 1. Exact match on object ID (handles full UUID or full NFC object ID)
+        # 2. Pattern match for NFC chip UID (handles short chip IDs like '69423A79')
+        cursor.execute('''
+            SELECT
+                o.id,
+                o.name,
+                o.type,
+                o.latitude,
+                o.longitude,
+                o.radius,
+                o.created_at,
+                o.created_by,
+                o.grounding_height,
+                o.ar_origin_latitude,
+                o.ar_origin_longitude,
+                o.ar_offset_x,
+                o.ar_offset_y,
+                o.ar_offset_z,
+                o.ar_placement_timestamp,
+                o.ar_anchor_transform
+            FROM objects o
+            WHERE LOWER(o.id) = ?
+               OR LOWER(o.id) LIKE 'nfc_' || ? || '_%'
+            ORDER BY o.created_at DESC
+            LIMIT 1
+        ''', (nfc_id_lower, nfc_id_lower))
+
+        obj_row = cursor.fetchone()
+
+        if not obj_row:
+            conn.close()
+            return jsonify({'error': 'Object not found'}), 404
+
+        # Get player who placed it
+        placer_name = 'Unknown'
+        if obj_row['created_by']:
+            cursor.execute('SELECT player_name FROM players WHERE device_uuid = ?', (obj_row['created_by'],))
+            placer_row = cursor.fetchone()
+            if placer_row:
+                placer_name = placer_row['player_name']
+
+        # Get all finds for this object (use the actual object ID from the matched row)
+        cursor.execute('''
+            SELECT
+                f.id,
+                f.found_by,
+                f.found_at,
+                p.player_name
+            FROM finds f
+            LEFT JOIN players p ON f.found_by = p.device_uuid
+            WHERE f.object_id = ?
+            ORDER BY f.found_at DESC
+        ''', (obj_row['id'],))
+
+        finds_rows = cursor.fetchall()
+        finds_count = len(finds_rows)
+
+        # Build finds list with player names
+        finds_list = []
+        for find_row in finds_rows:
+            finds_list.append({
+                'id': find_row['id'],
+                'found_by': find_row['found_by'],
+                'found_at': find_row['found_at'],
+                'player_name': find_row['player_name'] or 'Unknown Player'
+            })
+
+        conn.close()
+
+        return jsonify({
+            'id': obj_row['id'],
+            'name': obj_row['name'],
+            'type': obj_row['type'],
+            'latitude': obj_row['latitude'],
+            'longitude': obj_row['longitude'],
+            'radius': obj_row['radius'],
+            'created_at': obj_row['created_at'],
+            'created_by': obj_row['created_by'],
+            'placed_by_name': placer_name,
+            'grounding_height': obj_row['grounding_height'],
+            'ar_origin_latitude': obj_row['ar_origin_latitude'],
+            'ar_origin_longitude': obj_row['ar_origin_longitude'],
+            'ar_offset_x': obj_row['ar_offset_x'],
+            'ar_offset_y': obj_row['ar_offset_y'],
+            'ar_offset_z': obj_row['ar_offset_z'],
+            'ar_placement_timestamp': obj_row['ar_placement_timestamp'],
+            'ar_anchor_transform': obj_row['ar_anchor_transform'],
+            'collection_count': finds_count,
+            'finds': finds_list
+        })
+
+    except Exception as e:
+        conn.close()
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/server-info', methods=['GET'])
 def get_server_info():

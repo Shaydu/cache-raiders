@@ -40,6 +40,8 @@ services:
       - ./cache_raiders.db:/app/cache_raiders.db
       # Mount admin.html for live editing (no rebuild needed)
       - ./admin.html:/app/admin.html
+      # Mount nfc_details.html for live editing (no rebuild needed)
+      - ./nfc_details.html:/app/nfc_details.html
       # Mount app.py for live editing (no rebuild needed for code changes)
       - ./app.py:/app/app.py
       # Mount llm_service.py for live editing

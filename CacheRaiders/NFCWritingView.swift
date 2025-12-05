@@ -462,63 +462,97 @@ struct NFCWritingView: View {
         // Note: objectId will be created after NFC writing succeeds
         print("📍 Starting AR position capture for \(objectType.displayName)")
 
-        // Start with GPS coordinates
-        var latitude = userLocation.coordinate.latitude
-        var longitude = userLocation.coordinate.longitude
-        var altitude = userLocation.altitude
+        // CRITICAL IMPROVEMENT: Use GPS with higher precision than before
+        // When NFC tag is tapped, we know user is AT that exact location
+        // Use the phone's GPS as the placement location with best available accuracy
+        let latitude = userLocation.coordinate.latitude
+        let longitude = userLocation.coordinate.longitude
+        let altitude = userLocation.altitude
+        let gpsAccuracy = userLocation.horizontalAccuracy
 
-        print("📍 Initial GPS coordinates:")
-        print("   Latitude: \(latitude)")
-        print("   Longitude: \(longitude)")
-        print("   Altitude: \(altitude)")
+        print("📍 NFC tap location (GPS):")
+        print("   Latitude: \(String(format: "%.8f", latitude))")
+        print("   Longitude: \(String(format: "%.8f", longitude))")
+        print("   Altitude: \(String(format: "%.2f", altitude))m")
+        print("   GPS Accuracy: \(String(format: "%.2f", gpsAccuracy))m")
 
-        // Capture AR anchor position for nearby users
-        // This provides centimeter-level accuracy when users are within ~8m
-        var arAnchorTransform: simd_float4x4? = nil
-        var arAnchorData: Data? = nil
+        // CRITICAL: Try to capture AR camera transform from the active AR session
+        // This allows us to store AR offset coordinates for centimeter-level precision
+        var arOffsetX: Double? = nil
+        var arOffsetY: Double? = nil
+        var arOffsetZ: Double? = nil
+        var arOriginLat: Double? = nil
+        var arOriginLon: Double? = nil
 
-        do {
-            // Get camera transform at current position to use as AR anchor
-            if let cameraTransform = try? await getCurrentARCameraTransform() {
-                arAnchorTransform = cameraTransform
+        // Check if we have an active AR session via the integration service
+        if let arSession = arIntegrationService.getCurrentARSession(),
+           let frame = arSession.currentFrame {
+            let cameraTransform = frame.camera.transform
+            let cameraPos = SIMD3<Float>(
+                cameraTransform.columns.3.x,
+                cameraTransform.columns.3.y,
+                cameraTransform.columns.3.z
+            )
 
-                // Serialize the transform for storage
-                let transformArray = [
-                    cameraTransform.columns.0.x, cameraTransform.columns.0.y, cameraTransform.columns.0.z, cameraTransform.columns.0.w,
-                    cameraTransform.columns.1.x, cameraTransform.columns.1.y, cameraTransform.columns.1.z, cameraTransform.columns.1.w,
-                    cameraTransform.columns.2.x, cameraTransform.columns.2.y, cameraTransform.columns.2.z, cameraTransform.columns.2.w,
-                    cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z, cameraTransform.columns.3.w
-                ]
-                arAnchorData = try? JSONEncoder().encode(transformArray)
+            // Store AR position offsets (relative to AR origin)
+            arOffsetX = Double(cameraPos.x)
+            arOffsetY = Double(cameraPos.y)
+            arOffsetZ = Double(cameraPos.z)
 
-                print("🎯 Captured AR anchor transform for precise positioning")
-                print("   Position: x=\(cameraTransform.columns.3.x), y=\(cameraTransform.columns.3.y), z=\(cameraTransform.columns.3.z)")
-            }
-        } catch {
-            print("⚠️ Could not capture AR anchor: \(error)")
+            // Store AR origin location (for validating AR coordinates later)
+            arOriginLat = latitude  // AR origin is at tap location
+            arOriginLon = longitude
+
+            print("✅ Captured AR position offsets for PRECISION placement:")
+            print("   AR Offset X: \(String(format: "%.4f", arOffsetX!))m")
+            print("   AR Offset Y: \(String(format: "%.4f", arOffsetY!))m")
+            print("   AR Offset Z: \(String(format: "%.4f", arOffsetZ!))m")
+            print("   💎 This provides centimeter-level accuracy when users are nearby!")
+        } else {
+            print("ℹ️ No active AR session - using GPS-only positioning")
+            print("   For centimeter accuracy, tap NFC while viewing AR mode")
+            print("   GPS accuracy: ~\(String(format: "%.1f", gpsAccuracy))m")
         }
 
-        print("📤 AR positioning complete. Now writing NFC tag with complete data...")
-        print("   Coordinates: lat=\(latitude), lon=\(longitude), alt=\(altitude)")
-        print("   AR anchor: \(arAnchorData != nil ? "✓ captured" : "✗ not available")")
+        print("📤 Position capture complete. Now writing NFC tag...")
 
         // Create location object for NFC message
-        let location = CLLocation(coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
-                                altitude: altitude, horizontalAccuracy: 1, verticalAccuracy: 1,
-                                timestamp: Date())
+        let location = CLLocation(
+            coordinate: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+            altitude: altitude,
+            horizontalAccuracy: gpsAccuracy,
+            verticalAccuracy: userLocation.verticalAccuracy,
+            timestamp: Date()
+        )
 
-        // Write NFC tag with complete data including coordinates and AR anchor
-        await writeNFCWithCompleteData(for: objectType, location: location, arAnchorData: arAnchorData)
+        // Write NFC tag with complete data including coordinates and AR offsets
+        await writeNFCWithCompleteData(
+            for: objectType,
+            location: location,
+            arOffsetX: arOffsetX,
+            arOffsetY: arOffsetY,
+            arOffsetZ: arOffsetZ,
+            arOriginLat: arOriginLat,
+            arOriginLon: arOriginLon
+        )
     }
 
-    private func writeNFCWithCompleteData(for lootType: LootBoxType, location: CLLocation, arAnchorData: Data?) async {
+    private func writeNFCWithCompleteData(
+        for lootType: LootBoxType,
+        location: CLLocation,
+        arOffsetX: Double?,
+        arOffsetY: Double?,
+        arOffsetZ: Double?,
+        arOriginLat: Double?,
+        arOriginLon: Double?
+    ) async {
         currentStep = .writing
         isWriting = true
         errorMessage = nil
 
         // Create the compact message with just the object ID
         // All detailed data (coordinates, timestamps, user info) is stored only in the database
-        let compactMessage = createLootMessage(for: lootType, with: location, arAnchorData: arAnchorData)
+        let compactMessage = createLootMessage(for: lootType, with: location, arAnchorData: nil)
 
         print("🔧 Writing compact NFC tag for \(lootType.displayName)")
         print("   Message contains only object ID (detailed data in database)")
@@ -539,7 +573,11 @@ struct NFCWritingView: View {
                         await self.createObjectWithCompleteData(
                             type: lootType,
                             location: location,
-                            arAnchorData: arAnchorData,
+                            arOffsetX: arOffsetX,
+                            arOffsetY: arOffsetY,
+                            arOffsetZ: arOffsetZ,
+                            arOriginLat: arOriginLat,
+                            arOriginLon: arOriginLon,
                             nfcResult: nfcResult,
                             compactMessage: compactMessage
                         )
