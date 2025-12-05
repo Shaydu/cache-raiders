@@ -689,6 +689,9 @@ struct NFCWritingView: View {
             }
 
             if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
+                // CRITICAL: Object is created with collected: false
+                // This means the PLACER does NOT get credit for finding it
+                // Other players must scan it using "Scan NFC Token" to register a find
                 let object = LootBoxLocation(
                     id: objectId,
                     name: "\(type.displayName)",
@@ -696,7 +699,7 @@ struct NFCWritingView: View {
                     latitude: location.coordinate.latitude,
                     longitude: location.coordinate.longitude,
                     radius: 3.0,  // Match the reduced radius
-                    collected: false,
+                    collected: false,  // NOT collected by placer - must be scanned to find
                     source: .map
                 )
 
