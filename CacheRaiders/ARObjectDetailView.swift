@@ -15,11 +15,11 @@ struct ARObjectDetailView: View {
                     // Object Header
                     VStack(alignment: .leading, spacing: 8) {
                         Text(objectDetail.name)
-                            .font(.system(.title, design: .rounded, weight: .bold))
+                            .font(.system(size: 25, weight: .bold, design: .rounded))
                             .foregroundColor(.primary)
 
                         Text(objectDetail.itemType)
-                            .font(.system(.title3, design: .rounded))
+                            .font(.system(size: 18, design: .rounded))
                             .foregroundColor(.secondary)
                     }
                     .padding(.bottom, 10)
@@ -51,7 +51,7 @@ struct ARObjectDetailView: View {
                             DetailRow(label: "Combined", value: objectDetail.gpsCoordinateString)
                         } else {
                             Text("No GPS coordinates available")
-                                .font(.system(.body, design: .monospaced))
+                                .font(.system(size: 15, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -67,7 +67,7 @@ struct ARObjectDetailView: View {
                             DetailRow(label: "Combined", value: objectDetail.arCoordinateString)
                         } else {
                             Text("No AR coordinates available")
-                                .font(.system(.body, design: .monospaced))
+                                .font(.system(size: 15, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -83,10 +83,10 @@ struct ARObjectDetailView: View {
                         } else {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("No AR origin available")
-                                    .font(.system(.body, design: .monospaced))
+                                    .font(.system(size: 15, design: .monospaced))
                                     .foregroundColor(.secondary)
                                 Text("AR origin data is only available for objects manually placed in AR")
-                                    .font(.system(.caption, design: .rounded))
+                                    .font(.system(size: 11, design: .rounded))
                                     .foregroundColor(.secondary.opacity(0.7))
                             }
                         }
@@ -104,10 +104,10 @@ struct ARObjectDetailView: View {
                         } else {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("No AR offsets available")
-                                    .font(.system(.body, design: .monospaced))
+                                    .font(.system(size: 15, design: .monospaced))
                                     .foregroundColor(.secondary)
                                 Text("AR offset data is only available for objects manually placed in AR")
-                                    .font(.system(.caption, design: .rounded))
+                                    .font(.system(size: 11, design: .rounded))
                                     .foregroundColor(.secondary.opacity(0.7))
                             }
                         }
@@ -121,13 +121,13 @@ struct ARObjectDetailView: View {
                             VStack(alignment: .leading, spacing: 8) {
                                 ForEach(objectDetail.anchors, id: \.self) { anchorInfo in
                                     Text(anchorInfo)
-                                        .font(.system(.caption, design: .monospaced))
+                                        .font(.system(size: 11, design: .monospaced))
                                         .foregroundColor(.secondary)
                                 }
                             }
                         } else {
                             Text("No anchor information available")
-                                .font(.system(.body, design: .monospaced))
+                                .font(.system(size: 15, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -163,7 +163,7 @@ private struct DetailSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.system(.headline, design: .rounded, weight: .semibold))
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
                 .foregroundColor(.primary)
 
             VStack(alignment: .leading, spacing: 6) {
@@ -182,12 +182,12 @@ private struct DetailRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             Text(label + ":")
-                .font(.system(.subheadline, design: .rounded, weight: .medium))
+                .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundColor(.secondary)
                 .frame(width: 120, alignment: .leading)
 
             Text(value)
-                .font(.system(.body, design: .monospaced))
+                .font(.system(size: 15, design: .monospaced))
                 .foregroundColor(.primary)
                 .textSelection(.enabled) // Allow copying values
                 .frame(maxWidth: .infinity, alignment: .leading)

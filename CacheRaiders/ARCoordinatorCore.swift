@@ -234,6 +234,11 @@ class ARCoordinatorCore: NSObject {
             configuration.frameSemantics.insert(.personSegmentationWithDepth)
         }
 
+        // Enable camera grain estimation for tracking quality assessment
+        if #available(iOS 16.0, *), ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
+            configuration.frameSemantics.insert(.smoothedSceneDepth)
+        }
+
         // Start AR session
         arView.session.run(configuration)
         savedARConfiguration = configuration

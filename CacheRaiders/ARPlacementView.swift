@@ -16,6 +16,7 @@ struct ARPlacementView: View {
     @State private var crosshairPosition: CGPoint = .zero
     @State private var placementMode: PlacementMode = .selecting
     @State private var isMultifindable: Bool = false // Default to single-find for map placement
+    @State private var newObjectName: String = "" // Name for new objects
     
     enum PlacementMode {
         case selecting
@@ -40,6 +41,16 @@ struct ARPlacementView: View {
                                         Text(type.displayName).tag(type)
                                     }
                                 }
+
+                                TextField("Object Name (optional)", text: $newObjectName)
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .help("Leave empty for auto-generated name like 'New Chalice'. Max 50 characters.")
+                                    .onChange(of: newObjectName) { newValue in
+                                        // Limit to 50 characters
+                                        if newValue.count > 50 {
+                                            newObjectName = String(newValue.prefix(50))
+                                        }
+                                    }
 
                                 Toggle("Multi-Findable", isOn: $isMultifindable)
                                     .help("When enabled, this item disappears only for users who find it. Other players can still find it. When disabled, it disappears for everyone once found.")
@@ -127,6 +138,7 @@ struct ARPlacementView: View {
                                     // Create new object and get the ID returned from API
                                     objectId = await createNewObject(
                                         type: objectType,
+                                        name: newObjectName,
                                         coordinate: gpsCoordinate,
                                         arPosition: arPosition,
                                         arOrigin: arOrigin,
@@ -315,27 +327,35 @@ struct ARPlacementView: View {
         }
     }
 
-    private func createNewObject(type: LootBoxType, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async -> String {
+    private func createNewObject(type: LootBoxType, name: String, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async -> String {
         let objectId = UUID().uuidString
+        let now = Date()
 
         // CRITICAL: Include AR offset coordinates in initial object creation for <10cm accuracy
         // Use .map source so object persists to Core Data and syncs to API
+        let objectName = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "New \(type.displayName)"
+            : name.trimmingCharacters(in: .whitespacesAndNewlines)
+
         let newLocation = LootBoxLocation(
             id: objectId,
-            name: "New \(type.displayName)",
+            name: objectName,
             type: type,
             latitude: coordinate.latitude,
             longitude: coordinate.longitude,
             radius: 3.0, // Smaller radius since we have precise AR coordinates
             grounding_height: groundingHeight,
             source: .map, // Use .map instead of .arManual so object persists and syncs
+            created_by: APIService.shared.currentUserID, // Track who created this object
+            last_modified: now, // Set creation timestamp for display
             ar_origin_latitude: arOrigin?.coordinate.latitude,
             ar_origin_longitude: arOrigin?.coordinate.longitude,
             ar_offset_x: Double(arPosition.x),
             ar_offset_y: Double(arPosition.y),
             ar_offset_z: Double(arPosition.z),
-            ar_placement_timestamp: Date(),
-            multifindable: isMultifindable
+            ar_placement_timestamp: now,
+            multifindable: isMultifindable,
+            ar_placement_heading: userLocationManager.heading // Store compass heading for consistent object rotation
         )
 
         do {
@@ -361,6 +381,11 @@ struct ARPlacementView: View {
                 }
             } else {
                 print("⚠️ [Placement] Failed to convert APIObject to LootBoxLocation")
+            }
+
+            // Clear the name field for next object creation
+            await MainActor.run {
+                newObjectName = ""
             }
 
             // Store the intended AR position from ARPlacementView in UserDefaults

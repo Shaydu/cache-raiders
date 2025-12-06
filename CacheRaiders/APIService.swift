@@ -408,6 +408,14 @@ class APIService {
             arPlacementTimestamp = isoFormatter.date(from: timestampString)
         }
 
+        // Parse created_at timestamp for last_modified field
+        // Use created_at as the last_modified date since API provides creation time
+        var lastModified: Date? = nil
+        if let createdAtString = apiObject.created_at {
+            let isoFormatter = ISO8601DateFormatter()
+            lastModified = isoFormatter.date(from: createdAtString)
+        }
+
         // Determine source: if object has AR coordinates, treat as AR-placed (use .map for persistence)
         // Use .map instead of .arManual so it persists to Core Data and syncs to API
         let hasARCoordinates = apiObject.ar_origin_latitude != nil &&
@@ -428,6 +436,7 @@ class APIService {
             grounding_height: apiObject.grounding_height,
             source: source, // Use .map for AR-placed objects (persists + syncs), .api for GPS-only
             created_by: apiObject.created_by,
+            last_modified: lastModified, // Use created_at as last_modified for display
             ar_origin_latitude: apiObject.ar_origin_latitude,
             ar_origin_longitude: apiObject.ar_origin_longitude,
             ar_offset_x: apiObject.ar_offset_x,

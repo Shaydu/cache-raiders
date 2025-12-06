@@ -27,7 +27,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var geospatialService: ARGeospatialService? // New ENU-based geospatial service
     private var treasureHuntService: TreasureHuntService? // Treasure hunt game mode service
     private var npcService: ARNPCService? // NPC management service
-    private var anchoringService: ARAssetAnchoringService? // Stable AR anchoring service for drift prevention
+    private var coordinateSharingService: ARCoordinateSharingService? // Coordinate sharing for multi-user AR
+    private var worldMapPersistenceService: ARWorldMapPersistenceService? // World map persistence for stable AR anchoring
     var stateManager: ARStateManager? // State management for throttling and coordination
 
     weak var arView: ARView?
@@ -497,7 +498,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         groundingService = ARGroundingService(arView: arView)
         precisionPositioningService = ARPrecisionPositioningService(arView: arView) // Legacy
         geospatialService = ARGeospatialService() // New ENU-based service
-        anchoringService = ARAssetAnchoringService(arView: arView) // Stable AR anchoring for drift prevention
+        coordinateSharingService = ARCoordinateSharingService(arView: arView) // Coordinate sharing for multi-user AR
         stateManager = ARStateManager() // State management for throttling and coordination
 
         // Configure environment lighting for proper shading and colors
@@ -507,6 +508,27 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Start periodic grounding checks to ensure objects stay on surfaces
         // This continuously monitors for better surface data and re-grounds objects when found
         startPeriodicGrounding()
+
+        // Configure world map persistence service
+        if let worldMapPersistenceService = worldMapPersistenceService {
+            // Configure with API and WebSocket services when available
+            // Note: This will be enhanced when API/WebSocket integration is complete
+            worldMapPersistenceService.isPersistenceEnabled = true
+        }
+
+        // Configure coordinate sharing service
+        if let coordinateSharingService = coordinateSharingService,
+           let locationManager = locationManager {
+            coordinateSharingService.configure(
+                with: arView,
+                webSocketService: WebSocketService.shared,
+                apiService: APIService.shared,
+                locationManager: locationManager
+            )
+        }
+
+        // Setup world map persistence
+        setupWorldMapPersistence()
 
         // Configure managers with shared state
         occlusionManager?.placedBoxes = placedBoxes
@@ -734,6 +756,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         occlusionManager?.stopOcclusionChecking()
         NotificationCenter.default.removeObserver(self, name: NSNotification.Name("ARPlacementObjectSaved"), object: nil)
         stopPeriodicGrounding()
+
+        // WORLD MAP PERSISTENCE: Clean up on deinit
+        onARSessionEnded()
     }
 
     /// Timer for periodic grounding checks
@@ -1524,6 +1549,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                         Swift.print("   Ground level: \(String(format: "%.2f", groundLevel))m (FIXED - never changes)")
                         Swift.print("   ⚠️ AR origin will NOT change - all objects positioned relative to this fixed point")
                         Swift.print("   📐 Using ENU coordinate system for geospatial positioning")
+
+                        // WORLD MAP PERSISTENCE: Initialize when AR session starts
+                        onARSessionStarted()
                     }
                 } else {
                     // GPS available but accuracy too low
@@ -2213,6 +2241,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("✅ [AR Session] AR Session interruption ended")
         Swift.print("   Placed objects: \(placedBoxes.count) anchors in placedBoxes dictionary")
 
+        // WORLD MAP PERSISTENCE: Handle session resumption
+        onARSessionStarted()
+
         // CRITICAL: AR session interruption (e.g., from ARPlacementView dismissing) removes all anchors
         // Even though we don't call session.run(), the anchors are gone from the scene
         // We need to force re-placement of all objects that were in the scene
@@ -2347,56 +2378,112 @@ class ARCoordinator: NSObject, ARSessionDelegate {
            let arOffsetY = location.ar_offset_y,
            let arOffsetZ = location.ar_offset_z {
             // AR coordinates available - use them for mm-precision placement
-            let arOriginGPS = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
+            let storedAROriginGPS = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
 
-            // UPDATED LOGIC: Check USER distance to object (8m threshold) for precision mode
-            // This is the key factor - not distance from AR origin
+            // Check USER distance to object (8m threshold) for precision mode
             let objectLocation = location.location
             let userDistanceToObject = userLocation.distance(from: objectLocation)
 
             let useARCoordinates: Bool
-            let arPosition = SIMD3<Float>(Float(arOffsetX), Float(arOffsetY), Float(arOffsetZ))
-            let distanceFromOrigin = length(arPosition)
+            let storedARPosition = SIMD3<Float>(Float(arOffsetX), Float(arOffsetY), Float(arOffsetZ))
+            let distanceFromStoredOrigin = length(storedARPosition)
 
+            // Compute AR origin matching and distance for logging
+            var arOriginsMatch = false
+            var distanceFromOrigin = distanceFromStoredOrigin
             if let currentAROrigin = arOriginLocation {
-                // Compare AR origins - if they match, we can potentially use AR coordinates
-                let originDistance = currentAROrigin.distance(from: arOriginGPS)
+                let originDistance = currentAROrigin.distance(from: storedAROriginGPS)
+                arOriginsMatch = originDistance < 1.0
+                // For current session, distance from origin would be computed relative to current origin
+                // but we keep the stored distance for consistency
+            }
 
-                // NEW LOGIC: Use AR coordinates when user is within 8m of object AND AR session is valid
-                // This provides precision when users are close to objects
-                let arOriginsMatch = originDistance < 1.0
-                useARCoordinates = userDistanceToObject < 8.0 && arOriginsMatch && distanceFromOrigin < 12.0
+            // CRITICAL FIX: Use stored AR origin instead of current session's origin
+            // Transform AR coordinates from stored origin's coordinate system to current session
+            if let currentAROrigin = arOriginLocation {
+                let originDistance = currentAROrigin.distance(from: storedAROriginGPS)
+
+                // Use AR coordinates when user is close to object (within 8m)
+                // Even if AR origins don't match, we can transform between coordinate systems
+                let withinPrecisionRange = userDistanceToObject < 8.0 && distanceFromStoredOrigin < 12.0
+                useARCoordinates = withinPrecisionRange
 
                 Swift.print("🎯 AR COORDINATE DECISION for '\(location.name)':")
                 Swift.print("   📍 User distance to object: \(String(format: "%.2f", userDistanceToObject))m (threshold: 8.0m)")
-                Swift.print("   🔗 AR origins match: \(arOriginsMatch) (distance: \(String(format: "%.3f", originDistance))m)")
-                Swift.print("   📏 Distance from AR origin: \(String(format: "%.2f", distanceFromOrigin))m (max: 12.0m)")
+                Swift.print("   🔗 Stored AR origin vs current: \(String(format: "%.3f", originDistance))m apart")
+                Swift.print("   📏 Distance from stored AR origin: \(String(format: "%.2f", distanceFromStoredOrigin))m (max: 12.0m)")
                 Swift.print("   🎯 FINAL DECISION: \(useARCoordinates ? "✅ USING AR COORDINATES (PRECISION MODE)" : "📍 USING GPS COORDINATES (STANDARD MODE)")")
-                
+
                 if useARCoordinates {
-                    Swift.print("   💎 PRECISION PLACEMENT: Object will appear at exact AR position (cm accuracy)")
-                    
-                    // NEW: Check if we have AR anchor transform for even higher precision
+                    Swift.print("   💎 PRECISION PLACEMENT: Transforming coordinates from stored origin to current session")
+
+                    // CRITICAL: Transform AR coordinates from stored origin to current session's coordinate system
+                    // This allows cross-user consistency even with different AR origins
+                    var transformedARPosition: SIMD3<Float>
+
+                    if originDistance < 1.0 {
+                        // Origins are essentially the same (<1m apart) - use stored coordinates directly
+                        transformedARPosition = storedARPosition
+                        Swift.print("   ✅ AR origins match - using stored coordinates directly")
+                    } else {
+                        // Origins are different - need to transform coordinates
+                        // Calculate offset between stored origin and current origin using geospatial service
+                        if let geospatialService = geospatialService,
+                           let storedOriginENU = geospatialService.convertGPSToENU(storedAROriginGPS) {
+                            // Convert stored AR position to absolute GPS, then back to current AR coordinates
+                            // storedARPosition is relative to storedAROriginGPS
+                            // We need to find its absolute GPS location, then convert to current AR session
+
+                            Swift.print("   🔄 Transforming coordinates between AR sessions:")
+                            Swift.print("      Stored origin: (\(String(format: "%.6f", arOriginLat)), \(String(format: "%.6f", arOriginLon)))")
+                            Swift.print("      Current origin: (\(String(format: "%.6f", currentAROrigin.coordinate.latitude)), \(String(format: "%.6f", currentAROrigin.coordinate.longitude)))")
+                            Swift.print("      Origin offset in ENU: (\(String(format: "%.3f", storedOriginENU.x))m E, \(String(format: "%.3f", storedOriginENU.y))m N)")
+
+                            // Transform: stored AR coordinates → stored origin offset in current ENU
+                            // ARKit: +X = East, +Y = Up, +Z = -North
+                            // ENU: +E = East, +N = North, +U = Up
+                            let eastOffset = Float(storedOriginENU.x) + storedARPosition.x
+                            let northOffset = Float(storedOriginENU.y) - storedARPosition.z
+                            let upOffset = storedARPosition.y
+
+                            transformedARPosition = SIMD3<Float>(eastOffset, upOffset, -northOffset)
+                            Swift.print("      Transformed position: (\(String(format: "%.3f", transformedARPosition.x)), \(String(format: "%.3f", transformedARPosition.y)), \(String(format: "%.3f", transformedARPosition.z)))m")
+                        } else {
+                            // Fallback: use stored coordinates directly (may cause slight drift)
+                            transformedARPosition = storedARPosition
+                            Swift.print("   ⚠️ Could not transform coordinates - using stored position directly")
+                        }
+                    }
+
+                    // Check if we have AR anchor transform for even higher precision
                     if let arAnchorTransformString = location.ar_anchor_transform,
                        let arAnchorTransform = decodeARAnchorTransform(arAnchorTransformString) {
                         Swift.print("   🎯 AR ANCHOR AVAILABLE: Using exact camera transform for mm precision")
-                        placeObjectWithARAnchor(location, arAnchorTransform: arAnchorTransform, in: arView)
-                    } else {
-                        // Use stored AR offset coordinates
-                        Swift.print("   📍 Using stored AR offset coordinates (cm accuracy)")
-                        let arPosition = SIMD3<Float>(
-                            Float(arOffsetX),
-                            Float(arOffsetY),
-                            Float(arOffsetZ)
+
+                        // Apply compass-based rotation to the anchor transform if heading data is available
+                        let rotatedTransform = applyCompassRotationToAnchorTransform(
+                            arAnchorTransform,
+                            storedHeading: location.ar_placement_heading,
+                            currentHeading: userLocationManager?.heading
                         )
-                        
-                        // Use exact stored position - don't re-ground to preserve user's placement
-                        Swift.print("✅ [Placement] Using exact stored AR coordinates for \(location.name) (PRECISION MODE - cm accuracy)")
+                        placeObjectWithARAnchor(location, arAnchorTransform: rotatedTransform, in: arView)
+                    } else {
+                        // Apply compass-based rotation for consistent object orientation
+                        let finalARPosition = rotateARCoordinatesForCompassHeading(
+                            transformedARPosition,
+                            storedHeading: location.ar_placement_heading,
+                            currentHeading: userLocationManager?.heading
+                        )
+
+                        // Use transformed and rotated AR coordinates
+                        Swift.print("✅ [Placement] Using transformed AR coordinates for \(location.name) (PRECISION MODE - cm accuracy)")
                         Swift.print("   Object ID: \(location.id)")
-                        Swift.print("   Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
-                        Swift.print("   🎯 PRECISION ACHIEVED: Object placed at exact location where user positioned it")
-                        
-                        placeBoxAtPosition(arPosition, location: location, in: arView)
+                        Swift.print("   Original position: (\(String(format: "%.4f", storedARPosition.x)), \(String(format: "%.4f", storedARPosition.y)), \(String(format: "%.4f", storedARPosition.z)))m")
+                        Swift.print("   Transformed position: (\(String(format: "%.4f", transformedARPosition.x)), \(String(format: "%.4f", transformedARPosition.y)), \(String(format: "%.4f", transformedARPosition.z)))m")
+                        Swift.print("   Final rotated position: (\(String(format: "%.4f", finalARPosition.x)), \(String(format: "%.4f", finalARPosition.y)), \(String(format: "%.4f", finalARPosition.z)))m")
+                        Swift.print("   🎯 PRECISION ACHIEVED: Object placed with coordinate transformation and compass rotation for cross-user consistency")
+
+                        placeBoxAtPosition(finalARPosition, location: location, in: arView)
                     }
                     
                     // Log location again after 1 second to verify it's still there
@@ -2412,8 +2499,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                                 Swift.print("   Anchor parent: \(anchor.parent != nil ? "exists" : "nil")")
                                 if !isStillInScene {
                                     Swift.print("   ⚠️ WARNING: Object was removed from scene!")
-                                } else if abs(currentPos.x - arPosition.x) > 0.001 || abs(currentPos.y - arPosition.y) > 0.001 || abs(currentPos.z - arPosition.z) > 0.001 {
-                                    Swift.print("   ⚠️ WARNING: Object moved! Original: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z))), Current: (\(String(format: "%.4f", currentPos.x)), \(String(format: "%.4f", currentPos.y)), \(String(format: "%.4f", currentPos.z)))")
+                                } else if abs(currentPos.x - transformedARPosition.x) > 0.001 || abs(currentPos.y - transformedARPosition.y) > 0.001 || abs(currentPos.z - transformedARPosition.z) > 0.001 {
+                                    Swift.print("   ⚠️ WARNING: Object moved! Original: (\(String(format: "%.4f", transformedARPosition.x)), \(String(format: "%.4f", transformedARPosition.y)), \(String(format: "%.4f", transformedARPosition.z))), Current: (\(String(format: "%.4f", currentPos.x)), \(String(format: "%.4f", currentPos.y)), \(String(format: "%.4f", currentPos.z)))")
                                 } else {
                                     Swift.print("   ✅ Object still at original position")
                                 }
@@ -2432,10 +2519,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     }
                     return
                 } else {
-                    let _reasons: [String] = []
+                    // Not using AR coordinates - explain why
                     if userDistanceToObject >= 8.0 { Swift.print("   📍 Reason: User >8m from object (\(String(format: "%.1f", userDistanceToObject))m)") }
-                    if !arOriginsMatch { Swift.print("   📍 Reason: AR origins don't match (different sessions)") }
-                    if distanceFromOrigin >= 12.0 { Swift.print("   📍 Reason: Too far from AR origin (\(String(format: "%.1f", distanceFromOrigin))m)") }
+                    if distanceFromStoredOrigin >= 12.0 { Swift.print("   📍 Reason: Too far from stored AR origin (\(String(format: "%.1f", distanceFromStoredOrigin))m)") }
                     Swift.print("   🌍 STANDARD PLACEMENT: Object positioned using GPS (meter accuracy)")
                 }
             } else {
@@ -2446,40 +2532,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 Swift.print("   📍 Reason: No AR session active")
                 Swift.print("   🌍 STANDARD PLACEMENT: Object positioned using GPS (meter accuracy)")
             }
-            
-            if useARCoordinates {
-                // Use stored AR coordinates directly (mm-precision) - NEVER re-ground
-                // This preserves the exact placement position where the user placed it
-                // Objects should NEVER move after being placed, especially for the user who placed them
-                let arPosition = SIMD3<Float>(
-                    Float(arOffsetX),
-                    Float(arOffsetY),
-                    Float(arOffsetZ)
-                )
-                
-                // Use exact stored position - don't re-ground to preserve user's placement
-                Swift.print("✅ [Placement] Using exact stored AR coordinates for \(location.name) (PRECISION MODE - cm accuracy)")
-                Swift.print("   Object ID: \(location.id)")
-                Swift.print("   Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
-                Swift.print("   🎯 PRECISION ACHIEVED: Object placed at exact location where user positioned it")
-                
-                placeBoxAtPosition(arPosition, location: location, in: arView)
-                
-                // Log location again after 1 second to verify it's still there
-                Task {
-                    try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-                    await MainActor.run {
-                        if let anchor = placedBoxes[location.id] {
-                            let currentPos = anchor.position
-                            let isStillInScene = anchor.parent != nil
-                            Swift.print("📍 [Placement] Object '\(location.name)' location after 1 second:")
-                            Swift.print("   AR Position: X=\(String(format: "%.4f", currentPos.x))m, Y=\(String(format: "%.4f", currentPos.y))m, Z=\(String(format: "%.4f", currentPos.z))m")
-                            Swift.print("   Still in scene: \(isStillInScene ? "YES" : "NO")")
-                            Swift.print("   Anchor parent: \(anchor.parent != nil ? "exists" : "nil")")
-                            if !isStillInScene {
-                                Swift.print("   ⚠️ WARNING: Object was removed from scene!")
-                            } else if abs(currentPos.x - arPosition.x) > 0.001 || abs(currentPos.y - arPosition.y) > 0.001 || abs(currentPos.z - arPosition.z) > 0.001 {
-                                Swift.print("   ⚠️ WARNING: Object moved! Original: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z))), Current: (\(String(format: "%.4f", currentPos.x)), \(String(format: "%.4f", currentPos.y)), \(String(format: "%.4f", currentPos.z)))")
+
+            // REMOVED DUPLICATE CODE - AR coordinate transformation already handled above at lines 2410-2465
                             } else {
                                 Swift.print("   ✅ Object still at original position")
                             }
@@ -5164,6 +5218,74 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         boxEntity.components.set(light)
 
         return boxEntity
+    }
+
+    /// Rotates AR coordinates based on compass heading to ensure consistent object orientation
+    /// This ensures objects maintain the same orientation relative to magnetic north across different users/sessions
+    private func rotateARCoordinatesForCompassHeading(_ arPosition: SIMD3<Float>, storedHeading: Double?, currentHeading: Double?) -> SIMD3<Float> {
+        // If we don't have heading data, return coordinates unchanged
+        guard let storedHeading = storedHeading, let currentHeading = currentHeading else {
+            Swift.print("   🧭 No compass heading data available - using coordinates as-is")
+            return arPosition
+        }
+
+        // Calculate the rotation angle needed to align with magnetic north
+        let headingDifference = currentHeading - storedHeading
+        let rotationAngleRadians = headingDifference * .pi / 180.0
+
+        Swift.print("   🧭 Applying compass-based rotation:")
+        Swift.print("      Stored heading: \(String(format: "%.1f", Float(storedHeading)))°")
+        Swift.print("      Current heading: \(String(format: "%.1f", Float(currentHeading)))°")
+        Swift.print("      Rotation needed: \(String(format: "%.1f", Float(headingDifference)))°")
+
+        // Create rotation matrix around Y-axis (up/down axis) for compass rotation
+        let rotationMatrix = simd_float3x3([
+            SIMD3<Float>(cos(rotationAngleRadians), 0, -sin(rotationAngleRadians)), // X rotation
+            SIMD3<Float>(0, 1, 0),                                                  // Y unchanged (up)
+            SIMD3<Float>(sin(rotationAngleRadians), 0, cos(rotationAngleRadians))  // Z rotation
+        ])
+
+        // Apply rotation to the AR position
+        let rotatedPosition = rotationMatrix * arPosition
+
+        Swift.print("      Original position: (\(String(format: "%.3f", arPosition.x)), \(String(format: "%.3f", arPosition.y)), \(String(format: "%.3f", arPosition.z)))")
+        Swift.print("      Rotated position: (\(String(format: "%.3f", rotatedPosition.x)), \(String(format: "%.3f", rotatedPosition.y)), \(String(format: "%.3f", rotatedPosition.z)))")
+
+        return rotatedPosition
+    }
+
+    /// Applies compass-based rotation to an AR anchor transform matrix
+    /// This ensures objects maintain consistent orientation relative to magnetic north
+    private func applyCompassRotationToAnchorTransform(_ transform: simd_float4x4, storedHeading: Double?, currentHeading: Double?) -> simd_float4x4 {
+        // If we don't have heading data, return transform unchanged
+        guard let storedHeading = storedHeading, let currentHeading = currentHeading else {
+            Swift.print("   🧭 No compass heading data available for anchor transform - using as-is")
+            return transform
+        }
+
+        // Calculate the rotation angle needed to align with magnetic north
+        let headingDifference = currentHeading - storedHeading
+        let rotationAngleRadians = headingDifference * .pi / 180.0
+
+        Swift.print("   🧭 Applying compass-based rotation to anchor transform:")
+        Swift.print("      Stored heading: \(String(format: "%.1f", Float(storedHeading)))°")
+        Swift.print("      Current heading: \(String(format: "%.1f", Float(currentHeading)))°")
+        Swift.print("      Rotation needed: \(String(format: "%.1f", Float(headingDifference)))°")
+
+        // Create rotation matrix around Y-axis (up/down axis) for compass rotation
+        let rotationMatrix = simd_float4x4([
+            SIMD4<Float>(cos(rotationAngleRadians), 0, -sin(rotationAngleRadians), 0), // X rotation
+            SIMD4<Float>(0, 1, 0, 0),                                                  // Y unchanged (up)
+            SIMD4<Float>(sin(rotationAngleRadians), 0, cos(rotationAngleRadians), 0),  // Z rotation
+            SIMD4<Float>(0, 0, 0, 1)                                                   // W (homogeneous coordinate)
+        ])
+
+        // Apply rotation to the transform matrix
+        let rotatedTransform = rotationMatrix * transform
+
+        Swift.print("      Anchor transform rotated for compass alignment")
+
+        return rotatedTransform
     }
 
 

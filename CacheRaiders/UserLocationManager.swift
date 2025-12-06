@@ -47,6 +47,19 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     func requestLocationPermission() {
         locationManager.requestWhenInUseAuthorization()
     }
+
+    func startUpdatingHeading() {
+        if CLLocationManager.headingAvailable() {
+            locationManager.startUpdatingHeading()
+            print("🧭 Started compass heading updates")
+        } else {
+            print("⚠️ Compass heading not available on this device")
+        }
+    }
+
+    func stopUpdatingHeading() {
+        locationManager.stopUpdatingHeading()
+    }
     
     func startUpdatingLocation() {
         guard authorizationStatus == .authorizedWhenInUse || authorizationStatus == .authorizedAlways else {
@@ -54,7 +67,8 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
             return
         }
         locationManager.startUpdatingLocation()
-        
+        startUpdatingHeading() // Start compass heading updates alongside location
+
         // Fetch location update interval from server, then start automatic updates
         Task {
             await fetchLocationUpdateInterval()
@@ -82,6 +96,7 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     
     func stopUpdatingLocation() {
         locationManager.stopUpdatingLocation()
+        stopUpdatingHeading()
         stopAutomaticLocationUpdates()
     }
     
@@ -215,6 +230,15 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
         checkForTreasureDiscovery(at: location)
 
         // Note: Server updates are sent manually when user taps the GPS direction box
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        // Update heading from compass (more accurate than GPS course)
+        // CLHeading.trueHeading gives magnetic north-corrected heading
+        if newHeading.headingAccuracy >= 0 {
+            heading = newHeading.trueHeading
+            print("🧭 Compass heading updated: \(String(format: "%.1f", newHeading.trueHeading))° (accuracy: \(String(format: "%.1f", newHeading.headingAccuracy))°)")
+        }
     }
 
     /// Check if player has arrived at treasure location and trigger IOU discovery

@@ -306,6 +306,7 @@ def init_db():
         ('ar_offset_x', 'REAL'),
         ('ar_offset_y', 'REAL'),
         ('ar_offset_z', 'REAL'),
+        ('ar_placement_heading', 'REAL'),
         ('ar_placement_timestamp', 'TEXT'),
         ('ar_anchor_transform', 'TEXT')  # For millimeter-precise AR positioning
     ]
@@ -420,6 +421,7 @@ def init_db():
             ar_offset_x REAL,
             ar_offset_y REAL,
             ar_offset_z REAL,
+            ar_placement_heading REAL,
             ar_placement_timestamp TEXT
         )
     ''')
@@ -511,7 +513,7 @@ def get_objects():
         ]
         ar_columns = [
             'ar_origin_latitude', 'ar_origin_longitude',
-            'ar_offset_x', 'ar_offset_y', 'ar_offset_z', 'ar_placement_timestamp',
+            'ar_offset_x', 'ar_offset_y', 'ar_offset_z', 'ar_placement_timestamp', 'ar_placement_heading',
             'ar_anchor_transform', 'ar_world_transform', 'nfc_tag_id'
         ]
         
@@ -645,6 +647,7 @@ def get_object(object_id: str):
             o.ar_offset_y,
             o.ar_offset_z,
             o.ar_placement_timestamp,
+            o.ar_placement_heading,  -- Include compass heading for consistent orientation
             o.ar_anchor_transform,  -- Include AR anchor transform for precise positioning
             o.ar_world_transform,   -- Include full AR world transform for exact positioning
             o.nfc_tag_id,          -- Include NFC tag ID
@@ -700,7 +703,7 @@ def create_object():
             
             try:
                 cursor.execute('''
-                    INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height, ar_anchor_transform, ar_offset_x, ar_offset_y, ar_offset_z, ar_origin_latitude, ar_origin_longitude, ar_placement_timestamp, ar_world_transform, nfc_tag_id)
+                    INSERT INTO objects (id, name, type, latitude, longitude, radius, created_at, created_by, grounding_height, ar_anchor_transform, ar_offset_x, ar_offset_y, ar_offset_z, ar_origin_latitude, ar_origin_longitude, ar_placement_timestamp, ar_world_transform, nfc_tag_id, ar_placement_heading)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     data['id'],
@@ -720,7 +723,8 @@ def create_object():
                     data.get('ar_origin_longitude'),  # Optional AR origin GPS longitude
                     data.get('ar_placement_timestamp'),  # Optional AR placement timestamp
                     data.get('ar_world_transform'),  # Optional full AR world transform matrix
-                    data.get('nfc_tag_id')  # Optional NFC tag ID
+                    data.get('nfc_tag_id'),  # Optional NFC tag ID
+                    data.get('ar_placement_heading')  # Optional compass heading when object was placed
                 ))
                 
                 conn.commit()
@@ -788,6 +792,7 @@ def create_object():
                 o.ar_offset_y,
                 o.ar_offset_z,
                 o.ar_placement_timestamp,
+                o.ar_placement_heading,
                 o.ar_anchor_transform,
                 o.ar_world_transform,
                 o.nfc_tag_id,
@@ -830,6 +835,7 @@ def create_object():
                 'ar_offset_x': safe_get('ar_offset_x'),
                 'ar_offset_y': safe_get('ar_offset_y'),
                 'ar_offset_z': safe_get('ar_offset_z'),
+                'ar_placement_heading': safe_get('ar_placement_heading'),
                 'ar_placement_timestamp': safe_get('ar_placement_timestamp'),
                 'ar_anchor_transform': safe_get('ar_anchor_transform'),  # Include AR anchor transform
                 'ar_world_transform': safe_get('ar_world_transform'),  # Include full AR world transform
@@ -1854,6 +1860,7 @@ def get_nfc_details(nfc_id: str):
                 o.ar_offset_y,
                 o.ar_offset_z,
                 o.ar_placement_timestamp,
+                o.ar_placement_heading,
                 o.ar_anchor_transform
             FROM objects o
             WHERE LOWER(o.id) = ?
@@ -1921,6 +1928,7 @@ def get_nfc_details(nfc_id: str):
             'ar_offset_x': obj_row['ar_offset_x'],
             'ar_offset_y': obj_row['ar_offset_y'],
             'ar_offset_z': obj_row['ar_offset_z'],
+            'ar_placement_heading': obj_row['ar_placement_heading'],
             'ar_placement_timestamp': obj_row['ar_placement_timestamp'],
             'ar_anchor_transform': obj_row['ar_anchor_transform'],
             'collection_count': finds_count,

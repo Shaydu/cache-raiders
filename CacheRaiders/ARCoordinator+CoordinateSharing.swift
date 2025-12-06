@@ -124,16 +124,9 @@ extension ARCoordinator {
     }
 }
 
-// MARK: - ARCoordinator Property Addition
-/// This shows where to add the coordinate sharing service property to ARCoordinator
-extension ARCoordinator {
-    /// Coordinate sharing service for multi-device AR experiences
-    var coordinateSharingService: ARCoordinateSharingService? {
-        // This property should be added to the main ARCoordinator class
-        // Example: private let coordinateSharingService = ARCoordinateSharingService()
-        return nil // Placeholder - implement in main class
-    }
-}
+// MARK: - Note
+/// The coordinateSharingService property is now implemented as a stored property
+/// in the main ARCoordinator class (line 30)
 
 // MARK: - Usage Examples
 

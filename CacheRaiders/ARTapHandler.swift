@@ -451,6 +451,7 @@ class ARTapHandler {
 
                 // Generate unique name for tap-placed artifact
                 let tapCount = placedBoxes.count + 1
+                let now = Date()
                 let testLocation = LootBoxLocation(
                     id: UUID().uuidString,
                     name: "Test Artifact #\(tapCount)",
@@ -459,12 +460,14 @@ class ARTapHandler {
                     longitude: arOriginLon,  // Use GPS location, not 0
                     radius: 3.0,  // Smaller radius since we have precise AR coordinates
                     source: .map,  // Use .map so object syncs to API and is visible to all users
+                    created_by: APIService.shared.currentUserID,  // Track who created this object
+                    last_modified: now,  // Set creation timestamp for display
                     ar_origin_latitude: arOriginLat,
                     ar_origin_longitude: arOriginLon,
                     ar_offset_x: arOffsetX,
                     ar_offset_y: arOffsetY,
                     ar_offset_z: arOffsetZ,
-                    ar_placement_timestamp: Date()
+                    ar_placement_timestamp: now
                 )
                 // For manual tap placement, allow closer placement (1-2m instead of 3-5m)
                 // Add to locationManager FIRST so it's tracked, then place it
