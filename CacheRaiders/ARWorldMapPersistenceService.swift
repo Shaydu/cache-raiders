@@ -48,7 +48,6 @@ class ARWorldMapPersistenceService: ObservableObject {
 
     init(arView: ARView? = nil) {
         self.arView = arView
-        loadPersistedData()
         setupSessionDelegate()
         print("🗺️ ARWorldMapPersistenceService initialized")
     }
@@ -276,7 +275,7 @@ class ARWorldMapPersistenceService: ObservableObject {
         let objectData = objectWorldTransforms.map { objectId, transform -> [String: Any] in
             return [
                 "id": objectId,
-                "transform": transform.columns.map { $0 },
+                "transform": [transform.columns.0, transform.columns.1, transform.columns.2, transform.columns.3],
                 "timestamp": Date().timeIntervalSince1970
             ]
         }
@@ -295,14 +294,17 @@ class ARWorldMapPersistenceService: ObservableObject {
         var restoredCount = 0
         for objectDict in objectData {
             guard let objectId = objectDict["id"] as? String,
-                  let transformColumns = objectDict["transform"] as? [[SIMD4<Float>]] else {
+                  let transformColumns = objectDict["transform"] as? [SIMD4<Float>] else {
                 continue
             }
 
             // Reconstruct transform matrix
             var transform = matrix_identity_float4x4
-            for (index, column) in transformColumns.enumerated() {
-                transform.columns[index] = column[0]
+            if transformColumns.count >= 4 {
+                transform.columns.0 = transformColumns[0]
+                transform.columns.1 = transformColumns[1]
+                transform.columns.2 = transformColumns[2]
+                transform.columns.3 = transformColumns[3]
             }
 
             // Restore the anchor
@@ -334,19 +336,24 @@ class ARWorldMapPersistenceService: ObservableObject {
             "anchoredObjects": objectWorldTransforms.map { objectId, transform in
                 [
                     "id": objectId,
-                    "transform": transform.columns.map { $0 }
+                    "transform": [transform.columns.0, transform.columns.1, transform.columns.2, transform.columns.3]
                 ]
             },
             "timestamp": Date().timeIntervalSince1970,
             "deviceUUID": UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
         ]
 
+        // Note: shareARWorldMap method not yet implemented in APIService
+        // Commenting out for now to allow build to succeed
+        /*
         do {
             try await apiService.shareARWorldMap(sharedData)
             print("📤 Shared world map and \(objectWorldTransforms.count) anchored objects")
         } catch {
             print("❌ Failed to share world map: \(error.localizedDescription)")
         }
+        */
+        print("⚠️ World map sharing not yet implemented - shareARWorldMap API method needed")
     }
 
     /// Loads shared world map and objects from another user
@@ -392,14 +399,17 @@ class ARWorldMapPersistenceService: ObservableObject {
 
         for objectDict in objectsData {
             guard let objectId = objectDict["id"] as? String,
-                  let transformColumns = objectDict["transform"] as? [[SIMD4<Float>]] else {
+                  let transformColumns = objectDict["transform"] as? [SIMD4<Float>] else {
                 continue
             }
 
             // Reconstruct transform
             var transform = matrix_identity_float4x4
-            for (index, column) in transformColumns.enumerated() {
-                transform.columns[index] = column[0]
+            if transformColumns.count >= 4 {
+                transform.columns.0 = transformColumns[0]
+                transform.columns.1 = transformColumns[1]
+                transform.columns.2 = transformColumns[2]
+                transform.columns.3 = transformColumns[3]
             }
 
             // Create anchor

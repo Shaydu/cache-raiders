@@ -1117,7 +1117,7 @@ struct ARPlacementARView: UIViewRepresentable {
             )
             
             // Convert AR world position to GPS coordinates (fallback)
-            let gpsCoordinate = convertARToGPS(arPosition: tapWorldPos, arOrigin: arOrigin, userLocation: userLocation, cameraTransform: frame.camera.transform)
+            let gpsCoordinate = convertARToGPS(arPosition: tapWorldPos, arOrigin: arOriginGPS, userLocation: userLocation, cameraTransform: frame.camera.transform)
             
             // Always use AR coordinates for mm-precision (primary)
             // GPS is only for fallback when AR session restarts
@@ -1126,9 +1126,9 @@ struct ARPlacementARView: UIViewRepresentable {
             
             // Store placement data for potential later save (if user presses Done instead of Place)
             pendingPlacementData = (
-                gpsCoordinate: gpsCoordinate ?? arOrigin.coordinate,
+                gpsCoordinate: gpsCoordinate ?? arOriginGPS.coordinate,
                 arPosition: tapWorldPos,
-                arOrigin: arOrigin,
+                arOrigin: arOriginGPS,
                 groundingHeight: surfaceY,
                 scale: scaleMultiplier
             )
@@ -1213,7 +1213,7 @@ struct ARPlacementARView: UIViewRepresentable {
             print("   Adjusted position: X: \(String(format: "%.4f", adjustedPosition.x)), Y: \(String(format: "%.4f", adjustedPosition.y)), Z: \(String(format: "%.4f", adjustedPosition.z))")
 
             // Convert AR world position to GPS coordinates (fallback)
-            let gpsCoordinate = convertARToGPS(arPosition: adjustedPosition, arOrigin: arOrigin, userLocation: userLocation, cameraTransform: frame.camera.transform)
+            let gpsCoordinate = convertARToGPS(arPosition: adjustedPosition, arOrigin: arOriginGPS, userLocation: userLocation, cameraTransform: frame.camera.transform)
             
             // Always use AR coordinates for mm-precision (primary)
             // GPS is only for fallback when AR session restarts
@@ -1222,9 +1222,9 @@ struct ARPlacementARView: UIViewRepresentable {
 
             // Store placement data for potential later save (if user presses Done instead of Place)
             pendingPlacementData = (
-                gpsCoordinate: gpsCoordinate ?? arOrigin.coordinate,
+                gpsCoordinate: gpsCoordinate ?? arOriginGPS.coordinate,
                 arPosition: adjustedPosition,
-                arOrigin: arOrigin,
+                arOrigin: arOriginGPS,
                 groundingHeight: surfaceY,
                 scale: scaleMultiplier
             )
@@ -1235,7 +1235,7 @@ struct ARPlacementARView: UIViewRepresentable {
             // The object will appear in the main AR view via checkAndPlaceBoxes after the placement view dismisses.
 
             // Save to API and dismiss
-            onPlace(gpsCoordinate ?? arOrigin.coordinate, adjustedPosition, arOrigin, surfaceY, scaleMultiplier)
+            onPlace(gpsCoordinate ?? arOriginGPS.coordinate, adjustedPosition, arOriginGPS, surfaceY, scaleMultiplier)
         }
         
         /// Saves the currently placed object (called when Done button is pressed)

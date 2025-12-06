@@ -8,7 +8,7 @@ import UIKit
 class ARImageAnchorService {
     weak var arView: ARView?
     private var referenceImages: Set<ARReferenceImage> = []
-    private var imageAnchors: [String: ARImageAnchor] = [:]
+    private var imageAnchors: [String: ARAnchor] = [:]
     private var imageAnchorEntities: [String: AnchorEntity] = [:]
 
     init(arView: ARView?) {
@@ -76,11 +76,12 @@ class ARImageAnchorService {
 
         // First, create a reference image at this location
         if let referenceImage = referenceImages.first {
-            // Place the reference image as a virtual object that can be tracked
-            let imageAnchor = ARImageAnchor(referenceImage: referenceImage, transform: matrix_identity_float4x4)
-            var transform = imageAnchor.transform
+            // Create transform at the specified position
+            var transform = matrix_identity_float4x4
             transform.columns.3 = SIMD4<Float>(position.x, position.y, position.z, 1.0)
-            imageAnchor.transform = transform
+
+            // Use standard ARAnchor instead of ARImageAnchor for placement
+            let imageAnchor = ARAnchor(name: "placed_\(referenceImage.name ?? "image")", transform: transform)
 
             arView.session.add(anchor: imageAnchor)
             imageAnchors[objectId] = imageAnchor

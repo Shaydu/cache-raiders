@@ -27,8 +27,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var geospatialService: ARGeospatialService? // New ENU-based geospatial service
     private var treasureHuntService: TreasureHuntService? // Treasure hunt game mode service
     private var npcService: ARNPCService? // NPC management service
-    private var coordinateSharingService: ARCoordinateSharingService? // Coordinate sharing for multi-user AR
-    private var worldMapPersistenceService: ARWorldMapPersistenceService? // World map persistence for stable AR anchoring
+    internal var coordinateSharingService: ARCoordinateSharingService? // Coordinate sharing for multi-user AR
+    internal var worldMapPersistenceService: ARWorldMapPersistenceService? // World map persistence for stable AR anchoring
     var stateManager: ARStateManager? // State management for throttling and coordination
 
     weak var arView: ARView?
@@ -2417,43 +2417,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 if useARCoordinates {
                     Swift.print("   💎 PRECISION PLACEMENT: Transforming coordinates from stored origin to current session")
 
-                    // CRITICAL: Transform AR coordinates from stored origin to current session's coordinate system
-                    // This allows cross-user consistency even with different AR origins
-                    var transformedARPosition: SIMD3<Float>
-
-                    if originDistance < 1.0 {
-                        // Origins are essentially the same (<1m apart) - use stored coordinates directly
-                        transformedARPosition = storedARPosition
-                        Swift.print("   ✅ AR origins match - using stored coordinates directly")
-                    } else {
-                        // Origins are different - need to transform coordinates
-                        // Calculate offset between stored origin and current origin using geospatial service
-                        if let geospatialService = geospatialService,
-                           let storedOriginENU = geospatialService.convertGPSToENU(storedAROriginGPS) {
-                            // Convert stored AR position to absolute GPS, then back to current AR coordinates
-                            // storedARPosition is relative to storedAROriginGPS
-                            // We need to find its absolute GPS location, then convert to current AR session
-
-                            Swift.print("   🔄 Transforming coordinates between AR sessions:")
-                            Swift.print("      Stored origin: (\(String(format: "%.6f", arOriginLat)), \(String(format: "%.6f", arOriginLon)))")
-                            Swift.print("      Current origin: (\(String(format: "%.6f", currentAROrigin.coordinate.latitude)), \(String(format: "%.6f", currentAROrigin.coordinate.longitude)))")
-                            Swift.print("      Origin offset in ENU: (\(String(format: "%.3f", storedOriginENU.x))m E, \(String(format: "%.3f", storedOriginENU.y))m N)")
-
-                            // Transform: stored AR coordinates → stored origin offset in current ENU
-                            // ARKit: +X = East, +Y = Up, +Z = -North
-                            // ENU: +E = East, +N = North, +U = Up
-                            let eastOffset = Float(storedOriginENU.x) + storedARPosition.x
-                            let northOffset = Float(storedOriginENU.y) - storedARPosition.z
-                            let upOffset = storedARPosition.y
-
-                            transformedARPosition = SIMD3<Float>(eastOffset, upOffset, -northOffset)
-                            Swift.print("      Transformed position: (\(String(format: "%.3f", transformedARPosition.x)), \(String(format: "%.3f", transformedARPosition.y)), \(String(format: "%.3f", transformedARPosition.z)))m")
-                        } else {
-                            // Fallback: use stored coordinates directly (may cause slight drift)
-                            transformedARPosition = storedARPosition
-                            Swift.print("   ⚠️ Could not transform coordinates - using stored position directly")
-                        }
-                    }
+                    // Use ARCoordinateTransformService for coordinate transformation and rotation
+                    let transformedARPosition = ARCoordinateTransformService.shared.transformAndRotate(
+                        storedPosition: storedARPosition,
+                        storedOrigin: storedAROriginGPS,
+                        storedHeading: location.ar_placement_heading,
+                        currentOrigin: currentAROrigin,
+                        currentHeading: userLocationManager?.heading,
+                        geospatialService: geospatialService
+                    )
 
                     // Check if we have AR anchor transform for even higher precision
                     if let arAnchorTransformString = location.ar_anchor_transform,
@@ -2533,25 +2505,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 Swift.print("   🌍 STANDARD PLACEMENT: Object positioned using GPS (meter accuracy)")
             }
 
-            // REMOVED DUPLICATE CODE - AR coordinate transformation already handled above at lines 2410-2465
-                            } else {
-                                Swift.print("   ✅ Object still at original position")
-                            }
-                        } else {
-                            // Check if object was collected (normal case - not an error)
-                            let wasCollected = locationManager?.locations.first(where: { $0.id == location.id })?.collected ?? false
-                            if wasCollected {
-                                Swift.print("   ℹ️ Object '\(location.name)' was collected (removed from placedBoxes - this is normal)")
-                            } else if findableObjects[location.id] == nil {
-                                Swift.print("   ⚠️ WARNING: Object '\(location.name)' not found in placedBoxes and not in findableObjects - may have been removed unexpectedly")
-                            } else {
-                                Swift.print("   ℹ️ Object '\(location.name)' not in placedBoxes but still in findableObjects (may be in transition)")
-                            }
-                        }
-                    }
-                }
-                return
-            }
+            // AR coordinate handling complete - fallthrough to GPS placement if needed
         }
         
         // Fallback to GPS-based placement if AR coordinates not available

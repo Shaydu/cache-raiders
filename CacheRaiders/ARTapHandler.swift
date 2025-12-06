@@ -436,14 +436,16 @@ class ARTapHandler {
                 let arOffsetY = Double(hitTransform.columns.3.y)
                 let arOffsetZ = Double(hitTransform.columns.3.z)
 
-                // Get user's current GPS location for AR origin
-                guard let userLocation = userLocationManager?.currentLocation else {
-                    Swift.print("⚠️ No user location available - cannot save AR tap placement")
+                // CRITICAL: Use AR session's origin, not current user location
+                // Current user location may drift from where AR session started
+                guard let arSessionOrigin = arCoordinator?.arOriginLocation else {
+                    Swift.print("⚠️ No AR origin set - cannot save AR tap placement with precision")
+                    Swift.print("   AR session must be initialized with GPS origin first")
                     return
                 }
 
-                let arOriginLat = userLocation.coordinate.latitude
-                let arOriginLon = userLocation.coordinate.longitude
+                let arOriginLat = arSessionOrigin.coordinate.latitude
+                let arOriginLon = arSessionOrigin.coordinate.longitude
 
                 Swift.print("✅ Captured AR tap placement with <10cm accuracy:")
                 Swift.print("   AR Origin GPS: (\(String(format: "%.8f", arOriginLat)), \(String(format: "%.8f", arOriginLon)))")
