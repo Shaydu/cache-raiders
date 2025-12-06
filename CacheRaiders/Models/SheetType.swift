@@ -11,6 +11,7 @@ enum SheetType: Identifiable, Equatable {
     case skeletonConversation(npcId: String, npcName: String)
     case treasureMap
     case mapView
+    case objectDetail(detail: ARObjectDetail)
 
     var id: String {
         switch self {
@@ -25,6 +26,7 @@ enum SheetType: Identifiable, Equatable {
         case .skeletonConversation(let npcId, _): return "skeletonConversation_\(npcId)"
         case .treasureMap: return "treasureMap"
         case .mapView: return "mapView"
+        case .objectDetail(let detail): return "objectDetail_\(detail.id)"
         }
     }
 }

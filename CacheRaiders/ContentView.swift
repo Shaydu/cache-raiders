@@ -27,7 +27,8 @@ struct ContentView: View {
     @State private var temperatureStatus: String?
     @State private var collectionNotification: String?
     @State private var nearestObjectDirection: Double?
-    
+    @State private var currentTargetObjectName: String?
+
     // PERFORMANCE: Task for debouncing location updates to prevent excessive API calls
     @State private var locationUpdateTask: Task<Void, Never>?
     
@@ -209,14 +210,22 @@ struct ContentView: View {
                 }) {
                     VStack(alignment: .center, spacing: 4) {
                         directionArrowView
-                        
+
+                        if let objectName = currentTargetObjectName {
+                            Text(objectName)
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundColor(.white.opacity(0.9))
+                                .lineLimit(1)
+                        }
+
                         if let temperature = temperatureStatus {
                             Text(temperature)
                                 .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.white)
                         }
-                        
+
                         Text(formatDistanceInFeetInches(distance))
                             .font(.caption)
                             .fontWeight(.semibold)
@@ -472,6 +481,7 @@ struct ContentView: View {
             temperatureStatus: $temperatureStatus,
             collectionNotification: $collectionNotification,
             nearestObjectDirection: $nearestObjectDirection,
+            currentTargetObjectName: $currentTargetObjectName,
             conversationNPC: $conversationNPC,
             treasureHuntService: treasureHuntService
         )

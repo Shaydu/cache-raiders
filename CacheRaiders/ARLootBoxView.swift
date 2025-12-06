@@ -12,6 +12,7 @@ struct ARLootBoxView: View {
     @Binding var temperatureStatus: String?
     @Binding var collectionNotification: String?
     @Binding var nearestObjectDirection: Double?
+    @Binding var currentTargetObjectName: String?
     @Binding var conversationNPC: ConversationNPC?
     @ObservedObject var treasureHuntService: TreasureHuntService
 
@@ -27,6 +28,7 @@ struct ARLootBoxView: View {
                 temperatureStatus: $temperatureStatus,
                 collectionNotification: $collectionNotification,
                 nearestObjectDirection: $nearestObjectDirection,
+                currentTargetObjectName: $currentTargetObjectName,
                 conversationNPC: $conversationNPC,
                 conversationManager: conversationManager,
                 treasureHuntService: treasureHuntService
@@ -171,6 +173,7 @@ struct ARViewContainer: UIViewRepresentable {
     @Binding var temperatureStatus: String?
     @Binding var collectionNotification: String?
     @Binding var nearestObjectDirection: Double?
+    @Binding var currentTargetObjectName: String?
     @Binding var conversationNPC: ConversationNPC?
     @ObservedObject var conversationManager: ARConversationManager
     @ObservedObject var treasureHuntService: TreasureHuntService
@@ -240,7 +243,7 @@ struct ARViewContainer: UIViewRepresentable {
 
         // CRITICAL: Setup ARView and set delegate BEFORE running the session
         // This ensures session(_:didUpdate:) delegate methods are received from the very first frame
-        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, conversationNPC: $conversationNPC, conversationManager: conversationManager, treasureHuntService: treasureHuntService)
+        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, currentTargetObjectName: $currentTargetObjectName, conversationNPC: $conversationNPC, conversationManager: conversationManager, treasureHuntService: treasureHuntService)
 
         // CRITICAL: Store shared ARView reference in locationManager for placement view
         // This allows the placement view to use the same AR session instead of creating a new one
@@ -307,6 +310,12 @@ struct ARViewContainer: UIViewRepresentable {
         // Tap gesture for placing and collecting loot boxes - ADD AFTER setupARView so tapHandler is initialized
         let tapGesture = UITapGestureRecognizer(target: context.coordinator.tapHandler, action: #selector(ARTapHandler.handleTap(_:)))
         arView.addGestureRecognizer(tapGesture)
+
+        // Long press gesture for viewing object details
+        let longPressGesture = UILongPressGestureRecognizer(target: context.coordinator.tapHandler, action: #selector(ARTapHandler.handleLongPress(_:)))
+        longPressGesture.minimumPressDuration = 0.5 // 500ms for long press
+        arView.addGestureRecognizer(longPressGesture)
+
         return arView
     }
     

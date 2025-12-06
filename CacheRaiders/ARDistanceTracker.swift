@@ -27,7 +27,8 @@ class ARDistanceTracker: ObservableObject {
     var distanceToNearestBinding: Binding<Double?>?
     var temperatureStatusBinding: Binding<String?>?
     var nearestObjectDirectionBinding: Binding<Double?>?
-    
+    var currentTargetObjectNameBinding: Binding<String?>?
+
     @Published var nearestObjectDirection: Double? = nil
     @Published var currentTargetObjectName: String? = nil
 
@@ -616,7 +617,10 @@ class ARDistanceTracker: ObservableObject {
             previousDistance = currentDistance
             status = nil // Don't show anything until we have a comparison
         }
-        
+
+        // Update current target object name
+        currentTargetObjectName = location.name
+
         // Check for proximity (within 3 feet = ~0.91m) - play sound only (no auto-collection)
         // User must tap to collect boxes
         if currentDistance <= 0.91 && !proximitySoundPlayed.contains(location.id) {
@@ -624,10 +628,10 @@ class ARDistanceTracker: ObservableObject {
             proximitySoundPlayed.insert(location.id)
             // NOTE: Auto-collection disabled - user must tap to collect
         }
-        
+
         // Update direction to nearest object
         updateNearestObjectDirection()
-        
+
         // Update audio ping service if audio mode is enabled
         if let locationManager = locationManager, locationManager.enableAudioMode {
             audioPingService?.updateDistance(currentDistance)
@@ -636,11 +640,12 @@ class ARDistanceTracker: ObservableObject {
         } else {
             audioPingService?.stop()
         }
-        
+
         // Update bindings
         DispatchQueue.main.async { [weak self] in
             self?.distanceToNearestBinding?.wrappedValue = currentDistance
             self?.temperatureStatusBinding?.wrappedValue = status
+            self?.currentTargetObjectNameBinding?.wrappedValue = self?.currentTargetObjectName
             if let direction = self?.nearestObjectDirection {
                 self?.nearestObjectDirectionBinding?.wrappedValue = direction
             } else {

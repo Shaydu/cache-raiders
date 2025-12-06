@@ -27,10 +27,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var geospatialService: ARGeospatialService? // New ENU-based geospatial service
     private var treasureHuntService: TreasureHuntService? // Treasure hunt game mode service
     private var npcService: ARNPCService? // NPC management service
+    private var anchoringService: ARAssetAnchoringService? // Stable AR anchoring service for drift prevention
     var stateManager: ARStateManager? // State management for throttling and coordination
 
     weak var arView: ARView?
-    private var locationManager: LootBoxLocationManager?
+    var locationManager: LootBoxLocationManager? // Changed from private to allow extension access
     var userLocationManager: UserLocationManager?
     private var nearbyLocationsBinding: Binding<[LootBoxLocation]>?
     private var placedBoxes: [String: AnchorEntity] = [:]
@@ -107,6 +108,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     var temperatureStatusBinding: Binding<String?>?
     var collectionNotificationBinding: Binding<String?>?
     var nearestObjectDirectionBinding: Binding<Double?>?
+    var currentTargetObjectNameBinding: Binding<String?>?
     var conversationNPCBinding: Binding<ConversationNPC?>?
     private var lastSpherePlacementTime: Date? // Prevent rapid duplicate sphere placements
     private var sphereModeActive: Bool = false // Track when we're in sphere randomization mode
@@ -377,7 +379,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     // Conversation manager reference
     private weak var conversationManager: ARConversationManager?
 
-    func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>, nearestObjectDirection: Binding<Double?>, conversationNPC: Binding<ConversationNPC?>, conversationManager: ARConversationManager, treasureHuntService: TreasureHuntService? = nil) {
+    func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>, nearestObjectDirection: Binding<Double?>, currentTargetObjectName: Binding<String?>, conversationNPC: Binding<ConversationNPC?>, conversationManager: ARConversationManager, treasureHuntService: TreasureHuntService? = nil) {
         Swift.print("🎯 [SETUP] setupARView called")
         self.arView = arView
         self.locationManager = locationManager
@@ -387,6 +389,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         self.temperatureStatusBinding = temperatureStatus
         self.collectionNotificationBinding = collectionNotification
         self.nearestObjectDirectionBinding = nearestObjectDirection
+        self.currentTargetObjectNameBinding = currentTargetObjectName
         self.conversationNPCBinding = conversationNPC
         self.conversationManager = conversationManager
 
@@ -493,6 +496,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         groundingService = ARGroundingService(arView: arView)
         precisionPositioningService = ARPrecisionPositioningService(arView: arView) // Legacy
         geospatialService = ARGeospatialService() // New ENU-based service
+        anchoringService = ARAssetAnchoringService(arView: arView) // Stable AR anchoring for drift prevention
         stateManager = ARStateManager() // State management for throttling and coordination
 
         // Configure environment lighting for proper shading and colors
@@ -509,6 +513,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         distanceTracker?.distanceToNearestBinding = distanceToNearest
         distanceTracker?.temperatureStatusBinding = temperatureStatus
         distanceTracker?.nearestObjectDirectionBinding = nearestObjectDirection
+        distanceTracker?.currentTargetObjectNameBinding = currentTargetObjectName
         tapHandler?.placedBoxes = placedBoxes
         tapHandler?.findableObjects = findableObjects
         tapHandler?.collectionNotificationBinding = collectionNotification
@@ -531,6 +536,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         tapHandler?.onShowObjectInfo = { [weak self] location in
             self?.showObjectInfoPanel(location: location)
+        }
+        tapHandler?.onLongPressObject = { [weak self] locationId in
+            self?.handleLongPressObject(locationId: locationId)
         }
 
         // Monitor AR session
@@ -566,6 +574,43 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             name: NSNotification.Name("ShowObjectInfoPanel"),
             object: location
         )
+    }
+
+    // MARK: - Long Press Object Detail Handler
+
+    func handleLongPressObject(locationId: String) {
+        Swift.print("📋 ========== LONG PRESS OBJECT DETAIL ==========")
+        Swift.print("   Object ID: \(locationId)")
+
+        // Find the location object
+        guard let location = locationManager?.locations.first(where: { $0.id == locationId }) else {
+            Swift.print("⚠️ Location not found for ID: \(locationId)")
+            return
+        }
+
+        Swift.print("   Object Name: \(location.name)")
+        Swift.print("   Object Type: \(location.type.displayName)")
+
+        // Get the anchor for this object
+        let anchor = placedBoxes[locationId]
+
+        // Extract detailed information about the object
+        let objectDetail = ARObjectDetailService.shared.extractObjectDetails(
+            location: location,
+            anchor: anchor
+        )
+
+        Swift.print("   GPS Coordinates: \(objectDetail.gpsCoordinateString)")
+        Swift.print("   AR Coordinates: \(objectDetail.arCoordinateString)")
+        Swift.print("   Placed By: \(objectDetail.placerName ?? "Unknown")")
+
+        // Post notification to show the detail sheet
+        NotificationCenter.default.post(
+            name: NSNotification.Name("ShowObjectDetailSheet"),
+            object: objectDetail
+        )
+
+        Swift.print("✅ Posted notification to show object detail sheet")
     }
 
     /// Handle when an object is collected by another user - remove it from AR scene
@@ -1476,18 +1521,17 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Position 2m in front of camera
         let position = cameraPos + normalize(forward) * 2.0
 
-        // Create anchor at this position
-        let anchor = AnchorEntity(world: position)
-
         // Create the entity using the factory
         let factory = item.type.factory
-        let (entity, findable) = factory.createEntity(location: item, anchor: anchor, sizeMultiplier: 1.0)
+        let (entity, findable) = factory.createEntity(location: item, anchor: AnchorEntity(), sizeMultiplier: 1.0)
 
-        // Add entity to anchor
-        anchor.addChild(entity)
-
-        // Add anchor to scene
-        arView.scene.addAnchor(anchor)
+        // Use anchoring service to create stable AR anchor (drift-resistant)
+        guard let anchoringService = anchoringService,
+              anchoringService.placeEntityAtStablePosition(position, name: item.id, entity: entity),
+              let anchor = anchoringService.anchorEntities[item.id] else {
+            print("⚠️ Failed to create stable anchor for AR item: \(item.name)")
+            return
+        }
 
         // Track the placement
         placedBoxes[item.id] = anchor
@@ -3037,20 +3081,23 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 
                 let sphere = ModelEntity(mesh: sphereMesh, materials: [sphereMaterial])
                 sphere.name = location.id
-                
-                // Place anchor at exact AR position - sphere base will be at arPosition.y
-                let anchor = AnchorEntity(world: arPosition)
-                // Position sphere so its base (bottom) is at the anchor position (center of shadow X)
+
+                // Position sphere so its base (bottom) is at the anchor position
                 sphere.position = SIMD3<Float>(0, sphereRadius, 0)
-                
+
                 let light = PointLightComponent(color: .orange, intensity: 200)
                 sphere.components.set(light)
-                
-                anchor.addChild(sphere)
-                arView.scene.addAnchor(anchor)
+
+                // Use anchoring service to create stable AR anchor (drift-resistant)
+                guard let anchoringService = anchoringService,
+                      anchoringService.placeEntityAtStablePosition(arPosition, name: location.id, entity: sphere),
+                      let anchor = anchoringService.anchorEntities[location.id] else {
+                    print("⚠️ Failed to create stable anchor for sphere: \(location.name)")
+                    return
+                }
+
                 placedBoxes[location.id] = anchor
                 objectPlacementTimes[location.id] = Date() // Record placement time for grace period
-
                 environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
                 // If enabled, attach a hidden real object that will be revealed from the generic icon
@@ -3416,12 +3463,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("📍 Distance from camera: \(String(format: "%.2f", distanceFromCamera))m")
         Swift.print("📍 Height difference (camera - box): \(String(format: "%.2f", cameraPos.y - groundedPosition.y))m")
         
-        // Use same simple world anchor approach as spheres for consistency
-        // This ensures boxes stay fixed in world space and don't follow the camera
-        let anchor = AnchorEntity(world: groundedPosition)
-        // CRITICAL: Set anchor name to location.id so tap detection works even if entity hit test fails
-        anchor.name = location.id
-        
         // Determine object type based on location type from dropdown selection
         let selectedObjectType: PlacedObjectType
         switch location.type {
@@ -3450,20 +3491,28 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let minMultiplier = max(0.5, maxMultiplier * 0.7) // Keep some variety but stay under limit
         let sizeMultiplier = Float.random(in: minMultiplier...maxMultiplier) // Vary size for variety, capped at 2 feet
         let factory = location.type.factory
-        
+
         // CRITICAL: Verify each type uses its correct factory to ensure proper separation
-        // Check factory type name to ensure correct factory is being used
-        // Note: This verification could be removed if we trust the registry, but it's useful for debugging
         let factoryTypeName = String(describing: type(of: factory))
         Swift.print("✅ Using factory \(factoryTypeName) for \(location.type.displayName)")
-        
-        let (entity, findable) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: sizeMultiplier)
-        
+
+        // Create entity with temporary anchor (will be replaced by anchoring service)
+        let tempAnchor = AnchorEntity()
+        let (entity, findable) = factory.createEntity(location: location, anchor: tempAnchor, sizeMultiplier: sizeMultiplier)
+
         let placedEntity = entity
         let findableObject = findable
-        
-        // Add the placed entity to the anchor
-        anchor.addChild(placedEntity)
+
+        // Use anchoring service to create stable AR anchor (drift-resistant)
+        guard let anchoringService = anchoringService,
+              anchoringService.placeEntityAtStablePosition(groundedPosition, name: location.id, entity: placedEntity),
+              let anchor = anchoringService.anchorEntities[location.id] else {
+            Swift.print("❌ Failed to create anchor for \(location.name)")
+            return
+        }
+
+        // CRITICAL: Set anchor name to location.id so tap detection works even if entity hit test fails
+        anchor.name = location.id
         
         // FINAL GROUND SNAP: ensure the visual mesh sits exactly on the detected ground plane
         // Even if the model's pivot isn't at its base, this will align the lowest point of the
@@ -3482,11 +3531,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("✅ [GroundSnap] Adjusted '\(location.name)' to sit on ground: ΔY=\(formattedDeltaY)m")
         
         // Store the anchor and findable object
-        arView.scene.addAnchor(anchor)
+        // Note: anchor already added to scene by anchoring service
         placedBoxes[location.id] = anchor
         objectPlacementTimes[location.id] = Date() // Record placement time for grace period
 
-        Swift.print("✅✅✅ ANCHOR ADDED TO SCENE! ✅✅✅")
+        Swift.print("✅✅✅ DRIFT-RESISTANT ANCHOR ADDED TO SCENE! ✅✅✅")
         Swift.print("   Anchor ID: \(location.id)")
         Swift.print("   Anchor has \(anchor.children.count) children")
         Swift.print("   Entity isEnabled: \(placedEntity.isEnabled)")

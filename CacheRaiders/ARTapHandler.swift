@@ -32,6 +32,9 @@ class ARTapHandler {
     // Callback for showing info panel for user's own objects
     var onShowObjectInfo: ((LootBoxLocation) -> Void)?
 
+    // Callback for long press on objects - shows detailed information
+    var onLongPressObject: ((String) -> Void)?
+
     // Reference to placed NPCs for tap detection
     var placedNPCs: [String: AnchorEntity] = [:] {
         didSet {
@@ -474,6 +477,38 @@ class ARTapHandler {
         } else {
             Swift.print("⚠️ Raycast failed - no horizontal plane detected. Move device to scan floor/surfaces.")
         }
+    }
+
+    // MARK: - Long Press Handler
+    @objc func handleLongPress(_ sender: UILongPressGestureRecognizer) {
+        // Only trigger on the began state to avoid multiple calls
+        guard sender.state == .began else { return }
+
+        Swift.print("👆 ========== LONG PRESS DETECTED ==========")
+        guard let arView = arView else {
+            Swift.print("⚠️ Long press handler: Missing AR view")
+            return
+        }
+
+        let pressLocation = sender.location(in: arView)
+        Swift.print("   Screen location: (\(pressLocation.x), \(pressLocation.y))")
+        Swift.print("   Placed boxes: \(placedBoxes.count)")
+
+        // Use ARObjectDetailService to detect object at press location
+        guard let objectId = ARObjectDetailService.shared.detectObjectAtLocation(
+            pressLocation,
+            in: arView,
+            placedBoxes: placedBoxes
+        ) else {
+            Swift.print("   No object detected at long press location")
+            return
+        }
+
+        Swift.print("📋 Object long-pressed: \(objectId)")
+        Swift.print("   Triggering detail view callback")
+
+        // Trigger the callback to show object details
+        onLongPressObject?(objectId)
     }
 }
 

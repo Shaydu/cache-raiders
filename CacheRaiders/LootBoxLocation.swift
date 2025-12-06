@@ -252,6 +252,7 @@ class LootBoxLocationManager: ObservableObject {
     @Published var maxSearchDistance: Double = 100.0 // Default 100 meters
     @Published var maxObjectLimit: Int = 6 // Default 6 objects (range: 1-25)
     @Published var showARDebugVisuals: Bool = false // Default: debug visuals disabled
+    @Published var showDebugOverlay: Bool = false // Default: debug overlay disabled (shows object IDs/names)
     @Published var showFoundOnMap: Bool = false // Default: don't show found items on map
     @Published var disableOcclusion: Bool = false // Default: occlusion enabled (false = occlusion ON)
     @Published var disableAmbientLight: Bool = false // Default: ambient light enabled (false = ambient light ON)
@@ -327,6 +328,7 @@ class LootBoxLocationManager: ObservableObject {
     private let hasMigratedToCoreDataKey = "hasMigratedToCoreData"
     private let maxObjectLimitKey = "maxObjectLimit"
     private let debugVisualsKey = "showARDebugVisuals"
+    private let debugOverlayKey = "showDebugOverlay"
     private let showFoundOnMapKey = "showFoundOnMap"
     private let disableOcclusionKey = "disableOcclusion"
     private let disableAmbientLightKey = "disableAmbientLight"
@@ -1224,7 +1226,17 @@ class LootBoxLocationManager: ObservableObject {
     private func loadDebugVisuals() {
         showARDebugVisuals = UserDefaults.standard.bool(forKey: debugVisualsKey)
     }
-    
+
+    // Save debug overlay preference
+    func saveDebugOverlay() {
+        UserDefaults.standard.set(showDebugOverlay, forKey: debugOverlayKey)
+    }
+
+    // Load debug overlay preference
+    private func loadDebugOverlay() {
+        showDebugOverlay = UserDefaults.standard.bool(forKey: debugOverlayKey)
+    }
+
     // Save show found on map preference
     func saveShowFoundOnMap() {
         UserDefaults.standard.set(showFoundOnMap, forKey: showFoundOnMapKey)
