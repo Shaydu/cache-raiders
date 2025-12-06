@@ -34,6 +34,30 @@ struct ARPlacementView: View {
                         
                         // List of existing objects
                         List {
+                            Section("Create New Object") {
+                                Picker("Object Type", selection: $selectedObjectType) {
+                                    ForEach([LootBoxType.chalice, .templeRelic, .treasureChest, .lootChest, .sphere, .cube], id: \.self) { type in
+                                        Text(type.displayName).tag(type)
+                                    }
+                                }
+
+                                Toggle("Multi-Findable", isOn: $isMultifindable)
+                                    .help("When enabled, this item disappears only for users who find it. Other players can still find it. When disabled, it disappears for everyone once found.")
+
+                                Button(action: {
+                                    isPlacingNew = true
+                                    placementMode = .placing
+                                    showObjectSelector = false
+                                }) {
+                                    HStack {
+                                        Image(systemName: "plus.circle.fill")
+                                            .foregroundColor(.blue)
+                                        Text("Create New \(selectedObjectType.displayName)")
+                                            .foregroundColor(.primary)
+                                    }
+                                }
+                            }
+
                             Section("Existing Objects") {
                                 ForEach(locationManager.locations.sorted(by: { $0.name < $1.name })) { location in
                                     Button(action: {
@@ -58,30 +82,6 @@ struct ARPlacementView: View {
                                                     .foregroundColor(.green)
                                             }
                                         }
-                                    }
-                                }
-                            }
-                            
-                            Section("Create New Object") {
-                                Picker("Object Type", selection: $selectedObjectType) {
-                                    ForEach([LootBoxType.chalice, .templeRelic, .treasureChest, .lootChest, .sphere, .cube], id: \.self) { type in
-                                        Text(type.displayName).tag(type)
-                                    }
-                                }
-
-                                Toggle("Multi-Findable", isOn: $isMultifindable)
-                                    .help("When enabled, this item disappears only for users who find it. Other players can still find it. When disabled, it disappears for everyone once found.")
-
-                                Button(action: {
-                                    isPlacingNew = true
-                                    placementMode = .placing
-                                    showObjectSelector = false
-                                }) {
-                                    HStack {
-                                        Image(systemName: "plus.circle.fill")
-                                            .foregroundColor(.blue)
-                                        Text("Create New \(selectedObjectType.displayName)")
-                                            .foregroundColor(.primary)
                                     }
                                 }
                             }
@@ -183,7 +183,7 @@ struct ARPlacementView: View {
             .navigationTitle(placementMode == .selecting ? "Place Objects" : "Position Object")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .navigationBarTrailing) {
                     if placementMode == .placing {
                         Button("Cancel") {
                             placementMode = .selecting

@@ -109,7 +109,6 @@ struct RightButtonsView: View {
 // MARK: - Notifications View
 struct NotificationsView: View {
     let collectionNotification: String?
-    let temperatureStatus: String?
 
     var body: some View {
         VStack(spacing: 8) {
@@ -122,16 +121,6 @@ struct NotificationsView: View {
                     .background(Color.green.opacity(0.9))
                     .cornerRadius(8)
                     .transition(.slide)
-            }
-
-            if let tempStatus = temperatureStatus {
-                Text(tempStatus)
-                    .font(.subheadline)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
-                    .background(Color.blue.opacity(0.8))
-                    .cornerRadius(6)
             }
         }
         .padding(.horizontal)
@@ -151,8 +140,7 @@ struct GPSIndicatorView: View {
                 .frame(width: 44, height: 44)
                 .background(Color.black.opacity(0.6))
                 .cornerRadius(8)
-                .padding(.trailing, 6)
-                .padding(.bottom, 16)
+                .offset(x: -12, y: -12)
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -164,7 +152,6 @@ struct TopOverlayView: View {
     @Binding var showGridTreasureMap: Bool
     @Binding var presentedSheet: SheetType?
     let collectionNotification: String?
-    let temperatureStatus: String?
     let directionIndicatorView: AnyView
     let locationManager: LootBoxLocationManager
     let userLocationManager: UserLocationManager
@@ -175,7 +162,9 @@ struct TopOverlayView: View {
 
             Spacer()
 
-            NotificationsView(collectionNotification: collectionNotification, temperatureStatus: temperatureStatus)
+            if collectionNotification != nil {
+                NotificationsView(collectionNotification: collectionNotification)
+            }
         }
     }
 }

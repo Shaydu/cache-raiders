@@ -1444,6 +1444,31 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             Swift.print("   Camera tracking state: \(frame.camera.trackingState)")
             if case .notAvailable = frame.camera.trackingState {
                 Swift.print("⚠️ CAMERA TRACKING NOT AVAILABLE - THIS CAUSES BLACK CAMERA!")
+                Swift.print("   Possible causes:")
+                Swift.print("   - Insufficient lighting")
+                Swift.print("   - Device moving too fast")
+                Swift.print("   - Camera obstructed")
+                Swift.print("   - AR session interrupted and not properly resumed")
+                Swift.print("   - Camera permissions revoked")
+                Swift.print("💡 Try: Move to better lighting, reduce motion, check camera permissions")
+
+                // CRITICAL FIX: Attempt to recover tracking by resetting the session
+                // This can help when tracking gets stuck in .notAvailable state
+                recoverARSessionTracking()
+            } else if case .limited(let reason) = frame.camera.trackingState {
+                Swift.print("⚠️ Camera tracking LIMITED: \(reason)")
+                switch reason {
+                case .initializing:
+                    Swift.print("   Camera is initializing - wait a few seconds")
+                case .relocalizing:
+                    Swift.print("   Camera is relocalizing - keep device still")
+                case .excessiveMotion:
+                    Swift.print("   Too much motion - slow down device movement")
+                case .insufficientFeatures:
+                    Swift.print("   Not enough visual features - move to area with more detail/textures")
+                @unknown default:
+                    Swift.print("   Unknown limiting reason")
+                }
             }
         }
 
@@ -2231,6 +2256,60 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
     }
+
+    /// Attempt to recover AR session tracking when it becomes unavailable
+    /// This can help restore camera feed when tracking gets stuck
+    private func recoverARSessionTracking() {
+        Swift.print("🔄 [RECOVERY] Attempting to recover AR session tracking...")
+
+        guard let arView = arView else {
+            Swift.print("⚠️ Cannot recover tracking - ARView is nil")
+            return
+        }
+
+        // Only attempt recovery if session is running
+        guard arView.session.configuration != nil else {
+            Swift.print("⚠️ Cannot recover tracking - session not running")
+            return
+        }
+
+        // Create a fresh configuration matching current settings
+        let recoveryConfig = ARWorldTrackingConfiguration()
+        recoveryConfig.planeDetection = [.horizontal, .vertical]
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            recoveryConfig.sceneReconstruction = .mesh
+        }
+        recoveryConfig.environmentTexturing = .automatic
+
+        // Apply current lens if available
+        if let selectedLensId = locationManager?.selectedARLens,
+           let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
+            recoveryConfig.videoFormat = videoFormat
+        }
+
+        Swift.print("🔄 Running recovery session with resetTracking option")
+        arView.session.run(recoveryConfig, options: [.resetTracking])
+
+        // Monitor recovery after a short delay
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self,
+                  let frame = self.arView?.session.currentFrame else {
+                Swift.print("❌ Recovery check failed - no frame available")
+                return
+            }
+
+            Swift.print("🔍 Recovery result:")
+            Swift.print("   Tracking state: \(frame.camera.trackingState)")
+
+            if case .normal = frame.camera.trackingState {
+                Swift.print("✅ Tracking recovered successfully!")
+            } else {
+                Swift.print("⚠️ Tracking still not recovered - may need manual intervention")
+                Swift.print("💡 Try: Restart app, check lighting, move to different area")
+            }
+        }
+    }
+
     // MARK: - Loot Box Placement
     private func placeLootBoxAtLocation(_ location: LootBoxLocation, in arView: ARView) {
         Swift.print("🎯 placeLootBoxAtLocation called for: \(location.name) (type: \(location.type.displayName))")
@@ -4666,11 +4745,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     /// Handle dialog opened notification - pause AR session
     @objc private func handleDialogOpened(_ notification: Notification) {
         isDialogOpen = true
+        pauseARSession()
     }
 
     /// Handle dialog closed notification - resume AR session
     @objc private func handleDialogClosed(_ notification: Notification) {
         isDialogOpen = false
+        resumeARSession()
         // Clear conversationNPC binding to allow re-tapping
         DispatchQueue.main.async { [weak self] in
             self?.conversationNPCBinding?.wrappedValue = nil
@@ -4722,28 +4803,57 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("   ARView ID: \(ObjectIdentifier(arView))")
         Swift.print("   Session state before resume: \(arView.session.configuration != nil ? "CONFIGURED" : "NOT CONFIGURED")")
 
-        guard let config = savedARConfiguration else {
-            Swift.print("⚠️ Cannot resume AR session: No saved configuration")
-            // Try to create a default configuration
-            let defaultConfig = ARWorldTrackingConfiguration()
-            defaultConfig.planeDetection = [.horizontal, .vertical]
+        // CRITICAL FIX: Always ensure we have a valid configuration to resume with
+        let configToUse: ARWorldTrackingConfiguration
+        if let savedConfig = savedARConfiguration {
+            configToUse = savedConfig
+            Swift.print("   Using saved configuration")
+        } else {
+            Swift.print("⚠️ No saved configuration - creating fresh config")
+            // Create a fresh configuration matching the original setup
+            configToUse = ARWorldTrackingConfiguration()
+            configToUse.planeDetection = [.horizontal, .vertical]
             if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-                defaultConfig.sceneReconstruction = .mesh
+                configToUse.sceneReconstruction = .mesh
+                Swift.print("   Scene reconstruction enabled")
             }
-            defaultConfig.environmentTexturing = .automatic
-            Swift.print("   Creating default config and running with empty options")
-            arView.session.run(defaultConfig, options: [])
-            Swift.print("   ⚠️ POTENTIAL BLACK SCREEN: Running session.run() without saved config")
-            return
+            configToUse.environmentTexturing = .automatic
+
+            // Apply current lens if available
+            if let selectedLensId = locationManager?.selectedARLens,
+               let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
+                configToUse.videoFormat = videoFormat
+                Swift.print("   Applied lens: \(selectedLensId)")
+            }
         }
 
-        Swift.print("▶️ Resuming AR session (sheet dismissed)")
-        Swift.print("   Using saved configuration")
-        Swift.print("   Calling session.run() with empty options")
-        // Resume with saved configuration
-        arView.session.run(config, options: [])
-        Swift.print("   ✅ Session resumed")
+        // CRITICAL FIX: Use .resetTracking option to ensure camera feed comes back
+        // Empty options [] can leave the session in a paused state
+        let resumeOptions: ARSession.RunOptions = [.resetTracking]
+        Swift.print("▶️ Resuming AR session with resetTracking option")
+        Swift.print("   This ensures camera feed is restored after pause")
+
+        arView.session.run(configToUse, options: resumeOptions)
+        Swift.print("   ✅ Session resumed with resetTracking")
         Swift.print("   Session state after resume: \(arView.session.configuration != nil ? "CONFIGURED" : "NOT CONFIGURED")")
+
+        // Wait for session to stabilize, then check tracking state
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self else { return }
+            if let frame = self.arView?.session.currentFrame {
+                Swift.print("🔍 Post-resume tracking check:")
+                Swift.print("   Camera tracking state: \(frame.camera.trackingState)")
+                if case .notAvailable = frame.camera.trackingState {
+                    Swift.print("⚠️ Camera tracking still not available after resume - this causes black screen")
+                    Swift.print("💡 User may need to move device or wait for better lighting/GPS")
+                } else {
+                    Swift.print("✅ Camera tracking restored successfully")
+                }
+            } else {
+                Swift.print("❌ No frame available after resume - camera not working")
+            }
+        }
+
         savedARConfiguration = nil // Clear saved config after resuming
 
         // CRITICAL FIX: Re-place all objects after resuming AR session

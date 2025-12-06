@@ -88,8 +88,10 @@ struct SheetContentView: View {
             }
         case .objectDetail(let detail):
             ARObjectDetailView(objectDetail: detail)
+        case .foundItems:
+            FoundItemsView(locationManager: locationManager, userLocationManager: userLocationManager)
         case .gpsDetails:
-            GPSDetailsView(userLocationManager: userLocationManager)
+            GPSDetailsView(userLocationManager: userLocationManager, dismiss: dismiss)
         }
     }
 
@@ -172,9 +174,11 @@ struct SheetContentView: View {
 // MARK: - GPS Details View
 public struct GPSDetailsView: View {
     let userLocationManager: UserLocationManager
+    let dismiss: () -> Void
 
-    init(userLocationManager: UserLocationManager) {
+    init(userLocationManager: UserLocationManager, dismiss: @escaping () -> Void) {
         self.userLocationManager = userLocationManager
+        self.dismiss = dismiss
     }
 
     private var formatDistanceInFeetInches: (Double) -> String = { meters in
@@ -190,118 +194,84 @@ public struct GPSDetailsView: View {
     }
 
     public var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // GPS Status Section
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("GPS Status")
-                            .font(.headline)
-                            .foregroundColor(.white)
-
-                        HStack {
-                            Image(systemName: userLocationManager.currentLocation != nil ? "location.fill" : "location.slash")
-                                .foregroundColor(userLocationManager.currentLocation != nil ? .green : .red)
-                            Text(userLocationManager.currentLocation != nil ? "Connected" : "Disconnected")
-                                .foregroundColor(.white)
-                        }
-
-                        if let location = userLocationManager.currentLocation {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Coordinates:")
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-                                Text("Lat: \(location.coordinate.latitude, specifier: "%.8f")")
-                                    .font(.caption)
-                                    .foregroundColor(.white)
-                                Text("Lon: \(location.coordinate.longitude, specifier: "%.8f")")
-                                    .font(.caption)
-                                    .foregroundColor(.white)
-
-                                Text("Accuracy:")
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-                                    .padding(.top, 4)
-                                Text("\(formatDistanceInFeetInches(location.horizontalAccuracy))")
-                                    .font(.caption)
-                                    .foregroundColor(.white)
-
-                                Text("Altitude:")
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-                                    .padding(.top, 4)
-                                Text("\(location.altitude, specifier: "%.1f")m")
-                                    .font(.caption)
-                                    .foregroundColor(.white)
-                            }
-                        }
-                    }
-                    .padding()
-                    .background(Color.black.opacity(0.3))
-                    .cornerRadius(12)
-
-                    // AR Status Section
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("AR Status")
-                            .font(.headline)
-                            .foregroundColor(.white)
-
-                        HStack {
-                            Image(systemName: "camera.fill")
-                                .foregroundColor(.blue)
-                            Text("AR Session Active")
-                                .foregroundColor(.white)
-                        }
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Session Info:")
-                                .font(.subheadline)
-                                .foregroundColor(.gray)
-
-                            Text("AR tracking available")
-                                .font(.caption)
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .padding()
-                    .background(Color.black.opacity(0.3))
-                    .cornerRadius(12)
-
-                    // Location Services Section
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Location Services")
-                            .font(.headline)
-                            .foregroundColor(.white)
-
-                        HStack {
-                            Image(systemName: userLocationManager.authorizationStatus == .authorizedWhenInUse || userLocationManager.authorizationStatus == .authorizedAlways ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                .foregroundColor(userLocationManager.authorizationStatus == .authorizedWhenInUse || userLocationManager.authorizationStatus == .authorizedAlways ? .green : .red)
-                            Text("Permission: \(userLocationManager.authorizationStatus.rawValue)")
-                                .foregroundColor(.white)
-                        }
-
-                        HStack {
-                            Image(systemName: userLocationManager.isSendingLocation ? "arrow.up.circle.fill" : "arrow.up.circle")
-                                .foregroundColor(userLocationManager.isSendingLocation ? .green : .gray)
-                            Text("Sending to Server: \(userLocationManager.isSendingLocation ? "Yes" : "No")")
-                                .foregroundColor(.white)
-                        }
-
-                        if let lastSent = userLocationManager.lastLocationSentSuccessfully {
-                            Text("Last Sent: \(lastSent.formatted())")
-                                .font(.caption)
-                                .foregroundColor(.gray)
-                        }
-                    }
-                    .padding()
-                    .background(Color.black.opacity(0.3))
-                    .cornerRadius(12)
+        List {
+            // GPS Status Section
+            Section("GPS Status") {
+                HStack {
+                    Image(systemName: userLocationManager.currentLocation != nil ? "location.fill" : "location.slash")
+                        .foregroundColor(userLocationManager.currentLocation != nil ? .green : .red)
+                    Text(userLocationManager.currentLocation != nil ? "Connected" : "Disconnected")
                 }
-                .padding()
+
+                if let location = userLocationManager.currentLocation {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Coordinates:")
+                            .font(.subheadline)
+                        Text("Lat: \(location.coordinate.latitude, specifier: "%.8f")")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Lon: \(location.coordinate.longitude, specifier: "%.8f")")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Text("Accuracy: \(formatDistanceInFeetInches(location.horizontalAccuracy))")
+                            .font(.subheadline)
+
+                        Text("Altitude: \(location.altitude, specifier: "%.1f")m")
+                            .font(.subheadline)
+                    }
+                    .padding(.vertical, 4)
+                }
             }
-            .navigationTitle("GPS & AR Details")
-            .navigationBarTitleDisplayMode(.inline)
-            .background(Color.black.edgesIgnoringSafeArea(.all))
+
+            // AR Status Section
+            Section("AR Status") {
+                HStack {
+                    Image(systemName: "camera.fill")
+                        .foregroundColor(.blue)
+                    Text("AR Session Active")
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Session Info:")
+                        .font(.subheadline)
+
+                    Text("AR tracking available")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+
+            // Location Services Section
+            Section("Location Services") {
+                HStack {
+                    Image(systemName: userLocationManager.authorizationStatus == .authorizedWhenInUse || userLocationManager.authorizationStatus == .authorizedAlways ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .foregroundColor(userLocationManager.authorizationStatus == .authorizedWhenInUse || userLocationManager.authorizationStatus == .authorizedAlways ? .green : .red)
+                    Text("Permission: \(userLocationManager.authorizationStatus.rawValue)")
+                }
+
+                HStack {
+                    Image(systemName: userLocationManager.isSendingLocation ? "arrow.up.circle.fill" : "arrow.up.circle")
+                        .foregroundColor(userLocationManager.isSendingLocation ? .green : .gray)
+                    Text("Sending to Server: \(userLocationManager.isSendingLocation ? "Yes" : "No")")
+                }
+
+                if let lastSent = userLocationManager.lastLocationSentSuccessfully {
+                    Text("Last Sent: \(lastSent.formatted())")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .navigationTitle("GPS & AR Details")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button("Done") {
+                    dismiss()
+                }
+            }
         }
     }
 }

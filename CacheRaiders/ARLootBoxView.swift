@@ -253,10 +253,21 @@ struct ARViewContainer: UIViewRepresentable {
             print("✅ Camera permission granted")
         case .denied:
             print("❌ Camera permission denied - this will cause black AR camera")
+            print("   💡 User must grant camera permission in Settings app")
         case .restricted:
             print("⚠️ Camera permission restricted")
         case .notDetermined:
-            print("❓ Camera permission not determined")
+            print("❓ Camera permission not determined - requesting access...")
+            // Request camera permission for AR functionality
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async {
+                    if granted {
+                        print("✅ Camera permission granted by user")
+                    } else {
+                        print("❌ Camera permission denied by user - AR camera will be black")
+                    }
+                }
+            }
         @unknown default:
             print("❓ Camera permission unknown status")
         }
@@ -308,19 +319,6 @@ struct ARViewContainer: UIViewRepresentable {
             print("🎯 [MAKEVIEW] AR session.run() called with RESET options")
             print("🎯 [MAKEVIEW] Delegate after run: \(arView.session.delegate != nil ? "SET" : "NIL")")
             print("🎯 [MAKEVIEW] Session configuration: \(arView.session.configuration != nil ? "SET" : "NIL")")
-
-            // Check session state after starting
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                print("🔍 [AR SESSION CHECK] After 1 second:")
-                print("   Session running: \(arView.session.configuration != nil)")
-                if let currentFrame = arView.session.currentFrame {
-                    print("   Current frame available: YES")
-                    print("   Camera tracking state: \(currentFrame.camera.trackingState)")
-                    print("   Camera transform: \(currentFrame.camera.transform)")
-                } else {
-                    print("   Current frame available: NO - THIS IS THE PROBLEM!")
-                }
-            }
         }
 
         // Verify delegate is still set after a brief delay

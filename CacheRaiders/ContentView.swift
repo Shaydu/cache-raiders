@@ -79,7 +79,6 @@ struct ContentView: View {
             showGridTreasureMap: $showGridTreasureMap,
             presentedSheet: $presentedSheet,
             collectionNotification: collectionNotification,
-            temperatureStatus: temperatureStatus,
             directionIndicatorView: AnyView(directionIndicatorView),
             locationManager: locationManager,
             userLocationManager: userLocationManager
@@ -248,6 +247,17 @@ struct ContentView: View {
                         }
                         .buttonStyle(PlainButtonStyle())
                     }
+
+                    // Temperature indicator below item name
+                    if let tempStatus = temperatureStatus {
+                        Text(tempStatus)
+                            .font(.caption)
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue.opacity(0.8))
+                            .cornerRadius(6)
+                    }
                 }
                 .padding(.top)
             }
@@ -390,16 +400,23 @@ struct ContentView: View {
             HStack {
                 // Only show "Loot Boxes Found" counter in open mode
                 if locationManager.gameMode == .open && !locationManager.locations.isEmpty {
-                    Text("Found \(lootBoxCounter.found)/\(lootBoxCounter.total) Items")
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(.ultraThinMaterial)
-                        .cornerRadius(8)
-                        .padding(.leading, 16)
-                        .padding(.bottom, -4)
+                    Button(action: {
+                        // Show items sheet (both found and unfound)
+                        Task { @MainActor in
+                            presentedSheet = .foundItems
+                        }
+                    }) {
+                        Text("Items: \(lootBoxCounter.found)/\(lootBoxCounter.total)")
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.ultraThinMaterial)
+                            .cornerRadius(8)
+                    }
+                    .padding(.leading, 16)
+                    .padding(.bottom, -4)
                 }
-                
+
                 Spacer()
             }
         }
@@ -518,6 +535,7 @@ struct ContentView: View {
                             .offset(x: -12, y: -12)
                     }
                 }
+                .padding(.bottom, 9)
             }
             .ignoresSafeArea()
         }
@@ -570,18 +588,29 @@ struct ContentView: View {
     
     private func handleSheetChange(oldSheet: SheetType?, newSheet: SheetType?) {
         // Notify AR coordinator when sheets are presented/dismissed
-        // CRITICAL: Skip pause/resume for AR placement view since it shares the same ARView
+        // CRITICAL: Skip pause/resume for AR-related views that share the same ARView or don't contain AR content
         // Pausing/resuming causes the camera to go black
-        let isARPlacementView = (newSheet == .arPlacement || oldSheet == .arPlacement)
+        let shouldSkipPauseResume = {
+            switch newSheet ?? oldSheet {
+            case .arPlacement, .objectDetail, .foundItems:
+                // AR placement shares ARView, objectDetail and foundItems are informational sheets without AR content
+                return true
+            case .nfcScanner, .nfcWriting, .simpleNFCScanner:
+                // NFC operations don't need AR session running
+                return true
+            default:
+                return false
+            }
+        }()
 
-        if newSheet != nil && oldSheet == nil && !isARPlacementView {
-            // Sheet was presented (but not AR placement)
+        if newSheet != nil && oldSheet == nil && !shouldSkipPauseResume {
+            // Sheet was presented (but not AR-related)
             NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
-        } else if newSheet == nil && oldSheet != nil && !isARPlacementView {
-            // Sheet was dismissed (but not AR placement)
+        } else if newSheet == nil && oldSheet != nil && !shouldSkipPauseResume {
+            // Sheet was dismissed (but not AR-related)
             NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
         }
-        // AR placement view: no pause/resume needed (shares AR session)
+        // AR-related views: no pause/resume needed
     }
     
     private func handleGridMapChange(oldValue: Bool, newValue: Bool) {

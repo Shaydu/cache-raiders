@@ -16,7 +16,12 @@ struct ObjectPlacementOverlay: View {
     let onCancel: () -> Void
 
     var body: some View {
-        VStack {
+        ZStack {
+            // Semi-transparent background
+            Color.black.opacity(0.3)
+                .ignoresSafeArea()
+
+            VStack {
                 // Top info panel
                 VStack(spacing: 8) {
                     // Coordinates and height display
@@ -85,16 +90,6 @@ struct ObjectPlacementOverlay: View {
 
                 Spacer()
 
-                // Center instruction text (reticle crosshairs shown on shadow in AR)
-                VStack {
-                    Text("Point camera at placement location")
-                        .font(.caption)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.black.opacity(0.6))
-                        .cornerRadius(6)
-                }
 
                 Spacer()
 
@@ -152,21 +147,9 @@ struct ObjectPlacementOverlay: View {
                     .disabled(placementPosition == nil)
                     .opacity(placementPosition == nil ? 0.5 : 1.0)
 
-                    // Cancel button
-                    Button(action: onCancel) {
-                        HStack {
-                            Image(systemName: "xmark.circle.fill")
-                            Text("Cancel")
-                                .fontWeight(.semibold)
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
-                        .background(Color.red.opacity(0.8))
-                        .cornerRadius(25)
-                    }
                 }
                 .padding(.bottom, 40)
+            }
         }
     }
 
