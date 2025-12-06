@@ -81,9 +81,14 @@ struct ARObjectDetailView: View {
                             DetailRow(label: "Origin Longitude", value: String(format: "%.8f", origin.longitude))
                             DetailRow(label: "Combined", value: objectDetail.arOriginString)
                         } else {
-                            Text("No AR origin available")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.secondary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("No AR origin available")
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                Text("AR origin data is only available for objects manually placed in AR")
+                                    .font(.system(.caption, design: .rounded))
+                                    .foregroundColor(.secondary.opacity(0.7))
+                            }
                         }
                     }
 
@@ -97,9 +102,14 @@ struct ARObjectDetailView: View {
                             DetailRow(label: "Z Offset", value: String(format: "%.4f m", offsets.z))
                             DetailRow(label: "Combined", value: objectDetail.arOffsetString)
                         } else {
-                            Text("No AR offsets available")
-                                .font(.system(.body, design: .monospaced))
-                                .foregroundColor(.secondary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("No AR offsets available")
+                                    .font(.system(.body, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                Text("AR offset data is only available for objects manually placed in AR")
+                                    .font(.system(.caption, design: .rounded))
+                                    .foregroundColor(.secondary.opacity(0.7))
+                            }
                         }
                     }
 

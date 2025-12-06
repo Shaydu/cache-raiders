@@ -120,44 +120,6 @@ struct RightButtonsView: View {
     }
 }
 
-// MARK: - Location Display View
-struct LocationDisplayView: View {
-    let isGPSConnected: Bool
-    let formatDistanceInFeetInches: (Double) -> String
-
-    var body: some View {
-        VStack(spacing: 4) {
-            if isGPSConnected {
-                HStack {
-                    Image(systemName: "location.fill")
-                        .foregroundColor(.green)
-                    Text("GPS Connected")
-                        .font(.caption)
-                        .foregroundColor(.green)
-                }
-            } else {
-                HStack {
-                    Image(systemName: "location.slash")
-                        .foregroundColor(.red)
-                    Text("GPS Disconnected")
-                        .font(.caption)
-                        .foregroundColor(.red)
-                }
-            }
-
-            if let distance = UserLocationManager().currentLocation?.horizontalAccuracy {
-                Text("Accuracy: \(formatDistanceInFeetInches(distance))")
-                    .font(.caption2)
-                    .foregroundColor(.white.opacity(0.7))
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(Color.black.opacity(0.6))
-        .cornerRadius(8)
-    }
-}
-
 // MARK: - Notifications View
 struct NotificationsView: View {
     let collectionNotification: String?
@@ -190,13 +152,31 @@ struct NotificationsView: View {
     }
 }
 
+// MARK: - GPS Indicator View (Bottom Right Corner)
+struct GPSIndicatorView: View {
+    let isGPSConnected: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            Image(systemName: "arrow.up.circle.fill")
+                .font(.title2)
+                .foregroundColor(isGPSConnected ? .green : .red)
+                .frame(width: 44, height: 44)
+                .background(Color.black.opacity(0.6))
+                .cornerRadius(8)
+                .padding(.trailing, 16)
+                .padding(.bottom, 16)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
+
 // MARK: - Top Overlay View (Main Container)
 struct TopOverlayView: View {
     @Binding var showPlusMenu: Bool
     @Binding var showGridTreasureMap: Bool
     @Binding var presentedSheet: SheetType?
-    let isGPSConnected: Bool
-    let formatDistanceInFeetInches: (Double) -> String
     let collectionNotification: String?
     let temperatureStatus: String?
     let directionIndicatorView: AnyView
@@ -206,8 +186,6 @@ struct TopOverlayView: View {
     var body: some View {
         VStack {
             TopToolbarView(showPlusMenu: $showPlusMenu, showGridTreasureMap: $showGridTreasureMap, presentedSheet: $presentedSheet, directionIndicatorView: directionIndicatorView, locationManager: locationManager, userLocationManager: userLocationManager)
-
-            LocationDisplayView(isGPSConnected: isGPSConnected, formatDistanceInFeetInches: formatDistanceInFeetInches)
 
             Spacer()
 

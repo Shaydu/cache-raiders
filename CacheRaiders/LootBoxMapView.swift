@@ -14,6 +14,13 @@ struct MapAnnotationItem: Identifiable {
 struct LootBoxMapView: View {
     @ObservedObject var locationManager: LootBoxLocationManager
     @ObservedObject var userLocationManager: UserLocationManager
+    let onObjectTap: (LootBoxLocation) -> Void
+
+    init(locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, onObjectTap: @escaping (LootBoxLocation) -> Void = { _ in }) {
+        self.locationManager = locationManager
+        self.userLocationManager = userLocationManager
+        self.onObjectTap = onObjectTap
+    }
     @State private var position = MapCameraPosition.region(MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 0, longitude: 0), // Will be updated when user location is available
         span: MKCoordinateSpan(latitudeDelta: 0.01, longitudeDelta: 0.01)
@@ -100,14 +107,9 @@ struct LootBoxMapView: View {
                 }
             }
 
-            // Selection Filtering: if an item is selected, only show that item
-            // (NPCs and AR-placed items are always shown regardless of selection)
-            let isARPlaced = location.source == .map || location.source == .arManual || location.source == .arRandomized
-            if let selected = selectedId, !isNPC && !isARPlaced {
-                if location.id != selected {
-                    return false // Filter out non-selected items
-                }
-            }
+            // Selection doesn't hide other items on map - it's just for navigation
+            // Unlike AR which highlights the selected item, map shows all valid items
+            // This provides better situational awareness
 
             // NPCs are always shown (never collected, always visible)
             if isNPC {
@@ -189,13 +191,19 @@ struct LootBoxMapView: View {
                             let isPreview = location.id == "preview"
                             // Check if this is an NPC (Dead Men's Secrets mode)
                             let isNPC = location.id.hasPrefix("npc_")
-                            
+
                             // Loot box pin
                             Annotation("", coordinate: annotation.coordinate) {
                                 LootBoxAnnotationView(
                                     location: location,
                                     isPreview: isPreview,
-                                    isNPC: isNPC
+                                    isNPC: isNPC,
+                                    onTap: {
+                                        // Don't show detail sheet for preview markers
+                                        if !isPreview {
+                                            onObjectTap(location)
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -509,11 +517,8 @@ struct LootBoxMapView: View {
 
             locationManager.addLocation(sphereLocation)
             
-            // Set the location ID to use when placing the sphere in AR
-            locationManager.pendingSphereLocationId = sphereLocation.id
-            
-            // Trigger placement in the current AR room using the same location ID
-            locationManager.shouldPlaceSphere = true
+            // Queue it for AR placement (same as other items)
+            locationManager.pendingARItem = sphereLocation
             
             // Debug: Verify the location was added correctly
             print("🗺️ Added sphere location to map:")
@@ -602,6 +607,7 @@ struct LootBoxAnnotationView: View {
     let location: LootBoxLocation
     let isPreview: Bool
     let isNPC: Bool
+    let onTap: () -> Void
     
     private var iconName: String {
         if isPreview {
@@ -650,20 +656,23 @@ struct LootBoxAnnotationView: View {
     }
     
     var body: some View {
-        VStack(spacing: 4) {
-            Image(systemName: iconName)
-                .foregroundColor(iconColor)
-                .font(.title)
-                .background(Circle().fill(isPreview ? .white.opacity(0.8) : .white))
-                .shadow(radius: 3)
-                .opacity(isPreview ? 0.7 : 1.0)
+        Button(action: onTap) {
+            VStack(spacing: 4) {
+                Image(systemName: iconName)
+                    .foregroundColor(iconColor)
+                    .font(.title)
+                    .background(Circle().fill(isPreview ? .white.opacity(0.8) : .white))
+                    .shadow(radius: 3)
+                    .opacity(isPreview ? 0.7 : 1.0)
 
-            Text(displayText)
-                .font(.caption)
-                .padding(4)
-                .background(.ultraThinMaterial)
-                .cornerRadius(4)
+                Text(displayText)
+                    .font(.caption)
+                    .padding(4)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(4)
+            }
         }
+        .buttonStyle(PlainButtonStyle()) // Remove button styling to keep the pin appearance
     }
 }
 

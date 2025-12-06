@@ -13,6 +13,7 @@ struct ARLootBoxView: View {
     @Binding var collectionNotification: String?
     @Binding var nearestObjectDirection: Double?
     @Binding var currentTargetObjectName: String?
+    @Binding var currentTargetObject: LootBoxLocation?
     @Binding var conversationNPC: ConversationNPC?
     @ObservedObject var treasureHuntService: TreasureHuntService
 
@@ -29,6 +30,7 @@ struct ARLootBoxView: View {
                 collectionNotification: $collectionNotification,
                 nearestObjectDirection: $nearestObjectDirection,
                 currentTargetObjectName: $currentTargetObjectName,
+                currentTargetObject: $currentTargetObject,
                 conversationNPC: $conversationNPC,
                 conversationManager: conversationManager,
                 treasureHuntService: treasureHuntService
@@ -174,6 +176,7 @@ struct ARViewContainer: UIViewRepresentable {
     @Binding var collectionNotification: String?
     @Binding var nearestObjectDirection: Double?
     @Binding var currentTargetObjectName: String?
+    @Binding var currentTargetObject: LootBoxLocation?
     @Binding var conversationNPC: ConversationNPC?
     @ObservedObject var conversationManager: ARConversationManager
     @ObservedObject var treasureHuntService: TreasureHuntService
@@ -243,7 +246,7 @@ struct ARViewContainer: UIViewRepresentable {
 
         // CRITICAL: Setup ARView and set delegate BEFORE running the session
         // This ensures session(_:didUpdate:) delegate methods are received from the very first frame
-        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, currentTargetObjectName: $currentTargetObjectName, conversationNPC: $conversationNPC, conversationManager: conversationManager, treasureHuntService: treasureHuntService)
+        context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, currentTargetObjectName: $currentTargetObjectName, currentTargetObject: $currentTargetObject, conversationNPC: $conversationNPC, conversationManager: conversationManager, treasureHuntService: treasureHuntService)
 
         // CRITICAL: Store shared ARView reference in locationManager for placement view
         // This allows the placement view to use the same AR session instead of creating a new one
@@ -430,31 +433,6 @@ struct ARViewContainer: UIViewRepresentable {
         }
         
         // Handle randomization trigger
-        if locationManager.shouldRandomize {
-            print("🎯 Randomize button pressed - triggering sphere placement...")
-            // Defer ALL state modifications to avoid "Modifying state during view update" warning
-            Task { @MainActor in
-                context.coordinator.randomizeLootBoxes()
-                // Reset the flag after randomization is complete
-                locationManager.shouldRandomize = false
-                print("🔄 Randomize flag reset")
-            }
-        }
-
-        // Handle single sphere placement trigger
-        if locationManager.shouldPlaceSphere {
-            print("🎯 Single sphere placement triggered in ARLootBoxView...")
-            // Get the location ID if one was provided (from map marker)
-            let locationId = locationManager.pendingSphereLocationId
-            // Defer ALL state modifications to avoid "Modifying state during view update" warning
-            Task { @MainActor in
-                context.coordinator.placeSingleSphere(locationId: locationId)
-                // Reset the flags after placement is complete
-                locationManager.shouldPlaceSphere = false
-                locationManager.pendingSphereLocationId = nil
-                print("🔄 Single sphere flag reset")
-            }
-        }
 
         // Handle pending AR item placement
         if let pendingItem = locationManager.pendingARItem {

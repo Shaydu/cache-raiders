@@ -28,9 +28,11 @@ class ARDistanceTracker: ObservableObject {
     var temperatureStatusBinding: Binding<String?>?
     var nearestObjectDirectionBinding: Binding<Double?>?
     var currentTargetObjectNameBinding: Binding<String?>?
+    var currentTargetObjectBinding: Binding<LootBoxLocation?>?
 
     @Published var nearestObjectDirection: Double? = nil
     @Published var currentTargetObjectName: String? = nil
+    @Published var currentTargetObject: LootBoxLocation? = nil
 
     private var distanceLogger: Timer?
     private var previousDistance: Double?
@@ -618,8 +620,9 @@ class ARDistanceTracker: ObservableObject {
             status = nil // Don't show anything until we have a comparison
         }
 
-        // Update current target object name
+        // Update current target object name and object
         currentTargetObjectName = location.name
+        currentTargetObject = location
 
         // Check for proximity (within 3 feet = ~0.91m) - play sound only (no auto-collection)
         // User must tap to collect boxes
@@ -646,6 +649,7 @@ class ARDistanceTracker: ObservableObject {
             self?.distanceToNearestBinding?.wrappedValue = currentDistance
             self?.temperatureStatusBinding?.wrappedValue = status
             self?.currentTargetObjectNameBinding?.wrappedValue = self?.currentTargetObjectName
+            self?.currentTargetObjectBinding?.wrappedValue = self?.currentTargetObject
             if let direction = self?.nearestObjectDirection {
                 self?.nearestObjectDirectionBinding?.wrappedValue = direction
             } else {

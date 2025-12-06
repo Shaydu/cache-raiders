@@ -458,7 +458,7 @@ class ARTapHandler {
                     latitude: arOriginLat,  // Use GPS location, not 0
                     longitude: arOriginLon,  // Use GPS location, not 0
                     radius: 3.0,  // Smaller radius since we have precise AR coordinates
-                    source: .arManual,  // CRITICAL: Mark as AR-manually placed so it persists
+                    source: .map,  // Use .map so object syncs to API and is visible to all users
                     ar_origin_latitude: arOriginLat,
                     ar_origin_longitude: arOriginLon,
                     ar_offset_x: arOffsetX,

@@ -12,6 +12,7 @@ enum SheetType: Identifiable, Equatable {
     case treasureMap
     case mapView
     case objectDetail(detail: ARObjectDetail)
+    case gpsDetails
 
     var id: String {
         switch self {
@@ -27,6 +28,7 @@ enum SheetType: Identifiable, Equatable {
         case .treasureMap: return "treasureMap"
         case .mapView: return "mapView"
         case .objectDetail(let detail): return "objectDetail_\(detail.id)"
+        case .gpsDetails: return "gpsDetails"
         }
     }
 }

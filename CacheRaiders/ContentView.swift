@@ -28,6 +28,7 @@ struct ContentView: View {
     @State private var collectionNotification: String?
     @State private var nearestObjectDirection: Double?
     @State private var currentTargetObjectName: String?
+    @State private var currentTargetObject: LootBoxLocation?
 
     // PERFORMANCE: Task for debouncing location updates to prevent excessive API calls
     @State private var locationUpdateTask: Task<Void, Never>?
@@ -77,8 +78,6 @@ struct ContentView: View {
             showPlusMenu: $showPlusMenu,
             showGridTreasureMap: $showGridTreasureMap,
             presentedSheet: $presentedSheet,
-            isGPSConnected: isGPSConnected,
-            formatDistanceInFeetInches: formatDistanceInFeetInches,
             collectionNotification: collectionNotification,
             temperatureStatus: temperatureStatus,
             directionIndicatorView: AnyView(directionIndicatorView),
@@ -168,76 +167,99 @@ struct ContentView: View {
                     return distanceToNearest != nil
                 }
             }()
-            
+
             if shouldShowNav, let distance = distanceToNearest {
-                Button(action: {
-                    // Toggle grid treasure map (only available after skeleton gives map)
-                    if treasureHuntService.hasMap,
-                       let treasureLocation = treasureHuntService.treasureLocation,
-                       let mapPiece = treasureHuntService.mapPiece {
-                        // Update grid map service with current data
-                        let landmarks: [LandmarkAnnotation] = (mapPiece.landmarks ?? []).map { landmarkData in
-                            let landmarkType: LandmarkType
-                            switch landmarkData.type.lowercased() {
-                            case "water": landmarkType = .water
-                            case "tree": landmarkType = .tree
-                            case "building": landmarkType = .building
-                            case "mountain": landmarkType = .mountain
-                            case "path": landmarkType = .path
-                            default: landmarkType = .building
+                VStack(spacing: 8) {
+                    // Main navigation box with direction arrow and distance
+                    Button(action: {
+                        // Toggle grid treasure map (only available after skeleton gives map)
+                        if treasureHuntService.hasMap,
+                           let treasureLocation = treasureHuntService.treasureLocation,
+                           let mapPiece = treasureHuntService.mapPiece {
+                            // Update grid map service with current data
+                            let landmarks: [LandmarkAnnotation] = (mapPiece.landmarks ?? []).map { landmarkData in
+                                let landmarkType: LandmarkType
+                                switch landmarkData.type.lowercased() {
+                                case "water": landmarkType = .water
+                                case "tree": landmarkType = .tree
+                                case "building": landmarkType = .building
+                                case "mountain": landmarkType = .mountain
+                                case "path": landmarkType = .path
+                                default: landmarkType = .building
+                                }
+
+                                return LandmarkAnnotation(
+                                    id: UUID().uuidString,
+                                    coordinate: CLLocationCoordinate2D(latitude: landmarkData.latitude, longitude: landmarkData.longitude),
+                                    name: landmarkData.name,
+                                    type: landmarkType,
+                                    iconName: landmarkType.iconName
+                                )
                             }
-                            
-                            return LandmarkAnnotation(
-                                id: UUID().uuidString,
-                                coordinate: CLLocationCoordinate2D(latitude: landmarkData.latitude, longitude: landmarkData.longitude),
-                                name: landmarkData.name,
-                                type: landmarkType,
-                                iconName: landmarkType.iconName
+
+                            gridTreasureMapService.updateMapData(
+                                treasureLocation: treasureLocation.coordinate,
+                                landmarks: landmarks,
+                                userLocation: userLocationManager.currentLocation?.coordinate,
+                                userLocationManager: userLocationManager
                             )
+                            showGridTreasureMap = true
+                        } else {
+                            // Manually send location to server (also sent automatically every 5 seconds)
+                            userLocationManager.sendCurrentLocationToServer()
                         }
-                        
-                        gridTreasureMapService.updateMapData(
-                            treasureLocation: treasureLocation.coordinate,
-                            landmarks: landmarks,
-                            userLocation: userLocationManager.currentLocation?.coordinate,
-                            userLocationManager: userLocationManager
-                        )
-                        showGridTreasureMap = true
-                    } else {
-                        // Manually send location to server (also sent automatically every 5 seconds)
-                        userLocationManager.sendCurrentLocationToServer()
-                    }
-                }) {
-                    VStack(alignment: .center, spacing: 4) {
-                        directionArrowView
+                    }) {
+                        VStack(alignment: .center, spacing: 4) {
+                            directionArrowView
 
-                        if let objectName = currentTargetObjectName {
-                            Text(objectName)
-                                .font(.caption2)
-                                .fontWeight(.medium)
-                                .foregroundColor(.white.opacity(0.9))
-                                .lineLimit(1)
-                        }
+                            if let temperature = temperatureStatus {
+                                Text(temperature)
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .foregroundColor(.white)
+                            }
 
-                        if let temperature = temperatureStatus {
-                            Text(temperature)
+                            Text(formatDistanceInFeetInches(distance))
                                 .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.white)
                         }
-
-                        Text(formatDistanceInFeetInches(distance))
-                            .font(.caption)
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(8)
+                        .overlay(directionIndicatorBorder)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(8)
-                    .overlay(directionIndicatorBorder)
+                    .buttonStyle(PlainButtonStyle())
+
+                    // Linked item name below navigation box - tappable to show detail sheet
+                    if let targetObject = currentTargetObject {
+                        Button(action: {
+                            // Show object detail sheet (same as long-tap)
+                            let objectDetail = ARObjectDetailService.shared.extractObjectDetails(
+                                location: targetObject,
+                                anchor: nil // We don't have anchor info here, but that's okay
+                            )
+                            presentedSheet = .objectDetail(detail: objectDetail)
+                        }) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.right")
+                                    .font(.caption2)
+                                    .foregroundColor(.white.opacity(0.7))
+                                Text(targetObject.name)
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                    .foregroundColor(.white.opacity(0.9))
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.ultraThinMaterial.opacity(0.8))
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
                 }
-                .buttonStyle(PlainButtonStyle())
                 .padding(.top)
             }
         }
@@ -482,6 +504,7 @@ struct ContentView: View {
             collectionNotification: $collectionNotification,
             nearestObjectDirection: $nearestObjectDirection,
             currentTargetObjectName: $currentTargetObjectName,
+            currentTargetObject: $currentTargetObject,
             conversationNPC: $conversationNPC,
             treasureHuntService: treasureHuntService
         )
@@ -491,6 +514,23 @@ struct ContentView: View {
             arView
             topOverlayView
             bottomCounterView
+
+            // GPS indicator in bottom right corner
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    GPSIndicatorView(
+                        isGPSConnected: isGPSConnected,
+                        onTap: {
+                            Task { @MainActor in
+                                presentedSheet = .gpsDetails
+                            }
+                        }
+                    )
+                }
+            }
+            .ignoresSafeArea()
         }
     }
     
@@ -498,7 +538,7 @@ struct ContentView: View {
     private func handleAppear() {
         // Set location manager reference in user location manager for game mode checks
         userLocationManager.lootBoxLocationManager = locationManager
-        
+
         userLocationManager.requestLocationPermission()
 
         // Initialize offline mode manager with location manager reference
@@ -510,12 +550,31 @@ struct ContentView: View {
         } else {
             print("📴 Offline mode enabled - skipping WebSocket connection")
         }
-        
+
         // Sync saved user name to server on app startup (only if not offline)
         if !OfflineModeManager.shared.isOfflineMode {
             APIService.shared.syncSavedUserNameToServer()
         }
-        
+
+        // Listen for long-press object detail notifications from AR coordinator
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("ShowObjectDetailSheet"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            guard let objectDetail = notification.object as? ARObjectDetail else {
+                print("⚠️ ShowObjectDetailSheet notification received but object was not ARObjectDetail")
+                return
+            }
+
+            print("📋 ContentView received ShowObjectDetailSheet notification for: \(objectDetail.name)")
+
+            // Show the object detail sheet
+            DispatchQueue.main.async {
+                self.presentedSheet = .objectDetail(detail: objectDetail)
+            }
+        }
+
         // Note: QR scanner is now only available manually from Settings
         // Offline mode is supported, so we don't automatically show QR scanner on connection failures
     }

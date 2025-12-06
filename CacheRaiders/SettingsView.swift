@@ -208,14 +208,7 @@ struct SettingsView: View {
                                         return
                                     }
 
-                                    print("🔄 Search distance changed from \(previousDistance)m to \(newValue)m, regenerating loot boxes")
-
-                                    // Move heavy regeneration to background thread
-                                    Task.detached(priority: .userInitiated) {
-                                        await MainActor.run {
-                                            locationManager.regenerateLocations(near: userLocation)
-                                        }
-                                    }
+                                    print("🔄 Search distance changed from \(previousDistance)m to \(newValue)m")
                                 }
                             }
                             previousDistance = newValue

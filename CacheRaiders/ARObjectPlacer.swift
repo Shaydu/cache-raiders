@@ -208,81 +208,8 @@ class ARObjectPlacer {
 
     // MARK: - Sphere Placement
 
-    /// Place a single random sphere for testing
-    func placeSingleSphere(locationId: String? = nil) {
-        guard let arView = arCoordinator?.arView,
-              let frame = arView.session.currentFrame else {
-            Swift.print("⚠️ Cannot place sphere: AR frame not available")
-            return
-        }
-
-        // Use provided location ID or generate a random one
-        let sphereId = locationId ?? "sphere-\(UUID().uuidString.prefix(8))"
-        let location = createRandomSphereLocation(id: sphereId)
-
-        // Place the sphere
-        placeLootBoxAtLocation(location, in: arView)
-
-        // Track placement time to prevent rapid re-placement
-        arCoordinator?.lastSpherePlacementTime = Date()
-    }
-
-    private func createRandomSphereLocation(id: String) -> LootBoxLocation {
-        // Create a random location near the user for testing
-        guard let userLocation = arCoordinator?.userLocationManager?.currentLocation else {
-            // Fallback location if GPS unavailable
-            return LootBoxLocation(
-                id: id,
-                name: "Test Sphere",
-                type: .sphere,
-                latitude: 0,
-                longitude: 0,
-                radius: 10.0,
-                collected: false,
-                grounding_height: nil,
-                source: .arRandomized
-            )
-        }
-
-        // Generate random offset (up to 50 meters in any direction)
-        let randomAngle = Double.random(in: 0..<2 * .pi)
-        let randomDistance = Double.random(in: 10..<50) // 10-50 meters away
-        let randomCoordinate = userLocation.coordinate.coordinate(atDistance: randomDistance, atBearing: randomAngle * 180 / .pi)
-
-        return LootBoxLocation(
-            id: id,
-            name: "Random Sphere",
-            type: .sphere,
-            latitude: randomCoordinate.latitude,
-            longitude: randomCoordinate.longitude,
-            radius: 10.0,
-            collected: false,
-            grounding_height: nil,
-            source: .arRandomized
-        )
-    }
 
     /// Randomize loot boxes by placing multiple spheres
-    func randomizeLootBoxes() {
-        guard let arView = arCoordinator?.arView else { return }
-
-        Swift.print("🎲 Randomizing loot boxes...")
-
-        // Clear existing objects first
-        arCoordinator?.removeAllPlacedObjects()
-
-        // Place multiple random spheres
-        let sphereCount = 5
-        for i in 0..<sphereCount {
-            let sphereId = "random-sphere-\(i)"
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.5) { [weak self] in
-                self?.placeSingleSphere(locationId: sphereId)
-            }
-        }
-
-        arCoordinator?.sphereModeActive = true
-        Swift.print("✅ Placed \(sphereCount) random spheres for testing")
-    }
 
     // MARK: - Item Placement
 

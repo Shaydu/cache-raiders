@@ -40,6 +40,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private var placedBoxesSet: Set<String> = [] // Track IDs of placed boxes
     private var activeAnchors: [String: ARAnchor] = [:] // Track active AR anchors
     let objectPlaced = PassthroughSubject<String, Never>() // Publisher for object placement events
+    var shouldForceReplacement: Bool = false // Force re-placement after reset when AR is ready
     // MARK: - Helper Methods
     private func updateManagerReferences() {
         // Update all managers that reference placedBoxes
@@ -109,11 +110,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     var collectionNotificationBinding: Binding<String?>?
     var nearestObjectDirectionBinding: Binding<Double?>?
     var currentTargetObjectNameBinding: Binding<String?>?
+    var currentTargetObjectBinding: Binding<LootBoxLocation?>?
     var conversationNPCBinding: Binding<ConversationNPC?>?
     private var lastSpherePlacementTime: Date? // Prevent rapid duplicate sphere placements
     private var sphereModeActive: Bool = false // Track when we're in sphere randomization mode
-    private var hasAutoRandomized: Bool = false // Track if we've already auto-randomized spheres
-    var shouldForceReplacement: Bool = false // Force re-placement after reset when AR is ready
     var lastAppliedLensId: String? = nil // Track last applied AR lens to prevent redundant session resets
 
     // Debug frame counter for session delegate logging
@@ -379,7 +379,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     // Conversation manager reference
     private weak var conversationManager: ARConversationManager?
 
-    func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>, nearestObjectDirection: Binding<Double?>, currentTargetObjectName: Binding<String?>, conversationNPC: Binding<ConversationNPC?>, conversationManager: ARConversationManager, treasureHuntService: TreasureHuntService? = nil) {
+    func setupARView(_ arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearbyLocations: Binding<[LootBoxLocation]>, distanceToNearest: Binding<Double?>, temperatureStatus: Binding<String?>, collectionNotification: Binding<String?>, nearestObjectDirection: Binding<Double?>, currentTargetObjectName: Binding<String?>, currentTargetObject: Binding<LootBoxLocation?>, conversationNPC: Binding<ConversationNPC?>, conversationManager: ARConversationManager, treasureHuntService: TreasureHuntService? = nil) {
         Swift.print("🎯 [SETUP] setupARView called")
         self.arView = arView
         self.locationManager = locationManager
@@ -390,6 +390,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         self.collectionNotificationBinding = collectionNotification
         self.nearestObjectDirectionBinding = nearestObjectDirection
         self.currentTargetObjectNameBinding = currentTargetObjectName
+        self.currentTargetObjectBinding = currentTargetObject
         self.conversationNPCBinding = conversationNPC
         self.conversationManager = conversationManager
 
@@ -514,6 +515,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         distanceTracker?.temperatureStatusBinding = temperatureStatus
         distanceTracker?.nearestObjectDirectionBinding = nearestObjectDirection
         distanceTracker?.currentTargetObjectNameBinding = currentTargetObjectName
+        distanceTracker?.currentTargetObjectBinding = currentTargetObject
         tapHandler?.placedBoxes = placedBoxes
         tapHandler?.findableObjects = findableObjects
         tapHandler?.collectionNotificationBinding = collectionNotification
@@ -989,10 +991,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                                       existingLocation.ar_offset_y != nil &&
                                       existingLocation.ar_offset_z != nil
 
-                let isARPlaced = existingLocation.source == .arManual ||
-                                existingLocation.source == .arRandomized
+                let isARPlaced = false // No longer using AR-specific sources
 
-                if hasARCoordinates || isARPlaced {
+                if hasARCoordinates {
                     isManuallyPlaced = true
                     manuallyPlacedObjects.insert(locationId)
                 }
@@ -1053,8 +1054,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             !(tapHandler?.foundLootBoxes.contains(loc.id) ?? false) &&
             placedBoxes[loc.id] == nil &&
             !(loc.latitude == 0 && loc.longitude == 0) &&
-            !((loc.source == .arManual || loc.source == .arRandomized) && 
-              (loc.ar_offset_x == nil || loc.ar_offset_y == nil || loc.ar_offset_z == nil))
+            true // All valid locations can be placed
         }
         
         Swift.print("📊 Placement analysis:")
@@ -1119,17 +1119,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 continue
             }
 
-            // CRITICAL: Skip AR-placed objects that don't have valid ar_offset coordinates yet
-            // These objects are still being set up and will be placed by ARPlacementView
-            if (location.source == .arManual || location.source == .arRandomized) {
-                let hasValidAROffsets = location.ar_offset_x != nil &&
-                                       location.ar_offset_y != nil &&
-                                       location.ar_offset_z != nil
-                if !hasValidAROffsets {
-                    Swift.print("⏭️ Skipping AR-placed object '\\(location.name)' - waiting for ar_offset coordinates")
-                    continue
-                }
-            }
 
             // Skip if already collected (critical check to prevent re-placement after finding)
             // Check multiple sources to ensure we don't place collected objects
@@ -1261,10 +1250,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 }
             }
 
-            // Skip AR-only items that are already placed (they're placed directly in randomizeLootBoxes)
-            // BUT: Don't skip spheres with valid GPS coordinates - they should be placed via GPS
-            // Spheres from the API/map have GPS coordinates and should appear in AR
-            if location.isAROnly && location.type != .sphere {
+            // Only place locations with valid GPS coordinates (database/API objects)
+            if location.isAROnly {
                 continue
             }
 
@@ -1294,212 +1281,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
 
     // Regenerate loot boxes at random locations in the AR room
-    func randomizeLootBoxes() {
-        print("🎲 RANDOMIZE TRIGGERED - Starting sphere placement...")
 
-        guard let arView = arView,
-              let frame = arView.session.currentFrame,
-              let locationManager = locationManager else {
-            Swift.print("⚠️ Cannot randomize: AR not ready")
-            return
-        }
-
-        // Enter sphere mode - prevent GPS boxes
-        sphereModeActive = true
-        hasAutoRandomized = true // Mark as having randomized (whether auto or manual)
-
-        print("🗑️ Removing \(placedBoxes.count) existing spheres...")
-        // Remove all existing placed boxes
-        for (_, anchor) in placedBoxes {
-            anchor.removeFromParent()
-        }
-        placedBoxes.removeAll()
-        findableObjects.removeAll() // Also clear findable objects
-
-        // Also remove old randomly-generated AR item locations from locationManager to reset the counter
-        // Keep GPS-based locations and manually-added map markers
-        let oldCount = locationManager.locations.count
-        locationManager.locations.removeAll { location in
-            // Remove temporary AR-only items (randomized), but keep map-added items
-            location.isTemporary && location.isAROnly
-        }
-        let removedCount = oldCount - locationManager.locations.count
-        print("🗑️ Removed \(removedCount) old random AR item locations from locationManager")
-
-        // Generate exactly 3 new loot boxes at random positions (since we only allow 3 total)
-        let numberOfBoxes = 3
-        let cameraTransform = frame.camera.transform
-        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-
-        // Add time-based offset to ensure different results each randomization
-        let timeOffset = Float(Date().timeIntervalSince1970.truncatingRemainder(dividingBy: 100.0))
-        Swift.print("🎲 Time-based randomization offset: \(String(format: "%.2f", timeOffset))")
-
-        // Create a virtual "random center" that's offset from the actual camera position
-        // This ensures different placement patterns even when starting from the same location
-        let centerOffsetDistance = Float.random(in: 0...2.0) // Up to 2m offset
-        let centerOffsetAngle = Float.random(in: 0...(2 * Float.pi))
-        let randomCenterX = cameraPos.x + centerOffsetDistance * cos(centerOffsetAngle)
-        let randomCenterZ = cameraPos.z + centerOffsetDistance * sin(centerOffsetAngle)
-        let randomCenter = SIMD3<Float>(randomCenterX, cameraPos.y, randomCenterZ)
-
-        Swift.print("🎲 Using random center at (\(String(format: "%.2f", randomCenterX)), \(String(format: "%.2f", randomCenterZ))) instead of camera position")
-
-        // TEMPORARILY DISABLE indoor detection to ensure spheres spawn
-        // TODO: Re-enable with better logic once spheres are working reliably
-        let isIndoors = false // Always use outdoor placement for now
-        Swift.print("🏠 Environment detection: DISABLED (using outdoor placement)")
-        Swift.print("   Starting placement...")
-
-        // Adjust placement strategy based on environment
-        let (minDistance, maxDistance, placementStrategy) = getPlacementStrategy(isIndoors: isIndoors, searchDistance: Float(locationManager.maxSearchDistance))
-
-        Swift.print("🎲 Randomizing \(numberOfBoxes) loot boxes (\(placementStrategy))...")
-
-        var placedCount = 0
-        var attempts = 0
-        let maxAttempts = numberOfBoxes * 15 // Allow more attempts for complex indoor placement
-        
-        while placedCount < numberOfBoxes && attempts < maxAttempts {
-            attempts += 1
-
-            var randomX: Float
-            var randomZ: Float
-
-            // Simplified placement for reliable sphere spawning
-            let randomDistance = Float.random(in: minDistance...maxDistance)
-            let randomAngle = Float.random(in: 0...(2 * Float.pi))
-
-            // Add time-based variation to ensure different results each session
-            let angleOffset = timeOffset * 0.1 // Small angle variation based on time
-            let adjustedAngle = randomAngle + angleOffset
-
-            // Use random center instead of camera position for more varied placement
-            randomX = randomCenter.x + randomDistance * cos(adjustedAngle)
-            randomZ = randomCenter.z + randomDistance * sin(adjustedAngle)
-
-            // Find the highest blocking surface (floor or table above floor)
-            // If no surface detected, use default height and rely on periodic grounding to fix later
-            let surfaceY: Float
-            var usedDefaultHeight = false
-            if let detectedY = groundingService?.findHighestBlockingSurface(x: randomX, z: randomZ, cameraPos: cameraPos) {
-                surfaceY = detectedY
-                Swift.print("✅ Found surface at attempt \(attempts) - Y: \(String(format: "%.2f", surfaceY))")
-            } else {
-                // Use default ground height - object will be adjusted later by periodic grounding
-                let objectTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .sphere, .cube]
-                let selectedType = objectTypes.randomElement() ?? .sphere
-                surfaceY = groundingService?.getDefaultGroundHeight(for: selectedType, cameraPos: cameraPos) ?? (cameraPos.y - 1.5)
-                usedDefaultHeight = true
-                Swift.print("⚠️ No surface at attempt \(attempts) - using default height Y=\(String(format: "%.2f", surfaceY)) (will auto-adjust later)")
-            }
-
-            let cameraY = cameraPos.y
-
-            // Reject surfaces too far away (more than 2m above or below camera)
-            // BUT allow default heights since they're calculated relative to camera
-            let heightDiff = abs(surfaceY - cameraY)
-            if !usedDefaultHeight && heightDiff > 2.0 {
-                Swift.print("⚠️ Surface too far rejected at attempt \(attempts) - surfaceY: \(String(format: "%.2f", surfaceY)), cameraY: \(String(format: "%.2f", cameraY)), diff: \(String(format: "%.2f", heightDiff))")
-                continue
-            }
-            
-            let boxPosition = SIMD3<Float>(randomX, surfaceY, randomZ)
-            let distanceFromCamera = length(boxPosition - cameraPos)
-
-            // CRITICAL: Enforce MINIMUM 1m distance from camera to prevent objects spawning on camera
-            if distanceFromCamera < 1.0 {
-                Swift.print("⚠️ Too close to camera rejected at attempt \(attempts) - distance: \(String(format: "%.2f", distanceFromCamera))m")
-                continue
-            }
-
-            if distanceFromCamera < minDistance || distanceFromCamera > maxDistance {
-                Swift.print("⚠️ Distance out of range rejected at attempt \(attempts) - distance: \(String(format: "%.2f", distanceFromCamera))m, min: \(String(format: "%.2f", minDistance))m, max: \(String(format: "%.2f", maxDistance))m")
-                continue
-            }
-            
-            // Check if too close to other boxes
-            var tooClose = false
-            for (_, existingAnchor) in placedBoxes {
-                let existingTransform = existingAnchor.transformMatrix(relativeTo: nil)
-                let existingPos = SIMD3<Float>(
-                    existingTransform.columns.3.x,
-                    existingTransform.columns.3.y,
-                    existingTransform.columns.3.z
-                )
-                let distanceToExisting = length(boxPosition - existingPos)
-                if distanceToExisting < 3.0 {
-                    Swift.print("⚠️ Too close to existing box rejected at attempt \(attempts) - distance: \(String(format: "%.2f", distanceToExisting))m")
-                    tooClose = true
-                    break
-                }
-            }
-
-            if tooClose {
-                continue
-            }
-            
-            // Create a new temporary location for this object
-            // Use completely unique IDs to avoid any confusion with map locations
-            // Randomly select object type for variety
-            let objectTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .lootChest, .turkey, .sphere, .cube]
-            let selectedType = objectTypes.randomElement() ?? .chalice
-            
-            // Use the factory's itemDescription() to get the proper name for this type
-            // This ensures each type gets its unique description (e.g., "Golden Chalice" not just "Chalice")
-            let factory = selectedType.factory
-            let baseName = factory.itemDescription()
-
-            // Add unique suffix to prevent duplicate names
-            // Use the placement count to ensure uniqueness
-            let itemName = "\(baseName) #\(placedCount + 1)"
-            
-            let newLocation = LootBoxLocation(
-                id: UUID().uuidString,
-                name: itemName, // Use the factory's description to ensure proper naming
-                type: selectedType,
-                latitude: 0, // Not GPS-based
-                longitude: 0, // Not GPS-based
-                radius: 100.0, // Large radius since we're not using GPS
-                source: .arRandomized // Randomized AR item
-            )
-            
-            // Add the location to locationManager so it shows up in the counter
-            locationManager.addLocation(newLocation)
-
-            // Place the object (will create appropriate type based on location.type)
-            Swift.print("✅ Found valid position at attempt \(attempts) - placing \(itemName) (\(selectedType.displayName)) at distance: \(String(format: "%.2f", distanceFromCamera))m")
-            placeBoxAtPosition(boxPosition, location: newLocation, in: arView)
-            placedCount += 1
-        }
-        
-        Swift.print("✅ Randomized and placed \(placedCount) objects!")
-        if placedCount == 0 {
-            Swift.print("⚠️ WARNING: No objects were placed!")
-            Swift.print("   💡 Try: 1) Move camera around to scan surfaces, 2) Tap on surfaces to place manually")
-        } else {
-            Swift.print("   🎯 Objects placed on floors/tables - look around to find them!")
-        }
-    }
-
-    /// Place a single random sphere for testing
-    func placeSingleSphere(locationId: String? = nil) {
-        guard let arView = arView,
-              let frame = arView.session.currentFrame else {
-            Swift.print("⚠️ Cannot place sphere: AR frame not available")
-            return
-        }
-
-        // Use provided location ID or generate a random one
-        let sphereId = locationId ?? "sphere-\(UUID().uuidString.prefix(8))"
-        let location = createRandomSphereLocation(id: sphereId)
-
-        // Place the sphere
-        placeLootBoxAtLocation(location, in: arView)
-
-        // Track placement time to prevent rapid re-placement
-        lastSpherePlacementTime = Date()
-    }
 
     /// Place an AR item from game data
     func placeARItem(_ item: LootBoxLocation) {
@@ -1550,17 +1332,6 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
 
     /// Create a random sphere location for testing
-    private func createRandomSphereLocation(id: String) -> LootBoxLocation {
-        return LootBoxLocation(
-            id: id,
-            name: "Test Sphere \(id.suffix(4))",
-            type: .sphere,
-            latitude: 0,
-            longitude: 0,
-            radius: 100.0,
-            source: .arRandomized
-        )
-    }
 
 
     // Generate position for indoor placement (simplified approach)
@@ -2226,7 +1997,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     // Handle AR anchor updates - remove any unwanted plane anchors (especially ceilings)
     // Also re-ground objects when new horizontal planes are detected
     func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
-        Swift.print("🎯 [DELEGATE] session(_:didAdd:) called with \(anchors.count) anchors - delegate IS working!")
+        // Only log in debug mode to reduce noise
+        if UserDefaults.standard.bool(forKey: "showARDebugVisuals") {
+            Swift.print("🎯 [DELEGATE] session(_:didAdd:) called with \(anchors.count) anchors - delegate IS working!")
+        }
         guard let arView = arView, let frame = arView.session.currentFrame else { return }
 
         let cameraTransform = frame.camera.transform
@@ -2269,15 +2043,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     } else {
                         Swift.print("✅ Keeping horizontal plane anchor (floor/table): Y=\(String(format: "%.2f", planeY)), size=\(String(format: "%.2f", planeWidth))x\(String(format: "%.2f", planeHeight))")
 
-                        // Auto-randomize spheres when we have a good surface available
-                        if !hasAutoRandomized && placedBoxes.isEmpty {
-                            Swift.print("🎯 Auto-randomizing spheres on detected surface!")
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                                // Small delay to let AR settle
-                                self?.hasAutoRandomized = true
-                                self?.randomizeLootBoxes()
-                            }
-                        }
+                        // No auto-randomization - only manual placement of database objects
                     }
                 }
                 // Disabled: Don't create occlusion planes for vertical planes (was causing dark boxes everywhere)
@@ -2289,7 +2055,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     }
     
     func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
-        Swift.print("🎯 [DELEGATE-ANCHORS] session(_:didUpdate anchors:) called with \(anchors.count) anchors")
+        // Only log in debug mode to reduce noise
+        if UserDefaults.standard.bool(forKey: "showARDebugVisuals") {
+            Swift.print("🎯 [DELEGATE-ANCHORS] session(_:didUpdate anchors:) called with \(anchors.count) anchors")
+        }
         // Disabled: No longer updating occlusion planes (was causing dark boxes)
         // guard let arView = arView else { return }
         //
@@ -3831,7 +3600,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     longitude: npcGPS.longitude,
                     radius: 10.0,
                     collected: false,
-                    source: .arManual // Mark as AR manual to prevent auto-sync as object
+                    source: .map // Use .map so NPCs sync and are visible to all users on the map
                 )
                 
                 // Remove existing NPC location if any, then add new one
@@ -4448,28 +4217,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         }
         
-        // CRITICAL: Remove from AR scene immediately after collection
-        // This ensures objects disappear right when tapped, not waiting for periodic checks
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            // Remove from AR scene immediately
-            if let anchor = self.placedBoxes[locationId] {
-                anchor.removeFromParent()
-                self.placedBoxes.removeValue(forKey: locationId)
-                self.findableObjects.removeValue(forKey: locationId)
-                self.objectsInViewport.remove(locationId)
-                self.objectPlacementTimes.removeValue(forKey: locationId)
-                
-                // Also remove from distance tracker if applicable
-                if let textEntity = self.distanceTracker?.distanceTextEntities[locationId] {
-                    textEntity.removeFromParent()
-                    self.distanceTracker?.distanceTextEntities.removeValue(forKey: locationId)
-                }
-                
-                Swift.print("✅ Immediately removed \(locationId) from AR scene")
-            }
-        }
+        // NOTE: Object removal is now handled by FindableObject after confetti/animation completes
+        // This ensures confetti animations work properly before object disappears
         
         // Use FindableObject's find() method - this encapsulates all the basic findable behavior
         // This will trigger: confetti, sound, animation
@@ -4501,13 +4250,8 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self else { return }
                 
-                if anchor.parent != nil {
-                    Swift.print("🗑️ Removing \(objectName) (ID: \(locationId)) from AR scene (animation completed)...")
-                    anchor.removeFromParent()
-                    Swift.print("   ✅ Anchor removed from scene - object should now be invisible")
-                } else {
-                    Swift.print("ℹ️ Object \(objectName) (ID: \(locationId)) already removed from scene")
-                }
+                // NOTE: Anchor removal is now handled by FindableObject after confetti/animation completes
+                Swift.print("ℹ️ Object \(objectName) (ID: \(locationId)) removal handled by FindableObject")
 
                 // Cleanup after find completes
                 if self.placedBoxes[locationId] != nil {
@@ -4726,7 +4470,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     longitude: gpsCoordinate.longitude,
                     radius: 5.0,
                     grounding_height: groundingHeight,
-                    source: .arManual
+                    source: .map // Direct placement should sync to API
                 )
 
                 // Set AR positioning data using ARPositioningService
@@ -5109,7 +4853,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             latitude: 0, // NFC objects may not have GPS coordinates
             longitude: 0,
             radius: 5.0,
-            source: .arManual // NFC-placed objects
+            source: .map // NFC-placed objects should sync to API
         )
 
         // Register the anchor for tapping

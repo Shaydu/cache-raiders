@@ -31,8 +31,11 @@ struct LocationConfigView: View {
                 // Bottom controls
                 VStack(spacing: 12) {
                     if let userLocation = userLocationManager.currentLocation {
-                        Button("🔄 Regenerate Loot Boxes") {
-                            locationManager.regenerateLocations(near: userLocation)
+                        Button("🔄 Refresh Nearby Objects") {
+                            // Trigger refresh of nearby objects from API
+                            Task {
+                                await locationManager.loadLocationsFromAPI()
+                            }
                         }
                         .foregroundColor(.blue)
                         .padding(.horizontal, 16)

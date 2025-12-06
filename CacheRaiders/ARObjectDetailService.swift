@@ -6,7 +6,7 @@ import CoreLocation
 
 // MARK: - AR Object Detail Data Model
 /// Complete details about an AR object for display in detail sheet
-struct ARObjectDetail: Identifiable {
+struct ARObjectDetail: Identifiable, Equatable {
     let id: String
     let name: String
     let itemType: String
@@ -17,6 +17,22 @@ struct ARObjectDetail: Identifiable {
     let arOrigin: CLLocationCoordinate2D?
     let arOffsets: SIMD3<Double>?
     let anchors: [String] // AR anchor information
+
+    // Equatable conformance
+    static func == (lhs: ARObjectDetail, rhs: ARObjectDetail) -> Bool {
+        return lhs.id == rhs.id &&
+               lhs.name == rhs.name &&
+               lhs.itemType == rhs.itemType &&
+               lhs.placerName == rhs.placerName &&
+               lhs.datePlaced == rhs.datePlaced &&
+               lhs.gpsCoordinates?.latitude == rhs.gpsCoordinates?.latitude &&
+               lhs.gpsCoordinates?.longitude == rhs.gpsCoordinates?.longitude &&
+               lhs.arCoordinates == rhs.arCoordinates &&
+               lhs.arOrigin?.latitude == rhs.arOrigin?.latitude &&
+               lhs.arOrigin?.longitude == rhs.arOrigin?.longitude &&
+               lhs.arOffsets == rhs.arOffsets &&
+               lhs.anchors == rhs.anchors
+    }
 
     /// Display-friendly GPS coordinate string
     var gpsCoordinateString: String {
@@ -80,22 +96,19 @@ class ARObjectDetailService {
                 transform.columns.3.z
             )
 
-            // Extract anchor information
-            if let arAnchor = anchor.anchors.first {
-                let anchorId = arAnchor.identifier.uuidString
-                let anchorType = String(describing: type(of: arAnchor))
-                anchorInfo.append("ID: \(anchorId)")
-                anchorInfo.append("Type: \(anchorType)")
+            // Extract anchor entity information
+            let anchorId = anchor.id.description
+            let anchorType = String(describing: type(of: anchor))
+            anchorInfo.append("Entity ID: \(anchorId)")
+            anchorInfo.append("Entity Type: \(anchorType)")
 
-                // Add transform info
-                let anchorTransform = arAnchor.transform
-                let position = SIMD3<Float>(
-                    anchorTransform.columns.3.x,
-                    anchorTransform.columns.3.y,
-                    anchorTransform.columns.3.z
-                )
-                anchorInfo.append("Position: \(String(format: "%.2f, %.2f, %.2f", position.x, position.y, position.z))")
-            }
+            // Add transform info from the anchor entity
+            let position = SIMD3<Float>(
+                transform.columns.3.x,
+                transform.columns.3.y,
+                transform.columns.3.z
+            )
+            anchorInfo.append("Position: \(String(format: "%.2f, %.2f, %.2f", position.x, position.y, position.z))")
         }
 
         // Extract GPS coordinates (only if valid, not 0,0)
@@ -120,10 +133,14 @@ class ARObjectDetailService {
             arOffsets = SIMD3<Double>(offsetX, offsetY, offsetZ)
         }
 
-        // Get placer name - try created_by field first, fallback to "System" for API objects
-        var placerName: String? = location.created_by
-        if placerName == nil {
-            // If no creator, assume it's a system/admin placed object
+        // Get placer name - convert user ID to display name
+        var placerName: String? = nil
+        if let createdBy = location.created_by {
+            // Use same logic as ARCoordinator: "Your" for current user, "[UserID]'s" for others
+            let currentUserId = APIService.shared.currentUserID
+            placerName = createdBy == currentUserId ? "Your" : "\(createdBy)'s"
+        } else {
+            // If no creator info, show as Admin/System placed
             placerName = location.source == .api ? "Admin" : "Unknown"
         }
 

@@ -38,16 +38,12 @@ struct GameModeResponse: Codable {
 enum ItemSource: String, Codable {
     case api = "api"              // From the shared API database
     case map = "map"              // Added from map (has GPS, should be saved)
-    case arRandomized = "ar_randomized"  // Randomized in AR (temporary, no GPS)
-    case arManual = "ar_manual"   // Manually placed in AR (temporary, no GPS)
     
     /// Whether this source should be persisted to disk
     var shouldPersist: Bool {
         switch self {
         case .api, .map:
             return true
-        case .arRandomized, .arManual:
-            return false
         }
     }
     
@@ -56,19 +52,13 @@ enum ItemSource: String, Codable {
         switch self {
         case .api, .map:
             return true
-        case .arRandomized, .arManual:
-            return false
         }
     }
     
     /// Whether this source should appear on the map
     var shouldShowOnMap: Bool {
-        switch self {
-        case .api, .map:
-            return true
-        case .arRandomized, .arManual:
-            return false
-        }
+        // All sources (API and map-placed) should appear on the map
+        return true
     }
 }
 
@@ -206,10 +196,6 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
                 source = .map
             } else if id.hasPrefix("MAP_ITEM_") {
                 source = .map
-            } else if id.hasPrefix("AR_ITEM_") {
-                source = .arRandomized
-            } else if id.hasPrefix("AR_SPHERE_") {
-                source = .arRandomized
             } else {
                 source = .api // Default to API for regular IDs
             }
@@ -262,9 +248,6 @@ class LootBoxLocationManager: ObservableObject {
     @Published var lootBoxMaxSize: Double = 0.61 // Default 0.61m (2 feet maximum size)
     @Published var arZoomLevel: Double = 1.0 // Default 1.0x zoom (normal view)
     @Published var selectedARLens: String? = nil // Selected AR camera lens identifier (nil = default/wide)
-    @Published var shouldRandomize: Bool = false // Trigger for randomizing loot boxes in AR
-    @Published var shouldPlaceSphere: Bool = false // Trigger for placing a single sphere in AR
-    @Published var pendingSphereLocationId: String? // ID of the map marker location to use for the sphere
     @Published var pendingARItem: LootBoxLocation? // Item to place in AR room
     @Published var shouldResetARObjects: Bool = false // Trigger for removing all AR objects when locations are reset
     @Published var selectedDatabaseObjectId: String? = nil // Selected database object to find (only one at a time)
@@ -813,10 +796,11 @@ class LootBoxLocationManager: ObservableObject {
                     }
                     
                     if !hasNearbyLocation && !loadedLocations.isEmpty {
-                        // All locations are too far away - regenerate random ones nearby
-                        print("⚠️ Loaded locations are too far away (>10km), regenerating random locations nearby")
+                        // All locations are too far away - clear them since we only want API/database objects
+                        print("⚠️ Loaded locations are too far away (>10km), clearing local data to rely on API")
                         await MainActor.run {
-                            self.createDefaultLocations(near: userLocation)
+                            self.locations = []
+                            self.saveLocations()
                         }
                         return
                     }
@@ -830,27 +814,14 @@ class LootBoxLocationManager: ObservableObject {
                 }
             } catch {
                 print("⚠️ Could not load locations from Core Data: \(error.localizedDescription)")
-                // Only create defaults if we have a user location
-                if let userLocation = userLocation {
-                    await MainActor.run {
-                        self.createDefaultLocations(near: userLocation)
-                    }
-                } else {
-                    // If no user location yet, create empty array (will be populated when location is available)
-                    await MainActor.run {
-                        self.locations = []
-                    }
+                // If we can't load from Core Data, start with empty array (will be populated from API)
+                await MainActor.run {
+                    self.locations = []
                 }
             }
         }
     }
     
-    // Clear all locations and regenerate random ones near user
-    func regenerateLocations(near userLocation: CLLocation) {
-        locations = []
-        createDefaultLocations(near: userLocation)
-        print("🔄 Regenerated 3 random loot boxes near your location")
-    }
 
     // Reset all locations to not collected (for testing/debugging)
     func resetAllLocations() {
@@ -903,72 +874,6 @@ class LootBoxLocationManager: ObservableObject {
         return documentsDirectory.appendingPathComponent(locationsFileName)
     }
     
-    // Create default locations randomly within maxSearchDistance of user location
-    // NOTE: These auto-generated objects are LOCAL ONLY and do NOT sync to API
-    // Only manually added objects (via addLocation) sync to the shared API database
-    func createDefaultLocations(near userLocation: CLLocation) {
-        let lootBoxTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest]
-        let lootBoxNames = ["Chalice", "Temple Relic", "Treasure Chest"]
-        
-        locations = []
-        
-        // Generate 3 random loot boxes within maxSearchDistance
-        for _ in 0..<3 {
-            // Generate random distance (between 10% and 90% of maxSearchDistance)
-            // Ensure minimum distance is at least 5 meters
-            let minDistance = max(maxSearchDistance * 0.1, 5.0)
-            let maxDistance = maxSearchDistance * 0.9
-            let randomDistance = Double.random(in: minDistance...maxDistance)
-            
-            // Generate random bearing (0-360 degrees)
-            let randomBearing = Double.random(in: 0...360) * .pi / 180.0
-            
-            // Calculate new coordinates using haversine formula
-            let earthRadius: Double = 6371000 // meters
-            let lat1 = userLocation.coordinate.latitude * .pi / 180.0
-            let lon1 = userLocation.coordinate.longitude * .pi / 180.0
-            
-            let lat2 = asin(sin(lat1) * cos(randomDistance / earthRadius) +
-                           cos(lat1) * sin(randomDistance / earthRadius) * cos(randomBearing))
-            let lon2 = lon1 + atan2(sin(randomBearing) * sin(randomDistance / earthRadius) * cos(lat1),
-                                    cos(randomDistance / earthRadius) - sin(lat1) * sin(lat2))
-            
-            let newLat = lat2 * 180.0 / .pi
-            let newLon = lon2 * 180.0 / .pi
-            
-            // Pick random type and name
-            let randomIndex = Int.random(in: 0..<lootBoxTypes.count)
-            
-            let newLocation = LootBoxLocation(
-                id: UUID().uuidString,
-                name: lootBoxNames[randomIndex],
-                type: lootBoxTypes[randomIndex],
-                latitude: newLat,
-                longitude: newLon,
-                radius: 5.0, // 5 meter radius
-                collected: false,
-                grounding_height: nil,
-                source: .arRandomized, // These are auto-generated, not synced to API
-                ar_origin_latitude: nil,
-                ar_origin_longitude: nil,
-                ar_offset_x: nil,
-                ar_offset_y: nil,
-                ar_offset_z: nil,
-                ar_placement_timestamp: nil,
-                ar_anchor_transform: nil
-            )
-            locations.append(newLocation)
-            
-            // Save each location to Core Data
-            do {
-                try dataService.saveLocation(newLocation)
-            } catch {
-                print("⚠️ Error saving default location to Core Data: \(error)")
-            }
-        }
-        
-        print("✅ Created 3 random loot boxes within \(maxSearchDistance)m of your location")
-    }
     
     // Add a new location (manually added by user)
     // NOTE: Manually added objects ARE synced to the shared API database when useAPISync is enabled
