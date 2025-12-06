@@ -1191,17 +1191,21 @@ def get_all_players():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Get all players with their find counts
+        # Get all players with their find counts and last known location
         cursor.execute('''
-            SELECT 
+            SELECT
                 p.device_uuid,
                 p.player_name,
                 p.created_at,
                 p.updated_at,
-                COUNT(f.id) as find_count
+                COUNT(f.id) as find_count,
+                ull.latitude,
+                ull.longitude,
+                ull.updated_at as location_updated_at
             FROM players p
             LEFT JOIN finds f ON p.device_uuid = f.found_by
-            GROUP BY p.device_uuid, p.player_name, p.created_at, p.updated_at
+            LEFT JOIN user_last_locations ull ON p.device_uuid = ull.device_uuid
+            GROUP BY p.device_uuid, p.player_name, p.created_at, p.updated_at, ull.latitude, ull.longitude, ull.updated_at
             ORDER BY find_count DESC, p.updated_at DESC
         ''')
         
@@ -1212,7 +1216,10 @@ def get_all_players():
             'player_name': row['player_name'],
             'created_at': row['created_at'],
             'updated_at': row['updated_at'],
-            'find_count': row['find_count']
+            'find_count': row['find_count'],
+            'latitude': row['latitude'],
+            'longitude': row['longitude'],
+            'location_updated_at': row['location_updated_at']
         } for row in rows]
         
         return jsonify(players)

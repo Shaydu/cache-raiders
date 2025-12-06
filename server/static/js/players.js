@@ -61,7 +61,7 @@ const PlayersManager = {
                 const connectionIndicator = `<span class="connection-indicator ${connectionClass}" title="${isConnected ? 'Connected via WebSocket' : 'Disconnected'}"></span>`;
 
                 return `
-                    <div class="object-item player-item ${connectionClass}" 
+                    <div class="object-item player-item ${connectionClass}"
                          data-device-uuid="${player.device_uuid}"
                          oncontextmenu="event.preventDefault(); PlayersManager.showContextMenu(event, '${player.device_uuid}');">
                         <h3>${connectionIndicator}${player.player_name || 'Unnamed Player'}</h3>
@@ -69,6 +69,7 @@ const PlayersManager = {
                             Device ID: ${shortUuid}<br>
                             Full UUID: ${player.device_uuid}<br>
                             Finds: <span style="color: #4caf50; font-weight: bold;">${findCount}</span><br>
+                            ${player.latitude && player.longitude ? `Location: <span onclick="ObjectsManager.centerMapOnCoordinates(${player.latitude}, ${player.longitude})" style="color: #4a90e2; cursor: pointer; text-decoration: underline;" title="Click to center map on this location">${player.latitude.toFixed(6)}, ${player.longitude.toFixed(6)}</span><br>` : 'Location: Not available<br>'}
                             Status: <span style="color: ${isConnected ? '#4caf50' : '#999'}; font-weight: bold;">${isConnected ? '🟢 Connected' : '⚫ Disconnected'}</span><br>
                             Last Updated: ${updatedDate}
                         </div>
