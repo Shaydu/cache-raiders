@@ -63,3 +63,4 @@ if __name__ == "__main__":
 
     success = migrate_database(db_path)
     sys.exit(0 if success else 1)
+
