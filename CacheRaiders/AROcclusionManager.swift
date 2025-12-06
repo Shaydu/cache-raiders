@@ -128,6 +128,11 @@ class AROcclusionManager {
         let startTime = CFAbsoluteTimeGetCurrent()
         guard let arView = arView, let frame = arView.session.currentFrame else { return }
 
+        // Log summary when debug mode is enabled
+        if UserDefaults.standard.bool(forKey: "showARDebugVisuals") && !placedBoxes.isEmpty {
+            Swift.print("🔍 [OCCLUSION] Checking \(placedBoxes.count) objects for visibility: \(placedBoxes.keys.sorted().joined(separator: ", "))")
+        }
+
         // PERFORMANCE: Distance text updates moved to distance tracker's own timer (1s interval)
         // Only update direction here (lightweight calculation)
         distanceTracker?.updateNearestObjectDirection()
@@ -206,6 +211,9 @@ class AROcclusionManager {
             
             // If camera is too close, hide all children to prevent camera from appearing inside
             if isCameraTooClose {
+                if UserDefaults.standard.bool(forKey: "showARDebugVisuals") {
+                    Swift.print("📸 [CAMERA] Object '\(locationId)' HIDDEN - camera too close (\(String(format: "%.2f", distance))m < \(String(format: "%.2f", minDistanceForObject))m)")
+                }
                 for child in anchor.children {
                     if let modelEntity = child as? ModelEntity {
                         modelEntity.isEnabled = false
@@ -219,6 +227,9 @@ class AROcclusionManager {
             // Skip occlusion check if box is too far
             guard distance > 0.1 && distance < 50.0 else {
                 // Show all children if too far (no occlusion check needed)
+                if UserDefaults.standard.bool(forKey: "showARDebugVisuals") && distance >= 50.0 {
+                    Swift.print("📏 [DISTANCE] Object '\(locationId)' SHOWN - too far (\(String(format: "%.1f", distance))m >= 50.0m), skipping occlusion")
+                }
                 for child in anchor.children {
                     if let modelEntity = child as? ModelEntity {
                         modelEntity.isEnabled = true
@@ -234,6 +245,9 @@ class AROcclusionManager {
             
             // If occlusion is disabled, always show objects
             if occlusionDisabled {
+                if UserDefaults.standard.bool(forKey: "showARDebugVisuals") {
+                    Swift.print("🚫 [SETTINGS] Object '\(locationId)' SHOWN - occlusion disabled in settings")
+                }
                 for child in anchor.children {
                     if let modelEntity = child as? ModelEntity {
                         modelEntity.isEnabled = true
@@ -256,9 +270,11 @@ class AROcclusionManager {
             )
             
             let raycastResults = arView.session.raycast(raycastQuery)
-            
+
             // If we hit a vertical plane (wall) before reaching the object, hide it
             var isOccluded = false
+            var closestWallDistance: Float = Float.infinity
+
             for result in raycastResults {
                 // Check if the hit point is closer than the object (wall is between camera and object)
                 let hitPoint = SIMD3<Float>(
@@ -267,20 +283,42 @@ class AROcclusionManager {
                     result.worldTransform.columns.3.z
                 )
                 let hitDistance = length(hitPoint - cameraPosition)
-                
+                closestWallDistance = min(closestWallDistance, hitDistance)
+
                 // If wall is closer than object (with some tolerance), object is occluded
                 if hitDistance < distance - 0.3 { // 0.3m tolerance
                     isOccluded = true
                     break
                 }
             }
+
+            // Log raycast results when debug mode is enabled
+            if UserDefaults.standard.bool(forKey: "showARDebugVisuals") {
+                if raycastResults.isEmpty {
+                    Swift.print("🔍 [RAYCAST] Object '\(locationId)' - no walls detected (distance: \(String(format: "%.2f", distance))m)")
+                } else {
+                    Swift.print("🔍 [RAYCAST] Object '\(locationId)' - closest wall at \(String(format: "%.2f", closestWallDistance))m, object at \(String(format: "%.2f", distance))m, occluded: \(isOccluded)")
+                }
+            }
             
             // Show/hide all children based on occlusion
+            let wasOccluded = anchor.children.first(where: { !$0.isEnabled }) != nil // Check if any child was disabled
+            let visibilityChanged = (wasOccluded && !isOccluded) || (!wasOccluded && isOccluded)
+
             for child in anchor.children {
                 if let modelEntity = child as? ModelEntity {
                     modelEntity.isEnabled = !isOccluded
                 } else {
                     child.isEnabled = !isOccluded
+                }
+            }
+
+            // Log visibility changes when debug mode is enabled
+            if visibilityChanged && UserDefaults.standard.bool(forKey: "showARDebugVisuals") {
+                if isOccluded {
+                    Swift.print("👻 [OCCLUSION] Object '\(locationId)' HIDDEN - wall detected between camera and object")
+                } else {
+                    Swift.print("👁️ [OCCLUSION] Object '\(locationId)' SHOWN - no occlusion detected")
                 }
             }
         }

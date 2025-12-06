@@ -212,13 +212,6 @@ struct ContentView: View {
                         VStack(alignment: .center, spacing: 4) {
                             directionArrowView
 
-                            if let temperature = temperatureStatus {
-                                Text(temperature)
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .foregroundColor(.white)
-                            }
-
                             Text(formatDistanceInFeetInches(distance))
                                 .font(.caption)
                                 .fontWeight(.semibold)
@@ -232,6 +225,7 @@ struct ContentView: View {
                     }
                     .buttonStyle(PlainButtonStyle())
 
+
                     // Linked item name below navigation box - tappable to show detail sheet
                     if let targetObject = currentTargetObject {
                         Button(action: {
@@ -242,16 +236,11 @@ struct ContentView: View {
                             )
                             presentedSheet = .objectDetail(detail: objectDetail)
                         }) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.right")
-                                    .font(.caption2)
-                                    .foregroundColor(.white.opacity(0.7))
-                                Text(targetObject.name)
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                    .foregroundColor(.white.opacity(0.9))
-                                    .lineLimit(1)
-                            }
+                            Text("\(targetObject.name) (\(String(targetObject.id.prefix(4))))")
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundColor(.white.opacity(0.9))
+                                .lineLimit(1)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(.ultraThinMaterial.opacity(0.8))
@@ -349,21 +338,6 @@ struct ContentView: View {
                     .background(.ultraThinMaterial)
                     .cornerRadius(10)
             }
-
-            Button(action: {
-                // Use async to avoid modifying state during view update
-                Task { @MainActor in
-                    presentedSheet = .settings
-                }
-            }) {
-                Image(systemName: "gearshape")
-                    .foregroundColor(.white)
-                    .padding()
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(10)
-            }
-            .contentShape(Rectangle())
-            .allowsHitTesting(true)
         }
         .padding(.top)
     }
@@ -416,14 +390,14 @@ struct ContentView: View {
             HStack {
                 // Only show "Loot Boxes Found" counter in open mode
                 if locationManager.gameMode == .open && !locationManager.locations.isEmpty {
-                    Text("Loot Boxes Found: \(lootBoxCounter.found)/\(lootBoxCounter.total)")
+                    Text("Found \(lootBoxCounter.found)/\(lootBoxCounter.total) Items")
                         .font(.caption)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
                         .background(.ultraThinMaterial)
                         .cornerRadius(8)
                         .padding(.leading, 16)
-                        .padding(.bottom, 16)
+                        .padding(.bottom, -4)
                 }
                 
                 Spacer()
@@ -515,7 +489,7 @@ struct ContentView: View {
             topOverlayView
             bottomCounterView
 
-            // GPS indicator in bottom right corner
+            // GPS indicator and settings in bottom right corner
             VStack {
                 Spacer()
                 HStack {
@@ -528,6 +502,21 @@ struct ContentView: View {
                             }
                         }
                     )
+
+                    Button(action: {
+                        // Use async to avoid modifying state during view update
+                        Task { @MainActor in
+                            presentedSheet = .settings
+                        }
+                    }) {
+                        Image(systemName: "gear")
+                            .font(.title2)
+                            .foregroundColor(.white)
+                            .frame(width: 44, height: 44)
+                            .background(Color.black.opacity(0.6))
+                            .cornerRadius(8)
+                            .offset(x: -12, y: -12)
+                    }
                 }
             }
             .ignoresSafeArea()

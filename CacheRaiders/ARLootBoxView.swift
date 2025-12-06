@@ -1,6 +1,7 @@
 import SwiftUI
 import RealityKit
 import ARKit
+import AVFoundation
 import Combine
 
 // MARK: - AR Loot Box View
@@ -244,6 +245,22 @@ struct ARViewContainer: UIViewRepresentable {
             return arView
         }
 
+        // Check camera permissions
+        let cameraAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+        print("📷 [CAMERA PERMISSION] Status: \(cameraAuthorizationStatus.rawValue)")
+        switch cameraAuthorizationStatus {
+        case .authorized:
+            print("✅ Camera permission granted")
+        case .denied:
+            print("❌ Camera permission denied - this will cause black AR camera")
+        case .restricted:
+            print("⚠️ Camera permission restricted")
+        case .notDetermined:
+            print("❓ Camera permission not determined")
+        @unknown default:
+            print("❓ Camera permission unknown status")
+        }
+
         // CRITICAL: Setup ARView and set delegate BEFORE running the session
         // This ensures session(_:didUpdate:) delegate methods are received from the very first frame
         context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, currentTargetObjectName: $currentTargetObjectName, currentTargetObject: $currentTargetObject, conversationNPC: $conversationNPC, conversationManager: conversationManager, treasureHuntService: treasureHuntService)
@@ -291,6 +308,19 @@ struct ARViewContainer: UIViewRepresentable {
             print("🎯 [MAKEVIEW] AR session.run() called with RESET options")
             print("🎯 [MAKEVIEW] Delegate after run: \(arView.session.delegate != nil ? "SET" : "NIL")")
             print("🎯 [MAKEVIEW] Session configuration: \(arView.session.configuration != nil ? "SET" : "NIL")")
+
+            // Check session state after starting
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                print("🔍 [AR SESSION CHECK] After 1 second:")
+                print("   Session running: \(arView.session.configuration != nil)")
+                if let currentFrame = arView.session.currentFrame {
+                    print("   Current frame available: YES")
+                    print("   Camera tracking state: \(currentFrame.camera.trackingState)")
+                    print("   Camera transform: \(currentFrame.camera.transform)")
+                } else {
+                    print("   Current frame available: NO - THIS IS THE PROBLEM!")
+                }
+            }
         }
 
         // Verify delegate is still set after a brief delay

@@ -13,6 +13,7 @@
         <attribute name="collected" attributeType="Boolean" usesScalarValueType="YES"/>
         <attribute name="grounding_height" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
         <attribute name="source" attributeType="String" defaultValueString="api" usesScalarValueType="NO"/>
+        <attribute name="created_by" optional="YES" attributeType="String" usesScalarValueType="NO"/>
         <attribute name="ar_origin_latitude" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
         <attribute name="ar_origin_longitude" optional="YES" attributeType="Double" usesScalarValueType="YES"/>
         <attribute name="ar_offset_x" optional="YES" attributeType="Double" usesScalarValueType="YES"/>

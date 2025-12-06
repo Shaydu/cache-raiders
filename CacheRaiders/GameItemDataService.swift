@@ -51,6 +51,7 @@ class GameItemDataService {
         gameItem.collected = location.collected
         gameItem.grounding_height = location.grounding_height ?? 0.0
         gameItem.source = location.source.rawValue
+        gameItem.created_by = location.created_by
 
         // Use ARPositioningService to handle AR positioning data
         if let arData = ARPositioningService.shared.extractARPositioning(from: location),
@@ -87,7 +88,8 @@ class GameItemDataService {
         gameItem.collected = location.collected
         gameItem.grounding_height = location.grounding_height ?? 0.0
         gameItem.source = location.source.rawValue
-        
+        gameItem.created_by = location.created_by
+
         // Conflict resolution: only update if server version is newer or equal
         if let serverVersion = location.server_version {
             let currentVersion = gameItem.server_version?.int64Value ?? 0
@@ -156,6 +158,7 @@ class GameItemDataService {
             collected: gameItem.collected,
             grounding_height: groundingHeight,
             source: source,
+            created_by: gameItem.created_by,
             last_modified: gameItem.last_modified as Date?,
             server_version: gameItem.server_version?.int64Value
         )

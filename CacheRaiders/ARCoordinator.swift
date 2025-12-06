@@ -1441,6 +1441,10 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         sessionFrameCount += 1
         if sessionFrameCount % 60 == 0 {
             Swift.print("🎯 [SESSION] didUpdate called (frame \(sessionFrameCount)), arOrigin: \(arOriginLocation != nil)")
+            Swift.print("   Camera tracking state: \(frame.camera.trackingState)")
+            if case .notAvailable = frame.camera.trackingState {
+                Swift.print("⚠️ CAMERA TRACKING NOT AVAILABLE - THIS CAUSES BLACK CAMERA!")
+            }
         }
 
         // CRITICAL: Set AR origin on first frame if not set - NEVER change it after

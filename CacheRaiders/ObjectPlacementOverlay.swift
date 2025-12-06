@@ -16,12 +16,7 @@ struct ObjectPlacementOverlay: View {
     let onCancel: () -> Void
 
     var body: some View {
-        ZStack {
-            // Semi-transparent background
-            Color.black.opacity(0.3)
-                .ignoresSafeArea()
-
-            VStack {
+        VStack {
                 // Top info panel
                 VStack(spacing: 8) {
                     // Coordinates and height display
@@ -56,35 +51,37 @@ struct ObjectPlacementOverlay: View {
                         .cornerRadius(12)
                     }
                     
-                    // Scale control slider - moved up under header
-                    VStack(spacing: 8) {
+                    // Scale control slider - shrunk by 20% and moved up 30px
+                    VStack(spacing: 6) {
                         Text("Scale: \(String(format: "%.2fx", scaleMultiplier))")
-                            .font(.headline)
+                            .font(.subheadline)
                             .foregroundColor(.white)
-                        
+
                         Slider(
                             value: $scaleMultiplier,
                             in: 0.1...5.0,
                             step: 0.1
                         )
                         .accentColor(.cyan)
-                        
+                        .scaleEffect(0.8)
+
                         HStack {
                             Text("0.1x")
-                                .font(.caption)
+                                .font(.caption2)
                                 .foregroundColor(.white.opacity(0.7))
                             Spacer()
                             Text("5.0x")
-                                .font(.caption)
+                                .font(.caption2)
                                 .foregroundColor(.white.opacity(0.7))
                         }
+                        .scaleEffect(0.8)
                     }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 12)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
                     .background(Color.black.opacity(0.6))
                     .cornerRadius(12)
                 }
-                .padding(.top, 60)
+                .padding(.top, 30)
 
                 Spacer()
 
@@ -170,7 +167,6 @@ struct ObjectPlacementOverlay: View {
                     }
                 }
                 .padding(.bottom, 40)
-            }
         }
     }
 

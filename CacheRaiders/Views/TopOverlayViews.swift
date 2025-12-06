@@ -56,20 +56,6 @@ struct LeftButtonsView: View {
                     .cornerRadius(8)
             }
 
-            // Settings Button
-            Button(action: {
-                // Use async to avoid modifying state during view update
-                Task { @MainActor in
-                    presentedSheet = .settings
-                }
-            }) {
-                Image(systemName: "gear")
-                    .font(.title2)
-                    .foregroundColor(.white)
-                    .frame(width: 44, height: 44)
-                    .background(Color.black.opacity(0.6))
-                    .cornerRadius(8)
-            }
         }
     }
 }
@@ -159,13 +145,13 @@ struct GPSIndicatorView: View {
 
     var body: some View {
         Button(action: onTap) {
-            Image(systemName: "arrow.up.circle.fill")
+            Image(systemName: "location.fill")
                 .font(.title2)
                 .foregroundColor(isGPSConnected ? .green : .red)
                 .frame(width: 44, height: 44)
                 .background(Color.black.opacity(0.6))
                 .cornerRadius(8)
-                .padding(.trailing, 16)
+                .padding(.trailing, 6)
                 .padding(.bottom, 16)
         }
         .buttonStyle(PlainButtonStyle())
