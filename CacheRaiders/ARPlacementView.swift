@@ -272,27 +272,23 @@ struct ARPlacementView: View {
 
             // CRITICAL: Save AR offset coordinates so the main AR view can place the object
             // The AR position is relative to the AR origin (0,0,0), so it IS the offset
-            // Make this non-blocking - if it fails, placement should still continue
+            // This is now BLOCKING - if it fails, the entire placement fails to ensure AR data is saved
             if let arOrigin = arOrigin {
-                do {
-                    try await APIService.shared.updateAROffset(
-                        objectId: objectId,
-                        arOriginLatitude: arOrigin.coordinate.latitude,
-                        arOriginLongitude: arOrigin.coordinate.longitude,
-                        offsetX: Double(arPosition.x),
-                        offsetY: Double(arPosition.y),
-                        offsetZ: Double(arPosition.z)
-                    )
-                    print("✅ [Placement] Saved AR coordinates to API:")
-                    print("   Object ID: \(objectId)")
-                    print("   AR Origin: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
-                    print("   AR Offset: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
-                } catch {
-                    print("⚠️ [Placement] Failed to save AR coordinates (non-blocking): \(error)")
-                    print("   Placement will continue - object will be placed using GPS coordinates")
-                }
+                try await APIService.shared.updateAROffset(
+                    objectId: objectId,
+                    arOriginLatitude: arOrigin.coordinate.latitude,
+                    arOriginLongitude: arOrigin.coordinate.longitude,
+                    offsetX: Double(arPosition.x),
+                    offsetY: Double(arPosition.y),
+                    offsetZ: Double(arPosition.z)
+                )
+                print("✅ [Placement] Saved AR coordinates to API:")
+                print("   Object ID: \(objectId)")
+                print("   AR Origin: (\(String(format: "%.6f", arOrigin.coordinate.latitude)), \(String(format: "%.6f", arOrigin.coordinate.longitude)))")
+                print("   AR Offset: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))m")
             } else {
-                print("⚠️ [Placement] No AR origin available - cannot save AR coordinates")
+                print("❌ [Placement] No AR origin available - cannot save AR coordinates")
+                throw APIError.networkError("No AR origin available for coordinate saving")
             }
 
             // CRITICAL FIX: Update the location in locationManager.locations with new AR coordinates

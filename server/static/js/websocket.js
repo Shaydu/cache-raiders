@@ -111,6 +111,24 @@ const WebSocketManager = {
                 }
             });
 
+            // Listen for object created events (new objects added)
+            this.socket.on('object_created', (data) => {
+                console.log('📦 Received object_created event:', data.id, data.name);
+                if (ObjectsManager && typeof ObjectsManager.addObjectMarker === 'function') {
+                    // Get current zoom level for marker sizing
+                    const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
+                    ObjectsManager.addObjectMarker(data, currentZoom);
+                } else if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
+                    // Fallback: reload all objects if specific add isn't available
+                    ObjectsManager.loadObjects();
+                }
+
+                // Also refresh stats to update total counts
+                if (StatsManager && typeof StatsManager.refreshStats === 'function') {
+                    StatsManager.refreshStats();
+                }
+            });
+
             // Listen for object collected events (iOS finds objects)
             this.socket.on('object_collected', (data) => {
                 console.log('✅ Received object_collected event:', data.object_id, 'found by:', data.found_by);

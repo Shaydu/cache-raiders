@@ -140,6 +140,15 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
     var hasGPSCoordinates: Bool {
         return !isAROnly
     }
+
+    /// Whether this location has AR positioning data
+    var hasARData: Bool {
+        return ar_origin_latitude != nil &&
+               ar_origin_longitude != nil &&
+               ar_offset_x != nil &&
+               ar_offset_y != nil &&
+               ar_offset_z != nil
+    }
     
     // MARK: - Initializers
     
@@ -1588,9 +1597,51 @@ class LootBoxLocationManager: ObservableObject {
                     return isTemporaryAR || isMapCreatedNotSynced
                 }
                 
-                // Combine ALL API locations (not just nearby) with local-only items
+                // CRITICAL FIX: Preserve AR data from local locations when API doesn't have it
+                // This prevents AR coordinates from being lost when locations are reloaded from API
+                // Also replace temporary "New AR Object" entries with proper API data
+                var mergedLocations = allLocationsForStats
+                for (index, apiLocation) in mergedLocations.enumerated() {
+                    // Check if we have a local version with AR data that the API version lacks
+                    if let localLocation = self.locations.first(where: { $0.id == apiLocation.id }) {
+                        // Check if local location is a temporary "New AR Object" that should be replaced
+                        let isTemporaryObject = localLocation.name == "New AR Object" || localLocation.name == "NFC Object"
+
+                        if isTemporaryObject {
+                            // Replace temporary object with API data (including AR data if available)
+                            mergedLocations[index] = apiLocation
+                            print("🔄 Replaced temporary object '\(localLocation.name)' (ID: \(apiLocation.id)) with API data: '\(apiLocation.name)'")
+                        } else if localLocation.hasARData && !apiLocation.hasARData {
+                            // Preserve AR data from local location for non-temporary objects
+                            mergedLocations[index] = LootBoxLocation(
+                                id: apiLocation.id,
+                                name: apiLocation.name, // Use API name, not local name
+                                type: apiLocation.type,
+                                latitude: apiLocation.latitude,
+                                longitude: apiLocation.longitude,
+                                radius: apiLocation.radius,
+                                collected: apiLocation.collected,
+                                grounding_height: apiLocation.grounding_height,
+                                source: apiLocation.source,
+                                created_by: apiLocation.created_by,
+                                last_modified: apiLocation.last_modified,
+                                ar_origin_latitude: localLocation.ar_origin_latitude,
+                                ar_origin_longitude: localLocation.ar_origin_longitude,
+                                ar_offset_x: localLocation.ar_offset_x,
+                                ar_offset_y: localLocation.ar_offset_y,
+                                ar_offset_z: localLocation.ar_offset_z,
+                                ar_placement_timestamp: localLocation.ar_placement_timestamp,
+                                multifindable: apiLocation.multifindable
+                            )
+                            print("🛡️ Preserved AR data for object '\(apiLocation.name)' (ID: \(apiLocation.id)) from local storage")
+                        }
+                        // If neither condition applies, use API location as-is
+                    }
+                }
+
+                // Combine merged API locations with local-only items
                 // This ensures locationManager.locations contains all objects for accurate counting
-                self.locations = allLocationsForStats + localOnlyItems
+                self.locations = mergedLocations + localOnlyItems
                 
                 // Save all API-loaded locations to Core Data for offline access
                 // Only save items that should be persisted (exclude temporary AR-only items)
