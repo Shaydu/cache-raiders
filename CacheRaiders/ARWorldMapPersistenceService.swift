@@ -464,6 +464,11 @@ class ARWorldMapPersistenceService: ObservableObject {
         return worldAnchoredObjects[objectId] != nil
     }
 
+    /// Gets the number of world-anchored objects
+    var worldAnchoredObjectsCount: Int {
+        return worldAnchoredObjects.count
+    }
+
     /// Gets diagnostic information
     func getDiagnostics() -> [String: Any] {
         return [

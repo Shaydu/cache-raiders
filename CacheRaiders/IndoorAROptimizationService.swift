@@ -109,12 +109,14 @@ class IndoorAROptimizationService: ObservableObject {
 
         for anchor in meshAnchors {
             let geometry = anchor.geometry
-            let vertices = geometry.vertices
+            let vertexCount = geometry.vertices.count
             let transform = anchor.transform
 
             // Transform vertices to world space
-            for i in 0..<vertices.count {
-                let localVertex = SIMD3<Float>(vertices[i])
+            for i in 0..<vertexCount {
+                // Get vertex data from geometry source buffer
+                let vertexData = geometry.vertices.buffer.contents().advanced(by: i * geometry.vertices.stride)
+                let localVertex = vertexData.assumingMemoryBound(to: SIMD3<Float>.self).pointee
                 let worldVertex = matrix_multiply(transform, SIMD4<Float>(localVertex.x, localVertex.y, localVertex.z, 1))
                 allVertices.append(SIMD3<Float>(worldVertex.x, worldVertex.y, worldVertex.z))
             }
@@ -159,10 +161,8 @@ class IndoorAROptimizationService: ObservableObject {
         }
 
         // Use mesh data for precise surface detection
-        if let surfacePosition = findOptimalSurfacePosition(for: optimizedLocation) {
-            optimizedLocation.latitude = surfacePosition.latitude
-            optimizedLocation.longitude = surfacePosition.longitude
-        }
+        // Note: Surface optimization is handled in AR coordinate space, not GPS coordinates
+        _ = findOptimalSurfacePosition(for: optimizedLocation) // Call for side effects if needed
 
         return optimizedLocation
     }

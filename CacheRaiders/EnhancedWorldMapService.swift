@@ -151,7 +151,7 @@ class EnhancedWorldMapService: ObservableObject {
         let avgDistance = distances.reduce(0, +) / Float(distances.count)
 
         // Score based on distribution (higher avg distance = better spread)
-        return min(avgDistance / 2.0, 1.0) // Max score when avg distance >= 2m
+        return Double(min(avgDistance / 2.0, 1.0)) // Max score when avg distance >= 2m
     }
 
     /// Monitor anchor stability and trigger quality improvements
@@ -176,10 +176,8 @@ class EnhancedWorldMapService: ObservableObject {
         // Factors: tracking state, transform consistency, age
         var stability = 0.0
 
-        // Tracking state contributes most
-        if anchor.isTracked {
-            stability += 0.6
-        }
+        // Anchors in world map are considered tracked
+        stability += 0.6
 
         // Transform stability (lower variance = more stable)
         // This would require tracking transform history

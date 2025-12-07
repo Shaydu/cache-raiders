@@ -13,7 +13,7 @@ import UIKit
 import Foundation
 
 // MARK: - AR Coordinator
-class ARCoordinator: NSObject, ARSessionDelegate {
+class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
     // Managers
     private var environmentManager: AREnvironmentManager?
@@ -102,9 +102,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     private static let SKELETON_HEIGHT_OFFSET: Float = 1.65 // Scaled proportionally
     private var hasTalkedToSkeleton: Bool = false // Track if player has talked to skeleton
     private var collectedMapPieces: Set<Int> = [] // Track which map pieces player has collected (1 = skeleton, 2 = corgi)
-    private var arOriginLocation: CLLocation? // GPS location when AR session started
+    private var _arOriginLocation: CLLocation? // GPS location when AR session started
     private var arOriginSetTime: Date? // When AR origin was set (for degraded mode timeout)
     private var isDegradedMode: Bool = false // True if operating without GPS (AR-only mode)
+
+    /// Public access to AR origin location for components that need it
+    var arOriginLocation: CLLocation? {
+        return _arOriginLocation
+    }
     private var arOriginGroundLevel: Float? // Fixed ground level at AR origin (never changes)
     var distanceToNearestBinding: Binding<Double?>?
     var temperatureStatusBinding: Binding<String?>?
@@ -423,13 +428,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // If GPS is not ready yet, session(_:didUpdate:) will set it when GPS becomes available
         if let currentLocation = userLocationManager.currentLocation,
            currentLocation.coordinate.latitude != 0.0 || currentLocation.coordinate.longitude != 0.0 {
-            arOriginLocation = currentLocation
+            _arOriginLocation = currentLocation
             Swift.print("🎯 [SETUP] Setting initial AR origin from userLocationManager")
             Swift.print("   Location: \(currentLocation.coordinate.latitude), \(currentLocation.coordinate.longitude)")
             Swift.print("   Accuracy: \(currentLocation.horizontalAccuracy)m")
         } else {
             Swift.print("🎯 [SETUP] GPS not ready yet (0,0 or nil), will set AR origin in session(_:didUpdate:)")
-            arOriginLocation = nil
+            _arOriginLocation = nil
         }
 
         // Set AR coordinator reference in user location manager for enhanced location tracking
@@ -493,7 +498,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         distanceTracker = ARDistanceTracker(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, treasureHuntService: treasureHuntService)
         occlusionManager = AROcclusionManager(arView: arView, locationManager: locationManager, distanceTracker: distanceTracker)
-        tapHandler = ARTapHandler(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager)
+        tapHandler = ARTapHandler(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, arCoordinator: self, arOriginProvider: self)
         databaseIndicatorService = ARDatabaseIndicatorService()
         groundingService = ARGroundingService(arView: arView)
         precisionPositioningService = ARPrecisionPositioningService(arView: arView) // Legacy
@@ -518,12 +523,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         // Configure coordinate sharing service
         if let coordinateSharingService = coordinateSharingService,
-           let locationManager = locationManager {
+           let locationManagerProperty = self.locationManager {
             coordinateSharingService.configure(
                 with: arView,
                 webSocketService: WebSocketService.shared,
                 apiService: APIService.shared,
-                locationManager: locationManager
+                locationManager: locationManagerProperty
             )
         }
 
@@ -804,7 +809,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     /// Enters degraded AR-only mode when GPS is unavailable
     /// In this mode, objects are placed relative to AR origin (0,0,0) without GPS coordinates
     private func enterDegradedMode(cameraPos: SIMD3<Float>, frame: ARFrame) {
-        guard arOriginLocation == nil else { return } // Already set
+        guard _arOriginLocation == nil else { return } // Already set
         
         isDegradedMode = true
 
@@ -812,7 +817,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // This allows GPS-based objects to be placed with reduced accuracy instead of not at all
         if let userLocation = userLocationManager?.currentLocation {
             // Use current GPS location even if accuracy is poor
-            arOriginLocation = userLocation
+            _arOriginLocation = userLocation
 
             // Share AR origin with placement view for coordinate consistency
             locationManager?.sharedAROrigin = userLocation
@@ -825,7 +830,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             }
         } else {
             // No GPS available - cannot place GPS-based objects
-            arOriginLocation = nil
+            _arOriginLocation = nil
             locationManager?.sharedAROrigin = nil
             Swift.print("📍 Degraded mode: No GPS available - AR-only objects only")
         }
@@ -930,7 +935,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
 
         Swift.print("🔍 checkAndPlaceBoxes called: \(nearbyLocations.count) nearby, \(placedBoxes.count) already placed")
-        Swift.print("   AR origin set: \(arOriginLocation != nil), Degraded mode: \(isDegradedMode)")
+        Swift.print("   AR origin set: \(_arOriginLocation != nil), Degraded mode: \(isDegradedMode)")
         Swift.print("   Total locations in manager: \(locationManager?.locations.count ?? 0)")
         Swift.print("   Max search distance: \(locationManager?.maxSearchDistance ?? 0)m")
         Swift.print("   Max object limit: \(locationManager?.maxObjectLimit ?? 0)")
@@ -1332,16 +1337,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let factory = item.type.factory
         let (entity, findable) = factory.createEntity(location: item, anchor: AnchorEntity(), sizeMultiplier: 1.0)
 
-        // Use anchoring service to create stable AR anchor (drift-resistant)
-        guard let anchoringService = anchoringService,
-              anchoringService.placeEntityAtStablePosition(position, name: item.id, entity: entity),
-              let anchor = anchoringService.anchorEntities[item.id] else {
-            print("⚠️ Failed to create stable anchor for AR item: \(item.name)")
-            return
-        }
+        // Create traditional anchor for now - world map persistence can be added later
+        let anchor = AnchorEntity(world: position)
+        anchor.name = item.id
+        anchor.addChild(entity)
+        arView.scene.addAnchor(anchor)
 
-        // Track the placement
-        placedBoxes[item.id] = anchor
+        print("📍 Placed AR item '\(item.name)' at position (\(String(format: "%.2f", position.x)), \(String(format: "%.2f", position.y)), \(String(format: "%.2f", position.z)))")
         findableObjects[item.id] = findable
         objectPlacementTimes[item.id] = Date() // CRITICAL: Track placement time for grace period
 
@@ -1429,7 +1431,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
     func getAREnhancedLocation() -> (latitude: Double, longitude: Double, arOffsetX: Double, arOffsetY: Double, arOffsetZ: Double)? {
         guard let arView = arView,
               let frame = arView.session.currentFrame,
-              let arOrigin = arOriginLocation else {
+              let arOrigin = _arOriginLocation else {
             return nil
         }
         
@@ -1465,7 +1467,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Log every 60 frames (roughly once per second at 60fps) to avoid spam
         sessionFrameCount += 1
         if sessionFrameCount % 60 == 0 {
-            Swift.print("🎯 [SESSION] didUpdate called (frame \(sessionFrameCount)), arOrigin: \(arOriginLocation != nil)")
+            Swift.print("🎯 [SESSION] didUpdate called (frame \(sessionFrameCount)), arOrigin: \(_arOriginLocation != nil)")
             Swift.print("   Camera tracking state: \(frame.camera.trackingState)")
             if case .notAvailable = frame.camera.trackingState {
                 Swift.print("⚠️ CAMERA TRACKING NOT AVAILABLE - THIS CAUSES BLACK CAMERA!")
@@ -1503,7 +1505,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // 1. Accurate mode: Wait for GPS with good accuracy (< 7.5m) for precise AR-to-GPS conversion
         // 2. Degraded mode: Use AR-only positioning if GPS unavailable after timeout
 
-        if arOriginLocation == nil {
+        if _arOriginLocation == nil {
             Swift.print("🎯 [SESSION] AR origin is nil, attempting to set it")
             let cameraTransform = frame.camera.transform
             let cameraPos = SIMD3<Float>(
@@ -1521,7 +1523,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                     // ACCURATE MODE: GPS available with good accuracy
                     // Step 1: Set ENU origin from GPS (geospatial coordinate frame)
                     if geospatialService?.setENUOrigin(from: userLocation) == true {
-                        arOriginLocation = userLocation
+                        _arOriginLocation = userLocation
                         locationManager?.sharedAROrigin = userLocation // Share AR origin with placement view
                         arOriginSetTime = Date()
                         isDegradedMode = false
@@ -1592,7 +1594,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         
         // Step 5.5: Check if we should exit degraded mode (GPS accuracy improved)
-        // Note: This check happens even when arOriginLocation == nil because degraded mode sets it to nil
+        // Note: This check happens even when _arOriginLocation == nil because degraded mode sets it to nil
         // The existing code above will also try to set origin, but this provides explicit degraded mode exit
         if isDegradedMode, let userLocation = userLocationManager?.currentLocation {
             // Use hysteresis: require better accuracy (< 6.5m) to exit degraded mode than to enter (< 7.5m)
@@ -1608,7 +1610,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 
                 // Set ENU origin from GPS (geospatial coordinate frame)
                 if geospatialService?.setENUOrigin(from: userLocation) == true {
-                    arOriginLocation = userLocation
+                    _arOriginLocation = userLocation
                     locationManager?.sharedAROrigin = userLocation // Share AR origin with placement view
                     arOriginSetTime = Date()
                     isDegradedMode = false
@@ -1661,7 +1663,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         //     if let geospatial = geospatialService,
         //        geospatial.hasENUOrigin,
         //        let userLocation = userLocationManager?.currentLocation,
-        //        let origin = arOriginLocation,
+        //        let origin = _arOriginLocation,
         //        userLocation.horizontalAccuracy < origin.horizontalAccuracy {
         //         // Better GPS available - compute smooth correction
         //         if let correction = geospatial.computeSmoothCorrection(from: userLocation) {
@@ -1726,7 +1728,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 if Date().timeIntervalSince(self.lastNearbyLogTime) > 3.0 {
                     self.lastNearbyLogTime = Date()
                     let placedCount = self.stateQueue.sync { self.placedBoxes.count }
-                    let hasOrigin = self.arOriginLocation != nil
+                    let hasOrigin = self._arOriginLocation != nil
                     Swift.print("📱 AR Update: Found \(nearby.count) nearby locations, \(placedCount) placed, AR origin: \(hasOrigin)")
                     if !nearby.isEmpty && placedCount == 0 {
                         Swift.print("   ⚠️ Objects nearby but NONE placed yet!")
@@ -2391,7 +2393,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             // Compute AR origin matching and distance for logging
             var arOriginsMatch = false
             var distanceFromOrigin = distanceFromStoredOrigin
-            if let currentAROrigin = arOriginLocation {
+            if let currentAROrigin = _arOriginLocation {
                 let originDistance = currentAROrigin.distance(from: storedAROriginGPS)
                 arOriginsMatch = originDistance < 1.0
                 // For current session, distance from origin would be computed relative to current origin
@@ -2400,7 +2402,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
             // CRITICAL FIX: Use stored AR origin instead of current session's origin
             // Transform AR coordinates from stored origin's coordinate system to current session
-            if let currentAROrigin = arOriginLocation {
+            if let currentAROrigin = _arOriginLocation {
                 let originDistance = currentAROrigin.distance(from: storedAROriginGPS)
 
                 // Use AR coordinates when user is close to object (within 8m)
@@ -2549,7 +2551,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 return
             }
 
-            guard let arOrigin = arOriginLocation else {
+            guard let arOrigin = _arOriginLocation else {
                 Swift.print("⚠️ Cannot place \(location.name): AR origin not set yet")
                 Swift.print("   Waiting for AR origin to be established (requires GPS accuracy < 7.5m)")
                 Swift.print("   Will enter degraded mode if GPS unavailable")
@@ -2906,7 +2908,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
             // Check if AR origin matches current AR session origin
             let useARCoordinates: Bool
-            if let currentAROrigin = arOriginLocation {
+            if let currentAROrigin = _arOriginLocation {
                 let originDistance = currentAROrigin.distance(from: arOriginGPS)
                 useARCoordinates = originDistance < 1.0 // Within 1m = same AR session origin
 
@@ -2948,15 +2950,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
                 let light = PointLightComponent(color: .orange, intensity: 200)
                 sphere.components.set(light)
 
-                // Use anchoring service to create stable AR anchor (drift-resistant)
-                guard let anchoringService = anchoringService,
-                      anchoringService.placeEntityAtStablePosition(arPosition, name: location.id, entity: sphere),
-                      let anchor = anchoringService.anchorEntities[location.id] else {
-                    print("⚠️ Failed to create stable anchor for sphere: \(location.name)")
-                    return
-                }
+                // Create traditional anchor for sphere placement
+                let anchor = AnchorEntity(world: arPosition)
+                anchor.name = location.id
+                anchor.addChild(sphere)
+                arView.scene.addAnchor(anchor)
 
-                placedBoxes[location.id] = anchor
+                print("📍 Placed sphere '\(location.name)' at AR position (\(String(format: "%.2f", arPosition.x)), \(String(format: "%.2f", arPosition.y)), \(String(format: "%.2f", arPosition.z)))")
                 objectPlacementTimes[location.id] = Date() // Record placement time for grace period
                 environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
@@ -3022,11 +3022,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             targetGPS: locationCLLocation,
             userGPS: userLocation,
             cameraTransform: cameraTransform,
-            arOriginGPS: arOriginLocation
+            arOriginGPS: _arOriginLocation
         ) else {
             Swift.print("⚠️ Precision positioning failed for sphere, using fallback")
             // Fallback to simple GPS conversion
-            guard let arOrigin = arOriginLocation else {
+            guard let arOrigin = _arOriginLocation else {
                 Swift.print("⚠️ No AR origin set for sphere placement")
                 return
             }
@@ -3363,36 +3363,13 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let placedEntity = entity
         let findableObject = findable
 
-        // Use anchoring service to create stable AR anchor (drift-resistant)
-        guard let anchoringService = anchoringService,
-              anchoringService.placeEntityAtStablePosition(groundedPosition, name: location.id, entity: placedEntity),
-              let anchor = anchoringService.anchorEntities[location.id] else {
-            Swift.print("❌ Failed to create anchor for \(location.name)")
-            return
-        }
-
-        // CRITICAL: Set anchor name to location.id so tap detection works even if entity hit test fails
+        // Create traditional anchor for object placement
+        let anchor = AnchorEntity(world: groundedPosition)
         anchor.name = location.id
-        
-        // FINAL GROUND SNAP: ensure the visual mesh sits exactly on the detected ground plane
-        // Even if the model's pivot isn't at its base, this will align the lowest point of the
-        // rendered geometry with the groundedPosition.y height so objects never appear to float.
-        // Calculate bounds relative to the anchor (not world space) to get accurate entity bounds
-        let bounds = placedEntity.visualBounds(relativeTo: anchor)
-        let currentMinY = bounds.min.y  // This is relative to anchor, so entity's lowest point relative to anchor
-        let desiredMinY: Float = 0  // We want the bottom of the object at anchor Y (0 relative to anchor)
-        let deltaY = desiredMinY - currentMinY
-        
-        // Adjust entity position (not anchor position) so base aligns with anchor Y
-        // The anchor is already at groundedPosition, so we just need to adjust the entity
-        placedEntity.position.y += deltaY
-        
-        let formattedDeltaY = String(format: "%.3f", deltaY)
-        Swift.print("✅ [GroundSnap] Adjusted '\(location.name)' to sit on ground: ΔY=\(formattedDeltaY)m")
-        
-        // Store the anchor and findable object
-        // Note: anchor already added to scene by anchoring service
-        placedBoxes[location.id] = anchor
+        anchor.addChild(placedEntity)
+        arView.scene.addAnchor(anchor)
+
+        Swift.print("📍 Placed '\(location.name)' at grounded position (\(String(format: "%.2f", groundedPosition.x)), \(String(format: "%.2f", groundedPosition.y)), \(String(format: "%.2f", groundedPosition.z)))")
         objectPlacementTimes[location.id] = Date() // Record placement time for grace period
 
         Swift.print("✅✅✅ DRIFT-RESISTANT ANCHOR ADDED TO SCENE! ✅✅✅")
@@ -4632,7 +4609,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
            let offsetX = location.ar_offset_x,
            let offsetY = location.ar_offset_y,
            let offsetZ = location.ar_offset_z,
-           let currentOrigin = arOriginLocation {
+           let currentOrigin = _arOriginLocation {
 
             // Check if AR origins match (within 10 meters - same AR session)
             let savedOrigin = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
@@ -4659,7 +4636,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
             let targetGPS = CLLocation(latitude: location.latitude, longitude: location.longitude)
             let cameraTransform = frame.camera.transform
-            let arOriginGPS = self.arOriginLocation ?? userLocation
+            let arOriginGPS = self._arOriginLocation ?? userLocation
 
             guard let mainARPosition = precisionPositioningService?.convertGPSToARPosition(
                 targetGPS: targetGPS,
@@ -5194,9 +5171,9 @@ class ARCoordinator: NSObject, ARSessionDelegate {
 
         // Create rotation matrix around Y-axis (up/down axis) for compass rotation
         let rotationMatrix = simd_float3x3([
-            SIMD3<Float>(cos(rotationAngleRadians), 0, -sin(rotationAngleRadians)), // X rotation
+            SIMD3<Float>(Float(cos(rotationAngleRadians)), 0, Float(-sin(rotationAngleRadians))), // X rotation
             SIMD3<Float>(0, 1, 0),                                                  // Y unchanged (up)
-            SIMD3<Float>(sin(rotationAngleRadians), 0, cos(rotationAngleRadians))  // Z rotation
+            SIMD3<Float>(Float(sin(rotationAngleRadians)), 0, Float(cos(rotationAngleRadians)))  // Z rotation
         ])
 
         // Apply rotation to the AR position
@@ -5222,15 +5199,15 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         let rotationAngleRadians = headingDifference * .pi / 180.0
 
         Swift.print("   🧭 Applying compass-based rotation to anchor transform:")
-        Swift.print("      Stored heading: \(String(format: "%.1f", Float(storedHeading)))°")
-        Swift.print("      Current heading: \(String(format: "%.1f", Float(currentHeading)))°")
-        Swift.print("      Rotation needed: \(String(format: "%.1f", Float(headingDifference)))°")
+        Swift.print("      Stored heading: \(String(format: "%.1f", storedHeading))°")
+        Swift.print("      Current heading: \(String(format: "%.1f", currentHeading))°")
+        Swift.print("      Rotation needed: \(String(format: "%.1f", headingDifference))°")
 
         // Create rotation matrix around Y-axis (up/down axis) for compass rotation
         let rotationMatrix = simd_float4x4([
-            SIMD4<Float>(cos(rotationAngleRadians), 0, -sin(rotationAngleRadians), 0), // X rotation
+            SIMD4<Float>(Float(cos(rotationAngleRadians)), 0, Float(-sin(rotationAngleRadians)), 0), // X rotation
             SIMD4<Float>(0, 1, 0, 0),                                                  // Y unchanged (up)
-            SIMD4<Float>(sin(rotationAngleRadians), 0, cos(rotationAngleRadians), 0),  // Z rotation
+            SIMD4<Float>(Float(sin(rotationAngleRadians)), 0, Float(cos(rotationAngleRadians)), 0),  // Z rotation
             SIMD4<Float>(0, 0, 0, 1)                                                   // W (homogeneous coordinate)
         ])
 

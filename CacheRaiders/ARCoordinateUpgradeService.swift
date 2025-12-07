@@ -76,8 +76,21 @@ class ARCoordinateUpgradeService: ObservableObject {
         updatedLocation.last_modified = Date()
 
         do {
-            // Update in API
-            try await apiService.updateObject(updatedLocation)
+            // Update AR offset coordinates in API (APIService doesn't have updateObject method)
+            if let arOffsetX = updatedLocation.ar_offset_x,
+               let arOffsetY = updatedLocation.ar_offset_y,
+               let arOffsetZ = updatedLocation.ar_offset_z,
+               let arOriginLat = updatedLocation.ar_origin_latitude,
+               let arOriginLon = updatedLocation.ar_origin_longitude {
+                try await apiService.updateAROffset(
+                    objectId: updatedLocation.id,
+                    arOriginLatitude: arOriginLat,
+                    arOriginLongitude: arOriginLon,
+                    offsetX: arOffsetX,
+                    offsetY: arOffsetY,
+                    offsetZ: arOffsetZ
+                )
+            }
 
             // Update local location manager
             locationManager.updateLocation(updatedLocation)

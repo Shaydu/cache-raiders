@@ -92,7 +92,7 @@ extension ARCoordinator {
 
     /// Gets the number of world-map-anchored objects
     var worldAnchoredObjectCount: Int {
-        return worldMapPersistenceService?.worldAnchoredObjects.count ?? 0
+        return worldMapPersistenceService?.worldAnchoredObjectsCount ?? 0
     }
 
     /// Checks if a specific object is world-map-anchored

@@ -3,6 +3,12 @@ import SwiftUI
 import RealityKit
 import ARKit
 import UIKit
+import CoreLocation
+
+// MARK: - AR Origin Provider Protocol
+protocol AROriginProvider {
+    var arOriginLocation: CLLocation? { get }
+}
 
 // MARK: - AR Tap Handler
 /// Handles tap gesture detection and loot box finding
@@ -10,6 +16,8 @@ class ARTapHandler {
     weak var arView: ARView?
     weak var locationManager: LootBoxLocationManager?
     weak var userLocationManager: UserLocationManager? // Add reference to user location manager
+    weak var arCoordinator: ARCoordinator? // Add reference to AR coordinator
+    var arOriginProvider: AROriginProvider? // Protocol for getting AR origin location
 
     var placedBoxes: [String: AnchorEntity] = [:]
     var findableObjects: [String: FindableObject] = [:]
@@ -42,10 +50,12 @@ class ARTapHandler {
         }
     }
 
-    init(arView: ARView?, locationManager: LootBoxLocationManager?, userLocationManager: UserLocationManager?) {
+    init(arView: ARView?, locationManager: LootBoxLocationManager?, userLocationManager: UserLocationManager?, arCoordinator: ARCoordinator?, arOriginProvider: AROriginProvider?) {
         self.arView = arView
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
+        self.arCoordinator = arCoordinator
+        self.arOriginProvider = arOriginProvider
     }
     
     @objc func handleTap(_ sender: UITapGestureRecognizer) {
@@ -438,7 +448,7 @@ class ARTapHandler {
 
                 // CRITICAL: Use AR session's origin, not current user location
                 // Current user location may drift from where AR session started
-                guard let arSessionOrigin = arCoordinator?.arOriginLocation else {
+                guard let arSessionOrigin = arOriginProvider?.arOriginLocation ?? arCoordinator?.arOriginLocation else {
                     Swift.print("⚠️ No AR origin set - cannot save AR tap placement with precision")
                     Swift.print("   AR session must be initialized with GPS origin first")
                     return

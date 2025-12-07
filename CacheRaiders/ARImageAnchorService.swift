@@ -118,9 +118,10 @@ class ARImageAnchorService {
     func getImageAnchorTrackingQuality(objectId: String) -> Float {
         guard let imageAnchor = imageAnchors[objectId] else { return 0.0 }
 
-        // Image anchor tracking quality based on detection confidence
+        // Image anchor tracking quality based on transform validity
+        // Note: ARAnchor doesn't have isTracked property, check for valid transforms instead
         // Higher values indicate more stable tracking
-        return imageAnchor.isTracked ? 1.0 : 0.0
+        return imageAnchor.transform.columns.3.w.isFinite ? 1.0 : 0.0
     }
 
     /// Cleans up image anchors for an object

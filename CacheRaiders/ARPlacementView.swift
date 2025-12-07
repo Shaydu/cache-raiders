@@ -1117,7 +1117,7 @@ struct ARPlacementARView: UIViewRepresentable {
             )
             
             // Convert AR world position to GPS coordinates (fallback)
-            let gpsCoordinate = convertARToGPS(arPosition: tapWorldPos, arOrigin: arOriginGPS, userLocation: userLocation, cameraTransform: frame.camera.transform)
+            let gpsCoordinate = arOriginGPS.flatMap { convertARToGPS(arPosition: tapWorldPos, arOrigin: $0) }
             
             // Always use AR coordinates for mm-precision (primary)
             // GPS is only for fallback when AR session restarts
@@ -1126,7 +1126,7 @@ struct ARPlacementARView: UIViewRepresentable {
             
             // Store placement data for potential later save (if user presses Done instead of Place)
             pendingPlacementData = (
-                gpsCoordinate: gpsCoordinate ?? arOriginGPS.coordinate,
+                gpsCoordinate: gpsCoordinate ?? arOriginGPS?.coordinate ?? CLLocationCoordinate2D(),
                 arPosition: tapWorldPos,
                 arOrigin: arOriginGPS,
                 groundingHeight: surfaceY,
@@ -1140,8 +1140,8 @@ struct ARPlacementARView: UIViewRepresentable {
                 id: objectId,
                 name: locationName,
                 type: objectType,
-                latitude: gpsCoordinate?.latitude ?? arOrigin.coordinate.latitude,
-                longitude: gpsCoordinate?.longitude ?? arOrigin.coordinate.longitude,
+                latitude: gpsCoordinate?.latitude ?? arOriginGPS?.coordinate.latitude ?? 0,
+                longitude: gpsCoordinate?.longitude ?? arOriginGPS?.coordinate.longitude ?? 0,
                 radius: 5.0,
                 grounding_height: surfaceY,
                 source: .map // Use .map so object shows on map immediately
@@ -1213,7 +1213,7 @@ struct ARPlacementARView: UIViewRepresentable {
             print("   Adjusted position: X: \(String(format: "%.4f", adjustedPosition.x)), Y: \(String(format: "%.4f", adjustedPosition.y)), Z: \(String(format: "%.4f", adjustedPosition.z))")
 
             // Convert AR world position to GPS coordinates (fallback)
-            let gpsCoordinate = convertARToGPS(arPosition: adjustedPosition, arOrigin: arOriginGPS, userLocation: userLocation, cameraTransform: frame.camera.transform)
+            let gpsCoordinate = arOriginGPS.flatMap { convertARToGPS(arPosition: adjustedPosition, arOrigin: $0) }
             
             // Always use AR coordinates for mm-precision (primary)
             // GPS is only for fallback when AR session restarts
@@ -1222,7 +1222,7 @@ struct ARPlacementARView: UIViewRepresentable {
 
             // Store placement data for potential later save (if user presses Done instead of Place)
             pendingPlacementData = (
-                gpsCoordinate: gpsCoordinate ?? arOriginGPS.coordinate,
+                gpsCoordinate: gpsCoordinate ?? arOriginGPS?.coordinate ?? CLLocationCoordinate2D(),
                 arPosition: adjustedPosition,
                 arOrigin: arOriginGPS,
                 groundingHeight: surfaceY,
@@ -1235,7 +1235,7 @@ struct ARPlacementARView: UIViewRepresentable {
             // The object will appear in the main AR view via checkAndPlaceBoxes after the placement view dismisses.
 
             // Save to API and dismiss
-            onPlace(gpsCoordinate ?? arOriginGPS.coordinate, adjustedPosition, arOriginGPS, surfaceY, scaleMultiplier)
+            onPlace(gpsCoordinate ?? arOriginGPS?.coordinate ?? CLLocationCoordinate2D(), adjustedPosition, arOriginGPS, surfaceY, scaleMultiplier)
         }
         
         /// Saves the currently placed object (called when Done button is pressed)
@@ -1492,7 +1492,7 @@ struct ARPlacementARView: UIViewRepresentable {
             let finalWorldPos = anchor.position
             
             // Convert AR world position to GPS coordinates (fallback)
-            let gpsCoordinate = convertARToGPS(arPosition: finalWorldPos, arOrigin: arOrigin, userLocation: userLocation, cameraTransform: frame.camera.transform)
+            let gpsCoordinate = convertARToGPS(arPosition: finalWorldPos, arOrigin: arOrigin)
             
             // Always use AR coordinates for mm-precision (primary)
             // GPS is only for fallback when AR session restarts
@@ -1521,7 +1521,7 @@ struct ARPlacementARView: UIViewRepresentable {
         // Convert AR world position back to GPS coordinates
         // Uses AR origin GPS for maximum accuracy (matches ARPrecisionPositioningService approach)
         // NOTE: For indoor placement (< 12m), GPS is only used as fallback. AR coordinates are primary.
-        func convertARToGPS(arPosition: SIMD3<Float>, arOrigin: CLLocation, userLocation: CLLocation, cameraTransform: simd_float4x4) -> CLLocationCoordinate2D? {
+        func convertARToGPS(arPosition: SIMD3<Float>, arOrigin: CLLocation) -> CLLocationCoordinate2D? {
             // Calculate distance from AR origin
             let distanceFromOrigin = length(arPosition)
             

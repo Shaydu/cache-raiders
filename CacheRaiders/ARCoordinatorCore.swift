@@ -12,7 +12,7 @@ import UIKit
 // NPCType is defined in NPCType.swift
 
 // MARK: - AR Coordinator Core
-class ARCoordinatorCore: NSObject {
+class ARCoordinatorCore: NSObject, AROriginProvider {
 
     // Managers
     var environmentManager: AREnvironmentManager?
@@ -198,7 +198,7 @@ class ARCoordinatorCore: NSObject {
         distanceTracker = ARDistanceTracker(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, treasureHuntService: treasureHuntService)
 
         // Configure tap handler
-        tapHandler = ARTapHandler(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager)
+        tapHandler = ARTapHandler(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, arCoordinator: nil, arOriginProvider: self)
 
         // Configure grounding service
         groundingService = ARGroundingService(arView: arView)

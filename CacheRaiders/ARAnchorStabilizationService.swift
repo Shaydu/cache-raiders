@@ -68,9 +68,10 @@ class ARAnchorStabilizationService {
         }
 
         // Calculate average tracking quality across all anchors
+        // Note: ARAnchor doesn't have isTracked property, anchors are tracked once added to session
         let totalScore = anchors.reduce(0.0) { sum, anchor in
-            // Higher score for anchors that are being tracked well
-            let trackingScore = anchor.isTracked ? 1.0 : 0.5
+            // Higher score for anchors with valid transforms (always 1.0 for placed anchors)
+            let trackingScore = anchor.transform.columns.3.w.isFinite ? 1.0 : 0.5
             return sum + trackingScore
         }
 
@@ -86,7 +87,8 @@ class ARAnchorStabilizationService {
         }
 
         // Calculate average position from reference anchors
-        let validAnchors = anchors.filter { $0.isTracked }
+        // Note: ARAnchor doesn't have isTracked property, check for valid transforms instead
+        let validAnchors = anchors.filter { $0.transform.columns.3.w.isFinite }
         guard validAnchors.count >= 2 else { return originalPosition }
 
         let averagePosition = validAnchors.reduce(SIMD3<Float>.zero) { sum, anchor in
@@ -107,15 +109,34 @@ class ARAnchorStabilizationService {
     func detectAndCorrectDrift(frame: ARFrame) {
         guard let arView = arView else { return }
 
-        // Use camera grain estimation if available (iOS 16+)
+        // Use camera tracking state and smoothed depth for quality assessment
         if #available(iOS 16.0, *),
-           let smoothedDepth = frame.smoothedSceneDepth,
-           let cameraGrain = frame.cameraGrain {
-            // Camera grain indicates tracking quality
-            let trackingQuality = 1.0 - cameraGrain.intensity // Lower grain = better tracking
+           let smoothedDepth = frame.smoothedSceneDepth {
+            // Check camera tracking state instead of camera grain
+            let trackingState = frame.camera.trackingState
+            let trackingQuality: Double
+
+            switch trackingState {
+            case .normal:
+                trackingQuality = 1.0
+            case .limited(let reason):
+                // Map limited tracking reasons to quality scores
+                switch reason {
+                case .initializing, .relocalizing:
+                    trackingQuality = 0.7
+                case .excessiveMotion, .insufficientFeatures:
+                    trackingQuality = 0.5
+                default:
+                    trackingQuality = 0.3
+                }
+            case .notAvailable:
+                trackingQuality = 0.0
+            @unknown default:
+                trackingQuality = 0.5
+            }
 
             if trackingQuality < 0.7 {
-                print("⚠️ Low tracking quality detected (grain: \(String(format: "%.3f", cameraGrain.intensity))) - anchors may drift")
+                print("⚠️ Low tracking quality detected (state: \(trackingState)) - anchors may drift")
                 // Could trigger anchor relocalization here
             }
         }

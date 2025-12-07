@@ -30,7 +30,7 @@ class EnhancedCoordinateSharingService: ObservableObject {
         let deviceId: String
         let arOrigin: CLLocation?
         let lastSeen: Date
-        let worldMapAvailable: Bool
+        var worldMapAvailable: Bool
     }
 
     struct ObjectVersion {
