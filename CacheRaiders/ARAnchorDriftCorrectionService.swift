@@ -29,7 +29,7 @@ class ARAnchorDriftCorrectionService {
 
         let baseline = AnchorBaseline(
             initialPosition: position,
-            initialTransform: anchorEntity.transform,
+            initialTransform: anchorEntity.transform.matrix,
             baselineTimestamp: Date(),
             referenceAnchors: nearbyAnchors
         )
@@ -118,8 +118,8 @@ class ARAnchorDriftCorrectionService {
                                        anchor.transform.columns.3.z)
             let distance = length(anchorPos - center)
 
-            // Only use anchors within radius and that are being tracked well
-            return (distance <= radius && anchor.isTracked) ? anchor : nil
+            // Only use anchors within radius
+            return distance <= radius ? anchor : nil
         } ?? []
     }
 
@@ -130,7 +130,7 @@ class ARAnchorDriftCorrectionService {
         var validReferenceCount = 0
 
         // Calculate how much reference anchors have moved relative to baseline
-        for referenceAnchor in baseline.referenceAnchors where referenceAnchor.isTracked {
+        for referenceAnchor in baseline.referenceAnchors {
             // This would require storing baseline positions for reference anchors
             // For now, use a simpler approach based on anchor stability
             validReferenceCount += 1
@@ -160,11 +160,8 @@ class ARAnchorDriftCorrectionService {
         let correctionMagnitude = length(correction - oldPosition)
         print("🔧 Applied drift correction to object '\(objectId)': moved \(String(format: "%.3f", correctionMagnitude))m")
 
-        // Update baseline with corrected position
-        if var updatedBaseline = anchorBaselines[objectId] {
-            updatedBaseline.initialPosition = correction
-            anchorBaselines[objectId] = updatedBaseline
-        }
+        // Note: Baselines are immutable - we don't update initialPosition after creation
+        // Drift corrections are applied to the actual object position, not the baseline
     }
 
     /// Updates drift thresholds based on environmental conditions

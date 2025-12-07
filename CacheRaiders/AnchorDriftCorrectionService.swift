@@ -44,7 +44,7 @@ class AnchorDriftCorrectionService: ObservableObject {
 
         let baseline = AnchorBaseline(
             initialPosition: anchorEntity.position,
-            initialTransform: anchorEntity.transform,
+            initialTransform: anchorEntity.transform.matrix,
             establishmentTime: Date(),
             referenceAnchors: findNearbyReferenceAnchors(center: anchorEntity.position),
             worldMapQuality: assessWorldMapQuality()
@@ -126,7 +126,8 @@ class AnchorDriftCorrectionService: ObservableObject {
                 anchor.transform.columns.3.z
             )
             let distance = length(anchorPos - center)
-            return distance <= radius && anchor.isTracked
+            // For general ARAnchor objects, assume they're tracked if present in the session
+            return distance <= radius
         } ?? []
     }
 
@@ -134,13 +135,20 @@ class AnchorDriftCorrectionService: ObservableObject {
     private func assessWorldMapQuality() -> Double {
         guard let arView = arView else { return 0.0 }
 
-        do {
-            let worldMap = try arView.session.currentWorldMap()
-            let anchorCount = worldMap.anchors.count
-            return min(Double(anchorCount) / 10.0, 1.0) // Quality based on anchor density
-        } catch {
-            return 0.0
-        }
+        // Assess quality based on current frame data
+        guard let frame = arView.session.currentFrame else { return 0.0 }
+
+        // Quality factors
+        let anchorCount = Double(frame.anchors.count)
+        let planeCount = Double(frame.anchors.compactMap { $0 as? ARPlaneAnchor }.count)
+        let featurePoints = Double(frame.rawFeaturePoints?.points.count ?? 0)
+
+        // Weighted quality score
+        let anchorScore = min(anchorCount / 10.0, 1.0) * 0.4  // 40% weight
+        let planeScore = min(planeCount / 5.0, 1.0) * 0.3    // 30% weight
+        let featureScore = min(featurePoints / 500.0, 1.0) * 0.3 // 30% weight
+
+        return anchorScore + planeScore + featureScore
     }
 
     /// Find anchor entity by object ID
