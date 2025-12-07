@@ -456,8 +456,32 @@ def init_db():
     
     # Create index for faster lookups by device_uuid and status
     cursor.execute('''
-        CREATE INDEX IF NOT EXISTS idx_treasure_hunts_device_status 
+        CREATE INDEX IF NOT EXISTS idx_treasure_hunts_device_status
         ON treasure_hunts (device_uuid, status)
+    ''')
+
+    # Player inventory table - stores collected items (map pieces, clues, etc.)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS player_inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_uuid TEXT NOT NULL,
+            item_id TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            item_name TEXT NOT NULL,
+            item_description TEXT NOT NULL,
+            item_icon TEXT NOT NULL,
+            source_npc TEXT,
+            map_piece_data TEXT,  -- JSON data for map pieces
+            obtained_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(device_uuid, item_id)
+        )
+    ''')
+
+    # Create index for faster lookups
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_player_inventory_device
+        ON player_inventory (device_uuid)
     ''')
     
     # Initialize default game mode if not exists

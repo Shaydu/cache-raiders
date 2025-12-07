@@ -1,46 +1,46 @@
 /**
- * Map Manager - Handles Apple MapKit JS map initialization and management
+ * Map Manager - Handles Leaflet map initialization and management
  */
 const MapManager = {
     map: null,
     selectedLocation: null,
     selectedMarker: null,
-    annotations: [], // Store MapKit annotations
+    currentTileLayer: null,
 
     /**
-     * Wait for MapKit library to be loaded
+     * Wait for Leaflet library to be loaded
      */
-    async waitForMapKit(maxWaitMs = 10000) {
+    async waitForLeaflet(maxWaitMs = 10000) {
         const startTime = Date.now();
         let checkCount = 0;
-
-        while (typeof mapkit === 'undefined' && (Date.now() - startTime) < maxWaitMs) {
+        
+        while (typeof L === 'undefined' && (Date.now() - startTime) < maxWaitMs) {
             checkCount++;
             if (checkCount % 10 === 0) {
-                console.log(`⏳ Waiting for MapKit library to load... (${Math.round((Date.now() - startTime) / 1000)}s)`);
+                console.log(`⏳ Waiting for Leaflet library to load... (${Math.round((Date.now() - startTime) / 1000)}s)`);
             }
             await new Promise(resolve => setTimeout(resolve, 100));
         }
-
-        if (typeof mapkit === 'undefined') {
-            const errorMsg = `❌ MapKit library not loaded after ${maxWaitMs/1000}s. Please check your network connection and ensure the MapKit script is included in the HTML before map.js.`;
+        
+        if (typeof L === 'undefined') {
+            const errorMsg = `❌ Leaflet library (L) not loaded after ${maxWaitMs/1000}s. Please check your network connection and ensure the Leaflet script is included in the HTML before map.js.`;
             console.error(errorMsg);
             throw new Error(errorMsg);
         }
-
-        console.log(`✅ MapKit library loaded successfully`);
-        return mapkit;
+        
+        console.log(`✅ Leaflet library loaded successfully`);
+        return L;
     },
 
     /**
      * Initialize the map
      */
     async init() {
-        // CRITICAL: Wait for MapKit to be loaded before using it
+        // CRITICAL: Wait for Leaflet to be loaded before using it
         try {
-            await this.waitForMapKit();
+            await this.waitForLeaflet();
         } catch (error) {
-            console.error('❌ Failed to load MapKit library:', error);
+            console.error('❌ Failed to load Leaflet library:', error);
             return null;
         }
 
@@ -60,30 +60,11 @@ const MapManager = {
         // Wait for next frame to ensure DOM is ready
         await new Promise(resolve => requestAnimationFrame(resolve));
 
-        // Initialize MapKit with JWT token
-        try {
-            const tokenResponse = await fetch('/api/mapkit/token');
-            if (!tokenResponse.ok) {
-                throw new Error(`Failed to get MapKit token: ${tokenResponse.status}`);
-            }
-            const tokenData = await tokenResponse.json();
-
-            mapkit.init({
-                authorizationCallback: function(done) {
-                    done(tokenData.token);
-                }
-            });
-
-            console.log('✅ MapKit initialized with JWT token');
-        } catch (error) {
-            console.error('❌ Failed to initialize MapKit:', error);
-            return null;
-        }
-
         // Determine default center:
         // 1. Try last known user location from the server (persists across restarts)
         // 2. Fall back to Config.MAP_DEFAULT_CENTER if none available
         let defaultCenter = Config.MAP_DEFAULT_CENTER;
+        let defaultZoom = Config.MAP_DEFAULT_ZOOM;
 
         try {
             const mapCenter = await ApiService.map.getDefaultCenter();
@@ -97,49 +78,53 @@ const MapManager = {
             console.warn('Could not get last known user location for map center, using default from Config:', error);
         }
 
-        // Create MapKit map
-        this.map = new mapkit.Map('map');
+        this.map = L.map('map').setView(defaultCenter, defaultZoom);
 
-        // Set initial region (MapKit uses CoordinateRegion)
-        const center = new mapkit.Coordinate(defaultCenter[0], defaultCenter[1]);
-        const span = new mapkit.CoordinateSpan(0.01, 0.01); // Roughly equivalent to zoom level
-        this.map.region = new mapkit.CoordinateRegion(center, span);
+        // Initialize with OpenStreetMap tiles
+        this.initTileLayer();
 
         // Handle map clicks
-        this.map.addEventListener('select', (event) => {
-            if (event.annotation) {
-                // Handle annotation selection
-                return;
-            }
-            // Handle map click for placing objects
-            const coordinate = event.coordinate;
-            this.setSelectedLocation(coordinate.latitude, coordinate.longitude);
+        this.map.on('click', (e) => {
+            const { lat, lng } = e.latlng;
+            this.setSelectedLocation(lat, lng);
         });
 
         // Add center on top user control button
         this.addCenterOnTopUserControl();
 
         // Listen for zoom changes to update marker sizes
-        this.map.addEventListener('region-change-end', () => {
+        this.map.on('zoomend', () => {
             this.onZoomChange();
         });
 
-        console.log('🗺️ Map initialized with Apple Maps');
+        // Also listen for zoom start to update during zoom (smoother)
+        this.map.on('zoom', () => {
+            this.onZoomChange();
+        });
+
         return this.map;
     },
 
     /**
-     * Configure MapKit map settings
+     * Initialize tile layer with OpenStreetMap
      */
-    configureMap() {
-        // MapKit automatically handles tiles - no manual tile layer needed
-        // Configure map appearance and behavior
-        this.map.showsMapTypeControl = false;
-        this.map.showsZoomControl = true;
-        this.map.showsUserLocation = false; // We'll handle user location manually
-        this.map.showsUserLocationControl = false;
+    initTileLayer() {
+        if (this.currentTileLayer) {
+            this.map.removeLayer(this.currentTileLayer);
+        }
 
-        console.log('🗺️ MapKit map configured');
+        this.currentTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: Config.MAP_MAX_ZOOM,
+            maxNativeZoom: Config.MAP_MAX_NATIVE_ZOOM
+        });
+
+        this.currentTileLayer.on('tileerror', function(error, tile) {
+            console.warn('Tile load error at zoom level:', MapManager.map.getZoom(), error);
+        });
+
+        this.currentTileLayer.addTo(this.map);
+        console.log('🗺️ Map initialized with OpenStreetMap tiles');
     },
 
     /**
@@ -147,16 +132,13 @@ const MapManager = {
      */
     onZoomChange() {
         if (ObjectsManager && typeof ObjectsManager.updateMarkerSizes === 'function') {
-            // MapKit uses different zoom scale, approximate based on region span
-            const span = this.map.region.span;
-            const approximateZoom = Math.round(14 - Math.log2(span.latitudeDelta * 111000 / 1000)); // Rough approximation
-            ObjectsManager.updateMarkerSizes(approximateZoom);
+            ObjectsManager.updateMarkerSizes(this.map.getZoom());
         }
     },
 
     /**
      * Calculate marker size based on zoom level
-     * @param {number} zoom - Current zoom level (approximated from MapKit region)
+     * @param {number} zoom - Current zoom level
      * @param {boolean} isCollected - Whether marker is for collected item (X) or not (circle)
      * @returns {number} Marker size in pixels
      */
@@ -164,13 +146,17 @@ const MapManager = {
         // Base sizes at zoom level 15 (mid-range)
         const baseCircleSize = 18;
         const baseXSize = 20; // X's are slightly smaller than circles
-
+        
         // Scale factor: smaller when zoomed out, larger when zoomed in
-        // MapKit zoom approximation: adjust for different scale
+        // Zoom levels typically range from 0 (world view) to 18+ (street level)
+        // At zoom 10: ~50% of base size
+        // At zoom 15: 100% of base size
+        // At zoom 18: ~150% of base size
         const zoomFactor = Math.pow(1.15, zoom - 15); // Exponential scaling
-
+        
         if (isCollected) {
             // X markers: scale from 12px (zoom 10) to 30px (zoom 18)
+            // But make them a bit smaller than circles
             return Math.max(10, Math.min(28, baseXSize * zoomFactor * 0.85)); // 85% of circle size
         } else {
             // Circle markers: scale from 14px (zoom 10) to 35px (zoom 18)
@@ -182,40 +168,29 @@ const MapManager = {
      * Add control button to center on top user
      */
     addCenterOnTopUserControl() {
-        // Create a custom control element
-        const controlContainer = document.createElement('div');
-        controlContainer.className = 'center-on-top-user-control';
-        controlContainer.innerHTML = `
-            <button class="center-on-top-user-btn" title="Center on top player">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="12" cy="12" r="8" fill="#2196F3" stroke="#fff" stroke-width="2"/>
-                    <path d="M12 4 L12 8 M12 16 L12 20 M4 12 L8 12 M16 12 L20 12" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
-                    <circle cx="12" cy="12" r="3" fill="#fff"/>
-                </svg>
-            </button>
-        `;
-
-        // Style the control to position it
-        controlContainer.style.position = 'absolute';
-        controlContainer.style.top = '10px';
-        controlContainer.style.right = '10px';
-        controlContainer.style.zIndex = '1000';
-
-        // Add click handler
-        const button = controlContainer.querySelector('.center-on-top-user-btn');
-        button.addEventListener('click', () => {
-            UI.centerOnUserLocation();
+        const CenterOnTopUserControl = L.Control.extend({
+            onAdd: function(map) {
+                const container = L.DomUtil.create('div', 'center-on-top-user-control');
+                container.innerHTML = `
+                    <button class="center-on-top-user-btn" title="Center on top player">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="12" cy="12" r="8" fill="#2196F3" stroke="#fff" stroke-width="2"/>
+                            <path d="M12 4 L12 8 M12 16 L12 20 M4 12 L8 12 M16 12 L20 12" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+                            <circle cx="12" cy="12" r="3" fill="#fff"/>
+                        </svg>
+                    </button>
+                `;
+                
+                L.DomEvent.disableClickPropagation(container);
+                L.DomEvent.on(container, 'click', function() {
+                    UI.centerOnUserLocation();
+                });
+                
+                return container;
+            }
         });
 
-        // Add to map container
-        this.map.element.appendChild(controlContainer);
-    },
-
-    /**
-     * Get the map instance (for backward compatibility)
-     */
-    getMap() {
-        return this.map;
+        new CenterOnTopUserControl({ position: 'topright' }).addTo(this.map);
     },
 
     /**

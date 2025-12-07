@@ -2,9 +2,9 @@
  * Objects Manager - Handles object CRUD operations and display
  */
 const ObjectsManager = {
-    annotations: {}, // MapKit annotations instead of Leaflet markers
-    annotationData: {}, // Store annotation data for resizing
-    storyAnnotations: {}, // Store story mode annotations separately
+    markers: {},
+    markerData: {}, // Store marker data for resizing
+    storyMarkers: {}, // Store story mode markers separately
 
     /**
      * Load all objects and display on map
@@ -13,21 +13,23 @@ const ObjectsManager = {
         try {
             const objects = await ApiService.objects.getAll(true);
 
-            // Clear existing annotations
-            this.clearAllAnnotations();
-            this.annotations = {};
-            this.annotationData = {};
+            // Clear existing markers
+            Object.values(this.markers).forEach(marker => {
+                MapManager.getMap().removeLayer(marker);
+            });
+            this.markers = {};
+            this.markerData = {};
 
             // ADMIN PANEL: Always show all objects regardless of game mode
             // (Story mode filtering only applies to iOS app, not admin panel)
             const filteredObjects = objects;
 
-            // Get current zoom level approximation
-            const currentZoom = this.getCurrentZoomLevel();
+            // Get current zoom level
+            const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
 
-            // Add annotations for each object
+            // Add markers for each object
             filteredObjects.forEach(obj => {
-                this.addObjectAnnotation(obj, currentZoom);
+                this.addObjectMarker(obj, currentZoom);
             });
 
             // Update objects list in sidebar (use filtered objects)
@@ -39,106 +41,50 @@ const ObjectsManager = {
     },
 
     /**
-     * Get approximate zoom level from MapKit region
+     * Add object marker to map
      */
-    getCurrentZoomLevel() {
-        if (!MapManager.map || !MapManager.map.region) return 15;
-        const span = MapManager.map.region.span;
-        // Approximate zoom level from latitude span
-        return Math.max(10, Math.min(18, Math.round(14 - Math.log2(span.latitudeDelta * 111000 / 1000))));
-    },
-
-    /**
-     * Clear all annotations from map
-     */
-    clearAllAnnotations() {
-        if (MapManager.map && MapManager.map.annotations) {
-            MapManager.map.removeAnnotations(MapManager.map.annotations);
-        }
-    },
-
-    /**
-     * Add object annotation to map
-     */
-    addObjectAnnotation(obj, zoom = 15) {
+    addObjectMarker(obj, zoom = 15) {
         // Use the stored name from the database (what admin typed when creating)
         const displayName = obj.name || obj.type;
 
-        // Calculate annotation size based on zoom
-        const annotationSize = MapManager.calculateMarkerSize(zoom, obj.collected);
+        // Calculate marker size based on zoom
+        const markerSize = MapManager.calculateMarkerSize(zoom, obj.collected);
 
-        // Store annotation data for resizing
-        this.annotationData[obj.id] = {
+        // Store marker data for resizing
+        this.markerData[obj.id] = {
             collected: obj.collected,
             displayName: displayName,
             obj: obj
         };
 
-        // Create MapKit annotation
-        const coordinate = new mapkit.Coordinate(obj.latitude, obj.longitude);
-        const annotation = new mapkit.Annotation(coordinate, this.createAnnotationCallout(obj), {
-            title: displayName,
-            subtitle: `${obj.type} • ${obj.radius}m radius`,
-            glyphText: this.getAnnotationGlyph(obj),
-            color: this.getAnnotationColor(obj),
-            displayPriority: 100
-        });
+        // Create icon based on calculated size
+        const icon = this.createMarkerIcon(obj.collected, markerSize, obj);
 
-        // Add click handler
-        annotation.addEventListener('select', () => {
+        const marker = L.marker([obj.latitude, obj.longitude], { icon })
+            .addTo(MapManager.getMap())
+            .bindPopup(`
+                <strong>${displayName}</strong><br>
+                Type: ${obj.type}<br>
+                Radius: ${obj.radius}m<br>
+                ${obj.collected ? `<span style="color: #ff6b6b; font-weight: bold;">✓ Collected</span><br>Found by: ${obj.found_by || 'Unknown'}` : '<span style="color: #ffd700; font-weight: bold;">● Available</span>'}
+                ${obj.id.startsWith('nfc_') ? `<br><a href="/nfc/${obj.id}" target="_blank" style="color: #4a90e2; text-decoration: none; font-weight: 500; font-size: 12px;">📊 View Find Sheet →</a>` : ''}
+            `);
+
+        // Add tooltip for NFC objects
+        if (obj.id.startsWith('nfc_')) {
+            marker.bindTooltip('Click for details • <a href="/nfc/' + obj.id + '" target="_blank" style="color: #4a90e2;">📊 Find Sheet</a>', {
+                permanent: false,
+                direction: 'top',
+                offset: [0, -10]
+            });
+        }
+
+        // Add click handler to open modal
+        marker.on('click', () => {
             ModalManager.openObjectModal(obj.id);
         });
 
-        // Add to map
-        MapManager.map.addAnnotation(annotation);
-        this.annotations[obj.id] = annotation;
-    },
-
-    /**
-     * Create callout element for annotation
-     */
-    createAnnotationCallout(obj) {
-        const calloutElement = document.createElement('div');
-        calloutElement.innerHTML = `
-            <strong>${obj.name || obj.type}</strong><br>
-            Type: ${obj.type}<br>
-            Radius: ${obj.radius}m<br>
-            ${obj.collected ? `<span style="color: #ff6b6b; font-weight: bold;">✓ Collected</span><br>Found by: ${obj.found_by || 'Unknown'}` : '<span style="color: #ffd700; font-weight: bold;">● Available</span>'}
-            ${obj.id.startsWith('nfc_') ? `<br><a href="/nfc/${obj.id}" target="_blank" style="color: #4a90e2; text-decoration: none; font-weight: 500; font-size: 12px;">📊 View Find Sheet →</a>` : ''}
-        `;
-        return calloutElement;
-    },
-
-    /**
-     * Get glyph text for annotation
-     */
-    getAnnotationGlyph(obj) {
-        if (obj.id.startsWith('npc_')) {
-            return obj.name.includes('Bones') || obj.name.includes('skeleton') ? '💀' : '👤';
-        } else if (obj.id.startsWith('nfc_')) {
-            return 'N';
-        } else if (obj.created_by === 'admin-web-ui') {
-            return 'A';
-        } else {
-            return 'AR';
-        }
-    },
-
-    /**
-     * Get color for annotation
-     */
-    getAnnotationColor(obj) {
-        if (obj.collected) {
-            return '#ff6b6b'; // Red for collected
-        } else if (obj.id.startsWith('npc_')) {
-            return '#000000'; // Black for NPCs
-        } else if (obj.id.startsWith('nfc_')) {
-            return '#4a90e2'; // Blue for NFC
-        } else if (obj.created_by === 'admin-web-ui') {
-            return '#4caf50'; // Green for admin
-        } else {
-            return '#9c27b0'; // Purple for AR
-        }
+        this.markers[obj.id] = marker;
     },
 
     /**
@@ -290,12 +236,24 @@ const ObjectsManager = {
     },
 
     /**
-     * Update all annotation sizes based on current zoom level
+     * Update all marker sizes based on current zoom level
      */
     updateMarkerSizes(zoom) {
-        // Note: MapKit annotations don't support dynamic size changes like Leaflet markers
-        // This method is kept for compatibility but annotations maintain consistent size
-        console.log(`MapKit annotations maintain consistent size (zoom level: ${zoom})`);
+        Object.keys(this.markers).forEach(markerId => {
+            const marker = this.markers[markerId];
+            const markerInfo = this.markerData[markerId];
+
+            if (!marker || !markerInfo) return;
+
+            // Calculate new size
+            const newSize = MapManager.calculateMarkerSize(zoom, markerInfo.collected);
+
+            // Create new icon with updated size
+            const newIcon = this.createMarkerIcon(markerInfo.collected, newSize, markerInfo.obj);
+
+            // Update marker icon
+            marker.setIcon(newIcon);
+        });
     },
 
     /**
@@ -382,19 +340,19 @@ const ObjectsManager = {
     },
 
     /**
-     * Remove object annotation from map immediately
+     * Remove object marker from map immediately
      */
     removeObjectMarker(objectId) {
-        if (this.annotations[objectId]) {
-            MapManager.map.removeAnnotation(this.annotations[objectId]);
-            delete this.annotations[objectId];
-            delete this.annotationData[objectId];
-            console.log(`🗑️ Removed annotation for object: ${objectId}`);
+        if (this.markers[objectId]) {
+            MapManager.getMap().removeLayer(this.markers[objectId]);
+            delete this.markers[objectId];
+            delete this.markerData[objectId];
+            console.log(`🗑️ Removed marker for object: ${objectId}`);
         }
 
         // Reload objects list to update sidebar
         this.loadObjects().catch(err => {
-            console.error('Error reloading objects after annotation removal:', err);
+            console.error('Error reloading objects after marker removal:', err);
         });
 
         // Refresh stats
@@ -473,8 +431,8 @@ const ObjectsManager = {
                 return;
             }
 
-            // Get current zoom level approximation
-            const currentZoom = this.getCurrentZoomLevel();
+            // Get current zoom level
+            const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
 
             // Add markers for each story element
             elements.forEach(element => {
@@ -598,29 +556,29 @@ const ObjectsManager = {
     },
 
     /**
-     * Refresh a single object annotation with updated data from server
+     * Refresh a single object marker with updated data from server
      */
     refreshObjectMarker(objectId) {
-        if (this.annotations[objectId] && this.annotationData[objectId]) {
+        if (this.markers[objectId] && this.markerData[objectId]) {
             // Get updated object data from server FIRST
             ApiService.objects.get(objectId).then(obj => {
-                const currentZoom = this.getCurrentZoomLevel();
-
-                // Remove the old annotation
-                if (MapManager.map) {
-                    MapManager.map.removeAnnotation(this.annotations[objectId]);
+                const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
+                
+                // Remove the old marker
+                if (MapManager.getMap()) {
+                    MapManager.getMap().removeLayer(this.markers[objectId]);
                 }
-
-                // Add the updated annotation
-                this.addObjectAnnotation(obj, currentZoom);
-                console.log('✅ Object annotation refreshed:', objectId);
+                
+                // Add the updated marker
+                this.addObjectMarker(obj, currentZoom);
+                console.log('✅ Object marker refreshed:', objectId);
             }).catch(error => {
-                console.error('Error refreshing object annotation:', error);
+                console.error('Error refreshing object marker:', error);
                 // Fallback: reload all objects
                 this.loadObjects();
             });
         } else {
-            console.log('⚠️ Object annotation not found for refresh:', objectId);
+            console.log('⚠️ Object marker not found for refresh:', objectId);
             // Fallback: reload all objects
             this.loadObjects();
         }
