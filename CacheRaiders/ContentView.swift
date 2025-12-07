@@ -625,6 +625,24 @@ struct ContentView: View {
             }
         }
 
+        // Listen for collection notifications (success/error feedback from background operations)
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("ShowCollectionNotification"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let userInfo = notification.userInfo,
+               let message = userInfo["message"] as? String {
+                DispatchQueue.main.async {
+                    self.collectionNotification = message
+                    // Auto-clear notification after 3 seconds
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                        self.collectionNotification = nil
+                    }
+                }
+            }
+        }
+
         // Note: QR scanner is now only available manually from Settings
         // Offline mode is supported, so we don't automatically show QR scanner on connection failures
     }

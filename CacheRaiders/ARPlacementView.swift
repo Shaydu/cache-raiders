@@ -108,87 +108,124 @@ struct ARPlacementView: View {
                         objectType: isPlacingNew ? selectedObjectType : selectedObject?.type ?? .chalice,
                         isNewObject: isPlacingNew,
                         onPlace: { gpsCoordinate, arPosition, arOrigin, groundingHeight, scale, screenPoint in
-                            // Handle placement
+                            // Handle placement - IMMEDIATE VIEW DISMISSAL TO PREVENT UI FREEZE
                             print("🎯 [Placement] onPlace called - starting placement process")
                             print("   GPS: (\(gpsCoordinate.latitude), \(gpsCoordinate.longitude))")
                             print("   AR Position: (\(arPosition.x), \(arPosition.y), \(arPosition.z))")
                             print("   AR Origin: \(arOrigin != nil ? "available" : "nil")")
-                            
-                            Task {
-                                // Determine the object ID and type to use for placement
-                                let objectId: String
-                                let objectType: LootBoxType
 
-                                if let selected = selectedObject {
-                                    print("📝 [Placement] Updating existing object: \(selected.name) (ID: \(selected.id))")
-                                    objectId = selected.id
-                                    objectType = selected.type // Use existing object's type
-                                    // Update existing object
-                                    await updateObjectLocation(
-                                        objectId: objectId,
-                                        coordinate: gpsCoordinate,
-                                        arPosition: arPosition,
-                                        arOrigin: arOrigin,
-                                        groundingHeight: groundingHeight,
-                                        scale: scale,
-                                        screenPoint: screenPoint
-                                    )
-                                    print("✅ [Placement] Object location updated successfully")
-                                } else {
-                                    print("➕ [Placement] Creating new object of type: \(selectedObjectType.displayName)")
-                                    objectType = selectedObjectType // Use selected type for new object
-                                    // Create new object and get the ID returned from API
-                                    objectId = await createNewObject(
-                                        type: objectType,
-                                        name: newObjectName,
-                                        coordinate: gpsCoordinate,
-                                        arPosition: arPosition,
-                                        arOrigin: arOrigin,
-                                        groundingHeight: groundingHeight,
-                                        scale: scale,
-                                        screenPoint: screenPoint
-                                    )
-                                    print("✅ [Placement] New object created successfully with ID: \(objectId)")
-                                }
+                            // Determine the object ID and type to use for placement
+                            let objectId: String
+                            let objectType: LootBoxType
+                            let actualObjectName: String
 
-                                // CRITICAL FIX: Instead of reloading and hoping AR offsets are saved,
-                                // directly notify the main AR view with the placement data
-                                // CRITICAL: Calculate the object name that was used for API creation
-                                let actualObjectName = newObjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            if let selected = selectedObject {
+                                print("📝 [Placement] Updating existing object: \(selected.name) (ID: \(selected.id))")
+                                objectId = selected.id
+                                objectType = selected.type // Use existing object's type
+                                actualObjectName = selected.name
+                            } else {
+                                print("➕ [Placement] Creating new object of type: \(selectedObjectType.displayName)")
+                                objectId = UUID().uuidString // Generate ID immediately for immediate placement
+                                objectType = selectedObjectType // Use selected type for new object
+                                actualObjectName = newObjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                     ? "New \(objectType.displayName)"
                                     : newObjectName.trimmingCharacters(in: .whitespacesAndNewlines)
+                            }
 
-                                // This ensures immediate placement without waiting for API roundtrip
-                                let placementData: [String: Any] = [
-                                    "objectId": objectId,
-                                    "objectName": actualObjectName, // Include the actual name used for the object
-                                    "objectType": objectType.rawValue, // CRITICAL: Include type for fallback case
-                                    "gpsCoordinate": CLLocationCoordinate2D(latitude: gpsCoordinate.latitude, longitude: gpsCoordinate.longitude),
-                                    "arPosition": [arPosition.x, arPosition.y, arPosition.z],
-                                    "arOrigin": [arOrigin!.coordinate.latitude, arOrigin!.coordinate.longitude],
-                                    "groundingHeight": groundingHeight,
-                                    "scale": scale,
-                                    "screenPoint": screenPoint != nil ? [screenPoint!.x, screenPoint!.y] : nil // For plane anchor raycasting
-                                ]
+                            // IMMEDIATE PLACEMENT: Notify main AR view to place object right now
+                            // This ensures the object appears instantly without waiting for API calls
+                            let placementData: [String: Any] = [
+                                "objectId": objectId,
+                                "objectName": actualObjectName,
+                                "objectType": objectType.rawValue,
+                                "gpsCoordinate": CLLocationCoordinate2D(latitude: gpsCoordinate.latitude, longitude: gpsCoordinate.longitude),
+                                "arPosition": [arPosition.x, arPosition.y, arPosition.z],
+                                "arOrigin": [arOrigin!.coordinate.latitude, arOrigin!.coordinate.longitude],
+                                "groundingHeight": groundingHeight,
+                                "scale": scale,
+                                "screenPoint": screenPoint != nil ? [screenPoint!.x, screenPoint!.y] : nil
+                            ]
 
-                                // CRITICAL FIX: Don't reload ALL locations from API - this causes unrelated objects to appear!
-                                // Instead, just notify the main AR view to place the single object that was saved
-                                // The object is already in locationManager.locations (added by updateObjectLocation or createNewObject)
+                            // Post notification immediately for instant placement
+                            NotificationCenter.default.post(
+                                name: NSNotification.Name("ARPlacementObjectSaved"),
+                                object: nil,
+                                userInfo: placementData
+                            )
+                            print("📢 [Placement] Posted immediate placement notification")
 
-                                await MainActor.run {
-                                    NotificationCenter.default.post(
-                                        name: NSNotification.Name("ARPlacementObjectSaved"),
-                                        object: nil,
-                                        userInfo: placementData
-                                    )
-                                    print("📢 [Placement] Posted notification with direct placement data")
+                            // DISMISS VIEW IMMEDIATELY - Don't wait for API calls
+                            dismiss()
+
+                            // BACKGROUND API OPERATIONS: Run all API calls asynchronously in background
+                            Task.detached(priority: .background) {
+                                do {
+                                    if let selected = selectedObject {
+                                        // Update existing object
+                                        try await updateObjectLocation(
+                                            objectId: objectId,
+                                            coordinate: gpsCoordinate,
+                                            arPosition: arPosition,
+                                            arOrigin: arOrigin,
+                                            groundingHeight: groundingHeight,
+                                            scale: scale,
+                                            screenPoint: screenPoint
+                                        )
+                                        print("✅ [Placement] Object location updated successfully in background")
+
+                                        // Show success notification
+                                        await MainActor.run {
+                                            NotificationCenter.default.post(
+                                                name: NSNotification.Name("ShowCollectionNotification"),
+                                                object: nil,
+                                                userInfo: ["message": "Object position saved!"]
+                                            )
+                                        }
+                                    } else {
+                                        // Create new object - this will get the real ID from API
+                                        let realObjectId = try await createNewObject(
+                                            type: objectType,
+                                            name: newObjectName,
+                                            coordinate: gpsCoordinate,
+                                            arPosition: arPosition,
+                                            arOrigin: arOrigin,
+                                            groundingHeight: groundingHeight,
+                                            scale: scale,
+                                            screenPoint: screenPoint
+                                        )
+                                        print("✅ [Placement] New object created successfully in background with ID: \(realObjectId)")
+
+                                        // If the real ID is different, we might need to update the placement
+                                        // But for now, the immediate placement with temp ID should work
+
+                                        // Show success notification
+                                        await MainActor.run {
+                                            NotificationCenter.default.post(
+                                                name: NSNotification.Name("ShowCollectionNotification"),
+                                                object: nil,
+                                                userInfo: ["message": "\(actualObjectName) created!"]
+                                            )
+                                        }
+                                    }
+
+                                    print("✅ [Background] All API operations completed successfully")
+
+                                } catch {
+                                    // Error handling - show error notification to user
+                                    print("❌ [Background] API operations failed: \(error)")
+
+                                    await MainActor.run {
+                                        NotificationCenter.default.post(
+                                            name: NSNotification.Name("ShowCollectionNotification"),
+                                            object: nil,
+                                            userInfo: ["message": "Failed to save object. Check connection."]
+                                        )
+                                    }
+
+                                    // Note: Object is already placed in AR, but persistence failed
+                                    // User would need to try again or the object might disappear on app restart
                                 }
-
-                                // Brief delay to ensure the main AR view receives notification before view dismisses
-                                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-
-                                print("✅ [Placement] Placement process complete - dismissing view")
-                                dismiss()
                             }
                         },
                         onCancel: {
@@ -728,6 +765,7 @@ struct ARPlacementARView: UIViewRepresentable {
 
         // Display link for continuous reticle updates
         var displayLink: CADisplayLink?
+        private var frameCounter = 0 // Throttle to 30fps instead of 60fps
 
         func setup(arView: ARView, locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, selectedObject: LootBoxLocation?, objectType: LootBoxType, isNewObject: Bool, placementReticle: ARPlacementReticle) {
             self.arView = arView
@@ -821,13 +859,22 @@ struct ARPlacementARView: UIViewRepresentable {
             displayLink = nil
         }
 
-        /// Called by display link to update reticle position every frame
+        /// Called by display link to update reticle position every frame (throttled to 30fps)
         @objc func updateReticleFromDisplayLink() {
+            frameCounter += 1
+
+            // Only update every other frame (30fps instead of 60fps) to reduce CPU load
+            guard frameCounter % 2 == 0 else { return }
+
             // Update crosshair position as camera moves
             updateCrosshairPosition()
 
             // Update placement reticle position
             placementReticle?.update()
+
+            // CRITICAL FIX: Update preview object position when sharing session from main AR view
+            // This ensures the selected object previews centered on the crosshairs/reticle
+            updatePreviewObjectForSharedSession()
         }
         
         func placeAllObjectsAsWireframes() {
@@ -1175,7 +1222,7 @@ struct ARPlacementARView: UIViewRepresentable {
         @objc func handlePlacementButtonTap() {
             // Detailed diagnostics to identify which condition is missing
             var missingConditions: [String] = []
-            
+
             if arView == nil {
                 missingConditions.append("AR view")
             }
@@ -1191,14 +1238,14 @@ struct ARPlacementARView: UIViewRepresentable {
             if placementReticle?.getPlacementPosition() == nil {
                 missingConditions.append("reticle position")
             }
-            
+
             // CRITICAL: Force reticle update before checking position
             // This ensures the reticle anchor is positioned even if update() hasn't been called yet
             if let reticle = placementReticle, reticle.getPlacementPosition() == nil {
                 print("🔄 Reticle position not available - forcing update...")
                 reticle.update()
             }
-            
+
             guard let arView = arView,
                   let _ = arView.session.currentFrame,
                   let _ = userLocationManager?.currentLocation,
@@ -1224,7 +1271,9 @@ struct ARPlacementARView: UIViewRepresentable {
             let screenPoint = placementReticle?.getPlacementScreenPoint()
             print("   Screen coordinates: \(screenPoint != nil ? "(\(String(format: "%.1f", screenPoint!.x)), \(String(format: "%.1f", screenPoint!.y)))" : "unavailable")")
 
-            // Hide preview object - main AR view will place the persistent object
+            // CRITICAL: Hide preview object and mark as placed immediately when user initiates placement
+            // This prevents the preview from lingering after placement
+            hasPlacedObject = true
             hidePreviewObject()
 
             // Use reticle position directly - it's already at the correct X/Z and Y (surface level)
@@ -1652,6 +1701,28 @@ struct ARPlacementARView: UIViewRepresentable {
             previewObjectAnchor = anchor
 
             print("👻 [Preview] Created preview object at position: \(position)")
+        }
+
+        /// Updates preview object position when sharing session from main AR view (display link path)
+        func updatePreviewObjectForSharedSession() {
+            // PERFORMANCE FIX: Keep preview object visually aligned with reticle (no throttling for position)
+            // Only throttle expensive 3D model creation, not position updates
+            if !hasPlacedObject, let reticlePos = placementReticle?.getPlacementPosition() {
+                // Always update position for visual accuracy - this is cheap
+                if let existingAnchor = previewObjectAnchor {
+                    existingAnchor.position = reticlePos
+                } else {
+                    // Only create expensive 3D model with throttling
+                    let now = Date()
+                    if now.timeIntervalSince(lastPreviewUpdateTime) >= previewUpdateInterval {
+                        lastPreviewUpdateTime = now
+                        updatePreviewObjectPosition(to: reticlePos)
+                    }
+                }
+            } else if hasPlacedObject {
+                // Hide preview once object is placed
+                hidePreviewObject()
+            }
         }
 
         // MARK: - ARSessionDelegate

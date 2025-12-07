@@ -58,7 +58,7 @@ const ObjectsManager = {
         };
 
         // Create icon based on calculated size
-        const icon = this.createMarkerIcon(obj.collected, markerSize, obj);
+        const icon = this.createMarkerIcon(obj.collected, markerSize, obj, displayName);
 
         const marker = L.marker([obj.latitude, obj.longitude], { icon })
             .addTo(MapManager.getMap())
@@ -90,7 +90,7 @@ const ObjectsManager = {
     /**
      * Create marker icon with specified size
      */
-    createMarkerIcon(isCollected, size, obj = null) {
+    createMarkerIcon(isCollected, size, obj = null, displayName = null) {
         let iconHtml;
         const anchorOffset = size / 2;
 
@@ -114,19 +114,22 @@ const ObjectsManager = {
             const borderWidth = Math.max(2, Math.min(4, size / 6));
             const iconSymbol = isSkeleton ? '💀' : '👤';
             iconHtml = `
-                <div style="
-                    background: ${iconColor};
-                    width: ${size}px;
-                    height: ${size}px;
-                    border-radius: 50%;
-                    border: ${borderWidth}px solid ${borderColor};
-                    box-shadow: 0 0 ${size/2}px rgba(0, 0, 0, 0.6);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: ${size * 0.6}px;
-                    color: white;
-                ">${iconSymbol}</div>
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <div style="
+                        background: ${iconColor};
+                        width: ${size}px;
+                        height: ${size}px;
+                        border-radius: 50%;
+                        border: ${borderWidth}px solid ${borderColor};
+                        box-shadow: 0 0 ${size/2}px rgba(0, 0, 0, 0.6);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: ${size * 0.6}px;
+                        color: white;
+                    ">${iconSymbol}</div>
+                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                </div>
             `;
         } else if (isNFCObject) {
             // NFC object icon - blue circle with white 'N'
@@ -135,21 +138,24 @@ const ObjectsManager = {
             const borderWidth = Math.max(2, Math.min(4, size / 6));
             const fontSize = size * 0.6;
             iconHtml = `
-                <div style="
-                    background: ${markerColor};
-                    width: ${size}px;
-                    height: ${size}px;
-                    border-radius: 50%;
-                    border: ${borderWidth}px solid ${borderColor};
-                    box-shadow: 0 0 ${size/2}px rgba(74, 144, 226, 0.6);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: ${fontSize}px;
-                    color: white;
-                    font-weight: bold;
-                    position: relative;
-                ">N${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">N</div>` : ''}</div>
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <div style="
+                        background: ${markerColor};
+                        width: ${size}px;
+                        height: ${size}px;
+                        border-radius: 50%;
+                        border: ${borderWidth}px solid ${borderColor};
+                        box-shadow: 0 0 ${size/2}px rgba(74, 144, 226, 0.6);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: ${fontSize}px;
+                        color: white;
+                        font-weight: bold;
+                        position: relative;
+                    ">N${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">N</div>` : ''}</div>
+                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                </div>
             `;
         } else if (isARObject) {
             // AR object icon - purple circle with white 'AR'
@@ -158,21 +164,24 @@ const ObjectsManager = {
             const borderWidth = Math.max(2, Math.min(4, size / 6));
             const fontSize = size * 0.4; // Smaller font for 'AR'
             iconHtml = `
-                <div style="
-                    background: ${markerColor};
-                    width: ${size}px;
-                    height: ${size}px;
-                    border-radius: 50%;
-                    border: ${borderWidth}px solid ${borderColor};
-                    box-shadow: 0 0 ${size/2}px rgba(156, 39, 176, 0.6);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: ${fontSize}px;
-                    color: white;
-                    font-weight: bold;
-                    position: relative;
-                ">AR${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">AR</div>` : ''}</div>
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <div style="
+                        background: ${markerColor};
+                        width: ${size}px;
+                        height: ${size}px;
+                        border-radius: 50%;
+                        border: ${borderWidth}px solid ${borderColor};
+                        box-shadow: 0 0 ${size/2}px rgba(156, 39, 176, 0.6);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: ${fontSize}px;
+                        color: white;
+                        font-weight: bold;
+                        position: relative;
+                    ">AR${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">AR</div>` : ''}</div>
+                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                </div>
             `;
         } else if (isAdminObject) {
             // Admin object icon - green circle with white 'A'
@@ -181,42 +190,48 @@ const ObjectsManager = {
             const borderWidth = Math.max(2, Math.min(4, size / 6));
             const fontSize = size * 0.6;
             iconHtml = `
-                <div style="
-                    background: ${markerColor};
-                    width: ${size}px;
-                    height: ${size}px;
-                    border-radius: 50%;
-                    border: ${borderWidth}px solid ${borderColor};
-                    box-shadow: 0 0 ${size/2}px rgba(76, 175, 80, 0.6);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    font-size: ${fontSize}px;
-                    color: white;
-                    font-weight: bold;
-                    position: relative;
-                ">A${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">A</div>` : ''}</div>
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <div style="
+                        background: ${markerColor};
+                        width: ${size}px;
+                        height: ${size}px;
+                        border-radius: 50%;
+                        border: ${borderWidth}px solid ${borderColor};
+                        box-shadow: 0 0 ${size/2}px rgba(76, 175, 80, 0.6);
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: ${fontSize}px;
+                        color: white;
+                        font-weight: bold;
+                        position: relative;
+                    ">A${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">A</div>` : ''}</div>
+                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                </div>
             `;
         } else if (isCollected) {
             // Stylized red X for found treasure
             // Adjust stroke width based on size to keep proportions
             const strokeWidth = Math.max(2, Math.min(5, size / 6));
             iconHtml = `
-                <div style="
-                    width: ${size}px;
-                    height: ${size}px;
-                    position: relative;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                ">
-                    <svg width="${size}" height="${size}" viewBox="0 0 24 24" style="filter: drop-shadow(0 0 ${size/6}px rgba(255, 0, 0, 0.8));">
-                        <path d="M2 2 L22 22 M22 2 L2 22"
-                              stroke="#ff0000"
-                              stroke-width="${strokeWidth}"
-                              stroke-linecap="round"
-                              stroke-linejoin="round"/>
-                    </svg>
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <div style="
+                        width: ${size}px;
+                        height: ${size}px;
+                        position: relative;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                    ">
+                        <svg width="${size}" height="${size}" viewBox="0 0 24 24" style="filter: drop-shadow(0 0 ${size/6}px rgba(255, 0, 0, 0.8));">
+                            <path d="M2 2 L22 22 M22 2 L2 22"
+                                  stroke="#ff0000"
+                                  stroke-width="${strokeWidth}"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"/>
+                        </svg>
+                    </div>
+                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
                 </div>
             `;
         } else {
@@ -224,14 +239,23 @@ const ObjectsManager = {
             const markerColor = '#ffd700';
             const borderColor = '#b8860b';
             const borderWidth = Math.max(2, Math.min(4, size / 6));
-            iconHtml = `<div style="background: ${markerColor}; width: ${size}px; height: ${size}px; border-radius: 50%; border: ${borderWidth}px solid ${borderColor}; box-shadow: 0 0 ${size/2}px rgba(255, 215, 0, 0.6);"></div>`;
+            iconHtml = `
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <div style="background: ${markerColor}; width: ${size}px; height: ${size}px; border-radius: 50%; border: ${borderWidth}px solid ${borderColor}; box-shadow: 0 0 ${size/2}px rgba(255, 215, 0, 0.6);"></div>
+                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                </div>
+            `;
         }
+
+        // Calculate total height including label (if present)
+        const hasLabel = displayName && displayName.trim() !== '';
+        const totalHeight = hasLabel ? size + 20 : size; // Add space for label
 
         return L.divIcon({
             className: 'object-marker',
             html: iconHtml,
-            iconSize: [size, size],
-            iconAnchor: [anchorOffset, anchorOffset]
+            iconSize: [size, totalHeight],
+            iconAnchor: [anchorOffset, hasLabel ? anchorOffset + 10 : anchorOffset] // Adjust anchor for label
         });
     },
 
@@ -249,7 +273,7 @@ const ObjectsManager = {
             const newSize = MapManager.calculateMarkerSize(zoom, markerInfo.collected);
 
             // Create new icon with updated size
-            const newIcon = this.createMarkerIcon(markerInfo.collected, newSize, markerInfo.obj);
+            const newIcon = this.createMarkerIcon(markerInfo.collected, newSize, markerInfo.obj, markerInfo.displayName);
 
             // Update marker icon
             marker.setIcon(newIcon);
@@ -462,7 +486,8 @@ const ObjectsManager = {
      */
     addStoryMarker(element, zoom = 15) {
         const markerSize = this.calculateStoryMarkerSize(zoom, element.type);
-        const icon = this.createStoryMarkerIcon(element, markerSize);
+        const displayName = element.name || element.type;
+        const icon = this.createStoryMarkerIcon(element, markerSize, displayName);
 
         const marker = L.marker([element.latitude, element.longitude], { icon })
             .addTo(MapManager.getMap())
@@ -490,7 +515,7 @@ const ObjectsManager = {
     /**
      * Create story marker icon based on element type
      */
-    createStoryMarkerIcon(element, size) {
+    createStoryMarkerIcon(element, size, displayName = null) {
         let bgColor, borderColor, iconEmoji;
 
         switch (element.type) {
@@ -524,25 +549,32 @@ const ObjectsManager = {
         const fontSize = size * 0.6;
 
         const iconHtml = `
-            <div style="
-                background: ${bgColor};
-                width: ${size}px;
-                height: ${size}px;
-                border-radius: 50%;
-                border: ${borderWidth}px solid ${borderColor};
-                box-shadow: 0 0 ${size/2}px rgba(0, 0, 0, 0.3);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: ${fontSize}px;
-            ">${iconEmoji}</div>
+            <div style="display: flex; flex-direction: column; align-items: center;">
+                <div style="
+                    background: ${bgColor};
+                    width: ${size}px;
+                    height: ${size}px;
+                    border-radius: 50%;
+                    border: ${borderWidth}px solid ${borderColor};
+                    box-shadow: 0 0 ${size/2}px rgba(0, 0, 0, 0.3);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    font-size: ${fontSize}px;
+                ">${iconEmoji}</div>
+                ${displayName ? `<div style="font-size: 8px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+            </div>
         `;
+
+        // Calculate total height including label (if present)
+        const hasLabel = displayName && displayName.trim() !== '';
+        const totalHeight = hasLabel ? size + 20 : size; // Add space for label
 
         return L.divIcon({
             className: 'story-marker',
             html: iconHtml,
-            iconSize: [size, size],
-            iconAnchor: [size / 2, size / 2]
+            iconSize: [size, totalHeight],
+            iconAnchor: [size / 2, hasLabel ? size / 2 + 10 : size / 2] // Adjust anchor for label
         });
     },
 

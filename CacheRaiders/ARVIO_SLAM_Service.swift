@@ -32,7 +32,7 @@ class ARVIO_SLAM_Service: ObservableObject {
     // Enhanced tracking
     private var trackingStateHistory: [ARCamera.TrackingState] = []
     private var frameProcessingTimer: Timer?
-    private var lastProcessedFrame: ARFrame?
+    private var lastFrameTimestamp: TimeInterval = 0.0 // Track timestamp instead of retaining frame
 
     // Stabilization
     private var stabilizationTransforms: [String: simd_float4x4] = [:]
@@ -136,16 +136,19 @@ class ARVIO_SLAM_Service: ObservableObject {
     }
 
     private func setupFrameProcessing() {
-        frameProcessingTimer = Timer.scheduledTimer(withTimeInterval: 1.0/30.0, repeats: true) { [weak self] _ in
+        // Reduced from 30fps to 10fps to reduce CPU load and prevent camera freezing
+        frameProcessingTimer = Timer.scheduledTimer(withTimeInterval: 1.0/10.0, repeats: true) { [weak self] _ in
             self?.processCurrentFrame()
         }
     }
 
     private func processCurrentFrame() {
-        guard let frame = arView?.session.currentFrame,
-              frame != lastProcessedFrame else { return }
+        guard let frame = arView?.session.currentFrame else { return }
 
-        lastProcessedFrame = frame
+        // Prevent processing the same frame multiple times by checking timestamp
+        let currentTimestamp = frame.timestamp
+        guard currentTimestamp > lastFrameTimestamp else { return }
+        lastFrameTimestamp = currentTimestamp
 
         // Extract features for SLAM
         processSLAMFeatures(frame)
@@ -222,14 +225,29 @@ class ARVIO_SLAM_Service: ObservableObject {
         let correction = stabilizationTransforms[objectId] ?? matrix_identity_float4x4
 
         // Apply VIO-based stabilization if available
-        if let vioCorrection = vioProcessor?.getStabilizationCorrection() {
+        if let vioCorrection = vioProcessor?.getStabilizationCorrection(),
+           isValidTransform(vioCorrection) {
             let stabilizedTransform = currentTransform * correction * vioCorrection
-            stabilizationTransforms[objectId] = stabilizedTransform
-            return stabilizedTransform
+
+            // Validate the result of matrix multiplication to prevent NaN propagation
+            if isValidTransform(stabilizedTransform) {
+                stabilizationTransforms[objectId] = stabilizedTransform
+                return stabilizedTransform
+            } else {
+                print("⚠️ VIO/SLAM: Matrix multiplication produced invalid transform, using original")
+            }
         }
 
         // Fallback to basic stabilization
-        return currentTransform * correction
+        let fallbackTransform = currentTransform * correction
+
+        // Validate fallback result too
+        if isValidTransform(fallbackTransform) {
+            return fallbackTransform
+        } else {
+            print("⚠️ VIO/SLAM: Fallback stabilization produced invalid transform, using current")
+            return currentTransform
+        }
     }
 
     /// Compensates for drift in object positioning
@@ -237,12 +255,28 @@ class ARVIO_SLAM_Service: ObservableObject {
         let driftCompensation = self.driftCompensation[objectId] ?? SIMD3<Float>(0, 0, 0)
 
         // Apply SLAM-based drift compensation
-        if let slamCorrection = slamMap?.getDriftCorrection(for: currentPosition) {
+        if let slamCorrection = slamMap?.getDriftCorrection(for: currentPosition),
+           isValidVector(slamCorrection) {
             let compensatedPosition = currentPosition + driftCompensation + slamCorrection
-            return compensatedPosition
+
+            // Validate result to prevent NaN propagation
+            if isValidVector(compensatedPosition) {
+                return compensatedPosition
+            } else {
+                print("⚠️ VIO/SLAM: Drift compensation produced invalid position, using current")
+                return currentPosition
+            }
         }
 
-        return currentPosition + driftCompensation
+        let fallbackPosition = currentPosition + driftCompensation
+
+        // Validate fallback result
+        if isValidVector(fallbackPosition) {
+            return fallbackPosition
+        } else {
+            print("⚠️ VIO/SLAM: Fallback drift compensation produced invalid position, using current")
+            return currentPosition
+        }
     }
 
     /// Applies pose corrections from SLAM optimization
@@ -312,6 +346,12 @@ class ARVIO_SLAM_Service: ObservableObject {
     }
 
     private func applyInertialStabilization(_ inertialPose: simd_float4x4) {
+        // Validate transform before applying to prevent NaN issues
+        guard isValidTransform(inertialPose) else {
+            print("⚠️ Skipping inertial stabilization - invalid transform")
+            return
+        }
+
         // Apply inertial pose corrections to all tracked objects
         for (objectId, _) in stabilizationTransforms {
             stabilizationTransforms[objectId] = inertialPose
@@ -321,12 +361,38 @@ class ARVIO_SLAM_Service: ObservableObject {
     }
 
     private func applySLAMRelocalization(_ relocalizationPose: simd_float4x4) {
+        // Validate transform before applying to prevent NaN issues
+        guard isValidTransform(relocalizationPose) else {
+            print("⚠️ Skipping SLAM relocalization - invalid transform")
+            return
+        }
+
         // Apply SLAM-based relocalization
         for (objectId, _) in stabilizationTransforms {
             stabilizationTransforms[objectId] = relocalizationPose
         }
 
         print("🗺️ Applied SLAM relocalization")
+    }
+
+    /// Check if a transform matrix contains valid (non-NaN, non-infinite) values
+    private func isValidTransform(_ transform: simd_float4x4) -> Bool {
+        for column in 0..<4 {
+            for row in 0..<4 {
+                let value = transform[column][row]
+                if value.isNaN || value.isInfinite {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    /// Check if a vector contains valid (non-NaN, non-infinite) values
+    private func isValidVector(_ vector: SIMD3<Float>) -> Bool {
+        return !vector.x.isNaN && !vector.x.isInfinite &&
+               !vector.y.isNaN && !vector.y.isInfinite &&
+               !vector.z.isNaN && !vector.z.isInfinite
     }
 
     // MARK: - Diagnostics
@@ -356,7 +422,7 @@ class ARVIO_SLAM_Service: ObservableObject {
 
 class VIOProcessor {
     private var inertialHistory: [CMDeviceMotion] = []
-    private var cameraHistory: [ARFrame] = []
+    private var cameraTransforms: [simd_float4x4] = [] // Store only transforms, not entire frames
     private var currentPose: simd_float4x4 = matrix_identity_float4x4
 
     func processInertialData(_ data: [CMDeviceMotion]) {
@@ -365,9 +431,10 @@ class VIOProcessor {
     }
 
     func processCameraData(_ frame: ARFrame) {
-        cameraHistory.append(frame)
-        if cameraHistory.count > 30 { // Keep last 30 frames
-            cameraHistory.removeFirst()
+        // Store only the camera transform, not the entire frame
+        cameraTransforms.append(frame.camera.transform)
+        if cameraTransforms.count > 30 { // Keep last 30 transforms
+            cameraTransforms.removeFirst()
         }
         updatePoseEstimation()
     }
@@ -377,12 +444,37 @@ class VIOProcessor {
         // In a real implementation, this would use proper VIO algorithms
         // combining visual features with inertial measurements
 
-        guard !inertialHistory.isEmpty && !cameraHistory.isEmpty else { return }
+        guard !inertialHistory.isEmpty && !cameraTransforms.isEmpty else { return }
 
-        // Use camera transform as base pose
-        if let latestFrame = cameraHistory.last {
-            currentPose = latestFrame.camera.transform
+        // Use latest camera transform as base pose
+        let latestTransform = cameraTransforms.last!
+
+        // Validate transform before using it
+        if isValidTransform(latestTransform) {
+            currentPose = latestTransform
+        } else {
+            print("⚠️ VIO Processor: Rejecting invalid camera transform")
         }
+    }
+
+    /// Check if a transform matrix contains valid (non-NaN, non-infinite) values
+    private func isValidTransform(_ transform: simd_float4x4) -> Bool {
+        for column in 0..<4 {
+            for row in 0..<4 {
+                let value = transform[column][row]
+                if value.isNaN || value.isInfinite {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
+    /// Check if a vector contains valid (non-NaN, non-infinite) values
+    private func isValidVector(_ vector: SIMD3<Float>) -> Bool {
+        return !vector.x.isNaN && !vector.x.isInfinite &&
+               !vector.y.isNaN && !vector.y.isInfinite &&
+               !vector.z.isNaN && !vector.z.isInfinite
     }
 
     func getStabilizationCorrection() -> simd_float4x4? {

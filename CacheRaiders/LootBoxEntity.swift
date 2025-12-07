@@ -18,25 +18,50 @@ enum LootBoxType: String, CaseIterable, Codable {
     var displayName: String {
         return self.rawValue
     }
-    
+
+    var glowColor: UIColor {
+        switch self {
+        case .chalice: return .systemYellow
+        case .templeRelic: return .systemPurple
+        case .treasureChest: return .systemOrange
+        case .lootChest: return .systemGreen
+        case .lootCart: return .systemBlue
+        case .sphere: return .systemRed
+        case .cube: return .systemCyan
+        case .turkey: return .systemBrown
+        case .terrorEngine: return .systemPink
+        }
+    }
+
     /// Returns the color for this loot box type (delegates to factory)
     var color: UIColor {
         return factory.color
     }
-    
-    /// Returns the glow color for this loot box type (delegates to factory)
-    var glowColor: UIColor {
-        return factory.glowColor
-    }
-    
+
     /// Returns the base size for this loot box type (delegates to factory)
     var size: Float {
         return factory.size
     }
-    
+
     /// Returns the factory for this loot box type (uses registry instead of switch)
     var factory: LootBoxFactory {
         return LootBoxFactoryRegistry.factory(for: self)
+    }
+}
+
+// MARK: - Performance Mode for Loot Box Effects
+extension LootBoxEntity {
+    // Global performance mode to control animation intensity
+    static var globalPerformanceMode: PerformanceMode = .full {
+        didSet {
+            print("🎯 Loot box performance mode changed to: \(globalPerformanceMode)")
+        }
+    }
+
+    enum PerformanceMode {
+        case full      // All effects (high CPU usage)
+        case reduced   // Pulsating glow only
+        case minimal   // No animations (lowest CPU usage)
     }
 }
 
@@ -69,7 +94,7 @@ class LootBoxEntity {
     
     // Extract lid from box entity (finds and removes skull lid)
     private static func extractLid(from box: ModelEntity, type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity? {
-        let size = type.size * sizeMultiplier
+        let size = type.factory.size * sizeMultiplier
         // Find the skull lid child (it's positioned at size * 0.35 on Y axis)
         for child in box.children {
             if abs(child.position.y - size * 0.35) < 0.1 {
@@ -87,7 +112,7 @@ class LootBoxEntity {
     
     // Create a separate lid entity
     private static func createLid(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
-        let size = type.size * sizeMultiplier
+        let size = type.factory.size * sizeMultiplier
         let lidBase = MeshResource.generateBox(
             width: size * 0.4,
             height: size * 0.15,
@@ -356,7 +381,7 @@ class LootBoxEntity {
     
     // MARK: - Crystal Skull Creation
     private static func createCrystalSkull(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
-        let size = type.size * sizeMultiplier
+        let size = type.factory.size * sizeMultiplier
         
         // Create dark ancient box with skull lid
         let boxBase = MeshResource.generateBox(
@@ -388,7 +413,7 @@ class LootBoxEntity {
     
     // MARK: - Golden Idol Creation
     private static func createGoldenIdol(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
-        let size = type.size * sizeMultiplier
+        let size = type.factory.size * sizeMultiplier
         
         // Create dark ancient chest with skull decorations
         let chestBase = MeshResource.generateBox(
@@ -420,7 +445,7 @@ class LootBoxEntity {
     
     // MARK: - Ancient Artifact Creation
     private static func createAncientArtifact(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
-        let size = type.size * sizeMultiplier
+        let size = type.factory.size * sizeMultiplier
         
         // Create dark weathered artifact box
         let mainBody = MeshResource.generateBox(
@@ -453,7 +478,7 @@ class LootBoxEntity {
     
     // MARK: - Temple Relic Creation
     private static func createTempleRelic(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
-        let size = type.size * sizeMultiplier
+        let size = type.factory.size * sizeMultiplier
         
         // Create dark stone pedestal
         let pedestal = MeshResource.generateBox(
@@ -498,7 +523,7 @@ class LootBoxEntity {
     
     // MARK: - Puzzle Box Creation
     private static func createPuzzleBox(type: LootBoxType, sizeMultiplier: Float = 1.0) -> ModelEntity {
-        let size = type.size * sizeMultiplier
+        let size = type.factory.size * sizeMultiplier
         
         // Create dark ancient puzzle box
         let mainBox = MeshResource.generateBox(
@@ -531,7 +556,7 @@ class LootBoxEntity {
     
     // MARK: - Stone Tablet Creation
     private static func createStoneTablet(type: LootBoxType) -> ModelEntity {
-        let size = type.size
+        let size = type.factory.size
         
         // Create dark weathered stone tablet
         let tablet = MeshResource.generateBox(
@@ -693,15 +718,23 @@ class LootBoxEntity {
         // Add intense point light for dramatic glow
         let light = PointLightComponent(color: type.glowColor, intensity: 600)
         entity.components.set(light)
-        
-        // Add pulsating animation (more dramatic)
-        addPulsatingGlow(to: entity, color: type.glowColor)
-        
-        // Add floating dust particles (more atmospheric)
-        addDustParticles(to: entity, color: type.glowColor)
-        
-        // Add floating animation
-        addFloatingAnimation(to: entity)
+
+        // Only add heavy animations if performance allows
+        let performanceMode = LootBoxEntity.globalPerformanceMode
+        if performanceMode == .full {
+            // Add pulsating animation (more dramatic)
+            addPulsatingGlow(to: entity, color: type.glowColor)
+
+            // Add floating dust particles (more atmospheric)
+            addDustParticles(to: entity, color: type.glowColor)
+
+            // Add floating animation
+            addFloatingAnimation(to: entity)
+        } else if performanceMode == .reduced {
+            // Minimal effects - just pulsating glow
+            addPulsatingGlow(to: entity, color: type.glowColor)
+        }
+        // PerformanceMode.minimal gets no animations at all
     }
     
     private static func addPulsatingGlow(to entity: ModelEntity, color: UIColor) {
@@ -756,8 +789,9 @@ class LootBoxEntity {
     private static func addFloatingAnimation(to entity: ModelEntity) {
         let baseY = entity.position.y
         var offset: Float = 0
-        
-        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak entity] timer in
+
+        // Reduced from 20fps to 10fps to reduce CPU load
+        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak entity] timer in
             guard let entity = entity, entity.parent != nil else {
                 timer.invalidate()
                 return
@@ -771,8 +805,9 @@ class LootBoxEntity {
     private static func addPrizeFloatingAnimation(to entity: ModelEntity) {
         let baseY = entity.position.y
         var offset: Float = 0
-        
-        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak entity] timer in
+
+        // Reduced from 20fps to 10fps to reduce CPU load
+        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak entity] timer in
             guard let entity = entity, entity.parent != nil else {
                 timer.invalidate()
                 return
@@ -786,8 +821,9 @@ class LootBoxEntity {
     private static func animateDustParticle(_ particle: ModelEntity, index: Int) {
         let basePosition = particle.position
         var offset: Float = Float(index) * 0.5
-        
-        Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak particle] timer in
+
+        // Reduced from 10fps to 5fps to reduce CPU load
+        Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak particle] timer in
             guard let particle = particle, particle.parent != nil else {
                 timer.invalidate()
                 return
@@ -813,3 +849,4 @@ class LootBoxEntity {
         }
     }
 }
+

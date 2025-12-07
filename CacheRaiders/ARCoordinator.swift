@@ -50,6 +50,9 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     // Track placed box IDs for quick lookup
     private var placedBoxesSet: Set<String> = []
 
+    // Track camera freeze issues
+    private var consecutiveNoFrames: Int = 0
+
     // Track active AR anchors by object ID
     private var activeAnchors: [String: ARAnchor] = [:]
 
@@ -1544,11 +1547,30 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     // MARK: - ARSessionDelegate
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        // Set performance mode to reduced when AR is active to prevent camera freezing
+        if LootBoxEntity.globalPerformanceMode != .reduced {
+            LootBoxEntity.globalPerformanceMode = .reduced
+        }
+
         // Process frame through VIO/SLAM service for enhanced tracking
-        vioSlamService?.processFrameForEnhancement(frame)
+        // Throttle VIO/SLAM processing to prevent overwhelming newer devices
+        let shouldProcessVIO_SLAM = sessionFrameCount % 3 == 0 // Process every 3rd frame (20fps instead of 60fps)
+        if shouldProcessVIO_SLAM {
+            vioSlamService?.processFrameForEnhancement(frame)
+        }
 
         // Apply enhanced stabilization to all active objects
         applyEnhancedStabilization()
+
+        // Track consecutive frames with no camera data (for detecting frozen camera)
+        if frame.camera.trackingState == .notAvailable {
+            consecutiveNoFrames += 1
+        } else {
+            if consecutiveNoFrames > 60 { // Only log if it was a significant freeze
+                Swift.print("📷 Camera feed restored after \(consecutiveNoFrames/60) seconds")
+            }
+            consecutiveNoFrames = 0
+        }
 
         // Log every 60 frames (roughly once per second at 60fps) to avoid spam
         sessionFrameCount += 1
@@ -1568,6 +1590,13 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 // CRITICAL FIX: Attempt to recover tracking by resetting the session
                 // This can help when tracking gets stuck in .notAvailable state
                 recoverARSessionTracking()
+
+                // AUTO-RESTART: If camera has been unavailable for too long, force restart
+                if consecutiveNoFrames > 300 { // 5+ seconds of no frames (60fps * 5)
+                    Swift.print("🚨 AUTO-RESTARTING AR SESSION - Camera feed frozen for \(consecutiveNoFrames/60) seconds")
+                    forceRestartARSession()
+                    consecutiveNoFrames = 0
+                }
             } else if case .limited(let reason) = frame.camera.trackingState {
                 Swift.print("⚠️ Camera tracking LIMITED: \(reason)")
                 switch reason {
@@ -2510,11 +2539,32 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     func sessionWasInterrupted(_ session: ARSession) {
         Swift.print("⚠️ [AR Session] AR Session was interrupted")
         Swift.print("   This usually happens when the app goes to background or another app uses the camera")
+        Swift.print("   Timestamp: \(Date())")
+        Swift.print("   Thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
+
+        // Check if any dialogs are open that might have caused this
+        Swift.print("   Dialog state: \(isDialogOpen ? "OPEN" : "CLOSED")")
+
+        // Check if we're sharing session with placement view
+        if let sharedARView = locationManager?.sharedARView {
+            Swift.print("   Shared ARView exists: \(ObjectIdentifier(sharedARView))")
+        } else {
+            Swift.print("   No shared ARView")
+        }
     }
     
     func sessionInterruptionEnded(_ session: ARSession) {
         Swift.print("✅ [AR Session] AR Session interruption ended")
+        Swift.print("   Timestamp: \(Date())")
+        Swift.print("   Thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
         Swift.print("   Placed objects: \(placedBoxes.count) anchors in placedBoxes dictionary")
+
+        // Check camera state immediately
+        if let frame = session.currentFrame {
+            Swift.print("   Camera state after interruption ended: \(frame.camera.trackingState)")
+        } else {
+            Swift.print("   ❌ No frame available after interruption ended!")
+        }
 
         // WORLD MAP PERSISTENCE: Handle session resumption
         onARSessionStarted()
@@ -5620,7 +5670,13 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             // Smooth the transition to prevent jarring movements
             let smoothingFactor: Float = 0.1 // 10% correction per frame
             let smoothedTransform = interpolateTransform(from: currentTransform, to: targetTransform, factor: smoothingFactor)
-            findableObject.anchor.transform = Transform(matrix: smoothedTransform)
+
+            // Final validation before applying to RealityKit to prevent NaN errors
+            if isValidTransform(smoothedTransform) {
+                findableObject.anchor.transform = Transform(matrix: smoothedTransform)
+            } else {
+                Swift.print("⚠️ ARCoordinator: Rejecting invalid smoothed transform to prevent RealityKit NaN errors")
+            }
         }
     }
 
@@ -5656,12 +5712,69 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         Swift.print("🔍 === END REPORT ===")
     }
 
+    /// Force restart AR session when camera feed is frozen
+    func forceRestartARSession() {
+        Swift.print("🔄 FORCE RESTARTING AR SESSION - Attempting to fix frozen camera")
+
+        guard let arView = arView else {
+            Swift.print("❌ Cannot restart AR session: no ARView available")
+            return
+        }
+
+        // Stop the current session
+        Swift.print("⏹️ Stopping current AR session...")
+        arView.session.pause()
+
+        // Wait a moment
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self = self else { return }
+
+            Swift.print("▶️ Starting new AR session...")
+
+            // Create fresh configuration
+            let config = self.vioSlamService?.getEnhancedARConfiguration() ?? ARWorldTrackingConfiguration()
+            config.planeDetection = [.horizontal, .vertical]
+            config.environmentTexturing = .automatic
+
+            // Apply lens if available
+            if let selectedLensId = self.locationManager?.selectedARLens,
+               let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
+                config.videoFormat = videoFormat
+                Swift.print("   Applied lens: \(selectedLensId)")
+            }
+
+            // Run with reset tracking
+            arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
+
+            Swift.print("✅ AR session restarted with reset tracking")
+
+            // Re-place objects after restart
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self = self else { return }
+                Swift.print("🔄 Re-placing objects after forced restart...")
+                self.replaceUnfoundObjectsAsync()
+            }
+        }
+    }
+
     /// Interpolates between two transforms for smooth stabilization
     private func interpolateTransform(from: simd_float4x4, to: simd_float4x4, factor: Float) -> simd_float4x4 {
+        // Validate inputs to prevent NaN propagation
+        guard isValidTransform(from) && isValidTransform(to) && !factor.isNaN && !factor.isInfinite else {
+            Swift.print("⚠️ ARCoordinator: Invalid inputs to interpolateTransform, returning 'from'")
+            return from
+        }
+
         // Interpolate translation
         let fromPos = SIMD3<Float>(from.columns.3.x, from.columns.3.y, from.columns.3.z)
         let toPos = SIMD3<Float>(to.columns.3.x, to.columns.3.y, to.columns.3.z)
         let interpolatedPos = fromPos + (toPos - fromPos) * factor
+
+        // Validate interpolated result
+        guard isValidVector(interpolatedPos) else {
+            Swift.print("⚠️ ARCoordinator: Interpolation produced invalid position, returning 'from'")
+            return from
+        }
 
         // For now, just interpolate position. Rotation interpolation would be more complex
         // and may not be necessary for small corrections
@@ -5669,6 +5782,26 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         result.columns.3 = SIMD4<Float>(interpolatedPos.x, interpolatedPos.y, interpolatedPos.z, 1.0)
 
         return result
+    }
+
+    /// Check if a vector contains valid (non-NaN, non-infinite) values
+    private func isValidVector(_ vector: SIMD3<Float>) -> Bool {
+        return !vector.x.isNaN && !vector.x.isInfinite &&
+               !vector.y.isNaN && !vector.y.isInfinite &&
+               !vector.z.isNaN && !vector.z.isInfinite
+    }
+
+    /// Check if a transform matrix contains valid (non-NaN, non-infinite) values
+    private func isValidTransform(_ transform: simd_float4x4) -> Bool {
+        for column in 0..<4 {
+            for row in 0..<4 {
+                let value = transform[column][row]
+                if value.isNaN || value.isInfinite {
+                    return false
+                }
+            }
+        }
+        return true
     }
 
 
