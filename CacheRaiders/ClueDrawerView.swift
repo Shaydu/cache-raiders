@@ -394,6 +394,8 @@ struct CollectedItemCell: View {
             return "circle.fill"
         case .cube:
             return "cube.fill"
+        case .terrorEngine:
+            return "gearshape.2.fill"
         }
     }
     
@@ -413,6 +415,8 @@ struct CollectedItemCell: View {
             return .blue
         case .cube:
             return .green
+        case .terrorEngine:
+            return .pink
         }
     }
 }
@@ -425,4 +429,3 @@ struct CollectedItemCell: View {
         userLocationManager: UserLocationManager()
     )
 }
-

@@ -21,8 +21,8 @@ struct RotatingModelView: View {
             if let entity = modelEntity {
                 RealityView { content in
                     content.add(entity)
-                    // Only start auto-rotation if user is not interacting
-                    if !isUserInteracting {
+                    // Start auto-rotation once when added
+                    if entity.availableAnimations.isEmpty {
                         startRotationAnimation(for: entity)
                     }
                 } update: { content in
@@ -38,6 +38,8 @@ struct RotatingModelView: View {
                         DragGesture(minimumDistance: 0)
                             .updating($dragOffset) { value, state, _ in
                                 state = value.translation
+                            }
+                            .onChanged { _ in
                                 isUserInteracting = true
                             }
                             .onEnded { value in
@@ -53,6 +55,8 @@ struct RotatingModelView: View {
                         MagnificationGesture()
                             .updating($magnification) { value, state, _ in
                                 state = value
+                            }
+                            .onChanged { _ in
                                 isUserInteracting = true
                             }
                             .onEnded { value in
@@ -93,8 +97,8 @@ struct RotatingModelView: View {
                     return
                 }
 
-                let loadedEntity = try await Entity.load(contentsOf: modelURL)
-                await MainActor.run {
+                let loadedEntity = try await ModelEntity(contentsOf: modelURL)
+                await MainActor.run(body: {
                     if let modelEntity = findFirstModelEntity(in: loadedEntity) {
                         // Scale the model appropriately
                         modelEntity.scale = SIMD3<Float>(repeating: size / 0.5) // Adjust scale based on desired size
@@ -104,7 +108,7 @@ struct RotatingModelView: View {
                         print("❌ No ModelEntity found in loaded model")
                         createFallbackModel()
                     }
-                }
+                })
             } catch {
                 print("❌ Error loading model \(modelName): \(error)")
                 await MainActor.run {

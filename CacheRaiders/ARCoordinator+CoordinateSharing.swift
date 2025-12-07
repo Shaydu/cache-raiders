@@ -12,7 +12,7 @@ extension ARCoordinator {
 
     /// Initializes coordinate sharing service integration
     func setupCoordinateSharing() {
-        guard let coordinateSharingService = coordinateSharingService,
+        guard let service = self.coordinateSharingService,
               let arView = arView,
               let locationManager = locationManager else {
             print("⚠️ Coordinate sharing service, ARView, or locationManager not available")
@@ -20,7 +20,7 @@ extension ARCoordinator {
         }
 
         // Configure the service with dependencies
-        coordinateSharingService.configure(
+        service.configure(
             with: arView,
             webSocketService: WebSocketService.shared,
             apiService: APIService.shared,
@@ -39,7 +39,7 @@ extension ARCoordinator {
     /// Shares current AR origin with other devices
     /// - Parameter arOrigin: The AR origin GPS coordinates
     func shareAROrigin(_ arOrigin: CLLocation) {
-        coordinateSharingService?.shareAROrigin(arOrigin)
+        self.coordinateSharingService?.shareAROrigin(arOrigin)
     }
 
     /// Updates object coordinates across all devices
@@ -52,7 +52,7 @@ extension ARCoordinator {
                                 gpsCoordinates: CLLocationCoordinate2D,
                                 arOffset: SIMD3<Double>? = nil,
                                 arOrigin: CLLocation? = nil) {
-        coordinateSharingService?.updateObjectCoordinates(
+        self.coordinateSharingService?.updateObjectCoordinates(
             objectId: objectId,
             gpsCoordinates: gpsCoordinates,
             arOffset: arOffset,
@@ -62,29 +62,29 @@ extension ARCoordinator {
 
     /// Captures and shares the current AR world map
     func captureAndShareWorldMap() async {
-        await coordinateSharingService?.shareWorldMap()
+        await self.coordinateSharingService?.shareWorldMap()
     }
 
     /// Starts collaborative AR session
     func startCollaborativeSession() {
-        coordinateSharingService?.startCollaborativeSession()
+        self.coordinateSharingService?.startCollaborativeSession()
     }
 
     /// Stops collaborative AR session
     func stopCollaborativeSession() {
-        coordinateSharingService?.stopCollaborativeSession()
+        self.coordinateSharingService?.stopCollaborativeSession()
     }
 
     /// Gets diagnostic information about coordinate sharing
     func getCoordinateSharingDiagnostics() -> [String: Any]? {
-        return coordinateSharingService?.getDiagnostics()
+        return self.coordinateSharingService?.getDiagnostics()
     }
 
     // MARK: - ARSessionDelegate for Collaboration
 
     /// Handles AR session collaboration data
     func session(_ session: ARSession, didOutputCollaborationData data: ARSession.CollaborationData) {
-        coordinateSharingService?.handleCollaborationData(data)
+        self.coordinateSharingService?.handleCollaborationData(data)
     }
 
     // MARK: - Legacy Integration Points
@@ -125,7 +125,6 @@ extension ARCoordinator {
 
         Swift.print("✅ GPS coordinates corrected via coordinate sharing service")
     }
-}
 
 // MARK: - Note
 /// The coordinateSharingService property is now implemented as a stored property
@@ -184,7 +183,7 @@ extension ARCoordinator {
 
     /// Sets up cloud geo anchor tracking for stable multi-user AR
     private func setupCloudGeoAnchors() {
-        guard let service = coordinateSharingService else {
+        guard let service = self.coordinateSharingService else {
             print("⚠️ Coordinate sharing service not available for cloud geo anchors")
             return
         }
@@ -215,7 +214,7 @@ extension ARCoordinator {
                                       altitude: CLLocationDistance = 0,
                                       arOffset: SIMD3<Float> = .zero) async throws -> AnchorEntity {
 
-        guard let service = coordinateSharingService else {
+        guard let service = self.coordinateSharingService else {
             throw NSError(domain: "ARCoordinator",
                          code: -1,
                          userInfo: [NSLocalizedDescriptionKey: "Coordinate sharing service not available"])
@@ -234,7 +233,7 @@ extension ARCoordinator {
                              coordinate: CLLocationCoordinate2D,
                              altitude: CLLocationDistance = 0) async throws {
 
-        guard let service = coordinateSharingService else { return }
+        guard let service = self.coordinateSharingService else { return }
 
         try await service.updateCloudGeoAnchor(
             objectId: objectId,
@@ -245,9 +244,10 @@ extension ARCoordinator {
 
     /// Checks if cloud geo anchors are available and working
     var isCloudGeoAnchorsAvailable: Bool {
-        return coordinateSharingService?.isCloudGeoTrackingAvailable ?? false
+        return self.coordinateSharingService?.isCloudGeoTrackingAvailable ?? false
     }
 
     var isCloudGeoAnchorsEnabled: Bool {
-        return coordinateSharingService?.isCloudGeoTrackingEnabled ?? false
+        return self.coordinateSharingService?.isCloudGeoTrackingEnabled ?? false
     }
+}

@@ -189,7 +189,8 @@ struct ARPlacementView: View {
                         onDone: {
                             // User pressed Done - save any placed object and dismiss
                             dismiss()
-                        }
+                        },
+                        scaleMultiplier: $scaleMultiplier
                     )
                 }
             }
@@ -498,9 +499,11 @@ struct ARPlacementARViewWrapper: View {
                             // This is needed because hasPlacedObject is a computed property
                             Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
                                 if coord.hasPlacedObject != hasPlacedObject {
-                                    hasPlacedObject = coord.hasPlacedObject
+                                    DispatchQueue.main.async {
+                                        self.hasPlacedObject = coord.hasPlacedObject
+                                    }
                                 }
-                                if !coord.hasPlacedObject {
+                                if coord.hasPlacedObject {
                                     timer.invalidate()
                                 }
                             }
@@ -527,12 +530,8 @@ struct ARPlacementARViewWrapper: View {
                     }
                     onDone()
                 },
-                onCancel: onCancel,
-                scaleMultiplier: $scaleMultiplier
+                onCancel: onCancel
             )
-        }
-        .onChange(of: coordinator?.hasPlacedObject ?? false) { oldValue, newValue in
-            hasPlacedObject = newValue
         }
     }
 }
@@ -971,17 +970,17 @@ struct ARPlacementARView: UIViewRepresentable {
                 // Cylinder wireframe for chalice/turkey
                 let mesh = MeshResource.generateCylinder(height: size * 0.6, radius: size * 0.3)
                 wireframeEntity = ModelEntity(mesh: mesh, materials: [wireframeMaterial])
-                
-            case .treasureChest, .lootChest, .lootCart:
-                // Box wireframe for chest
+
+            case .treasureChest, .lootChest, .lootCart, .terrorEngine:
+                // Box wireframe for chest and engine
                 let mesh = MeshResource.generateBox(width: size * 0.6, height: size * 0.6, depth: size * 0.6)
                 wireframeEntity = ModelEntity(mesh: mesh, materials: [wireframeMaterial])
-                
+
             case .sphere:
                 // Sphere wireframe
                 let mesh = MeshResource.generateSphere(radius: size * 0.3)
                 wireframeEntity = ModelEntity(mesh: mesh, materials: [wireframeMaterial])
-                
+
             case .cube:
                 // Cube wireframe
                 let mesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.4, depth: size * 0.4)
@@ -1022,7 +1021,7 @@ struct ARPlacementARView: UIViewRepresentable {
             switch type {
             case .chalice, .templeRelic, .turkey:
                 shadowYOffset = -size * 0.3 - 0.01 // Cylinder-based objects
-            case .treasureChest, .lootChest, .lootCart:
+            case .treasureChest, .lootChest, .lootCart, .terrorEngine:
                 shadowYOffset = -size * 0.3 - 0.01 // Box-based objects
             case .sphere:
                 shadowYOffset = -size * 0.3 - 0.01 // Spheres
@@ -1507,7 +1506,7 @@ struct ARPlacementARView: UIViewRepresentable {
             switch objectType {
             case .chalice, .templeRelic, .turkey:
                 shadowYOffset = -scaledObjectSize * 0.3 - 0.01
-            case .treasureChest, .lootChest, .lootCart:
+            case .treasureChest, .lootChest, .lootCart, .terrorEngine:
                 shadowYOffset = -scaledObjectSize * 0.3 - 0.01
             case .sphere:
                 shadowYOffset = -scaledObjectSize * 0.3 - 0.01
