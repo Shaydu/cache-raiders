@@ -476,7 +476,6 @@ struct ARPlacementARViewWrapper: View {
     @StateObject private var placementReticle = ARPlacementReticle(arView: nil, locationManager: nil)
     @State private var isPlacementMode = true
     @State private var coordinator: ARPlacementARView.Coordinator?
-    @State private var hasPlacedObject = false
 
     var body: some View {
         ZStack {
@@ -493,11 +492,7 @@ struct ARPlacementARViewWrapper: View {
                 onCancel: onCancel,
                 coordinatorBinding: Binding(
                     get: { coordinator },
-                    set: {
-                        coordinator = $0
-                        // Note: hasPlacedObject will be updated through other means
-                        // (e.g., when placement occurs, the overlay will be dismissed)
-                    }
+                    set: { coordinator = $0 }
                 )
             )
 
@@ -507,17 +502,9 @@ struct ARPlacementARViewWrapper: View {
                 placementPosition: $placementReticle.currentPosition,
                 placementDistance: $placementReticle.distanceFromCamera,
                 objectType: objectType,
-                hasPlacedObject: hasPlacedObject,
                 onPlaceObject: {
                     // Trigger placement at reticle position via notification
                     NotificationCenter.default.post(name: NSNotification.Name("TriggerPlacementAtReticle"), object: nil)
-                },
-                onDone: {
-                    // Save the placed object if one exists
-                    if let coord = coordinator, coord.hasPlacedObject {
-                        coord.savePlacedObject()
-                    }
-                    onDone()
                 },
                 onCancel: onCancel
             )
@@ -650,18 +637,18 @@ struct ARPlacementARView: UIViewRepresentable {
         var previewWireframeAnchor: AnchorEntity?
         var placedObjectAnchor: AnchorEntity? // Track placed object to show immediately
         var placedObjectEntity: ModelEntity? // Track placed object entity
-        var previewObjectAnchor: AnchorEntity? // Track preview object at crosshair
-        var previewObjectEntity: ModelEntity? // Track preview object entity
-        
+
+        // Preview object properties (for showing object before placement)
+        var previewObjectAnchor: AnchorEntity?
+        var lastPreviewUpdateTime: Date = Date()
+        var previewUpdateInterval: TimeInterval = 0.1 // 100ms throttle
+
         // Track if an object has been placed (for Done button)
         var hasPlacedObject: Bool = false
         
         // Store placement data for saving
         var pendingPlacementData: (gpsCoordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float)?
 
-        // PERFORMANCE OPTIMIZATION: Throttle preview object updates to prevent freezing
-        private var lastPreviewUpdateTime: Date = Date()
-        private let previewUpdateInterval: TimeInterval = 0.1 // Max 10 updates per second
 
         init(onPlace: @escaping (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void, onCancel: @escaping () -> Void) {
             self.onPlace = onPlace
@@ -683,109 +670,6 @@ struct ARPlacementARView: UIViewRepresentable {
             NotificationCenter.default.removeObserver(self)
         }
 
-        /// Show preview object at crosshair position with rotation animation
-        func showPreviewObject(at position: SIMD3<Float>) {
-            guard let arView = arView else { return }
-
-            // PERFORMANCE CRITICAL: If preview object already exists, just update its position
-            // This prevents expensive recreation of 3D models, materials, and animations
-            if let existingAnchor = previewObjectAnchor, let existingEntity = previewObjectEntity {
-                // Preview object exists and is valid, just update position
-                existingAnchor.position = position
-                return
-            }
-
-            // Remove any existing preview object (cleanup) - only if it's in an invalid state
-            if previewObjectAnchor != nil && previewObjectEntity == nil {
-                hidePreviewObject()
-            }
-
-            // Create preview object using the same factory
-            let factory = LootBoxFactoryRegistry.factory(for: objectType)
-
-            // Create a temporary anchor for the factory (required parameter)
-            let tempAnchor = AnchorEntity(world: position)
-            let previewLocation = LootBoxLocation(id: "preview", name: "Preview", type: objectType, latitude: 0, longitude: 0, radius: 1.0)
-            let (entity, _) = factory.createEntity(location: previewLocation, anchor: tempAnchor, sizeMultiplier: scaleMultiplier)
-
-            // Remove entity from temp anchor and make it semi-transparent
-            entity.removeFromParent()
-
-            // Make entity semi-transparent by modifying materials
-            if var modelComponent = entity.model {
-                var newMaterials: [RealityKit.Material] = []
-                for material in modelComponent.materials {
-                    if var simpleMaterial = material as? SimpleMaterial {
-                        simpleMaterial.color = .init(tint: simpleMaterial.color.tint.withAlphaComponent(0.7))
-                        newMaterials.append(simpleMaterial)
-                    } else if var physicallyBasedMaterial = material as? PhysicallyBasedMaterial {
-                        physicallyBasedMaterial.baseColor = .init(tint: physicallyBasedMaterial.baseColor.tint.withAlphaComponent(0.7))
-                        newMaterials.append(physicallyBasedMaterial)
-                    } else {
-                        newMaterials.append(material)
-                    }
-                }
-                modelComponent.materials = newMaterials
-                entity.model = modelComponent
-            }
-
-            // Add continuous rotation animation
-            let rotationAnimation = FromToByAnimation(
-                name: "previewRotation",
-                from: Transform(),
-                to: Transform(rotation: simd_quatf(angle: .pi * 2, axis: SIMD3<Float>(0, 1, 0))),
-                duration: 3.0, // 3 seconds for full rotation
-                timing: .linear,
-                isAdditive: false,
-                bindTarget: .transform,
-                repeatMode: .repeat
-            )
-
-            if let animationResource = try? AnimationResource.generate(with: rotationAnimation) {
-                entity.playAnimation(animationResource)
-            }
-
-            // Create anchor at crosshair position
-            let anchor = AnchorEntity(world: position)
-            anchor.addChild(entity)
-
-            // Ground the preview object so its base sits on the surface
-            let bounds = entity.visualBounds(relativeTo: anchor)
-            let currentMinY = bounds.min.y  // Entity's lowest point relative to anchor
-            let desiredMinY: Float = 0  // We want the bottom of the object at anchor Y
-            let deltaY = desiredMinY - currentMinY
-            entity.position.y += deltaY
-
-            arView.scene.addAnchor(anchor)
-
-            previewObjectAnchor = anchor
-            previewObjectEntity = entity
-
-            print("✅ [Preview] Showing preview object at crosshair position: \(position)")
-        }
-
-        /// Create preview object at position (only called when object doesn't exist)
-        func updatePreviewObjectPosition(to position: SIMD3<Float>) {
-            // This method is now only responsible for initial creation
-            // Position updates are handled directly in the calling methods for better performance
-            guard previewObjectAnchor == nil else {
-                // Object already exists, position updates handled elsewhere
-                return
-            }
-
-            // Create the preview object
-            showPreviewObject(at: position)
-        }
-
-        /// Hide and remove preview object
-        func hidePreviewObject() {
-            if let anchor = previewObjectAnchor {
-                anchor.removeFromParent()
-                previewObjectAnchor = nil
-                previewObjectEntity = nil
-                print("⏹️ [Preview] Hidden preview object")
-            }
-        }
 
         /// Clean up all placement view additions (wireframes, previews, crosshairs)
         /// Called when placement view is dismissed to prevent artifacts in main AR view
@@ -821,9 +705,6 @@ struct ARPlacementARView: UIViewRepresentable {
             // Remove placement reticle
             placementReticle?.hide()
             print("   Hidden placement reticle")
-
-            // Remove preview object
-            hidePreviewObject()
 
             // NOTE: We intentionally do NOT remove placedObjectAnchor here because:
             // 1. We removed the call to placeObjectImmediately, so there's no preview object anymore
@@ -944,25 +825,6 @@ struct ARPlacementARView: UIViewRepresentable {
 
             // Update placement reticle position
             placementReticle?.update()
-
-            // PERFORMANCE FIX: Keep preview object visually aligned with reticle (no throttling for position)
-            // Only throttle expensive 3D model creation, not position updates
-            if !hasPlacedObject, let reticlePos = placementReticle?.getPlacementPosition() {
-                // Always update position for visual accuracy - this is cheap
-                if let existingAnchor = previewObjectAnchor {
-                    existingAnchor.position = reticlePos
-                } else {
-                    // Only create expensive 3D model with throttling
-                    let now = Date()
-                    if now.timeIntervalSince(lastPreviewUpdateTime) >= previewUpdateInterval {
-                        lastPreviewUpdateTime = now
-                        updatePreviewObjectPosition(to: reticlePos)
-                    }
-                }
-            } else if hasPlacedObject {
-                // Hide preview once object is placed
-                hidePreviewObject()
-            }
         }
         
         func placeAllObjectsAsWireframes() {
@@ -1385,43 +1247,6 @@ struct ARPlacementARView: UIViewRepresentable {
                 scale: scaleMultiplier
             )
 
-            // Convert preview object to persistent placed object that stays in shared AR scene
-            if let previewAnchor = previewObjectAnchor, let previewEntity = previewObjectEntity {
-                // Stop the rotation animation and make it fully opaque
-                previewEntity.stopAllAnimations()
-
-                // Make fully opaque by restoring original materials
-                if var modelComponent = previewEntity.model {
-                    // Remove transparency - restore original colors
-                    var newMaterials: [RealityKit.Material] = []
-                    for material in modelComponent.materials {
-                        if var simpleMaterial = material as? SimpleMaterial {
-                            // Remove alpha component to make fully opaque
-                            let originalTint = simpleMaterial.color.tint
-                            simpleMaterial.color = .init(tint: originalTint.withAlphaComponent(1.0))
-                            newMaterials.append(simpleMaterial)
-                        } else if var physicallyBasedMaterial = material as? PhysicallyBasedMaterial {
-                            // Remove alpha component to make fully opaque
-                            let originalTint = physicallyBasedMaterial.baseColor.tint
-                            physicallyBasedMaterial.baseColor = .init(tint: originalTint.withAlphaComponent(1.0))
-                            newMaterials.append(physicallyBasedMaterial)
-                        } else {
-                            newMaterials.append(material)
-                        }
-                    }
-                    modelComponent.materials = newMaterials
-                    previewEntity.model = modelComponent
-                }
-
-                // Move from preview to placed object tracking
-                placedObjectAnchor = previewAnchor
-                placedObjectEntity = previewEntity
-                previewObjectAnchor = nil
-                previewObjectEntity = nil
-
-                print("✅ [Placement] Converted preview object to persistent placed object - will remain in AR scene")
-            }
-
             // Save to API (for persistence across app restarts)
             onPlace(gpsCoordinate ?? arOriginGPS?.coordinate ?? CLLocationCoordinate2D(), adjustedPosition, arOriginGPS, surfaceY, scaleMultiplier)
         }
@@ -1755,7 +1580,71 @@ struct ARPlacementARView: UIViewRepresentable {
             
             return targetGPS
         }
-        
+
+        /// Hides the preview object by removing its anchor
+        func hidePreviewObject() {
+            if let previewAnchor = previewObjectAnchor {
+                previewAnchor.removeFromParent()
+                previewObjectAnchor = nil
+                print("👻 [Preview] Hidden preview object")
+            }
+        }
+
+        /// Updates the preview object position and creates it if needed
+        func updatePreviewObjectPosition(to position: SIMD3<Float>) {
+            guard let arView = arView else { return }
+
+            // Remove existing preview if it exists
+            hidePreviewObject()
+
+            // Create new preview object at the position
+            let tempLocation = LootBoxLocation(
+                id: "preview-\(UUID().uuidString)",
+                name: "Preview",
+                type: objectType,
+                latitude: 0, longitude: 0, // Not used for preview
+                radius: 5.0,
+                grounding_height: Double(position.y),
+                source: .map
+            )
+
+            // Get factory for this object type
+            let factory = LootBoxFactoryRegistry.factory(for: objectType)
+
+            // Create anchor at preview position
+            let anchor = AnchorEntity(world: position)
+
+            // Create the preview object entity using factory
+            let (entity, _) = factory.createEntity(location: tempLocation, anchor: anchor, sizeMultiplier: scaleMultiplier)
+
+            // Make preview semi-transparent by modifying materials
+            if let modelEntity = entity as? ModelEntity, let model = modelEntity.model {
+                var updatedMaterials = model.materials
+                for (index, material) in updatedMaterials.enumerated() {
+                    if var simpleMaterial = material as? SimpleMaterial {
+                        // Create a new material with reduced opacity
+                        var transparentMaterial = SimpleMaterial()
+                        transparentMaterial.color = .init(tint: UIColor.white.withAlphaComponent(0.7))
+                        transparentMaterial.roughness = simpleMaterial.roughness
+                        transparentMaterial.metallic = simpleMaterial.metallic
+                        updatedMaterials[index] = transparentMaterial
+                    }
+                }
+                modelEntity.model?.materials = updatedMaterials
+            }
+
+            // Add entity to anchor
+            anchor.addChild(entity)
+
+            // Add anchor to scene
+            arView.scene.addAnchor(anchor)
+
+            // Track the preview
+            previewObjectAnchor = anchor
+
+            print("👻 [Preview] Created preview object at position: \(position)")
+        }
+
         // MARK: - ARSessionDelegate
         // NOTE: This delegate method is only used when the placement view creates its own AR session
         // (fallback case when shared session is not available). When sharing the session from the main

@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from dotenv import load_dotenv
 import jwt
+import json
 
 # Set up file logging for map requests debugging
 log_dir = os.path.join(os.path.dirname(__file__), 'logs')

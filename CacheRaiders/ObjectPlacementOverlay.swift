@@ -9,9 +9,7 @@ struct ObjectPlacementOverlay: View {
     @Binding var placementDistance: Float?
 
     let objectType: LootBoxType
-    let hasPlacedObject: Bool
     let onPlaceObject: () -> Void
-    let onDone: () -> Void
     let onCancel: () -> Void
 
     var body: some View {
@@ -41,23 +39,6 @@ struct ObjectPlacementOverlay: View {
 
                 // Bottom: Action buttons
                 VStack(spacing: 16) {
-                    // Done button (shown when object is placed)
-                    if hasPlacedObject {
-                        Button(action: onDone) {
-                            HStack {
-                                Image(systemName: "checkmark.circle.fill")
-                                Text("Done")
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 32)
-                            .padding(.vertical, 14)
-                            .background(Color.green.opacity(0.9))
-                            .cornerRadius(25)
-                            .shadow(color: .green.opacity(0.5), radius: 10, x: 0, y: 0)
-                        }
-                    }
-                    
                     // Placement button
                     Button(action: onPlaceObject) {
                         VStack(spacing: 8) {
@@ -133,9 +114,7 @@ struct ObjectPlacementOverlay_Previews: PreviewProvider {
             placementPosition: .constant(SIMD3<Float>(2.5, -0.8, -3.2)),
             placementDistance: .constant(4.2),
             objectType: .sphere,
-            hasPlacedObject: false,
             onPlaceObject: {},
-            onDone: {},
             onCancel: {}
         )
     }

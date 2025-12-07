@@ -216,7 +216,7 @@ struct MapPieceDetailsView: View {
 // MARK: - Preview
 struct InventoryView_Previews: PreviewProvider {
     static var previews: some View {
-        let inventoryService = InventoryService()
+        let inventoryService = InventoryService.shared
 
         // Add some sample items for preview
         let mockMapPiece = MapPiece(

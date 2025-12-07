@@ -49,18 +49,17 @@ struct ObjectInfoPanel: View {
                     InfoRow(label: "Name", value: location.name)
                     InfoRow(label: "Type", value: location.type.displayName)
 
-                    Group {
-                        if let createdBy = location.created_by {
-                            let placerDisplay: String
+                    if let createdBy = location.created_by {
+                        let placerDisplay: String = {
                             if createdBy == APIService.shared.currentUserID {
-                                placerDisplay = "You"
+                                return "You"
                             } else if createdBy == "admin-web-ui" {
-                                placerDisplay = "Admin"
+                                return "Admin"
                             } else {
-                                placerDisplay = "Another user"
+                                return "Another user"
                             }
-                            InfoRow(label: "Placed by", value: placerDisplay)
-                        }
+                        }()
+                        InfoRow(label: "Placed by", value: placerDisplay)
                     }
 
                     // Placement method

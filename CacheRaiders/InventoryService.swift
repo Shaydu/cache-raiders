@@ -125,7 +125,6 @@ struct InventoryItem: Identifiable, Codable, Equatable {
             name: name,
             description: description,
             icon: icon,
-            obtainedDate: obtainedDate,
             sourceNPC: sourceNPC,
             mapPieceData: mapPieceData
         )

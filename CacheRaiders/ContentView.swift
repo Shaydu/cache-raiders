@@ -7,7 +7,7 @@ struct ContentView: View {
     @StateObject private var userLocationManager = UserLocationManager()
     @StateObject private var treasureHuntService = TreasureHuntService()
     @StateObject private var gridTreasureMapService = GridTreasureMapService()
-    @StateObject private var inventoryService = InventoryService()
+    @ObservedObject private var inventoryService = InventoryService.shared
     
     // Grid treasure map modal state (separate from sheets)
     @State private var showGridTreasureMap = false
