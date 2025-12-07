@@ -1079,4 +1079,92 @@ class APIService {
             throw APIError.serverError(deleteResponse.message)
         }
     }
+
+    // MARK: - Inventory Management
+
+    func getInventory() async throws -> [[String: Any]] {
+        let url = URL(string: "\(baseURL)/api/inventory/\(currentUserID)")!
+        let (data, response) = try await session.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw APIError.serverError("Failed to get inventory")
+        }
+
+        guard let jsonArray = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            throw APIError.decodingError("Invalid inventory response")
+        }
+
+        return jsonArray
+    }
+
+    func addInventoryItem(_ item: InventoryItem) async throws {
+        let url = URL(string: "\(baseURL)/api/inventory/\(currentUserID)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        // Convert item to server format
+        var itemData: [String: Any] = [
+            "id": item.id,
+            "type": item.type.rawValue,
+            "name": item.name,
+            "description": item.description,
+            "icon": item.icon,
+            "obtained_date": ISO8601DateFormatter().string(from: item.obtainedDate)
+        ]
+
+        if let sourceNPC = item.sourceNPC {
+            itemData["source_npc"] = sourceNPC
+        }
+
+        if let mapData = item.mapPieceData {
+            itemData["map_piece_data"] = [
+                "piece_number": mapData.pieceNumber,
+                "total_pieces": mapData.totalPieces,
+                "npc_name": mapData.npcName,
+                "hint": mapData.hint,
+                "approximate_latitude": mapData.approximateLatitude,
+                "approximate_longitude": mapData.approximateLongitude,
+                "is_first_half": mapData.isFirstHalf,
+                "clue": mapData.clue,
+                "landmarks": mapData.landmarks
+            ]
+        }
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: itemData)
+
+        let (_, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 201 else {
+            throw APIError.serverError("Failed to add inventory item")
+        }
+    }
+
+    func deleteInventoryItem(itemId: String) async throws {
+        let url = URL(string: "\(baseURL)/api/inventory/\(currentUserID)/\(itemId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+
+        let (_, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw APIError.serverError("Failed to delete inventory item")
+        }
+    }
+
+    func resetPlayerInventory() async throws {
+        let url = URL(string: "\(baseURL)/api/inventory/\(currentUserID)/reset")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+
+        let (_, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200 else {
+            throw APIError.serverError("Failed to reset inventory")
+        }
+    }
 }

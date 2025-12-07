@@ -497,6 +497,14 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             name: NSNotification.Name("ObjectCreatedRealtime"),
             object: nil
         )
+
+        // Listen for real-time object deletion via WebSocket
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRealtimeObjectDeleted),
+            name: NSNotification.Name("ObjectDeletedRealtime"),
+            object: nil
+        )
         
         // Initialize managers
         environmentManager = AREnvironmentManager(arView: arView, locationManager: locationManager)
@@ -5213,6 +5221,48 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 self.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
             } else {
                 Swift.print("ℹ️ New object is outside search range - will appear when user moves closer")
+            }
+        }
+    }
+
+    @objc private func handleRealtimeObjectDeleted(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let objectId = userInfo["object_id"] as? String else {
+            Swift.print("⚠️ Real-time object deleted notification missing object_id")
+            return
+        }
+
+        Swift.print("🗑️ Real-time object deleted - removing from AR: '\(objectId)'")
+
+        Task { @MainActor in
+            guard let arView = self.arView else {
+                Swift.print("⚠️ Cannot remove object - AR view not available")
+                return
+            }
+
+            // Remove the object from AR scene if it's currently placed
+            if let findableObject = self.findableObjects[objectId] {
+                let objectName = findableObject.location?.name ?? "Unknown"
+                Swift.print("   Removing object '\(objectName)' from AR scene")
+
+                // Remove from AR scene
+                findableObject.anchor.removeFromParent()
+
+                // Clean up tracking
+                self.findableObjects.removeValue(forKey: objectId)
+                self.objectsInViewport.remove(objectId)
+                self.objectPlacementTimes.removeValue(forKey: objectId)
+
+                // Update manager references
+                self.updateManagerReferences()
+
+                // Clear found sets so object can be re-placed if it gets recreated
+                self.distanceTracker?.foundLootBoxes.remove(objectId)
+                self.tapHandler?.foundLootBoxes.remove(objectId)
+
+                Swift.print("✅ Object '\(objectName)' removed from AR scene")
+            } else {
+                Swift.print("ℹ️ Object '\(objectId)' was not currently placed in AR - nothing to remove")
             }
         }
     }

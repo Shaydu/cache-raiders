@@ -364,14 +364,24 @@ struct ARViewContainer: UIViewRepresentable {
         print("👆 [GESTURE SETUP] Adding tap gesture recognizer")
         print("   Coordinator tapHandler exists: \(context.coordinator.tapHandler != nil)")
         print("   ARView isUserInteractionEnabled: \(arView.isUserInteractionEnabled)")
-        let tapGesture = UITapGestureRecognizer(target: context.coordinator.tapHandler, action: #selector(ARTapHandler.handleTap(_:)))
+
+        // Check if tapHandler exists
+        let tapHandler = context.coordinator.tapHandler
+        let hasTapHandler = tapHandler != nil
+        print("   TapHandler exists: \(hasTapHandler)")
+
+        let tapGesture = UITapGestureRecognizer(target: tapHandler, action: #selector(ARTapHandler.handleTap(_:)))
         tapGesture.cancelsTouchesInView = false
         tapGesture.delaysTouchesBegan = false
         tapGesture.delaysTouchesEnded = false
+        tapGesture.numberOfTapsRequired = 1
+        tapGesture.numberOfTouchesRequired = 1
+
         arView.addGestureRecognizer(tapGesture)
         print("✅ Tap gesture added to ARView")
-        print("   Tap gesture target: \(tapGesture.target != nil ? "SET" : "NIL")")
-        print("   Tap gesture action: \(tapGesture.action != nil ? "SET" : "NIL")")
+        print("   Tap gesture enabled: \(tapGesture.isEnabled)")
+        print("   Tap gesture numberOfTapsRequired: \(tapGesture.numberOfTapsRequired)")
+        print("   Tap gesture numberOfTouchesRequired: \(tapGesture.numberOfTouchesRequired)")
 
         // Long press gesture for viewing object details
         print("👆 [GESTURE SETUP] Adding long press gesture recognizer")
@@ -398,6 +408,38 @@ struct ARViewContainer: UIViewRepresentable {
         print("   Thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
 
         let coordinator = context.coordinator
+
+        // Ensure gesture recognizers are present (they might have been cleared by session resets)
+        let existingTapGestures = uiView.gestureRecognizers?.filter { $0 is UITapGestureRecognizer } ?? []
+        let existingLongPressGestures = uiView.gestureRecognizers?.filter { $0 is UILongPressGestureRecognizer } ?? []
+
+        if existingTapGestures.isEmpty || existingLongPressGestures.isEmpty {
+            print("🔄 [GESTURE CHECK] Missing gesture recognizers in updateUIView, re-adding")
+            print("   Existing gestures: \(uiView.gestureRecognizers?.count ?? 0)")
+
+            // Remove any existing gestures to avoid conflicts
+            if let existingGestures = uiView.gestureRecognizers {
+                for gesture in existingGestures {
+                    uiView.removeGestureRecognizer(gesture)
+                }
+            }
+
+            // Re-add gestures
+            let tapHandler = context.coordinator.tapHandler
+            if tapHandler != nil {
+                let tapGesture = UITapGestureRecognizer(target: tapHandler, action: #selector(ARTapHandler.handleTap(_:)))
+                tapGesture.cancelsTouchesInView = false
+                tapGesture.delaysTouchesBegan = false
+                tapGesture.delaysTouchesEnded = false
+                uiView.addGestureRecognizer(tapGesture)
+
+                let longPressGesture = UILongPressGestureRecognizer(target: tapHandler, action: #selector(ARTapHandler.handleLongPress(_:)))
+                longPressGesture.minimumPressDuration = 0.5
+                uiView.addGestureRecognizer(longPressGesture)
+
+                print("✅ Gesture recognizers re-added in updateUIView")
+            }
+        }
         
         // Throttle updateUIView to prevent excessive calls and freezing
         let now = Date()
@@ -459,6 +501,33 @@ struct ARViewContainer: UIViewRepresentable {
                 print("🔄 Lens changed - session reset, objects will be re-placed when tracking is ready")
                 // Set flag to force re-placement when AR tracking is ready
                 context.coordinator.shouldForceReplacement = true
+
+                // CRITICAL: Re-add gesture recognizers after session reset
+                // Session resets can clear gesture recognizers
+                print("🔄 Lens changed - re-adding gesture recognizers after session reset")
+                let tapHandler = context.coordinator.tapHandler
+                if tapHandler != nil {
+                    // Remove existing gestures first to avoid duplicates
+                    if let existingGestures = uiView.gestureRecognizers {
+                        for gesture in existingGestures {
+                            uiView.removeGestureRecognizer(gesture)
+                        }
+                    }
+
+                    // Re-add tap gesture
+                    let tapGesture = UITapGestureRecognizer(target: tapHandler, action: #selector(ARTapHandler.handleTap(_:)))
+                    tapGesture.cancelsTouchesInView = false
+                    tapGesture.delaysTouchesBegan = false
+                    tapGesture.delaysTouchesEnded = false
+                    uiView.addGestureRecognizer(tapGesture)
+
+                    // Re-add long press gesture
+                    let longPressGesture = UILongPressGestureRecognizer(target: tapHandler, action: #selector(ARTapHandler.handleLongPress(_:)))
+                    longPressGesture.minimumPressDuration = 0.5
+                    uiView.addGestureRecognizer(longPressGesture)
+
+                    print("✅ Gesture recognizers re-added after session reset")
+                }
             }
 
             // Remember the lens we just applied to prevent redundant updates

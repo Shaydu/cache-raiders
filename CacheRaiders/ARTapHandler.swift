@@ -61,7 +61,6 @@ class ARTapHandler {
     @objc func handleTap(_ sender: UITapGestureRecognizer) {
         Swift.print("👆 ========== TAP DETECTED ==========")
         Swift.print("   Gesture recognizer state: \(sender.state.rawValue)")
-        Swift.print("   Tap location in view: \(sender.location(in: sender.view))")
         Swift.print("   ARView exists: \(arView != nil)")
         Swift.print("   LocationManager exists: \(locationManager != nil)")
         Swift.print("   Current frame exists: \(arView?.session.currentFrame != nil)")
@@ -74,13 +73,17 @@ class ARTapHandler {
         }
 
         let tapLocation = sender.location(in: arView)
+        Swift.print("   Tap location in ARView: \(tapLocation)")
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
 
         Swift.print("   Screen location: (\(tapLocation.x), \(tapLocation.y))")
         Swift.print("   Placed boxes: \(placedBoxes.count) - \(placedBoxes.keys.sorted())")
+        Swift.print("   Findable objects: \(findableObjects.count) - \(findableObjects.keys.sorted())")
         Swift.print("   Placed NPCs: \(placedNPCs.count) - \(placedNPCs.keys.sorted())")
+        Swift.print("   Found loot boxes: \(foundLootBoxes.count) - \(Array(foundLootBoxes))")
         Swift.print("   onNPCTap callback exists: \(onNPCTap != nil)")
+        Swift.print("   onFindLootBox callback exists: \(onFindLootBox != nil)")
 
         // Get screen center for crosshair placement
         let screenCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)

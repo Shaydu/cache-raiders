@@ -10,6 +10,65 @@ enum InventoryItemType: String, Codable {
     case other = "other"
 }
 
+// MARK: - Inventory Sync Service
+class InventorySyncService {
+    static let shared = InventorySyncService()
+
+    private init() {
+        setupWebSocketListeners()
+    }
+
+    private func setupWebSocketListeners() {
+        // Listen for inventory synchronization events
+        WebSocketService.shared.onInventoryItemAdded = { [weak self] itemData in
+            self?.handleInventoryItemAdded(itemData)
+        }
+
+        WebSocketService.shared.onInventoryItemDeleted = { [weak self] deleteData in
+            self?.handleInventoryItemDeleted(deleteData)
+        }
+
+        WebSocketService.shared.onInventoryReset = { [weak self] resetData in
+            self?.handleInventoryReset(resetData)
+        }
+    }
+
+    private func handleInventoryItemAdded(_ itemData: [String: Any]) {
+        guard let deviceUUID = itemData["device_uuid"] as? String,
+              let item = itemData["item"] as? [String: Any],
+              deviceUUID == APIService.shared.currentUserID else {
+            return // Not for this device
+        }
+
+        // Convert server item data to InventoryItem
+        if let inventoryItem = InventoryItem.fromServerData(item) {
+            InventoryService.shared.addItem(inventoryItem)
+            print("📦 [InventorySync] Item added via WebSocket: \(inventoryItem.name)")
+        }
+    }
+
+    private func handleInventoryItemDeleted(_ deleteData: [String: Any]) {
+        guard let deviceUUID = deleteData["device_uuid"] as? String,
+              let itemId = deleteData["item_id"] as? String,
+              deviceUUID == APIService.shared.currentUserID else {
+            return // Not for this device
+        }
+
+        InventoryService.shared.removeItem(withId: itemId)
+        print("🗑️ [InventorySync] Item deleted via WebSocket: \(itemId)")
+    }
+
+    private func handleInventoryReset(_ resetData: [String: Any]) {
+        guard let deviceUUID = resetData["device_uuid"] as? String,
+              deviceUUID == APIService.shared.currentUserID else {
+            return // Not for this device
+        }
+
+        InventoryService.shared.reset()
+        print("🔄 [InventorySync] Inventory reset via WebSocket")
+    }
+}
+
 // MARK: - Inventory Item
 struct InventoryItem: Identifiable, Codable, Equatable {
     let id: String
@@ -32,6 +91,44 @@ struct InventoryItem: Identifiable, Codable, Equatable {
         self.obtainedDate = Date()
         self.sourceNPC = sourceNPC
         self.mapPieceData = mapPieceData
+    }
+
+    // MARK: - Server Data Conversion
+    static func fromServerData(_ data: [String: Any]) -> InventoryItem? {
+        guard let id = data["id"] as? String,
+              let typeString = data["type"] as? String,
+              let type = InventoryItemType(rawValue: typeString),
+              let name = data["name"] as? String,
+              let description = data["description"] as? String,
+              let icon = data["icon"] as? String else {
+            return nil
+        }
+
+        let sourceNPC = data["source_npc"] as? String
+
+        // Parse map piece data if present
+        var mapPieceData: MapPieceData? = nil
+        if let mapData = data["map_piece_data"] as? [String: Any] {
+            mapPieceData = MapPieceData.fromServerData(mapData)
+        }
+
+        // Parse obtained date
+        var obtainedDate = Date()
+        if let dateString = data["obtained_date"] as? String,
+           let date = ISO8601DateFormatter().date(from: dateString) {
+            obtainedDate = date
+        }
+
+        return InventoryItem(
+            id: id,
+            type: type,
+            name: name,
+            description: description,
+            icon: icon,
+            obtainedDate: obtainedDate,
+            sourceNPC: sourceNPC,
+            mapPieceData: mapPieceData
+        )
     }
 
     // Convenience initializer for map pieces
@@ -96,17 +193,73 @@ struct MapPieceData: Codable, Equatable {
         self.isFirstHalf = mapPiece.is_first_half
         self.clue = mapPiece.clue
     }
+
+    static func fromServerData(_ data: [String: Any]) -> MapPieceData? {
+        guard let pieceNumber = data["piece_number"] as? Int,
+              let totalPieces = data["total_pieces"] as? Int,
+              let npcName = data["npc_name"] as? String,
+              let hint = data["hint"] as? String,
+              let latitude = data["approximate_latitude"] as? Double,
+              let longitude = data["approximate_longitude"] as? Double,
+              let isFirstHalf = data["is_first_half"] as? Bool,
+              let clue = data["clue"] as? String else {
+            return nil
+        }
+
+        let landmarks = data["landmarks"] as? [Landmark]
+
+        return MapPieceData(
+            pieceNumber: pieceNumber,
+            totalPieces: totalPieces,
+            npcName: npcName,
+            hint: hint,
+            approximateLatitude: latitude,
+            approximateLongitude: longitude,
+            landmarks: landmarks,
+            isFirstHalf: isFirstHalf,
+            clue: clue
+        )
+    }
 }
 
 // MARK: - Inventory Service
 class InventoryService: ObservableObject {
+    static let shared = InventoryService()
+
     @Published var items: [InventoryItem] = []
     @Published var hasNewItems: Bool = false
 
     private let inventoryKey = "inventory_items"
+    private var isInitialized = false
 
-    init() {
+    private init() {
         loadInventory()
+        // Initialize sync service
+        _ = InventorySyncService.shared
+    }
+
+    // MARK: - Server Synchronization
+
+    func syncWithServer() async throws {
+        print("🔄 [InventoryService] Syncing inventory with server...")
+        let serverItems = try await APIService.shared.getInventory()
+
+        // Convert server items to InventoryItem objects
+        var syncedItems: [InventoryItem] = []
+        for itemData in serverItems {
+            if let item = InventoryItem.fromServerData(itemData) {
+                syncedItems.append(item)
+            }
+        }
+
+        // Update local inventory
+        await MainActor.run {
+            self.items = syncedItems
+            self.saveInventory()
+            self.isInitialized = true
+        }
+
+        print("✅ [InventoryService] Synced \(syncedItems.count) items from server")
     }
 
     // MARK: - Add Items
@@ -127,6 +280,18 @@ class InventoryService: ObservableObject {
                 object: nil,
                 userInfo: ["item": item]
             )
+
+            // Sync to server if initialized
+            if isInitialized {
+                Task {
+                    do {
+                        try await APIService.shared.addInventoryItem(item)
+                        print("📤 [InventoryService] Synced item to server: \(item.name)")
+                    } catch {
+                        print("❌ [InventoryService] Failed to sync item to server: \(error.localizedDescription)")
+                    }
+                }
+            }
         }
 
         saveInventory()
@@ -168,6 +333,18 @@ class InventoryService: ObservableObject {
     func removeItem(withId id: String) {
         items.removeAll { $0.id == id }
         saveInventory()
+
+        // Sync deletion to server if initialized
+        if isInitialized {
+            Task {
+                do {
+                    try await APIService.shared.deleteInventoryItem(itemId: id)
+                    print("🗑️ [InventoryService] Synced item deletion to server: \(id)")
+                } catch {
+                    print("❌ [InventoryService] Failed to sync item deletion to server: \(error.localizedDescription)")
+                }
+            }
+        }
     }
 
     func clearNewItemsFlag() {

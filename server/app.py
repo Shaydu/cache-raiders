@@ -1632,6 +1632,184 @@ def kick_player(device_uuid: str):
         'sessions_disconnected': disconnected_count
     }), 200
 
+# INVENTORY MANAGEMENT ENDPOINTS
+@app.route('/api/inventory/<device_uuid>', methods=['GET'])
+def get_player_inventory(device_uuid: str):
+    """Get all collected items for a player."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        SELECT item_id, item_type, item_name, item_description, item_icon,
+               source_npc, map_piece_data, obtained_at
+        FROM player_inventory
+        WHERE device_uuid = ?
+        ORDER BY obtained_at DESC
+    ''', (device_uuid,))
+
+    items = []
+    for row in cursor.fetchall():
+        item = {
+            'id': row['item_id'],
+            'type': row['item_type'],
+            'name': row['item_name'],
+            'description': row['item_description'],
+            'icon': row['item_icon'],
+            'source_npc': row['source_npc'],
+            'obtained_date': row['obtained_at']
+        }
+
+        # Parse map piece data if present
+        if row['map_piece_data']:
+            try:
+                item['map_piece_data'] = json.loads(row['map_piece_data'])
+            except:
+                item['map_piece_data'] = None
+        else:
+            item['map_piece_data'] = None
+
+        items.append(item)
+
+    conn.close()
+    return jsonify(items), 200
+
+@app.route('/api/inventory/<device_uuid>', methods=['POST'])
+def add_inventory_item(device_uuid: str):
+    """Add an item to a player's inventory."""
+    data = request.json
+
+    required_fields = ['id', 'type', 'name', 'description', 'icon']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Check if item already exists
+        cursor.execute('SELECT id FROM player_inventory WHERE device_uuid = ? AND item_id = ?',
+                      (device_uuid, data['id']))
+        if cursor.fetchone():
+            conn.close()
+            return jsonify({'error': 'Item already exists in inventory'}), 409
+
+        # Insert new item
+        cursor.execute('''
+            INSERT INTO player_inventory
+            (device_uuid, item_id, item_type, item_name, item_description, item_icon,
+             source_npc, map_piece_data, obtained_at, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            device_uuid,
+            data['id'],
+            data['type'],
+            data['name'],
+            data['description'],
+            data['icon'],
+            data.get('source_npc'),
+            json.dumps(data.get('map_piece_data')) if data.get('map_piece_data') else None,
+            data.get('obtained_date', datetime.utcnow().isoformat()),
+            datetime.utcnow().isoformat()
+        ))
+
+        conn.commit()
+        conn.close()
+
+        # Broadcast inventory update via WebSocket
+        socketio.emit('inventory_item_added', {
+            'device_uuid': device_uuid,
+            'item': data
+        })
+
+        return jsonify({
+            'message': 'Item added to inventory successfully',
+            'item_id': data['id']
+        }), 201
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': f'Database error: {str(e)}'}), 500
+
+@app.route('/api/inventory/<device_uuid>/<item_id>', methods=['DELETE'])
+def delete_inventory_item(device_uuid: str, item_id: str):
+    """Delete an item from a player's inventory."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Check if item exists
+        cursor.execute('SELECT item_name FROM player_inventory WHERE device_uuid = ? AND item_id = ?',
+                      (device_uuid, item_id))
+        item = cursor.fetchone()
+        if not item:
+            conn.close()
+            return jsonify({'error': 'Item not found in inventory'}), 404
+
+        # Delete the item
+        cursor.execute('DELETE FROM player_inventory WHERE device_uuid = ? AND item_id = ?',
+                      (device_uuid, item_id))
+
+        if cursor.rowcount == 0:
+            conn.close()
+            return jsonify({'error': 'Failed to delete item'}), 500
+
+        conn.commit()
+        conn.close()
+
+        # Broadcast inventory deletion via WebSocket
+        socketio.emit('inventory_item_deleted', {
+            'device_uuid': device_uuid,
+            'item_id': item_id,
+            'item_name': item['item_name']
+        })
+
+        return jsonify({
+            'message': 'Item deleted from inventory successfully',
+            'item_id': item_id
+        }), 200
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': f'Database error: {str(e)}'}), 500
+
+@app.route('/api/inventory/<device_uuid>/reset', methods=['POST'])
+def reset_player_inventory(device_uuid: str):
+    """Reset/clear all items from a player's inventory."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    try:
+        # Get count before deletion for response
+        cursor.execute('SELECT COUNT(*) as count FROM player_inventory WHERE device_uuid = ?',
+                      (device_uuid,))
+        count_before = cursor.fetchone()['count']
+
+        # Delete all items for this player
+        cursor.execute('DELETE FROM player_inventory WHERE device_uuid = ?', (device_uuid,))
+
+        deleted_count = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        # Broadcast inventory reset via WebSocket
+        socketio.emit('inventory_reset', {
+            'device_uuid': device_uuid,
+            'items_removed': deleted_count
+        })
+
+        return jsonify({
+            'message': f'Player inventory reset successfully. {deleted_count} item(s) removed.',
+            'items_removed': deleted_count
+        }), 200
+
+    except sqlite3.Error as e:
+        conn.rollback()
+        conn.close()
+        return jsonify({'error': f'Database error: {str(e)}'}), 500
+
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
     """Get statistics about objects and finds."""

@@ -608,6 +608,14 @@ class LootBoxLocationManager: ObservableObject {
             name: NSNotification.Name("WebSocketObjectCreated"),
             object: nil
         )
+
+        // Set up NotificationCenter observer for real-time object deletion
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWebSocketObjectDeleted(_:)),
+            name: NSNotification.Name("WebSocketObjectDeleted"),
+            object: nil
+        )
     }
 
     /// Handle real-time object creation via WebSocket
@@ -660,6 +668,38 @@ class LootBoxLocationManager: ObservableObject {
                 object: nil,
                 userInfo: ["location": lootBoxLocation]
             )
+        }
+    }
+
+    /// Handle real-time object deletion via WebSocket
+    @objc private func handleWebSocketObjectDeleted(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let objectId = userInfo["object_id"] as? String else {
+            print("⚠️ [LootBoxLocationManager] Invalid WebSocketObjectDeleted notification")
+            return
+        }
+
+        print("🗑️ [LootBoxLocationManager] Received object deletion for: \(objectId)")
+
+        // Find and remove the location from our local array
+        if let index = locations.firstIndex(where: { $0.id == objectId }) {
+            locations.remove(at: index)
+            print("✅ [LootBoxLocationManager] Removed object \(objectId) from local locations")
+
+            // Save the updated locations
+            saveLocations()
+
+            // Notify AR coordinator to remove from AR scene
+            NotificationCenter.default.post(
+                name: NSNotification.Name("ObjectDeletedRealtime"),
+                object: nil,
+                userInfo: ["object_id": objectId]
+            )
+
+            // Notify that objects changed (for UI updates)
+            onSizeChanged?()
+        } else {
+            print("⚠️ [LootBoxLocationManager] Object \(objectId) not found in local locations")
         }
     }
     

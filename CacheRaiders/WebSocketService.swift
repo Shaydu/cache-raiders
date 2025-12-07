@@ -66,6 +66,11 @@ class WebSocketService: ObservableObject {
     var onLocationUpdateIntervalChanged: ((Double) -> Void)? // (interval_seconds)
     var onGameModeChanged: ((String) -> Void)? // (game_mode)
     var onObjectUpdated: (([String: Any]) -> Void)? // Object update data
+
+    // Inventory synchronization callbacks
+    var onInventoryItemAdded: (([String: Any]) -> Void)? // Item added to inventory
+    var onInventoryItemDeleted: (([String: Any]) -> Void)? // Item deleted from inventory
+    var onInventoryReset: (([String: Any]) -> Void)? // Inventory reset
     
     var baseURL: String {
         // Use the same validated baseURL as APIService to ensure consistency
@@ -532,6 +537,24 @@ class WebSocketService: ObservableObject {
             // iOS clients don't need to handle these events as they don't display
             // other users on a multiplayer map. Just acknowledge and ignore.
             print("📍 [WebSocket] Received user_location_updated event (admin tracking only)")
+
+        case "inventory_item_added":
+            print("📦 [WebSocket] Inventory item added event received")
+            DispatchQueue.main.async {
+                self.onInventoryItemAdded?(eventData)
+            }
+
+        case "inventory_item_deleted":
+            print("🗑️ [WebSocket] Inventory item deleted event received")
+            DispatchQueue.main.async {
+                self.onInventoryItemDeleted?(eventData)
+            }
+
+        case "inventory_reset":
+            print("🔄 [WebSocket] Inventory reset event received")
+            DispatchQueue.main.async {
+                self.onInventoryReset?(eventData)
+            }
 
         default:
             print("📨 Received unhandled Socket.IO event: \(eventName)")
