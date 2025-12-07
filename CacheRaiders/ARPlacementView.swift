@@ -17,6 +17,7 @@ struct ARPlacementView: View {
     @State private var placementMode: PlacementMode = .selecting
     @State private var isMultifindable: Bool = false // Default to single-find for map placement
     @State private var newObjectName: String = "" // Name for new objects
+    @State private var scaleMultiplier: Float = 1.0
     
     enum PlacementMode {
         case selecting
@@ -205,6 +206,40 @@ struct ARPlacementView: View {
                         Button("Done") {
                             dismiss()
                         }
+                    }
+                }
+
+                // Scale control for placement mode
+                if placementMode == .placing {
+                    ToolbarItem(placement: .bottomBar) {
+                        VStack(spacing: 6) {
+                            Text("Scale: \(String(format: "%.2fx", scaleMultiplier))")
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
+
+                            Slider(
+                                value: $scaleMultiplier,
+                                in: 0.1...5.0,
+                                step: 0.1
+                            )
+                            .accentColor(.cyan)
+                            .padding(.horizontal)
+
+                            HStack {
+                                Text("0.1x")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                                Text("5.0x")
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.horizontal)
+                        }
+                        .padding(.vertical, 8)
+                        .background(Color(.systemBackground).opacity(0.9))
+                        .cornerRadius(12)
+                        .padding(.horizontal)
                     }
                 }
             }
@@ -433,10 +468,10 @@ struct ARPlacementARViewWrapper: View {
     let onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void
     let onCancel: () -> Void
     let onDone: () -> Void
+    @Binding var scaleMultiplier: Float
 
     @StateObject private var placementReticle = ARPlacementReticle(arView: nil, locationManager: nil)
     @State private var isPlacementMode = true
-    @State private var scaleMultiplier: Float = 1.0
     @State private var coordinator: ARPlacementARView.Coordinator?
     @State private var hasPlacedObject = false
 
@@ -479,7 +514,6 @@ struct ARPlacementARViewWrapper: View {
                 isPlacementMode: $isPlacementMode,
                 placementPosition: $placementReticle.currentPosition,
                 placementDistance: $placementReticle.distanceFromCamera,
-                scaleMultiplier: $scaleMultiplier,
                 objectType: objectType,
                 hasPlacedObject: hasPlacedObject,
                 onPlaceObject: {
@@ -493,7 +527,8 @@ struct ARPlacementARViewWrapper: View {
                     }
                     onDone()
                 },
-                onCancel: onCancel
+                onCancel: onCancel,
+                scaleMultiplier: $scaleMultiplier
             )
         }
         .onChange(of: coordinator?.hasPlacedObject ?? false) { oldValue, newValue in

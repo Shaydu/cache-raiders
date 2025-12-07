@@ -1351,6 +1351,140 @@ struct TurkeyFactory: LootBoxFactory {
     }
 }
 
+struct TerrorEngineFactory: LootBoxFactory {
+    var iconName: String { "engine.combustion.fill" }
+    var modelNames: [String] { ["Terror_Engine_-_Leather_Ghost"] }
+    var color: UIColor { UIColor(red: 0.3, green: 0.2, blue: 0.1, alpha: 1.0) } // Dark leather/metal
+    var glowColor: UIColor { UIColor(red: 0.8, green: 0.4, blue: 0.2, alpha: 1.0) } // Fiery orange glow
+    var size: Float { 0.8 }
+    var itemNames: [String] { ["Terror Engine", "Ancient Engine", "Leather Ghost Engine"] }
+
+    func itemDescription() -> String {
+        return itemNames.randomElement() ?? "Terror Engine"
+    }
+
+    func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
+        // Create container with custom open behavior
+        let container = createContainer(location: location, sizeMultiplier: sizeMultiplier)!
+        let entity = container.container
+        entity.name = location.id
+
+        // Position terror engine so its base sits on the ground
+        let baseSize = size * sizeMultiplier
+        let yOffset = baseSize * 0.3 // Offset to place base on ground
+        entity.position = SIMD3<Float>(0, yOffset, 0)
+
+        // Ensure entity is enabled and visible
+        entity.isEnabled = true
+
+        let findableObject = FindableObject(
+            locationId: location.id,
+            anchor: anchor,
+            sphereEntity: nil,
+            container: container,
+            location: location
+        )
+
+        return (entity, findableObject)
+    }
+
+    func createContainer(location: LootBoxLocation, sizeMultiplier: Float) -> LootBoxContainer? {
+        return TerrorEngineLootContainer.create(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
+    }
+
+    func animateFind(entity: ModelEntity, container: LootBoxContainer?, tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
+        // Create confetti effect
+        let parentEntity = container?.container.parent ?? entity.parent ?? entity
+        let confettiPosition: SIMD3<Float>
+        if let tapPos = tapWorldPosition {
+            let parentTransform = parentEntity.transformMatrix(relativeTo: nil)
+            let parentWorldPos = SIMD3<Float>(
+                parentTransform.columns.3.x,
+                parentTransform.columns.3.y,
+                parentTransform.columns.3.z
+            )
+            confettiPosition = tapPos - parentWorldPos
+        } else {
+            confettiPosition = entity.position
+        }
+        LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
+
+        // Play sound
+        playFindSound()
+
+        // Open the terror engine
+        if let container = container {
+            openTerrorEngine(container: container, onComplete: onComplete)
+        } else {
+            onComplete()
+        }
+    }
+
+    func animateLoop(entity: ModelEntity) {
+        // Terror engine doesn't have continuous loop animations
+    }
+
+    func playFindSound() {
+        LootBoxAnimation.playOpeningSoundWithHaptics()
+    }
+
+    private func openTerrorEngine(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+        container.prize.isEnabled = true
+
+        let prizeStartPos = container.prize.position
+        let prizeEndPos = SIMD3<Float>(prizeStartPos.x, prizeStartPos.y + 0.4, prizeStartPos.z)
+
+        let prizeTransform = Transform(
+            scale: container.prize.scale,
+            rotation: container.prize.orientation,
+            translation: prizeEndPos
+        )
+
+        container.prize.move(
+            to: prizeTransform,
+            relativeTo: container.container,
+            duration: 1.0,
+            timingFunction: .easeOut
+        )
+
+        animatePrizeRotation(prize: container.prize, duration: 1.0)
+
+        var completionCalled = false
+        let safeCompletion = {
+            if !completionCalled {
+                completionCalled = true
+                onComplete()
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            safeCompletion()
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            safeCompletion()
+        }
+    }
+
+    private func animatePrizeRotation(prize: ModelEntity, duration: Float) {
+        var currentRotation: Float = 0
+        let rotationSpeed: Float = Float.pi * 2 / duration
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { timer in
+            currentRotation += rotationSpeed * 0.016
+            if currentRotation >= Float.pi * 2 {
+                timer.invalidate()
+                prize.orientation = simd_quatf(angle: Float.pi * 2, axis: SIMD3<Float>(0, 1, 0))
+            } else {
+                prize.orientation = simd_quatf(angle: currentRotation, axis: SIMD3<Float>(0, 1, 0))
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + Double(duration)) {
+            timer.invalidate()
+        }
+    }
+}
+
 // MARK: - Factory Registry (replaces switch statement for better decoupling)
 /// Centralized registry for all loot box factories
 /// This eliminates the need for switch statements when accessing factories
@@ -1363,7 +1497,8 @@ struct LootBoxFactoryRegistry {
         .templeRelic: TempleRelicFactory(),
         .sphere: SphereFactory(),
         .cube: CubeFactory(),
-        .turkey: TurkeyFactory()
+        .turkey: TurkeyFactory(),
+        .terrorEngine: TerrorEngineFactory()
     ]
     
     static func factory(for type: LootBoxType) -> LootBoxFactory {

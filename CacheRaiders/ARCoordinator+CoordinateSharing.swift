@@ -30,6 +30,9 @@ extension ARCoordinator {
         // Set up session delegate for collaboration data
         arView.session.delegate = self
 
+        // Initialize cloud geo anchor tracking if available
+        setupCloudGeoAnchors()
+
         print("✅ ARCoordinator coordinate sharing integration initialized")
     }
 
@@ -165,4 +168,86 @@ extension ARCoordinator {
  6. Add collaborative sessions:
     // When starting multi-player mode:
     startCollaborativeSession()
+
+ 7. Use cloud geo anchors (recommended):
+    // For stable multi-user object placement:
+    if isCloudGeoAnchorsAvailable {
+        let anchor = try await placeObjectWithCloudGeoAnchor(
+            objectId: "treasure_123",
+            coordinate: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+            altitude: 10.0
+        )
+    }
 */
+
+    // MARK: - Cloud Geo Anchors
+
+    /// Sets up cloud geo anchor tracking for stable multi-user AR
+    private func setupCloudGeoAnchors() {
+        guard let service = coordinateSharingService else {
+            print("⚠️ Coordinate sharing service not available for cloud geo anchors")
+            return
+        }
+
+        // Check if cloud geo tracking is available
+        if service.isCloudGeoTrackingAvailable {
+            Task { [weak self] in
+                do {
+                    try await self?.coordinateSharingService?.startCloudGeoTracking()
+                    print("🛰️ Cloud geo tracking enabled for stable AR anchoring")
+
+                    // Request sync of existing cloud anchors
+                    try await self?.coordinateSharingService?.requestCloudGeoAnchorSync()
+                } catch {
+                    print("⚠️ Failed to start cloud geo tracking: \(error.localizedDescription)")
+                    print("   Falling back to traditional AR anchoring")
+                }
+            }
+        } else {
+            print("📍 Cloud geo tracking not supported on this device")
+            print("   Using traditional AR anchoring")
+        }
+    }
+
+    /// Creates a cloud geo anchor for object placement (preferred method)
+    func placeObjectWithCloudGeoAnchor(objectId: String,
+                                      coordinate: CLLocationCoordinate2D,
+                                      altitude: CLLocationDistance = 0,
+                                      arOffset: SIMD3<Float> = .zero) async throws -> AnchorEntity {
+
+        guard let service = coordinateSharingService else {
+            throw NSError(domain: "ARCoordinator",
+                         code: -1,
+                         userInfo: [NSLocalizedDescriptionKey: "Coordinate sharing service not available"])
+        }
+
+        return try await service.createCloudGeoAnchor(
+            for: objectId,
+            at: coordinate,
+            altitude: altitude,
+            arOffset: arOffset
+        )
+    }
+
+    /// Updates a cloud geo anchor position
+    func updateCloudGeoAnchor(objectId: String,
+                             coordinate: CLLocationCoordinate2D,
+                             altitude: CLLocationDistance = 0) async throws {
+
+        guard let service = coordinateSharingService else { return }
+
+        try await service.updateCloudGeoAnchor(
+            objectId: objectId,
+            coordinate: coordinate,
+            altitude: altitude
+        )
+    }
+
+    /// Checks if cloud geo anchors are available and working
+    var isCloudGeoAnchorsAvailable: Bool {
+        return coordinateSharingService?.isCloudGeoTrackingAvailable ?? false
+    }
+
+    var isCloudGeoAnchorsEnabled: Bool {
+        return coordinateSharingService?.isCloudGeoTrackingEnabled ?? false
+    }

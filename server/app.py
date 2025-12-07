@@ -467,7 +467,10 @@ def init_db():
             VALUES (?, ?, ?)
         ''', ('game_mode', 'open', datetime.utcnow().isoformat()))
         print("✅ Initialized default game mode: open")
-    
+
+    # Initialize geo anchors table
+    init_geo_anchors_table()
+
     conn.commit()
     conn.close()
     print("✅ Database initialized")
@@ -4266,6 +4269,248 @@ def delete_objects_bulk():
         
     finally:
         conn.close()
+
+# MARK: - Cloud Geo Anchors API
+
+@app.route('/api/geo-anchors', methods=['GET'])
+def get_geo_anchors():
+    """Retrieve all cloud geo anchors from the database."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Get all geo anchors
+        cursor.execute('''
+            SELECT object_id, latitude, longitude, altitude, device_id, created_at
+            FROM geo_anchors
+            ORDER BY created_at DESC
+        ''')
+
+        anchors = []
+        for row in cursor.fetchall():
+            anchors.append({
+                'object_id': row[0],
+                'latitude': row[1],
+                'longitude': row[2],
+                'altitude': row[3],
+                'device_id': row[4],
+                'created_at': row[5]
+            })
+
+        conn.close()
+
+        return jsonify({
+            'success': True,
+            'anchors': anchors
+        }), 200
+
+    except sqlite3.Error as e:
+        print(f"❌ Database error in get_geo_anchors: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Database error: {str(e)}'
+        }), 500
+    except Exception as e:
+        print(f"❌ Unexpected error in get_geo_anchors: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Unexpected error: {str(e)}'
+        }), 500
+
+@app.route('/api/geo-anchors', methods=['POST'])
+def store_geo_anchor():
+    """Store a cloud geo anchor in the database."""
+    try:
+        data = request.get_json()
+
+        # Validate required fields
+        required_fields = ['object_id', 'latitude', 'longitude', 'altitude', 'device_id']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({
+                    'success': False,
+                    'error': f'Missing required field: {field}'
+                }), 400
+
+        object_id = data['object_id']
+        latitude = float(data['latitude'])
+        longitude = float(data['longitude'])
+        altitude = float(data['altitude'])
+        device_id = data['device_id']
+        created_at = data.get('created_at', datetime.now().isoformat())
+
+        # Validate coordinate ranges
+        if not (-90 <= latitude <= 90):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid latitude (must be between -90 and 90)'
+            }), 400
+
+        if not (-180 <= longitude <= 180):
+            return jsonify({
+                'success': False,
+                'error': 'Invalid longitude (must be between -180 and 180)'
+            }), 400
+
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Insert or replace the geo anchor
+        cursor.execute('''
+            INSERT OR REPLACE INTO geo_anchors
+            (object_id, latitude, longitude, altitude, device_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (object_id, latitude, longitude, altitude, device_id, created_at))
+
+        anchor_id = cursor.lastrowid
+        conn.commit()
+        conn.close()
+
+        # Broadcast the new anchor to all connected clients
+        socketio.emit('geo_anchor_stored', {
+            'object_id': object_id,
+            'latitude': latitude,
+            'longitude': longitude,
+            'altitude': altitude,
+            'device_id': device_id,
+            'created_at': created_at
+        })
+
+        return jsonify({
+            'success': True,
+            'message': 'Geo anchor stored successfully',
+            'anchor_id': anchor_id
+        }), 201
+
+    except ValueError as e:
+        return jsonify({
+            'success': False,
+            'error': f'Invalid data format: {str(e)}'
+        }), 400
+    except sqlite3.Error as e:
+        print(f"❌ Database error in store_geo_anchor: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Database error: {str(e)}'
+        }), 500
+    except Exception as e:
+        print(f"❌ Unexpected error in store_geo_anchor: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Unexpected error: {str(e)}'
+        }), 500
+
+@app.route('/api/geo-anchors/<object_id>', methods=['DELETE'])
+def delete_geo_anchor(object_id: str):
+    """Delete a cloud geo anchor from the database."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Delete the geo anchor
+        cursor.execute('DELETE FROM geo_anchors WHERE object_id = ?', (object_id,))
+
+        if cursor.rowcount == 0:
+            conn.close()
+            return jsonify({
+                'success': False,
+                'error': 'Geo anchor not found'
+            }), 404
+
+        conn.commit()
+        conn.close()
+
+        # Broadcast the deletion to all connected clients
+        socketio.emit('geo_anchor_deleted', {
+            'object_id': object_id
+        })
+
+        return jsonify({
+            'success': True,
+            'message': 'Geo anchor deleted successfully'
+        }), 200
+
+    except sqlite3.Error as e:
+        print(f"❌ Database error in delete_geo_anchor: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Database error: {str(e)}'
+        }), 500
+    except Exception as e:
+        print(f"❌ Unexpected error in delete_geo_anchor: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Unexpected error: {str(e)}'
+        }), 500
+
+@app.route('/api/geo-anchors/share', methods=['POST'])
+def share_geo_anchor():
+    """Share a geo anchor with other connected users."""
+    try:
+        data = request.get_json()
+
+        # Validate required fields
+        required_fields = ['object_id', 'latitude', 'longitude', 'altitude', 'device_id']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({
+                    'success': False,
+                    'error': f'Missing required field: {field}'
+                }), 400
+
+        # Broadcast to all connected WebSocket clients
+        socketio.emit('geo_anchor_shared', data)
+
+        # Count connected clients (excluding the sender)
+        connected_count = len(socketio.server.manager.rooms.get('/', {}).keys()) - 1
+
+        return jsonify({
+            'success': True,
+            'message': 'Geo anchor shared successfully',
+            'shared_with': max(0, connected_count)
+        }), 200
+
+    except Exception as e:
+        print(f"❌ Unexpected error in share_geo_anchor: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'Unexpected error: {str(e)}'
+        }), 500
+
+# MARK: - Database Schema for Geo Anchors
+
+def init_geo_anchors_table():
+    """Initialize the geo_anchors table if it doesn't exist."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS geo_anchors (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            object_id TEXT UNIQUE NOT NULL,
+            latitude REAL NOT NULL,
+            longitude REAL NOT NULL,
+            altitude REAL NOT NULL,
+            device_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Create index for faster lookups
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_geo_anchors_object_id
+        ON geo_anchors(object_id)
+    ''')
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_geo_anchors_device_id
+        ON geo_anchors(device_id)
+    ''')
+
+    conn.commit()
+    conn.close()
+    print("📍 Geo anchors table initialized")
 
 if __name__ == '__main__':
     init_db()

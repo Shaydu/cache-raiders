@@ -1235,6 +1235,7 @@ struct LootTypeCard: View {
         case .sphere: return "circle.fill"
         case .cube: return "square.fill"
         case .turkey: return "bird.fill"
+        case .terrorEngine: return "engine.combustion.fill"
         }
     }
 }

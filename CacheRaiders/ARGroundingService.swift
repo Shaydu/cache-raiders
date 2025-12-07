@@ -306,7 +306,7 @@ class ARGroundingService {
         case .chalice, .turkey:
             // Medium height objects
             return cameraPos.y - 1.0
-        case .treasureChest, .lootChest, .templeRelic, .lootCart:
+        case .treasureChest, .lootChest, .templeRelic, .lootCart, .terrorEngine:
             // Larger containers: place on floor
             return cameraPos.y - 1.5
         }

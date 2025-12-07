@@ -42,6 +42,10 @@ class ARCoordinateSharingService: ObservableObject {
     private weak var apiService: APIService?
     private weak var locationManager: LootBoxLocationManager?
 
+    // Cloud geo anchor services
+    private var cloudGeoAnchorService: CloudGeoAnchorService?
+    private var cloudAnchorSharingService: CloudAnchorSharingService?
+
     // MARK: - Initialization
 
     init(arView: ARView? = nil) {
@@ -59,8 +63,27 @@ class ARCoordinateSharingService: ObservableObject {
         self.apiService = apiService
         self.locationManager = locationManager
 
+        // Initialize cloud geo anchor services
+        setupCloudGeoAnchors()
+
         setupWebSocketCallbacks()
         print("✅ ARCoordinateSharingService configured with dependencies")
+    }
+
+    private func setupCloudGeoAnchors() {
+        // Initialize cloud geo anchor service
+        cloudGeoAnchorService = CloudGeoAnchorService(arView: arView)
+        cloudGeoAnchorService?.configure(with: arView ?? ARView(),
+                                        apiService: apiService!,
+                                        webSocketService: webSocketService!)
+
+        // Initialize cloud anchor sharing service
+        cloudAnchorSharingService = CloudAnchorSharingService()
+        cloudAnchorSharingService?.configure(with: apiService!,
+                                           webSocketService: webSocketService!,
+                                           geoAnchorService: cloudGeoAnchorService!)
+
+        print("🛰️ Cloud geo anchor services initialized")
     }
 
     // MARK: - WebSocket Integration
@@ -436,6 +459,123 @@ class ARCoordinateSharingService: ObservableObject {
         NotificationCenter.default.removeObserver(self)
         stopCollaborativeSession()
         print("🗑️ ARCoordinateSharingService deinitialized")
+    }
+
+    // MARK: - Cloud Geo Anchors Integration
+
+    /// Starts cloud geo tracking for stable multi-user AR
+    func startCloudGeoTracking() async throws {
+        guard let service = cloudGeoAnchorService else {
+            throw NSError(domain: "ARCoordinateSharingService",
+                         code: -1,
+                         userInfo: [NSLocalizedDescriptionKey: "Cloud geo anchor service not available"])
+        }
+
+        try await service.startGeoTracking()
+
+        // Sync existing anchors from server
+        try await cloudGeoAnchorService?.syncGeoAnchorsFromServer()
+
+        print("🛰️ Cloud geo tracking started and synced")
+    }
+
+    /// Stops cloud geo tracking
+    func stopCloudGeoTracking() {
+        cloudGeoAnchorService?.stopGeoTracking()
+        print("🛑 Cloud geo tracking stopped")
+    }
+
+    /// Creates a cloud geo anchor for an object at the specified location
+    func createCloudGeoAnchor(for objectId: String,
+                             at coordinate: CLLocationCoordinate2D,
+                             altitude: CLLocationDistance,
+                             arOffset: SIMD3<Float> = .zero) async throws -> AnchorEntity {
+
+        guard let service = cloudGeoAnchorService else {
+            throw NSError(domain: "ARCoordinateSharingService",
+                         code: -2,
+                         userInfo: [NSLocalizedDescriptionKey: "Cloud geo anchor service not available"])
+        }
+
+        let anchorEntity = try await service.createGeoAnchorAtLocation(
+            coordinate: coordinate,
+            altitude: altitude,
+            arOffset: arOffset,
+            objectId: objectId
+        )
+
+        // Share the anchor with other users
+        try await cloudAnchorSharingService?.shareGeoAnchor(
+            CloudGeoAnchorData(
+                objectId: objectId,
+                coordinate: coordinate,
+                altitude: altitude,
+                createdAt: Date(),
+                deviceId: UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
+            )
+        )
+
+        print("☁️ Created and shared cloud geo anchor for object '\(objectId)'")
+        return anchorEntity
+    }
+
+    /// Updates the position of a cloud geo anchor
+    func updateCloudGeoAnchor(objectId: String,
+                             coordinate: CLLocationCoordinate2D,
+                             altitude: CLLocationDistance) async throws {
+
+        let anchorData = CloudGeoAnchorData(
+            objectId: objectId,
+            coordinate: coordinate,
+            altitude: altitude,
+            createdAt: Date(),
+            deviceId: UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
+        )
+
+        try await cloudAnchorSharingService?.updateSharedAnchor(anchorData)
+        print("🔄 Updated cloud geo anchor for object '\(objectId)'")
+    }
+
+    /// Removes a cloud geo anchor
+    func removeCloudGeoAnchor(objectId: String) async throws {
+        try await cloudAnchorSharingService?.removeSharedAnchor(objectId: objectId)
+        cloudGeoAnchorService?.removeGeoAnchor(objectId: objectId)
+        print("🗑️ Removed cloud geo anchor for object '\(objectId)'")
+    }
+
+    /// Gets the quality score of a cloud geo anchor
+    func getCloudGeoAnchorQuality(objectId: String) -> Double {
+        return cloudGeoAnchorService?.getAnchorQuality(objectId: objectId) ?? 0.0
+    }
+
+    /// Requests synchronization of all cloud geo anchors
+    func requestCloudGeoAnchorSync() async throws {
+        try await cloudAnchorSharingService?.requestAnchorSync()
+        print("🔄 Requested cloud geo anchor synchronization")
+    }
+
+    /// Checks if cloud geo tracking is available and enabled
+    var isCloudGeoTrackingAvailable: Bool {
+        return cloudGeoAnchorService?.isGeoTrackingSupported ?? false
+    }
+
+    var isCloudGeoTrackingEnabled: Bool {
+        return cloudGeoAnchorService?.isGeoTrackingEnabled ?? false
+    }
+
+    /// Gets diagnostics for cloud geo anchor services
+    func getCloudGeoAnchorDiagnostics() -> [String: Any] {
+        var diagnostics: [String: Any] = [:]
+
+        if let geoDiagnostics = cloudGeoAnchorService?.getDiagnostics() {
+            diagnostics["geoAnchorService"] = geoDiagnostics
+        }
+
+        if let sharingDiagnostics = cloudAnchorSharingService?.getSharingDiagnostics() {
+            diagnostics["anchorSharingService"] = sharingDiagnostics
+        }
+
+        return diagnostics
     }
 }
 

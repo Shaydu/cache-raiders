@@ -663,5 +663,125 @@ class LootBoxAnimation {
             }
         }
     }
+
+    /// Opens a terror engine container - uses built-in animation if available, otherwise dramatic activation effect
+    static func openTerrorEngine(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+        // First, try to use built-in animation from the USDZ model if available
+        if let animation = container.builtInAnimation {
+            Swift.print("🎬 Playing built-in animation from Terror Engine USDZ model!")
+
+            // Play the built-in animation on the engine entity
+            let _ = container.box.playAnimation(
+                animation,
+                transitionDuration: 0.2,
+                startsPaused: false
+            )
+
+            // For terror engine, we want a dramatic one-time activation, not looping
+            // Wait for animation to complete then show prize
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { // Assume 3 second animation
+                container.prize.isEnabled = true
+                animatePrizeReveal(container: container, onComplete: onComplete)
+            }
+        } else {
+            // No built-in animation - use dramatic activation effect
+            Swift.print("🎭 No built-in animation found, using dramatic activation effect for Terror Engine")
+
+            // Create intense activation effect (flashing lights, shaking, etc.)
+            activateTerrorEngine(container: container, onComplete: onComplete)
+        }
+    }
+
+    /// Creates a dramatic activation effect for the terror engine when no built-in animation exists
+    private static func activateTerrorEngine(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+        let engine = container.box
+
+        // Create intense pulsing light effect
+        var baseIntensity: Float = 400
+        var pulsingUp = true
+        var pulseCount = 0
+        let maxPulses = 8
+
+        let pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { timer in
+            if pulsingUp {
+                baseIntensity = min(baseIntensity + 200, 1200) // Brighter
+            } else {
+                baseIntensity = max(baseIntensity - 150, 200) // Dimmer
+            }
+
+            // Alternate direction every pulse
+            if baseIntensity >= 1000 {
+                pulsingUp = false
+            } else if baseIntensity <= 300 {
+                pulsingUp = true
+                pulseCount += 1
+            }
+
+            // Update light intensity
+            if var light = engine.components[PointLightComponent.self] {
+                light.intensity = baseIntensity
+                engine.components[PointLightComponent.self] = light
+            }
+
+            // Stop pulsing after max pulses and activate engine
+            if pulseCount >= maxPulses {
+                timer.invalidate()
+
+                // Final bright flash
+                if var light = engine.components[PointLightComponent.self] {
+                    light.intensity = 1500
+                    light.color = UIColor.white // White hot flash
+                    engine.components[PointLightComponent.self] = light
+                }
+
+                // Slight shake effect
+                addShakeEffect(to: engine)
+
+                // Show prize after dramatic activation
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    container.prize.isEnabled = true
+                    animatePrizeReveal(container: container, onComplete: onComplete)
+                }
+            }
+        }
+
+        // Safety timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            pulseTimer.invalidate()
+            if !container.prize.isEnabled {
+                container.prize.isEnabled = true
+                onComplete()
+            }
+        }
+    }
+
+    /// Adds a shake effect to an entity
+    private static func addShakeEffect(to entity: ModelEntity) {
+        let originalPosition = entity.position
+        var shakeOffset: Float = 0
+        var shakeIntensity: Float = 0.05
+
+        let shakeTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+            shakeOffset += 0.3
+            shakeIntensity *= 0.9 // Reduce intensity over time
+
+            let shakeX = sin(shakeOffset) * shakeIntensity
+            let shakeZ = cos(shakeOffset * 1.3) * shakeIntensity
+
+            entity.position = originalPosition + SIMD3<Float>(shakeX, 0, shakeZ)
+
+            // Stop shaking after intensity becomes negligible
+            if shakeIntensity < 0.005 {
+                timer.invalidate()
+                entity.position = originalPosition // Reset to original position
+            }
+        }
+
+        // Safety timeout for shake effect
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            shakeTimer.invalidate()
+            entity.position = originalPosition
+        }
+    }
 }
 

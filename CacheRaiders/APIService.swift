@@ -924,4 +924,156 @@ class APIService {
         // Stub implementation
         print("syncSavedUserNameToServer not implemented")
     }
+
+    // MARK: - Cloud Geo Anchors
+
+    /// Stores a geo anchor on the server for multi-user synchronization
+    func storeGeoAnchor(_ anchorData: CloudGeoAnchorData) async throws {
+        let url = URL(string: "\(baseURL)/api/geo-anchors")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "object_id": anchorData.objectId,
+            "latitude": anchorData.coordinate.latitude,
+            "longitude": anchorData.coordinate.longitude,
+            "altitude": anchorData.altitude,
+            "device_id": anchorData.deviceId,
+            "created_at": ISO8601DateFormatter().string(from: anchorData.createdAt)
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError("Invalid response")
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw APIError.httpError(httpResponse.statusCode)
+        }
+
+        // Parse response to confirm storage
+        struct GeoAnchorResponse: Codable {
+            let success: Bool
+            let message: String
+            let anchor_id: String?
+        }
+
+        let anchorResponse = try decoder.decode(GeoAnchorResponse.self, from: data)
+        if !anchorResponse.success {
+            throw APIError.serverError(anchorResponse.message)
+        }
+    }
+
+    /// Retrieves all geo anchors from the server
+    func fetchGeoAnchors() async throws -> [CloudGeoAnchorData] {
+        let url = URL(string: "\(baseURL)/api/geo-anchors")!
+        let (data, response) = try await session.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError("Invalid response")
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw APIError.httpError(httpResponse.statusCode)
+        }
+
+        struct GeoAnchorsResponse: Codable {
+            let success: Bool
+            let anchors: [GeoAnchorData]
+        }
+
+        struct GeoAnchorData: Codable {
+            let object_id: String
+            let latitude: Double
+            let longitude: Double
+            let altitude: Double
+            let device_id: String
+            let created_at: String
+        }
+
+        let anchorsResponse = try decoder.decode(GeoAnchorsResponse.self, from: data)
+
+        return anchorsResponse.anchors.map { anchor in
+            CloudGeoAnchorData(
+                objectId: anchor.object_id,
+                coordinate: CLLocationCoordinate2D(latitude: anchor.latitude, longitude: anchor.longitude),
+                altitude: anchor.altitude,
+                createdAt: ISO8601DateFormatter().date(from: anchor.created_at) ?? Date(),
+                deviceId: anchor.device_id
+            )
+        }
+    }
+
+    /// Shares a geo anchor with other users via WebSocket
+    func shareGeoAnchor(_ anchorData: CloudGeoAnchorData) async throws {
+        let url = URL(string: "\(baseURL)/api/geo-anchors/share")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "object_id": anchorData.objectId,
+            "latitude": anchorData.coordinate.latitude,
+            "longitude": anchorData.coordinate.longitude,
+            "altitude": anchorData.altitude,
+            "device_id": anchorData.deviceId,
+            "created_at": ISO8601DateFormatter().string(from: anchorData.createdAt)
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError("Invalid response")
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw APIError.httpError(httpResponse.statusCode)
+        }
+
+        struct ShareResponse: Codable {
+            let success: Bool
+            let message: String
+            let shared_with: Int
+        }
+
+        let shareResponse = try decoder.decode(ShareResponse.self, from: data)
+        if !shareResponse.success {
+            throw APIError.serverError(shareResponse.message)
+        }
+
+        print("📤 Shared geo anchor with \(shareResponse.shared_with) other users")
+    }
+
+    /// Deletes a geo anchor from the server
+    func deleteGeoAnchor(objectId: String) async throws {
+        let url = URL(string: "\(baseURL)/api/geo-anchors/\(objectId)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+
+        let (data, response) = try await session.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw APIError.networkError("Invalid response")
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw APIError.httpError(httpResponse.statusCode)
+        }
+
+        struct DeleteResponse: Codable {
+            let success: Bool
+            let message: String
+        }
+
+        let deleteResponse = try decoder.decode(DeleteResponse.self, from: data)
+        if !deleteResponse.success {
+            throw APIError.serverError(deleteResponse.message)
+        }
+    }
 }

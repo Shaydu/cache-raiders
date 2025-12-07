@@ -35,16 +35,27 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     var locationManager: LootBoxLocationManager? // Changed from private to allow extension access
     var userLocationManager: UserLocationManager?
     private var nearbyLocationsBinding: Binding<[LootBoxLocation]>?
-    private var placedBoxes: [String: AnchorEntity] = [:]
-    private var findableObjects: [String: FindableObject] = [:] // Track all findable objects
-    private var objectPlacementTimes: [String: Date] = [:] // Track when objects were placed (for grace period)
-    private var placedBoxesSet: Set<String> = [] // Track IDs of placed boxes
-    private var activeAnchors: [String: ARAnchor] = [:] // Track active AR anchors
+
+    // MEMORY OPTIMIZATION: Consolidated tracking - findableObjects contains the anchor, so no need for separate placedBoxes dictionary
+    var findableObjects: [String: FindableObject] = [:] // Track all findable objects (contains anchor reference)
+    var objectPlacementTimes: [String: Date] = [:] // Track when objects were placed (for grace period)
+
+    // BACKWARD COMPATIBILITY: Computed property for services that still reference placedBoxes
+    var placedBoxes: [String: AnchorEntity] {
+        return findableObjects.mapValues { $0.anchor }
+    }
+
+    // Track placed box IDs for quick lookup
+    private var placedBoxesSet: Set<String> = []
+
+    // Track active AR anchors by object ID
+    private var activeAnchors: [String: ARAnchor] = [:]
+
     let objectPlaced = PassthroughSubject<String, Never>() // Publisher for object placement events
     var shouldForceReplacement: Bool = false // Force re-placement after reset when AR is ready
     // MARK: - Helper Methods
     private func updateManagerReferences() {
-        // Update all managers that reference placedBoxes
+        // Update all managers that reference placedBoxes (backward compatibility)
         occlusionManager?.placedBoxes = placedBoxes
         distanceTracker?.placedBoxes = placedBoxes
         tapHandler?.placedBoxes = placedBoxes
@@ -662,7 +673,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         anchor.removeFromParent()
         
         // Remove from tracking dictionaries
-        placedBoxes.removeValue(forKey: objectId)
         findableObjects.removeValue(forKey: objectId)
         objectsInViewport.remove(objectId)
         
@@ -693,7 +703,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         // Remove from AR scene if it's currently placed (so it can be re-placed)
         if let anchor = placedBoxes[objectId] {
             anchor.removeFromParent()
-            placedBoxes.removeValue(forKey: objectId)
             findableObjects.removeValue(forKey: objectId)
             objectsInViewport.remove(objectId)
             objectPlacementTimes.removeValue(forKey: objectId)
@@ -733,7 +742,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         }
         
         // Clear tracking dictionaries
-        placedBoxes.removeAll()
         findableObjects.removeAll()
         
         // Clear viewport visibility tracking
@@ -908,7 +916,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                     let locationName = locationManager?.locations.first(where: { $0.id == locationId })?.name ?? locationId
                     Swift.print("🗑️ Removing findable '\(locationName)' (ID: \(locationId)) from story mode - only NPCs allowed")
                     anchor.removeFromParent()
-                    placedBoxes.removeValue(forKey: locationId)
                     findableObjects.removeValue(forKey: locationId)
                     objectsInViewport.remove(locationId)
                     objectPlacementTimes.removeValue(forKey: locationId)
@@ -1066,7 +1073,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         for locationId in objectsToRemove {
             if let anchor = placedBoxes[locationId] {
                 anchor.removeFromParent()
-                placedBoxes.removeValue(forKey: locationId)
                 findableObjects.removeValue(forKey: locationId)
                 objectsInViewport.remove(locationId)
                 objectPlacementTimes.removeValue(forKey: locationId) // Clean up placement time
@@ -1967,7 +1973,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         for locationId in objectsToRemove {
             if let anchor = placedBoxes[locationId] {
                 anchor.removeFromParent()
-                placedBoxes.removeValue(forKey: locationId)
                 findableObjects.removeValue(forKey: locationId)
                 objectsInViewport.remove(locationId)
                 objectPlacementTimes.removeValue(forKey: locationId)
@@ -2277,7 +2282,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 Swift.print("🔄 Re-placing \(anchorsRemoved.count) objects that were removed by session interruption")
 
                 // Clear placedBoxes to allow re-placement
-                self.placedBoxes.removeAll()
                 self.findableObjects.removeAll()
 
                 // Get nearby locations and re-place them
@@ -2351,6 +2355,68 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         if placedBoxes[location.id] != nil {
             Swift.print("   ⏭️ Already placed, skipping")
             return // Already placed, skip silently
+        }
+
+        // PREFER CLOUD GEO ANCHORS: Use cloud geo anchors for maximum stability in multi-user scenarios
+        if isCloudGeoAnchorsAvailable && isCloudGeoAnchorsEnabled {
+            Task {
+                do {
+                    let coordinate = CLLocationCoordinate2D(latitude: location.latitude, longitude: location.longitude)
+                    let altitude = CLLocationDistance(location.grounding_height ?? 0)
+
+                    // Calculate AR offset if available
+                    var arOffset = SIMD3<Float>.zero
+                    if let arOffsetX = location.ar_offset_x,
+                       let arOffsetY = location.ar_offset_y,
+                       let arOffsetZ = location.ar_offset_z {
+                        arOffset = SIMD3<Float>(Float(arOffsetX), Float(arOffsetY), Float(arOffsetZ))
+                    }
+
+                    let anchorEntity = try await placeObjectWithCloudGeoAnchor(
+                        objectId: location.id,
+                        coordinate: coordinate,
+                        altitude: altitude,
+                        arOffset: arOffset
+                    )
+
+                    // Create entity and findable object using factory (same as regular placement)
+                    let factory = location.type.factory
+                    let sizeMultiplier: Float = 1.0 // Standard size for cloud geo anchors
+                    let (entity, findable) = factory.createEntity(location: location, anchor: anchorEntity, sizeMultiplier: sizeMultiplier)
+
+                    // Attach the entity to the anchor
+                    anchorEntity.addChild(entity)
+
+                    // Use consolidated tracking (same as placeBoxAtPosition)
+                    findableObjects[location.id] = findable
+                    objectPlacementTimes[location.id] = Date()
+
+                    // Update tap handler for both backward compatibility
+                    tapHandler?.placedBoxes[location.id] = anchorEntity
+                    tapHandler?.findableObjects[location.id] = findable
+
+                    // Update manager references
+                    updateManagerReferences()
+
+                    // Start loop animation if supported
+                    factory.animateLoop(entity: entity)
+
+                    // Notify about placement
+                    objectPlaced.send(location.id)
+
+                    Swift.print("☁️ Successfully placed '\(location.name)' using cloud geo anchor")
+                    return
+
+                } catch {
+                    Swift.print("⚠️ Cloud geo anchor failed for '\(location.name)': \(error.localizedDescription)")
+                    Swift.print("   Falling back to traditional AR placement")
+                    // Continue with traditional placement below
+                }
+            }
+        } else if isCloudGeoAnchorsAvailable {
+            Swift.print("☁️ Cloud geo anchors available but not enabled - using traditional AR placement")
+        } else {
+            Swift.print("📍 Cloud geo anchors not available - using traditional AR placement")
         }
 
         // Check AR frame availability
@@ -2818,9 +2884,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         // Add to scene
         arView.scene.addAnchor(anchorEntity)
 
-        // Store references for interaction
-        placedBoxes[location.id] = anchorEntity
-
         // Update findable objects
         let findable = FindableObject(
             locationId: location.id,
@@ -3060,7 +3123,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             sphere.components.set(light)
             anchor.addChild(sphere)
             arView.scene.addAnchor(anchor)
-            placedBoxes[location.id] = anchor
             environmentManager?.applyUniformLuminanceToNewEntity(anchor)
 
             // If enabled, attach a hidden real object that will be revealed from the generic icon
@@ -3168,7 +3230,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         anchor.addChild(sphere)
 
         arView.scene.addAnchor(anchor)
-        placedBoxes[location.id] = anchor
 
         // Apply uniform luminance if ambient light is disabled
         environmentManager?.applyUniformLuminanceToNewEntity(anchor)
@@ -3332,8 +3393,10 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             selectedObjectType = .sphere
         case .cube:
             selectedObjectType = .cube
-        case .templeRelic, .treasureChest, .lootChest, .lootCart, .turkey:
+        case .templeRelic, .treasureChest, .lootChest, .lootCart, .turkey, .terrorEngine:
             selectedObjectType = .treasureBox
+        default:
+            selectedObjectType = .treasureBox // Default to treasure box for any new types
         }
 
         Swift.print("🎲 Placing \(selectedObjectType) (\(location.type.displayName)) for \(location.name)")
@@ -4323,7 +4386,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
                 // Cleanup after find completes
                 if self.placedBoxes[locationId] != nil {
-                    self.placedBoxes.removeValue(forKey: locationId)
                     self.findableObjects.removeValue(forKey: locationId)
                     self.objectsInViewport.remove(locationId) // Also remove from viewport tracking
                     Swift.print("   ✅ Removed from placedBoxes (\(self.placedBoxes.count) remaining)")
@@ -4394,7 +4456,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         anchor.addChild(boxEntity)
 
         arView.scene.addAnchor(anchor)
-        placedBoxes[item.id] = anchor
 
         // Apply uniform luminance if ambient light is disabled
         environmentManager?.applyUniformLuminanceToNewEntity(anchor)
@@ -4697,7 +4758,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             }
 
             // Track the placement
-            placedBoxes[location.id] = anchor
             findableObjects[location.id] = findableObject
             objectsInViewport.insert(location.id)
             objectPlacementTimes[location.id] = Date()
@@ -4873,7 +4933,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         for (_, anchor) in placedBoxes {
             anchor.removeFromParent()
         }
-        placedBoxes.removeAll()
         findableObjects.removeAll()
         objectPlacementTimes.removeAll()
         
@@ -4965,9 +5024,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     /// This is called when NFC objects are placed by PreciseARPositioningService
     func registerNFCObjectAnchor(objectId: String, anchorEntity: AnchorEntity, location: LootBoxLocation? = nil) {
         Swift.print("🎯 Registering NFC object for tapping: '\(objectId)'")
-
-        // Register with placed boxes for tap detection
-        placedBoxes[objectId] = anchorEntity
 
         // Create findable object for tap handler
         let findable = FindableObject(

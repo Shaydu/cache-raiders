@@ -787,7 +787,26 @@ class WebSocketService: ObservableObject {
             }
         }
     }
-    
+
+    /// Sends a custom message via WebSocket using Socket.IO event format
+    /// - Parameter message: Dictionary containing the message data with "type" and other fields
+    func sendMessage(_ message: [String: Any]) {
+        guard isConnected, handshakeState == .completed else {
+            print("⚠️ Cannot send message: WebSocket not connected or handshake incomplete")
+            return
+        }
+
+        do {
+            let data = try JSONSerialization.data(withJSONObject: message)
+            let jsonString = String(data: data, encoding: .utf8) ?? "{}"
+            let packet = "42\(jsonString)"
+            sendSocketIOPacket(packet)
+            print("📤 Sent WebSocket message: \(message["type"] as? String ?? "unknown")")
+        } catch {
+            print("❌ Failed to serialize WebSocket message: \(error)")
+        }
+    }
+
     // MARK: - Timers
     
     private func startPingTimer() {
