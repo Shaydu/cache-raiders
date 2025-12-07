@@ -742,80 +742,6 @@ class ARCoordinateSharingService: ObservableObject {
 
         return diagnostics
     }
-}
-
-// MARK: - Extensions
-
-extension Date {
-    func ISO8601Format() -> String {
-        let formatter = ISO8601DateFormatter()
-        return formatter.string(from: self)
-    }
-}
-
-// MARK: - LootBoxLocationManager Extension
-
-extension LootBoxLocationManager {
-    /// Updates location coordinates from coordinate sharing service
-    func updateLocationCoordinates(objectId: String, coordinateData: [String: Any]) {
-        // This would update the location in the location manager
-        // Implementation depends on your location manager structure
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-
-            // Find and update the location
-            if let index = self.locations.firstIndex(where: { $0.id == objectId }) {
-                let existingLocation = self.locations[index]
-
-                // Create new location with updated coordinates
-                let updatedLatitude = coordinateData["latitude"] as? Double ?? existingLocation.latitude
-                let updatedLongitude = coordinateData["longitude"] as? Double ?? existingLocation.longitude
-                let updatedAROffsetX = coordinateData["ar_offset_x"] as? Double ?? existingLocation.ar_offset_x
-                let updatedAROffsetY = coordinateData["ar_offset_y"] as? Double ?? existingLocation.ar_offset_y
-                let updatedAROffsetZ = coordinateData["ar_offset_z"] as? Double ?? existingLocation.ar_offset_z
-                let updatedAROriginLat = coordinateData["ar_origin_latitude"] as? Double ?? existingLocation.ar_origin_latitude
-                let updatedAROriginLng = coordinateData["ar_origin_longitude"] as? Double ?? existingLocation.ar_origin_longitude
-
-                let updatedLocation = LootBoxLocation(
-                    id: existingLocation.id,
-                    name: existingLocation.name,
-                    type: existingLocation.type,
-                    latitude: updatedLatitude,
-                    longitude: updatedLongitude,
-                    radius: existingLocation.radius,
-                    collected: existingLocation.collected,
-                    grounding_height: existingLocation.grounding_height,
-                    source: existingLocation.source,
-                    created_by: existingLocation.created_by,
-                    needs_sync: existingLocation.needs_sync,
-                    last_modified: Date(),
-                    server_version: existingLocation.server_version,
-                    ar_origin_latitude: updatedAROriginLat,
-                    ar_origin_longitude: updatedAROriginLng,
-                    ar_offset_x: updatedAROffsetX,
-                    ar_offset_y: updatedAROffsetY,
-                    ar_offset_z: updatedAROffsetZ,
-                    ar_placement_timestamp: existingLocation.ar_placement_timestamp,
-                    ar_anchor_transform: existingLocation.ar_anchor_transform,
-                    ar_world_transform: existingLocation.ar_world_transform,
-                    nfc_tag_id: existingLocation.nfc_tag_id,
-                    multifindable: existingLocation.multifindable
-                )
-
-                self.locations[index] = updatedLocation
-
-                // Notify about the update
-                NotificationCenter.default.post(
-                    name: NSNotification.Name("LocationCoordinatesUpdated"),
-                    object: nil,
-                    userInfo: ["locationId": objectId, "location": updatedLocation]
-                )
-
-                print("📍 Updated coordinates for location \(objectId)")
-            }
-        }
-    }
 
     // MARK: - CloudKit Management
 
@@ -947,6 +873,80 @@ extension LootBoxLocationManager {
         // Reload world map with new provider if available
         if worldMapService.loadPersistedWorldMap() {
             print("✅ Reloaded world map with new cloud provider")
+        }
+    }
+}
+
+// MARK: - Extensions
+
+extension Date {
+    func ISO8601Format() -> String {
+        let formatter = ISO8601DateFormatter()
+        return formatter.string(from: self)
+    }
+}
+
+// MARK: - LootBoxLocationManager Extension
+
+extension LootBoxLocationManager {
+    /// Updates location coordinates from coordinate sharing service
+    func updateLocationCoordinates(objectId: String, coordinateData: [String: Any]) {
+        // This would update the location in the location manager
+        // Implementation depends on your location manager structure
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+
+            // Find and update the location
+            if let index = self.locations.firstIndex(where: { $0.id == objectId }) {
+                let existingLocation = self.locations[index]
+
+                // Create new location with updated coordinates
+                let updatedLatitude = coordinateData["latitude"] as? Double ?? existingLocation.latitude
+                let updatedLongitude = coordinateData["longitude"] as? Double ?? existingLocation.longitude
+                let updatedAROffsetX = coordinateData["ar_offset_x"] as? Double ?? existingLocation.ar_offset_x
+                let updatedAROffsetY = coordinateData["ar_offset_y"] as? Double ?? existingLocation.ar_offset_y
+                let updatedAROffsetZ = coordinateData["ar_offset_z"] as? Double ?? existingLocation.ar_offset_z
+                let updatedAROriginLat = coordinateData["ar_origin_latitude"] as? Double ?? existingLocation.ar_origin_latitude
+                let updatedAROriginLng = coordinateData["ar_origin_longitude"] as? Double ?? existingLocation.ar_origin_longitude
+
+                let updatedLocation = LootBoxLocation(
+                    id: existingLocation.id,
+                    name: existingLocation.name,
+                    type: existingLocation.type,
+                    latitude: updatedLatitude,
+                    longitude: updatedLongitude,
+                    radius: existingLocation.radius,
+                    collected: existingLocation.collected,
+                    grounding_height: existingLocation.grounding_height,
+                    source: existingLocation.source,
+                    created_by: existingLocation.created_by,
+                    needs_sync: existingLocation.needs_sync,
+                    last_modified: Date(),
+                    server_version: existingLocation.server_version,
+                    ar_origin_latitude: updatedAROriginLat,
+                    ar_origin_longitude: updatedAROriginLng,
+                    ar_offset_x: updatedAROffsetX,
+                    ar_offset_y: updatedAROffsetY,
+                    ar_offset_z: updatedAROffsetZ,
+                    ar_placement_timestamp: existingLocation.ar_placement_timestamp,
+                    ar_anchor_transform: existingLocation.ar_anchor_transform,
+                    ar_world_transform: existingLocation.ar_world_transform,
+                    nfc_tag_id: existingLocation.nfc_tag_id,
+                    multifindable: existingLocation.multifindable
+                )
+
+                self.locations[index] = updatedLocation
+
+                // Notify about the update
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("LocationCoordinatesUpdated"),
+                    object: nil,
+                    userInfo: ["locationId": objectId, "location": updatedLocation]
+                )
+
+                print("📍 Updated coordinates for location \(objectId)")
+            }
         }
     }
 }
