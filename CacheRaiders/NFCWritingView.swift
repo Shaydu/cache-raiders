@@ -789,6 +789,7 @@ struct NFCWritingView: View {
                     radius: 3.0,  // Match the reduced radius
                     collected: false,  // NOT collected by placer - must be scanned to find
                     source: .map,
+                    nfc_tag_id: nfcResult.tagId,  // CRITICAL: Store NFC tag ID for /nfc/<id> lookups
                     multifindable: true // NFC-placed items are multifindable
                 )
 
