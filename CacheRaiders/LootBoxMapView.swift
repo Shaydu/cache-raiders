@@ -43,7 +43,7 @@ struct LootBoxMapView: View {
     @State private var lastAddTime = Date()
     
     // Combine user location and loot boxes into a single annotation array
-    // Explicitly depend on showFoundOnMap, collected status, and selection to ensure view updates
+    // Explicitly depend on showFoundOnMap, collected status, selection, and locations count to ensure view updates
     private var allAnnotations: [MapAnnotationItem] {
         // Access showFoundOnMap to create explicit dependency for SwiftUI updates
         let showFound = locationManager.showFoundOnMap
@@ -53,7 +53,10 @@ struct LootBoxMapView: View {
         // Access selectedDatabaseObjectId to force updates when selection changes
         let selectedId = locationManager.selectedDatabaseObjectId
         _ = selectedId // Explicitly use to create dependency
-        
+        // Access total locations count to force updates when objects are added via WebSocket
+        let totalLocationsCount = locationManager.locations.count
+        _ = totalLocationsCount // Explicitly use to create dependency
+
         // Explicitly access user location and heading to create dependencies for SwiftUI updates
         let userLocation = userLocationManager.currentLocation
         let userHeading = userLocationManager.heading

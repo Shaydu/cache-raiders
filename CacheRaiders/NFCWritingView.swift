@@ -790,15 +790,23 @@ struct NFCWritingView: View {
                         self.dismiss()
                     }
                 }
-            } else {
-                throw NSError(domain: "NFCWriting", code: -1,
-                             userInfo: [NSLocalizedDescriptionKey: "Server error: \(httpResponse.statusCode)"])
-            }
 
         } catch {
             print("❌ Failed to create object: \(error)")
             DispatchQueue.main.async {
-                self.errorMessage = "Failed to create object: \(error.localizedDescription)"
+                // Provide more user-friendly error messages
+                var userFriendlyMessage = "Failed to save loot to database"
+
+                let errorDesc = error.localizedDescription.lowercased()
+                if errorDesc.contains("connection") || errorDesc.contains("network") || errorDesc.contains("unreachable") {
+                    userFriendlyMessage = "Cannot connect to server. Please ensure the CacheRaiders server is running and you're connected to the same network."
+                } else if errorDesc.contains("timeout") {
+                    userFriendlyMessage = "Server connection timed out. Please check your network connection and server status."
+                } else if errorDesc.contains("invalid response") {
+                    userFriendlyMessage = "Server returned an invalid response. Please check the server logs."
+                }
+
+                self.errorMessage = userFriendlyMessage
                 self.currentStep = .error
                 self.showARPlacement = false
             }

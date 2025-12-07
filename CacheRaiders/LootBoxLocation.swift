@@ -579,6 +579,18 @@ class LootBoxLocationManager: ObservableObject {
             // Fetch current game mode to ensure we're in sync with server (with retries)
             Task {
                 await self.fetchGameModeFromServer(retryCount: 2)
+
+                // Automatically sync with server when WebSocket connects
+                // This replicates what the "Refresh from API" button does in settings
+                print("🔄 WebSocket connected - automatically syncing with server...")
+
+                // Load ALL locations from API (same as settings refresh button)
+                await self.loadLocationsFromAPI(userLocation: nil, includeFound: true)
+
+                // Sync any pending local changes back to server
+                await self.syncPendingChangesToAPI()
+
+                print("✅ Auto-sync complete - device and server are now synchronized")
             }
         }
 

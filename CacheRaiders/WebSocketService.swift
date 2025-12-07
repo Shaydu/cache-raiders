@@ -498,9 +498,12 @@ class WebSocketService: ObservableObject {
         case "admin_diagnostic_ping":
             handleAdminDiagnosticPing(eventData)
             
+        case "objects_batch":
+            handleObjectsBatchEvent(eventData)
+
         case "object_created":
             handleObjectCreatedEvent(eventData)
-            
+
         case "object_deleted":
             handleObjectDeletedEvent(eventData)
             
@@ -576,6 +579,42 @@ class WebSocketService: ObservableObject {
         }
     }
     
+    /// Handle objects_batch event: {"objects": [...], "batch_index": 0, "total_batches": N, "is_last_batch": false}
+    private func handleObjectsBatchEvent(_ data: [String: Any]) {
+        guard let objects = data["objects"] as? [[String: Any]],
+              let batchIndex = data["batch_index"] as? Int,
+              let totalBatches = data["total_batches"] as? Int,
+              let isLastBatch = data["is_last_batch"] as? Bool else {
+            print("⚠️ WebSocket: Invalid objects_batch data: \(data)")
+            return
+        }
+
+        print("📦 WebSocket: Received objects batch \(batchIndex + 1)/\(totalBatches) with \(objects.count) objects")
+
+        DispatchQueue.main.async {
+            // Post notification for each object in the batch
+            for objectData in objects {
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("WebSocketObjectCreated"),
+                    object: nil,
+                    userInfo: objectData
+                )
+            }
+
+            print("   ✅ Processed batch \(batchIndex + 1)/\(totalBatches) (\(objects.count) objects)")
+
+            if isLastBatch {
+                print("   🎉 All object batches received and processed")
+                // Could post a completion notification here if needed
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("WebSocketObjectsSyncComplete"),
+                    object: nil,
+                    userInfo: nil
+                )
+            }
+        }
+    }
+
     /// Handle object_created event: {"id": "...", "name": "...", ...}
     private func handleObjectCreatedEvent(_ data: [String: Any]) {
         print("📦 WebSocket: Object created - ID: \(data["id"] ?? "unknown")")

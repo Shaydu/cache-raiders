@@ -2272,6 +2272,90 @@ def generate_qrcode():
     return Response(img_io.getvalue(), mimetype='image/png')
 
 # WebSocket event handlers
+def get_all_objects_for_websocket():
+    """Get all objects formatted for WebSocket emission (includes found status)."""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Check which AR columns exist in the database
+        cursor.execute("PRAGMA table_info(objects)")
+        columns_info = cursor.fetchall()
+        column_names = [col[1] for col in columns_info]
+
+        # Build SELECT clause dynamically based on available columns
+        base_columns = [
+            'o.id', 'o.name', 'o.type', 'o.latitude', 'o.longitude',
+            'o.radius', 'o.created_at', 'o.created_by', 'o.grounding_height'
+        ]
+        ar_columns = [
+            'ar_origin_latitude', 'ar_origin_longitude',
+            'ar_offset_x', 'ar_offset_y', 'ar_offset_z', 'ar_placement_timestamp', 'ar_placement_heading',
+            'ar_anchor_transform', 'ar_world_transform', 'nfc_tag_id'
+        ]
+
+        select_columns = base_columns.copy()
+        # Add multifindable column if it exists
+        if 'multifindable' in column_names:
+            select_columns.append('o.multifindable')
+        for ar_col in ar_columns:
+            if ar_col in column_names:
+                select_columns.append(f'o.{ar_col}')
+
+        select_columns.extend([
+            'CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as collected',
+            'f.found_by',
+            'f.found_at'
+        ])
+
+        query = f'''
+            SELECT
+                {', '.join(select_columns)}
+            FROM objects o
+            LEFT JOIN finds f ON o.id = f.object_id
+            ORDER BY o.created_at DESC
+        '''
+
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        conn.close()
+
+        # Group by object_id to handle multiple finds (though we'll only show the first)
+        objects_dict = {}
+        for row in rows:
+            obj_id = row['id']
+            if obj_id not in objects_dict:
+                obj_data = {
+                    'id': row['id'],
+                    'name': row['name'],
+                    'type': row['type'],
+                    'latitude': row['latitude'],
+                    'longitude': row['longitude'],
+                    'radius': row['radius'],
+                    'created_at': row['created_at'],
+                    'created_by': row['created_by'],
+                    'grounding_height': row['grounding_height'],
+                    'multifindable': bool(row['multifindable']) if 'multifindable' in row.keys() else None,
+                    'collected': bool(row['collected']),
+                    'found_by': row['found_by'],
+                    'found_at': row['found_at']
+                }
+
+                # Add AR columns if they exist
+                for ar_col in ar_columns:
+                    if ar_col in column_names and ar_col in row.keys():
+                        obj_data[ar_col] = row[ar_col]
+                    else:
+                        obj_data[ar_col] = None
+
+                objects_dict[obj_id] = obj_data
+
+        return list(objects_dict.values())
+
+    except Exception as e:
+        print(f"⚠️ Error getting all objects for WebSocket: {e}")
+        return []
+
 @socketio.on('connect')
 def handle_connect():
     """Handle client connection."""
@@ -2281,12 +2365,30 @@ def handle_connect():
         print(f"   Namespace: {request.namespace}")
     except AttributeError:
         pass
-    # Note: Flask-SocketIO should automatically handle Socket.IO protocol ping/pong (packets "2" and "3")
-    emit('connected', {'status': 'connected', 'message': 'Successfully connected to CacheRaiders WebSocket'})
-    
+
     # Track connection (device_uuid will be set when client identifies itself)
     # For now, just track the session
     connected_clients[session_id] = None  # Will be updated when client sends device_uuid
+
+    # Send all objects to the newly connected client
+    print(f"📦 Sending all objects to new client {session_id[:8]}...")
+    all_objects = get_all_objects_for_websocket()
+    print(f"   📊 Sending {len(all_objects)} objects")
+
+    # Send objects in batches to avoid overwhelming the client
+    batch_size = 50
+    for i in range(0, len(all_objects), batch_size):
+        batch = all_objects[i:i + batch_size]
+        emit('objects_batch', {
+            'objects': batch,
+            'batch_index': i // batch_size,
+            'total_batches': (len(all_objects) + batch_size - 1) // batch_size,
+            'is_last_batch': i + batch_size >= len(all_objects)
+        })
+        print(f"   📦 Sent batch {i // batch_size + 1}/{(len(all_objects) + batch_size - 1) // batch_size} ({len(batch)} objects)")
+
+    # Send connected confirmation
+    emit('connected', {'status': 'connected', 'message': 'Successfully connected to CacheRaiders WebSocket'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
