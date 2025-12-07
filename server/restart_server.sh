@@ -47,3 +47,7 @@ else
     echo "❌ Server health check failed"
     echo "   Check logs: docker logs cache-raiders-api"
 fi
+
+
+
+
