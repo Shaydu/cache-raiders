@@ -579,7 +579,9 @@ class WebSocketService: ObservableObject {
     /// Handle object_created event: {"id": "...", "name": "...", ...}
     private func handleObjectCreatedEvent(_ data: [String: Any]) {
         print("📦 WebSocket: Object created - ID: \(data["id"] ?? "unknown")")
-        
+        print("   📊 Full object data: \(data)")
+        print("   🔄 Broadcasting to NotificationCenter...")
+
         DispatchQueue.main.async {
             // Pass the full object data to the handler
             NotificationCenter.default.post(
@@ -587,6 +589,7 @@ class WebSocketService: ObservableObject {
                 object: nil,
                 userInfo: data
             )
+            print("   ✅ Posted WebSocketObjectCreated notification")
         }
     }
     

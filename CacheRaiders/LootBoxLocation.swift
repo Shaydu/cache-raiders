@@ -599,6 +599,7 @@ class LootBoxLocationManager: ObservableObject {
         }
 
         print("📦 Handling real-time object creation: \(objectData)")
+        print("   🎯 Received notification from WebSocketService")
 
         Task { @MainActor in
             // Convert the WebSocket data to a LootBoxLocation

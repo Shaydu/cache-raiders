@@ -601,6 +601,7 @@ class APIService {
     }
 
     func createObject(_ location: LootBoxLocation) async throws -> APIObject {
+        print("🌐 [APIService] Creating object via API: \(location.name) (ID: \(location.id))")
         let url = URL(string: "\(baseURL)/api/objects")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -665,7 +666,9 @@ class APIService {
             throw APIError.httpError(httpResponse.statusCode)
         }
 
-        return try decoder.decode(APIObject.self, from: data)
+        let createdObject = try decoder.decode(APIObject.self, from: data)
+        print("✅ [APIService] Successfully created object: \(createdObject.name) (ID: \(createdObject.id))")
+        return createdObject
     }
 
     // MARK: - Game Mode
