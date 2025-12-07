@@ -158,6 +158,9 @@ class ARVIO_SLAM_Service: ObservableObject {
 
         // Perform pose optimization if needed
         optimizeSLAMPose()
+
+        // Periodically clean up invalid stabilization transforms
+        cleanupInvalidStabilizationTransforms()
     }
 
     private func processSLAMFeatures(_ frame: ARFrame) {
@@ -219,14 +222,49 @@ class ARVIO_SLAM_Service: ObservableObject {
 
     // MARK: - Drift Prevention and Stabilization
 
+    /// Periodically cleans up invalid stabilization transforms to prevent accumulation of corrupted data
+    private func cleanupInvalidStabilizationTransforms() {
+        let invalidKeys = stabilizationTransforms.keys.filter { key in
+            let transform = stabilizationTransforms[key]!
+            return !isValidTransform(transform)
+        }
+
+        for key in invalidKeys {
+            print("🧹 VIO/SLAM: Removing invalid stabilization transform for object \(key)")
+            stabilizationTransforms.removeValue(forKey: key)
+        }
+
+        if !invalidKeys.isEmpty {
+            print("🧹 VIO/SLAM: Cleaned up \(invalidKeys.count) invalid stabilization transforms")
+        }
+    }
+
     /// Applies stabilization transform to an AR object
     func stabilizeObject(_ objectId: String, currentTransform: simd_float4x4) -> simd_float4x4 {
-        // Get stabilization correction
-        let correction = stabilizationTransforms[objectId] ?? matrix_identity_float4x4
+        // Validate input transform first
+        guard isValidTransform(currentTransform) else {
+            print("⚠️ VIO/SLAM: Input transform is invalid, using identity")
+            return matrix_identity_float4x4
+        }
 
-        // Apply VIO-based stabilization if available
+        // Get stabilization correction and validate it
+        let correction = stabilizationTransforms[objectId] ?? matrix_identity_float4x4
+        guard isValidTransform(correction) else {
+            print("⚠️ VIO/SLAM: Stored correction transform is invalid, resetting to identity")
+            stabilizationTransforms.removeValue(forKey: objectId)
+            return currentTransform
+        }
+
+        // Apply VIO-based stabilization if available and valid
         if let vioCorrection = vioProcessor?.getStabilizationCorrection(),
            isValidTransform(vioCorrection) {
+
+            // Validate all inputs before multiplication
+            guard isValidTransform(currentTransform) && isValidTransform(correction) && isValidTransform(vioCorrection) else {
+                print("⚠️ VIO/SLAM: One or more input transforms invalid before multiplication")
+                return currentTransform
+            }
+
             let stabilizedTransform = currentTransform * correction * vioCorrection
 
             // Validate the result of matrix multiplication to prevent NaN propagation
@@ -235,10 +273,18 @@ class ARVIO_SLAM_Service: ObservableObject {
                 return stabilizedTransform
             } else {
                 print("⚠️ VIO/SLAM: Matrix multiplication produced invalid transform, using original")
+                // Reset the stored correction since it led to invalid results
+                stabilizationTransforms.removeValue(forKey: objectId)
             }
         }
 
-        // Fallback to basic stabilization
+        // Fallback to basic stabilization - validate inputs again
+        guard isValidTransform(currentTransform) && isValidTransform(correction) else {
+            print("⚠️ VIO/SLAM: Input transforms invalid for fallback stabilization")
+            stabilizationTransforms.removeValue(forKey: objectId)
+            return currentTransform
+        }
+
         let fallbackTransform = currentTransform * correction
 
         // Validate fallback result too
@@ -246,6 +292,8 @@ class ARVIO_SLAM_Service: ObservableObject {
             return fallbackTransform
         } else {
             print("⚠️ VIO/SLAM: Fallback stabilization produced invalid transform, using current")
+            // Reset the stored correction since even fallback failed
+            stabilizationTransforms.removeValue(forKey: objectId)
             return currentTransform
         }
     }
@@ -282,7 +330,13 @@ class ARVIO_SLAM_Service: ObservableObject {
     /// Applies pose corrections from SLAM optimization
     private func applyPoseCorrections(_ optimizedPoses: [String: simd_float4x4]) {
         for (objectId, optimizedPose) in optimizedPoses {
-            stabilizationTransforms[objectId] = optimizedPose
+            if isValidTransform(optimizedPose) {
+                stabilizationTransforms[objectId] = optimizedPose
+            } else {
+                print("⚠️ VIO/SLAM: Rejecting invalid optimized pose for object \(objectId)")
+                // Remove invalid transform to prevent future issues
+                stabilizationTransforms.removeValue(forKey: objectId)
+            }
         }
     }
 
@@ -353,7 +407,7 @@ class ARVIO_SLAM_Service: ObservableObject {
         }
 
         // Apply inertial pose corrections to all tracked objects
-        for (objectId, _) in stabilizationTransforms {
+        for objectId in stabilizationTransforms.keys {
             stabilizationTransforms[objectId] = inertialPose
         }
 
@@ -368,7 +422,7 @@ class ARVIO_SLAM_Service: ObservableObject {
         }
 
         // Apply SLAM-based relocalization
-        for (objectId, _) in stabilizationTransforms {
+        for objectId in stabilizationTransforms.keys {
             stabilizationTransforms[objectId] = relocalizationPose
         }
 
@@ -444,7 +498,7 @@ class VIOProcessor {
         // In a real implementation, this would use proper VIO algorithms
         // combining visual features with inertial measurements
 
-        guard !inertialHistory.isEmpty && !cameraTransforms.isEmpty else { return }
+        guard !cameraTransforms.isEmpty else { return }
 
         // Use latest camera transform as base pose
         let latestTransform = cameraTransforms.last!
@@ -453,7 +507,9 @@ class VIOProcessor {
         if isValidTransform(latestTransform) {
             currentPose = latestTransform
         } else {
-            print("⚠️ VIO Processor: Rejecting invalid camera transform")
+            print("⚠️ VIO Processor: Rejecting invalid camera transform, keeping previous pose")
+            // Don't update currentPose if the new transform is invalid
+            // This preserves the last known good pose
         }
     }
 
@@ -478,11 +534,19 @@ class VIOProcessor {
     }
 
     func getStabilizationCorrection() -> simd_float4x4? {
-        // Return stabilization correction based on VIO data
+        // Return stabilization correction based on VIO data, but validate first
+        guard isValidTransform(currentPose) else {
+            print("⚠️ VIO Processor: Current pose is invalid, cannot provide stabilization correction")
+            return nil
+        }
         return currentPose
     }
 
     func getInertialPose() -> simd_float4x4? {
+        guard isValidTransform(currentPose) else {
+            print("⚠️ VIO Processor: Current pose is invalid, cannot provide inertial pose")
+            return nil
+        }
         return currentPose
     }
 }
