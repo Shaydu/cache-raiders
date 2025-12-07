@@ -2,11 +2,12 @@ import Foundation
 import RealityKit
 import ARKit
 import CoreLocation
+import Combine
 
 // MARK: - Enhanced Plane Anchor Service
 /// Advanced plane anchoring system that prevents drift by anchoring objects to multiple planes
 /// and using geometric constraints for stability
-class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
+class AREnhancedPlaneAnchorService: ObservableObject {
 
     // MARK: - Properties
 
@@ -27,7 +28,6 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
     // MARK: - Initialization
 
     init(arView: ARView?, arCoordinator: ARCoordinator?) {
-        super.init()
         self.arView = arView
         self.arCoordinator = arCoordinator
         setupStabilityMonitoring()
@@ -51,6 +51,9 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
             return false
         }
 
+        // Extract position from the anchor entity
+        let position = anchorEntity.position
+
         // Find planes within anchoring radius
         let anchorRadius: Float = 3.0 // Search within 3 meters
         let nearbyPlanes = findPlanesNearPosition(position, radius: anchorRadius)
@@ -58,7 +61,7 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
         guard nearbyPlanes.count >= 2 else {
             print("⚠️ Insufficient planes for multi-plane anchoring (found: \(nearbyPlanes.count), needed: 2+)")
             // Fall back to single plane anchoring
-            return createSinglePlaneAnchor(objectId: objectId, position: position, entity: entity)
+            return createSinglePlaneAnchor(objectId: objectId, anchorEntity: anchorEntity)
         }
 
         // Create geometric constraints between planes
@@ -91,18 +94,10 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
     }
 
     /// Creates a single plane anchor as fallback when multi-plane anchoring isn't possible
-    private func createSinglePlaneAnchor(objectId: String, position: SIMD3<Float>, entity: Entity) -> Bool {
-        guard let arView = arView else { return false }
-
+    private func createSinglePlaneAnchor(objectId: String, anchorEntity: AnchorEntity) -> Bool {
         // Find the best single plane
+        let position = anchorEntity.position
         let bestPlane = findBestPlaneForPosition(position)
-
-        // Create standard anchor entity
-        let anchorEntity = AnchorEntity(world: position)
-        anchorEntity.name = "single_plane_\(objectId)"
-        anchorEntity.addChild(entity)
-
-        arView.scene.addAnchor(anchorEntity)
 
         // Create minimal anchor group for tracking
         let anchorGroup = PlaneAnchorGroup(
@@ -115,12 +110,18 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
 
         activePlaneAnchors[objectId] = anchorGroup
 
-        print("📍 Created single-plane anchor for '\(objectId)' (fallback - stability: \(String(format: "%.2f", anchorGroup.stabilityScore)))")
+        print("📍 Enhanced single-plane anchor for '\(objectId)' (fallback - stability: \(String(format: "%.2f", anchorGroup.stabilityScore)))")
 
         return true
     }
 
     // MARK: - Plane Detection and Analysis
+
+    /// Extracts position from ARPlaneAnchor transform
+    public static func positionFromPlane(_ plane: ARPlaneAnchor) -> SIMD3<Float> {
+        let transform = plane.transform // simd_float4x4
+        return SIMD3<Float>(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
+    }
 
     /// Finds all planes near a position within the specified radius
     private func findPlanesNearPosition(_ position: SIMD3<Float>, radius: Float) -> [ARPlaneAnchor] {
@@ -130,8 +131,8 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
         let planeAnchors = allAnchors.compactMap { $0 as? ARPlaneAnchor }
 
         return planeAnchors.filter { plane in
-            let planeCenter = SIMD3<Float>(plane.transform.columns.3.x, plane.transform.columns.3.y, plane.transform.columns.3.z)
-            let distance = simd_length(planeCenter - position)
+            let planeCenter = AREnhancedPlaneAnchorService.positionFromPlane(plane)
+            let distance = length(planeCenter - position)
             return distance <= radius
         }
     }
@@ -142,14 +143,16 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
 
         // Score planes based on size, distance, and orientation
         let scoredPlanes = nearbyPlanes.map { plane -> (plane: ARPlaneAnchor, score: Float) in
-            let planeCenter = SIMD3<Float>(plane.transform.columns.3.x, plane.transform.columns.3.y, plane.transform.columns.3.z)
-            let distance = simd_length(planeCenter - position)
+            let planeCenter = AREnhancedPlaneAnchorService.positionFromPlane(plane)
+            let distance = length(planeCenter - position)
             let distanceScore = max(0, 1.0 - distance / 2.0) // Closer is better
 
             let area = plane.planeExtent.width * plane.planeExtent.height
             let areaScore = min(area / 4.0, 1.0) // Larger area is better
 
-            let orientationScore = abs(plane.transform.columns.1.y) // Prefer horizontal planes
+            let transform = plane.transform // simd_float4x4
+            let upVector = SIMD3<Float>(transform.columns.1.x, transform.columns.1.y, transform.columns.1.z)
+            let orientationScore = abs(upVector.y) // Prefer horizontal planes (up vector points more up)
 
             let totalScore = (distanceScore * 0.4) + (areaScore * 0.4) + (orientationScore * 0.2)
             return (plane, totalScore)
@@ -170,10 +173,10 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
                 let plane1 = planes[i]
                 let plane2 = planes[j]
 
-                let pos1 = SIMD3<Float>(plane1.transform.columns.3.x, plane1.transform.columns.3.y, plane1.transform.columns.3.z)
-                let pos2 = SIMD3<Float>(plane2.transform.columns.3.x, plane2.transform.columns.3.y, plane2.transform.columns.3.z)
+                let pos1 = AREnhancedPlaneAnchorService.positionFromPlane(plane1)
+                let pos2 = AREnhancedPlaneAnchorService.positionFromPlane(plane2)
 
-                let distance = simd_length(pos2 - pos1)
+                let distance = length(pos2 - pos1)
                 let constraint = PlaneConstraint.distance(
                     between: plane1,
                     and: plane2,
@@ -187,8 +190,8 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
 
         // Create center-to-plane distance constraints
         for plane in planes {
-            let planePos = SIMD3<Float>(plane.transform.columns.3.x, plane.transform.columns.3.y, plane.transform.columns.3.z)
-            let distance = simd_length(planePos - centerPosition)
+            let planePos = AREnhancedPlaneAnchorService.positionFromPlane(plane)
+            let distance = length(planePos - centerPosition)
 
             let constraint = PlaneConstraint.centerDistance(
                 plane: plane,
@@ -243,11 +246,25 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
         let planeCountScore = min(Double(planes.count) / 4.0, 1.0) * 0.4
 
         // Stability from plane quality (size, confidence)
-        let planeQualityScore = planes.map { plane in
+        var totalQualityScore = 0.0
+        for plane in planes {
             let area = Double(plane.planeExtent.width * plane.planeExtent.height)
-            let confidence = Double(plane.classification.rawValue) / 3.0 // Assuming 3 confidence levels
-            return min((area / 4.0) * confidence, 1.0)
-        }.reduce(0, +) / Double(planes.count) * 0.4
+            // Map classification to confidence score (0.0-1.0)
+            let confidence: Double
+            switch plane.classification {
+            case .wall, .floor, .ceiling, .table, .seat:
+                confidence = 0.8 // High confidence for recognized surfaces
+            case .window, .door:
+                confidence = 0.6 // Medium confidence
+            case .none:
+                confidence = 0.3 // Low confidence for unrecognized
+            @unknown default:
+                confidence = 0.5 // Medium confidence for unknown cases
+            }
+            let qualityScore = min((area / 4.0) * confidence, 1.0)
+            totalQualityScore += qualityScore
+        }
+        let planeQualityScore = totalQualityScore / Double(planes.count) * 0.4
 
         // Constraint satisfaction score
         let constraintScore = Double(constraints.count) / Double(max(planes.count * 2, 1)) * 0.2
@@ -304,13 +321,13 @@ enum PlaneConstraint {
         case .distance(let plane1, let plane2, let targetDistance, let tolerance):
             let pos1 = SIMD3<Float>(plane1.transform.columns.3.x, plane1.transform.columns.3.y, plane1.transform.columns.3.z)
             let pos2 = SIMD3<Float>(plane2.transform.columns.3.x, plane2.transform.columns.3.y, plane2.transform.columns.3.z)
-            let currentDistance = simd_length(pos2 - pos1)
+            let currentDistance = length(pos2 - pos1)
             let deviation = abs(currentDistance - targetDistance)
             return deviation > tolerance ? deviation : 0
 
         case .centerDistance(let plane, let centerPosition, let targetDistance, let tolerance):
             let planePos = SIMD3<Float>(plane.transform.columns.3.x, plane.transform.columns.3.y, plane.transform.columns.3.z)
-            let currentDistance = simd_length(planePos - centerPosition)
+            let currentDistance = length(planePos - centerPosition)
             let deviation = abs(currentDistance - targetDistance)
             return deviation > tolerance ? deviation : 0
         }
@@ -334,7 +351,6 @@ class GeometricStabilizer {
     }
 
     func applyCorrection() {
-        // Calculate correction based on constraint violations
         var totalCorrection = SIMD3<Float>(0, 0, 0)
         var correctionCount = 0
 
@@ -343,21 +359,21 @@ class GeometricStabilizer {
             if violation > 0 {
                 switch constraint {
                 case .distance(let plane1, let plane2, let targetDistance, _):
-                    let pos1 = SIMD3<Float>(plane1.transform.columns.3.x, plane1.transform.columns.3.y, plane1.transform.columns.3.z)
-                    let pos2 = SIMD3<Float>(plane2.transform.columns.3.x, plane2.transform.columns.3.y, plane2.transform.columns.3.z)
+                    let pos1 = AREnhancedPlaneAnchorService.positionFromPlane(plane1)
+                    let pos2 = AREnhancedPlaneAnchorService.positionFromPlane(plane2)
 
                     let direction = normalize(pos2 - pos1)
-                    let currentDistance = simd_length(pos2 - pos1)
-                    let correction = direction * (targetDistance - currentDistance) * 0.1 // 10% correction
+                    let currentDistance = length(pos2 - pos1)
+                    let correction = direction * (targetDistance - currentDistance) * 0.1
 
                     totalCorrection += correction
                     correctionCount += 1
 
                 case .centerDistance(let plane, let centerPosition, let targetDistance, _):
-                    let planePos = SIMD3<Float>(plane.transform.columns.3.x, plane.transform.columns.3.y, plane.transform.columns.3.z)
+                    let planePos = AREnhancedPlaneAnchorService.positionFromPlane(plane)
                     let direction = normalize(planePos - centerPosition)
-                    let currentDistance = simd_length(planePos - centerPosition)
-                    let correction = direction * (targetDistance - currentDistance) * 0.05 // 5% correction
+                    let currentDistance = length(planePos - centerPosition)
+                    let correction = direction * (targetDistance - currentDistance) * 0.05
 
                     totalCorrection += correction
                     correctionCount += 1
@@ -370,7 +386,7 @@ class GeometricStabilizer {
             let maxCorrection: Float = 0.01 // Max 1cm correction per step
 
             if length(averageCorrection) > maxCorrection {
-                let correctionDirection = normalize(averageCorrection)
+                let correctionDirection = simd_normalize(averageCorrection)
                 anchorEntity.position += correctionDirection * maxCorrection
             } else {
                 anchorEntity.position += averageCorrection

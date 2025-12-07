@@ -74,7 +74,7 @@ struct TreasureMapView: View {
                 .ignoresSafeArea()
                 
                 MapReader { proxy in
-                    Map(position: $position) {
+                    Map(position: $position, bounds: MapCameraBounds(minimumDistance: 1, maximumDistance: nil)) {
                         // User location
                         if let userLocation = userLocationManager.currentLocation {
                             Annotation("You", coordinate: userLocation.coordinate) {

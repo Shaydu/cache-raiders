@@ -165,7 +165,7 @@ struct LootBoxMapView: View {
     var body: some View {
         ZStack {
             MapReader { proxy in
-                Map(position: $position) {
+                Map(position: $position, bounds: MapCameraBounds(minimumDistance: 1, maximumDistance: nil)) {
                     ForEach(allAnnotations, id: \.id) { annotation in
                         if annotation.isUserLocation {
                             // User location pin

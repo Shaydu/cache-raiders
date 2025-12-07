@@ -63,6 +63,38 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         tapHandler?.placedBoxes = placedBoxes
     }
 
+    /// Choose the best anchor type based on available data and object type
+    private func createOptimalAnchor(for position: SIMD3<Float>, screenPoint: CGPoint?, objectType: LootBoxType, in arView: ARView) -> AnchorEntity {
+
+        // Try plane anchor first if we have screen coordinates (for surface-attached objects)
+        if let screenPoint = screenPoint {
+            // Only try plane anchors for objects that benefit from surface attachment
+            let shouldTryPlaneAnchor = (objectType == .treasureChest || objectType == .lootChest ||
+                                       objectType == .chalice || objectType == .templeRelic)
+
+            if shouldTryPlaneAnchor {
+                if let raycastResult = arView.raycast(from: screenPoint, allowing: .estimatedPlane, alignment: .horizontal).first {
+
+                    // 🎯 PLANE ANCHOR: Attach to detected surface (much more stable!)
+                    let planeAnchor = AnchorEntity(anchor: raycastResult.anchor!)
+                    planeAnchor.position = SIMD3<Float>(raycastResult.worldTransform.columns.3.x, raycastResult.worldTransform.columns.3.y, raycastResult.worldTransform.columns.3.z)
+                    Swift.print("✅ PLANE ANCHOR: '\(objectType.displayName)' attached to detected surface")
+                    return planeAnchor
+                }
+                Swift.print("⚠️ PLANE ANCHOR: No surface detected for '\(objectType.displayName)', using world anchor")
+            } else {
+                Swift.print("🎯 WORLD ANCHOR: '\(objectType.displayName)' prefers floating placement")
+            }
+        } else {
+            Swift.print("🎯 WORLD ANCHOR: No screen coordinates available for '\(objectType.displayName)'")
+        }
+
+        // 🎯 WORLD ANCHOR: Fallback for floating objects or when no surface detected
+        let worldAnchor = AnchorEntity(world: position)
+        Swift.print("✅ WORLD ANCHOR: Using world-positioned anchor for '\(objectType.displayName)'")
+        return worldAnchor
+    }
+
     // MARK: - NPC Types
     enum NPCType: String, CaseIterable {
         case skeleton = "skeleton"
@@ -355,15 +387,19 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 break
             }
             checkedCount += 1
-            
+
             // Skip if already found/collected
             if distanceTracker?.foundLootBoxes.contains(locationId) ?? false {
                 continue
             }
-            
+
             // Check if object is in viewport
             if isObjectInViewport(locationId: locationId, anchor: anchor) {
                 currentlyVisible.insert(locationId)
+                // DEBUG: Log when object becomes visible
+                if !objectsInViewport.contains(locationId) {
+                    Swift.print("👁️ Object \(locationId) entered viewport")
+                }
                 
                 // If object just entered viewport (wasn't visible before), play chime and log details
                 if !objectsInViewport.contains(locationId) {
@@ -398,7 +434,12 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 }
             }
         }
-        
+
+        // DEBUG: Log viewport statistics periodically
+        if sessionFrameCount % 300 == 0 { // Every 5 seconds at 60fps
+            Swift.print("🎯 Viewport stats: \(currentlyVisible.count)/\(placedBoxes.count) objects visible, checked \(checkedCount) objects this frame")
+        }
+
         // Update tracked visible objects
         objectsInViewport = currentlyVisible
     }
@@ -2750,7 +2791,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                         Swift.print("   Final rotated position: (\(String(format: "%.4f", finalARPosition.x)), \(String(format: "%.4f", finalARPosition.y)), \(String(format: "%.4f", finalARPosition.z)))m")
                         Swift.print("   🎯 PRECISION ACHIEVED: Object placed with coordinate transformation and compass rotation for cross-user consistency")
 
-                        placeBoxAtPosition(finalARPosition, location: location, in: arView)
+                        placeBoxAtPosition(finalARPosition, location: location, in: arView, screenPoint: nil)
                     }
                     
                     // Log location again after 1 second to verify it's still there
@@ -2837,7 +2878,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 Swift.print("   Intended position: (\(String(format: "%.4f", intendedPosition.x)), \(String(format: "%.4f", intendedPosition.y)), \(String(format: "%.4f", intendedPosition.z)))m")
 
                 // Place at intended position
-                placeBoxAtPosition(intendedPosition, location: location, in: arView)
+                placeBoxAtPosition(intendedPosition, location: location, in: arView, screenPoint: nil)
 
                 // Clean up - position has been used
                 UserDefaults.standard.removeObject(forKey: arPositionKey)
@@ -3016,7 +3057,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 }
                 
                 // PERFORMANCE: Logging disabled
-                placeBoxAtPosition(finalPosition, location: location, in: arView)
+                placeBoxAtPosition(finalPosition, location: location, in: arView, screenPoint: nil)
                 return
             } else {
                 // Precision positioning service failed - cannot place object accurately
@@ -3085,7 +3126,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         }
         
         Swift.print("🎯 Placing object at tap location (distance: \(String(format: "%.2f", length(boxPosition - cameraPos)))m)")
-        placeBoxAtPosition(boxPosition, location: location, in: arView)
+        placeBoxAtPosition(boxPosition, location: location, in: arView, screenPoint: nil)
     }
     // Place an object at exact AR world transform position (highest precision)
     private func placeBoxAtARTransform(_ arWorldTransform: simd_float4x4, location: LootBoxLocation, in arView: ARView) {
@@ -3510,7 +3551,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     }
     
     // Helper method to place a randomly selected object at a specific position
-    private func placeBoxAtPosition(_ boxPosition: SIMD3<Float>, location: LootBoxLocation, in arView: ARView) {
+    private func placeBoxAtPosition(_ boxPosition: SIMD3<Float>, location: LootBoxLocation, in arView: ARView, screenPoint: CGPoint? = nil) {
         // Prevent duplicate placements
         if placedBoxes[location.id] != nil {
             Swift.print("⚠️ Object with ID \(location.id) already placed - skipping duplicate placement")
@@ -3653,8 +3694,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         let placedEntity = entity
         let findableObject = findable
 
-        // Create traditional anchor for object placement
-        let anchor = AnchorEntity(world: groundedPosition)
+        // Create optimal anchor (plane anchor if possible, world anchor as fallback)
+        let anchor = createOptimalAnchor(for: groundedPosition, screenPoint: screenPoint, objectType: location.type, in: arView)
         anchor.name = location.id
         anchor.addChild(placedEntity)
         arView.scene.addAnchor(anchor)
@@ -4483,7 +4524,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         }
         
         // Use the standard placement function instead of duplicating logic
-        placeBoxAtPosition(boxPosition, location: location, in: arView)
+        placeBoxAtPosition(boxPosition, location: location, in: arView, screenPoint: nil)
         Swift.print("✅ Placed \(location.name) in front of camera (fallback) at: \(boxPosition)")
         Swift.print("   Distance from camera: \(String(format: "%.2f", finalDistance))m")
     }
@@ -4861,8 +4902,16 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 Swift.print("✅ Added temporary location to locationManager for tap detection")
             }
 
+            // Extract screen coordinates for plane anchor raycasting
+            let screenPoint: CGPoint? = {
+                if let coords = placementData["screenPoint"] as? [CGFloat], coords.count >= 2 {
+                    return CGPoint(x: coords[0], y: coords[1])
+                }
+                return nil
+            }()
+
             // Place immediately at the exact AR coordinates WITH the scale from placement view
-            placeObjectAtARPosition(locationToPlace, arPosition: arPosition, userLocation: userLocation, scale: scale)
+            placeObjectAtARPosition(locationToPlace, arPosition: arPosition, userLocation: userLocation, scale: scale, screenPoint: screenPoint)
 
         } else {
             // Fallback to old method (reload and check nearby)
@@ -4880,7 +4929,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     }
 
     /// Place an object directly at specified AR coordinates (for immediate placement after AR creation)
-    private func placeObjectAtARPosition(_ location: LootBoxLocation, arPosition: SIMD3<Float>, userLocation: CLLocation, scale: Float = 1.0) {
+    private func placeObjectAtARPosition(_ location: LootBoxLocation, arPosition: SIMD3<Float>, userLocation: CLLocation, scale: Float = 1.0, screenPoint: CGPoint? = nil) {
         guard let arView = arView else {
             Swift.print("⚠️ Cannot place object: No AR view")
             return
@@ -4905,8 +4954,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         Swift.print("   Final AR Position: (\(String(format: "%.4f", finalPosition.x)), \(String(format: "%.4f", finalPosition.y)), \(String(format: "%.4f", finalPosition.z)))")
 
         do {
-            // Create anchor at the final AR position in main AR view's coordinate system
-            let anchor = AnchorEntity(world: finalPosition)
+            // Create optimal anchor (plane anchor if possible, world anchor as fallback)
+            let anchor = createOptimalAnchor(for: finalPosition, screenPoint: screenPoint, objectType: location.type, in: arView)
             // CRITICAL: Set anchor name to location.id so tap detection works even if entity hit test fails
             anchor.name = location.id
 
@@ -5396,7 +5445,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         Swift.print("   🎯 PRECISION MODE: Using exact AR anchor position (mm accuracy)")
         
         // Use the exact position from the AR anchor - no re-grounding
-        placeBoxAtPosition(position, location: location, in: arView)
+        placeBoxAtPosition(position, location: location, in: arView, screenPoint: nil)
     }
 
     /// Check for and re-place unfound objects that should be visible but aren't in AR
@@ -5408,20 +5457,34 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             return
         }
         
+        // DEBUG: Log current placement state
+        Swift.print("🔍 DEBUG: Placement check - Game mode: \(locationManager.gameMode.displayName), Search distance: \(locationManager.maxSearchDistance)m, User location: (\(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude))")
+
         // Get nearby unfound objects that aren't currently placed
         let nearby = locationManager.getNearbyLocations(userLocation: userLocation)
-        let unfoundObjects = nearby.filter { 
-            !$0.collected && 
-            placedBoxes[$0.id] == nil && 
+        let unfoundObjects = nearby.filter {
+            !$0.collected &&
+            placedBoxes[$0.id] == nil &&
             $0.latitude != 0 && // Skip manually placed objects (lat/lon 0,0)
             $0.longitude != 0
         }
-        
+
         if !unfoundObjects.isEmpty {
             Swift.print("🔄 Found \(unfoundObjects.count) unfound objects that need re-placement")
             for location in unfoundObjects {
-                Swift.print("   ↳ Re-placing: \(location.name) (ID: \(location.id))")
+                let distance = userLocation.distance(from: location.location)
+                Swift.print("   ↳ Re-placing: \(location.name) (ID: \(location.id), distance: \(String(format: "%.1f", distance))m, collected: \(location.collected))")
                 placeLootBoxAtLocation(location, in: arView)
+            }
+        } else {
+            // DEBUG: Log why no objects are being placed
+            Swift.print("🔍 DEBUG: No unfound objects to place. Nearby count: \(nearby.count)")
+            if !nearby.isEmpty {
+                for location in nearby {
+                    let distance = userLocation.distance(from: location.location)
+                    let isPlaced = placedBoxes[location.id] != nil
+                    Swift.print("   📍 Object: \(location.name) (ID: \(location.id), distance: \(String(format: "%.1f", distance))m, collected: \(location.collected), placed: \(isPlaced), coords: (\(location.latitude), \(location.longitude)))")
+                }
             }
         }
     }
@@ -5533,7 +5596,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
     /// Stabilizes a specific object using enhanced anchoring techniques
     private func stabilizeObject(objectId: String, findableObject: FindableObject) {
-        let currentTransform = findableObject.anchor.transform
+        let currentTransform = findableObject.anchor.transformMatrix(relativeTo: nil)
         let currentPosition = SIMD3<Float>(currentTransform.columns.3.x, currentTransform.columns.3.y, currentTransform.columns.3.z)
 
         var targetTransform = currentTransform
@@ -5557,8 +5620,40 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             // Smooth the transition to prevent jarring movements
             let smoothingFactor: Float = 0.1 // 10% correction per frame
             let smoothedTransform = interpolateTransform(from: currentTransform, to: targetTransform, factor: smoothingFactor)
-            findableObject.anchor.transform = smoothedTransform
+            findableObject.anchor.transform = Transform(matrix: smoothedTransform)
         }
+    }
+
+    /// DEBUG: Comprehensive AR status report for troubleshooting invisible objects
+    func debugARStatus() {
+        Swift.print("🔍 === AR STATUS REPORT ===")
+        Swift.print("📍 Placed objects: \(placedBoxes.count)")
+        Swift.print("👁️ Objects in viewport: \(objectsInViewport.count)")
+        Swift.print("🎮 Game mode: \(locationManager?.gameMode.displayName ?? "Unknown")")
+        Swift.print("📏 Search distance: \(locationManager?.maxSearchDistance ?? 0)m")
+
+        if let userLocation = userLocationManager?.currentLocation {
+            Swift.print("📍 User location: (\(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)) ±\(userLocation.horizontalAccuracy)m")
+
+            let nearby = locationManager?.getNearbyLocations(userLocation: userLocation) ?? []
+            Swift.print("📍 Nearby objects: \(nearby.count)")
+            for location in nearby {
+                let distance = userLocation.distance(from: location.location)
+                let isPlaced = placedBoxes[location.id] != nil
+                let isCollected = location.collected
+                Swift.print("   • \(location.name): \(String(format: "%.1f", distance))m away, placed: \(isPlaced), collected: \(isCollected)")
+            }
+        } else {
+            Swift.print("❌ No user location available")
+        }
+
+        if let arView = arView, let frame = arView.session.currentFrame {
+            Swift.print("📹 AR tracking state: \(frame.camera.trackingState)")
+        } else {
+            Swift.print("❌ No AR frame available")
+        }
+
+        Swift.print("🔍 === END REPORT ===")
     }
 
     /// Interpolates between two transforms for smooth stabilization

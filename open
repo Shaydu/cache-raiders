@@ -1,0 +1,7 @@
+"workbench.colorCustomizations": {
+    "titleBar.activeBackground": "#1E90FF",
+    "titleBar.activeForeground": "#FFFFFF",
+    "titleBar.inactiveBackground": "#104E8B",
+    "titleBar.inactiveForeground": "#CCCCCC",
+    "titleBar.border": "#FF0000"  // <-- this creates the 1px red line
+}

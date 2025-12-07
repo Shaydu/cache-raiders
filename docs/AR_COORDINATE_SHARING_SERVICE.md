@@ -338,3 +338,6 @@ print("Coordinate sharing status: \(diagnostics)")
 - `ARCoordinateSharingService.swift` - Main service implementation
 - `ARCoordinator+CoordinateSharing.swift` - Integration extension
 - `LootBoxLocationManager+Coordinates.swift` - Location manager integration
+
+
+

@@ -107,7 +107,7 @@ struct ARPlacementView: View {
                         selectedObject: selectedObject,
                         objectType: isPlacingNew ? selectedObjectType : selectedObject?.type ?? .chalice,
                         isNewObject: isPlacingNew,
-                        onPlace: { gpsCoordinate, arPosition, arOrigin, groundingHeight, scale in
+                        onPlace: { gpsCoordinate, arPosition, arOrigin, groundingHeight, scale, screenPoint in
                             // Handle placement
                             print("🎯 [Placement] onPlace called - starting placement process")
                             print("   GPS: (\(gpsCoordinate.latitude), \(gpsCoordinate.longitude))")
@@ -130,7 +130,8 @@ struct ARPlacementView: View {
                                         arPosition: arPosition,
                                         arOrigin: arOrigin,
                                         groundingHeight: groundingHeight,
-                                        scale: scale
+                                        scale: scale,
+                                        screenPoint: screenPoint
                                     )
                                     print("✅ [Placement] Object location updated successfully")
                                 } else {
@@ -144,7 +145,8 @@ struct ARPlacementView: View {
                                         arPosition: arPosition,
                                         arOrigin: arOrigin,
                                         groundingHeight: groundingHeight,
-                                        scale: scale
+                                        scale: scale,
+                                        screenPoint: screenPoint
                                     )
                                     print("✅ [Placement] New object created successfully with ID: \(objectId)")
                                 }
@@ -165,7 +167,8 @@ struct ARPlacementView: View {
                                     "arPosition": [arPosition.x, arPosition.y, arPosition.z],
                                     "arOrigin": [arOrigin!.coordinate.latitude, arOrigin!.coordinate.longitude],
                                     "groundingHeight": groundingHeight,
-                                    "scale": scale
+                                    "scale": scale,
+                                    "screenPoint": screenPoint != nil ? [screenPoint!.x, screenPoint!.y] : nil // For plane anchor raycasting
                                 ]
 
                                 // CRITICAL FIX: Don't reload ALL locations from API - this causes unrelated objects to appear!
@@ -270,7 +273,7 @@ struct ARPlacementView: View {
         }
     }
     
-    private func updateObjectLocation(objectId: String, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async {
+    private func updateObjectLocation(objectId: String, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float, screenPoint: CGPoint?) async {
         do {
             // Update GPS location
             let location = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
@@ -365,7 +368,7 @@ struct ARPlacementView: View {
         }
     }
 
-    private func createNewObject(type: LootBoxType, name: String, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float) async -> String {
+    private func createNewObject(type: LootBoxType, name: String, coordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float, screenPoint: CGPoint?) async -> String {
         let objectId = UUID().uuidString
         let now = Date()
 
@@ -468,7 +471,7 @@ struct ARPlacementARViewWrapper: View {
     let selectedObject: LootBoxLocation?
     let objectType: LootBoxType
     let isNewObject: Bool
-    let onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void
+    let onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float, CGPoint?) -> Void
     let onCancel: () -> Void
     let onDone: () -> Void
     @Binding var scaleMultiplier: Float
@@ -521,7 +524,7 @@ struct ARPlacementARView: UIViewRepresentable {
     let isNewObject: Bool
     @ObservedObject var placementReticle: ARPlacementReticle
     @Binding var scaleMultiplier: Float
-    let onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void
+    let onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float, CGPoint?) -> Void
     let onCancel: () -> Void
     @Binding var coordinatorBinding: Coordinator?
     
@@ -626,7 +629,7 @@ struct ARPlacementARView: UIViewRepresentable {
         var selectedObject: LootBoxLocation?
         var objectType: LootBoxType
         var isNewObject: Bool
-        var onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void
+        var onPlace: (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float, CGPoint?) -> Void
         var onCancel: () -> Void
         var arOriginGPS: CLLocation?
         var crosshairEntity: ModelEntity?
@@ -650,7 +653,7 @@ struct ARPlacementARView: UIViewRepresentable {
         var pendingPlacementData: (gpsCoordinate: CLLocationCoordinate2D, arPosition: SIMD3<Float>, arOrigin: CLLocation?, groundingHeight: Double, scale: Float)?
 
 
-        init(onPlace: @escaping (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float) -> Void, onCancel: @escaping () -> Void) {
+        init(onPlace: @escaping (CLLocationCoordinate2D, SIMD3<Float>, CLLocation?, Double, Float, CGPoint?) -> Void, onCancel: @escaping () -> Void) {
             self.onPlace = onPlace
             self.onCancel = onCancel
             self.objectType = .chalice
@@ -1217,6 +1220,10 @@ struct ARPlacementARView: UIViewRepresentable {
             print("✅ Placement button tapped - placing at reticle position: \(reticlePosition)")
             print("   Reticle X: \(String(format: "%.4f", reticlePosition.x)), Y: \(String(format: "%.4f", reticlePosition.y)), Z: \(String(format: "%.4f", reticlePosition.z))")
 
+            // Get screen coordinates for raycasting (plane anchor support)
+            let screenPoint = placementReticle?.getPlacementScreenPoint()
+            print("   Screen coordinates: \(screenPoint != nil ? "(\(String(format: "%.1f", screenPoint!.x)), \(String(format: "%.1f", screenPoint!.y)))" : "unavailable")")
+
             // Hide preview object - main AR view will place the persistent object
             hidePreviewObject()
 
@@ -1227,12 +1234,12 @@ struct ARPlacementARView: UIViewRepresentable {
                 reticlePosition.y, // Use surface Y level where crosshairs sit
                 reticlePosition.z
             )
-            
+
             print("   Adjusted position: X: \(String(format: "%.4f", adjustedPosition.x)), Y: \(String(format: "%.4f", adjustedPosition.y)), Z: \(String(format: "%.4f", adjustedPosition.z))")
 
             // Convert AR world position to GPS coordinates (fallback)
             let gpsCoordinate = arOriginGPS.flatMap { convertARToGPS(arPosition: adjustedPosition, arOrigin: $0) }
-            
+
             // Always use AR coordinates for mm-precision (primary)
             // GPS is only for fallback when AR session restarts
             let surfaceY = Double(adjustedPosition.y)
@@ -1248,7 +1255,8 @@ struct ARPlacementARView: UIViewRepresentable {
             )
 
             // Save to API (for persistence across app restarts)
-            onPlace(gpsCoordinate ?? arOriginGPS?.coordinate ?? CLLocationCoordinate2D(), adjustedPosition, arOriginGPS, surfaceY, scaleMultiplier)
+            // Include screen coordinates for plane anchor raycasting
+            onPlace(gpsCoordinate ?? arOriginGPS?.coordinate ?? CLLocationCoordinate2D(), adjustedPosition, arOriginGPS, surfaceY, scaleMultiplier, screenPoint)
         }
         
         /// Saves the currently placed object (called when Done button is pressed)
@@ -1264,7 +1272,8 @@ struct ARPlacementARView: UIViewRepresentable {
                 placementData.arPosition,
                 placementData.arOrigin,
                 placementData.groundingHeight,
-                placementData.scale
+                placementData.scale,
+                nil // No screen coordinates for saved placement data
             )
         }
         
@@ -1529,7 +1538,7 @@ struct ARPlacementARView: UIViewRepresentable {
             )
             
             // Place the object using AR coordinates (primary) with GPS fallback
-            onPlace(gpsCoordinate ?? arOrigin.coordinate, finalWorldPos, arOrigin, surfaceY, scaleMultiplier)
+            onPlace(gpsCoordinate ?? arOrigin.coordinate, finalWorldPos, arOrigin, surfaceY, scaleMultiplier, nil)
         }
         
         // Convert AR world position back to GPS coordinates
