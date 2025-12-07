@@ -176,22 +176,37 @@ class ARObjectDetailService {
         in arView: ARView,
         placedBoxes: [String: AnchorEntity]
     ) -> String? {
+        Swift.print("🔍 Detecting object at location: (\(location.x), \(location.y))")
+        Swift.print("   Available placed boxes: \(placedBoxes.count)")
+        if !placedBoxes.isEmpty {
+            Swift.print("   Placed box IDs: \(Array(placedBoxes.keys).sorted().joined(separator: ", "))")
+        }
+
         // First try direct entity hit
         if let tappedEntity = arView.entity(at: location) {
+            Swift.print("   Found tapped entity: \(tappedEntity.name) (type: \(type(of: tappedEntity)))")
+
             // Walk up entity hierarchy to find object ID
             var entityToCheck: Entity? = tappedEntity
             var checkedEntities = Set<String>()
+            var hierarchyPath: [String] = []
 
             while let currentEntity = entityToCheck {
                 let entityName = currentEntity.name
+                hierarchyPath.append("\(type(of: currentEntity)):'\(entityName)'")
+
                 if !entityName.isEmpty {
                     let entityKey = "\(ObjectIdentifier(currentEntity))"
                     guard !checkedEntities.contains(entityKey) else { break }
                     checkedEntities.insert(entityKey)
 
+                    Swift.print("   Checking entity: '\(entityName)'")
                     // Check if this ID matches a placed box
                     if placedBoxes[entityName] != nil {
+                        Swift.print("   ✅ Found matching object: '\(entityName)'")
                         return entityName
+                    } else {
+                        Swift.print("   ❌ No match for '\(entityName)' in placedBoxes")
                     }
                 }
 
@@ -211,10 +226,43 @@ class ARObjectDetailService {
 
                 entityToCheck = currentEntity.parent
             }
+
+            // Check if this is an orphaned entity (UUID-named but not tracked)
+            // Orphaned entities can still show details
+            entityToCheck = tappedEntity // Reset to start from tapped entity again
+            checkedEntities.removeAll() // Clear checked entities for new search
+
+            while let currentEntity = entityToCheck {
+                let entityName = currentEntity.name
+
+                if !entityName.isEmpty {
+                    let entityKey = "\(ObjectIdentifier(currentEntity))"
+                    guard !checkedEntities.contains(entityKey) else { break }
+                    checkedEntities.insert(entityKey)
+
+                    // Check if this looks like an orphaned entity
+                    if entityName.contains("-") && entityName.count >= 36 &&
+                       placedBoxes[entityName] == nil &&
+                       !entityName.hasPrefix("skeleton") && !entityName.hasPrefix("corgi") {
+                        Swift.print("   👻 Found orphaned entity: '\(entityName)' - returning for detail view")
+                        return "orphan:\(entityName)" // Special prefix to indicate orphaned entity
+                    }
+                }
+
+                entityToCheck = currentEntity.parent
+            }
+
+            Swift.print("   Entity hierarchy checked: \(hierarchyPath.joined(separator: " -> "))")
+        } else {
+            Swift.print("   No entity found at tap location")
         }
 
         // Fallback to proximity-based detection using screen-space projection
-        guard let frame = arView.session.currentFrame else { return nil }
+        Swift.print("   Trying fallback proximity detection...")
+        guard let frame = arView.session.currentFrame else {
+            Swift.print("   ❌ No AR frame available for fallback detection")
+            return nil
+        }
 
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(
@@ -268,6 +316,12 @@ class ARObjectDetailService {
                 closestScreenDistance = screenDistance
                 closestBoxId = boxId
             }
+        }
+
+        if let result = closestBoxId {
+            Swift.print("   ✅ Fallback detection found object: '\(result)' (screen distance: \(String(format: "%.1f", closestScreenDistance))px)")
+        } else {
+            Swift.print("   ❌ Fallback detection found no objects within range")
         }
 
         return closestBoxId

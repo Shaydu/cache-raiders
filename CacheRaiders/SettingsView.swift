@@ -492,6 +492,26 @@ struct SettingsView: View {
             Text("When enabled, objects appear as generic doubloon icons in AR and reveal their true form with a special animation when found.")
                 .font(.caption2)
                 .foregroundColor(.secondary)
+
+            // CloudKit Test Button
+            Button(action: {
+                // Get the ARCoordinator from the environment or app state
+                if let arCoordinator = self.locationManager.arCoordinator {
+                    arCoordinator.debugTestCloudKit()
+                } else {
+                    print("❌ ARCoordinator not available for CloudKit testing")
+                }
+            }) {
+                HStack {
+                    Image(systemName: "cloud.fill")
+                    Text("Test CloudKit")
+                }
+            }
+            .padding(.vertical, 4)
+
+            Text("Test CloudKit connectivity and basic operations. Results will be logged to the console.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
         }
     }
     

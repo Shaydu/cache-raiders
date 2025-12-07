@@ -3,11 +3,13 @@ import RealityKit
 import ARKit
 import CoreLocation
 import Combine
+import CloudKit
 
 // MARK: - AR World Map Persistence Service
 /// Provides stable AR object persistence using ARWorldMap anchoring.
 /// Objects anchored to world map features maintain position across app sessions
 /// and can be synchronized between users for consistent multi-user experiences.
+/// Supports both local storage and Apple's CloudKit infrastructure.
 class ARWorldMapPersistenceService: ObservableObject {
 
     // MARK: - Properties
@@ -21,6 +23,16 @@ class ARWorldMapPersistenceService: ObservableObject {
     private var arSession: ARSession? {
         return arView?.session
     }
+
+    // Cloud storage provider
+    enum CloudProvider {
+        case localStorage  // UserDefaults (original implementation)
+        case cloudKit      // Apple's CloudKit infrastructure
+    }
+
+    private var cloudProvider: CloudProvider = .localStorage
+    private var cloudKitContainer: CKContainer?
+    private let worldMapRecordType = "ARWorldMap"
 
     // World map management
     private var currentWorldMap: ARWorldMap?
@@ -54,12 +66,52 @@ class ARWorldMapPersistenceService: ObservableObject {
 
     func configure(with arView: ARView,
                    apiService: APIService,
-                   webSocketService: WebSocketService) {
+                   webSocketService: WebSocketService,
+                   cloudProvider: CloudProvider = .localStorage) {
         self.arView = arView
         self.apiService = apiService
         self.webSocketService = webSocketService
+        self.cloudProvider = cloudProvider
+
+        if cloudProvider == .cloudKit {
+            setupCloudKit()
+        }
+
         setupWebSocketCallbacks()
-        print("✅ ARWorldMapPersistenceService configured")
+        print("✅ ARWorldMapPersistenceService configured with provider: \(cloudProvider)")
+    }
+
+    // MARK: - CloudKit Setup
+
+    private func setupCloudKit() {
+        cloudKitContainer = CKContainer(identifier: "iCloud.com.shaydu.CacheRaiders")
+        print("☁️ CloudKit configured for world map persistence")
+    }
+
+    private func saveWorldMapToCloudKit(_ worldMapData: Data, quality: Double, completion: @escaping (Bool) -> Void) {
+        guard let container = cloudKitContainer else {
+            print("❌ CloudKit container not configured")
+            completion(false)
+            return
+        }
+
+        let record = CKRecord(recordType: worldMapRecordType)
+        record["worldMapData"] = worldMapData as CKRecordValue
+        record["quality"] = quality as CKRecordValue
+        record["timestamp"] = Date() as CKRecordValue
+        let deviceId: String = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
+        record["deviceId"] = deviceId as CKRecordValue
+
+        let database = container.privateCloudDatabase
+        database.save(record) { savedRecord, error in
+            if let error = error {
+                print("❌ Failed to save world map to CloudKit: \(error.localizedDescription)")
+                completion(false)
+            } else {
+                print("☁️ World map saved to CloudKit successfully")
+                completion(true)
+            }
+        }
     }
 
     // MARK: - Session Management
@@ -151,12 +203,25 @@ class ARWorldMapPersistenceService: ObservableObject {
                     self.worldMapData = data
                     self.currentWorldMap = worldMap
 
-                    // Persist to UserDefaults
-                    self.userDefaults.set(data, forKey: self.worldMapKey)
-                    self.hasPersistedWorldMap = true
+                    // Persist based on cloud provider
+                    switch self.cloudProvider {
+                    case .localStorage:
+                        self.userDefaults.set(data, forKey: self.worldMapKey)
+                        self.hasPersistedWorldMap = true
+                        print("💾 World map captured and persisted to local storage (\(data.count) bytes, quality: \(String(format: "%.2f", quality)))")
+                        continuation.resume(returning: true)
 
-                    print("✅ World map captured and persisted (\(data.count) bytes, quality: \(String(format: "%.2f", quality)))")
-                    continuation.resume(returning: true)
+                    case .cloudKit:
+                        self.saveWorldMapToCloudKit(data, quality: quality) { success in
+                            self.hasPersistedWorldMap = success
+                            if success {
+                                print("☁️ World map captured and persisted to CloudKit (\(data.count) bytes, quality: \(String(format: "%.2f", quality)))")
+                            } else {
+                                print("❌ Failed to persist world map to CloudKit")
+                            }
+                            continuation.resume(returning: success)
+                        }
+                    }
 
                 } catch {
                     print("❌ Failed to serialize world map: \(error.localizedDescription)")
@@ -168,14 +233,24 @@ class ARWorldMapPersistenceService: ObservableObject {
 
     /// Loads a persisted world map from storage
     func loadPersistedWorldMap() -> Bool {
+        switch cloudProvider {
+        case .localStorage:
+            return loadWorldMapFromLocalStorage()
+        case .cloudKit:
+            loadWorldMapFromCloudKit()
+            return false // Async operation, will complete later
+        }
+    }
+
+    private func loadWorldMapFromLocalStorage() -> Bool {
         guard let data = userDefaults.data(forKey: worldMapKey) else {
-            print("ℹ️ No persisted world map found")
+            print("ℹ️ No persisted world map found in local storage")
             return false
         }
 
         do {
             guard let worldMap = try NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: data) else {
-                print("❌ Failed to unarchive world map")
+                print("❌ Failed to unarchive world map from local storage")
                 return false
             }
 
@@ -184,12 +259,59 @@ class ARWorldMapPersistenceService: ObservableObject {
             self.hasPersistedWorldMap = true
             self.isWorldMapLoaded = false // Will be set to true when loaded into session
 
-            print("✅ Persisted world map loaded (\(data.count) bytes)")
+            print("💾 Persisted world map loaded from local storage (\(data.count) bytes)")
             return true
 
         } catch {
-            print("❌ Failed to load persisted world map: \(error.localizedDescription)")
+            print("❌ Failed to load persisted world map from local storage: \(error.localizedDescription)")
             return false
+        }
+    }
+
+    private func loadWorldMapFromCloudKit() {
+        guard let container = cloudKitContainer else {
+            print("❌ CloudKit container not configured")
+            return
+        }
+
+        let database = container.privateCloudDatabase
+        let query = CKQuery(recordType: worldMapRecordType, predicate: NSPredicate(value: true))
+        query.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
+
+        database.perform(query, inZoneWith: nil) { records, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    print("❌ Failed to fetch world map from CloudKit: \(error.localizedDescription)")
+                    return
+                }
+
+                guard let records = records, let latestRecord = records.first else {
+                    print("ℹ️ No world map found in CloudKit")
+                    return
+                }
+
+                guard let worldMapData = latestRecord["worldMapData"] as? Data else {
+                    print("❌ Invalid world map data in CloudKit record")
+                    return
+                }
+
+                do {
+                    guard let worldMap = try NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: worldMapData) else {
+                        print("❌ Failed to unarchive world map from CloudKit")
+                        return
+                    }
+
+                    self.persistedWorldMap = worldMap
+                    self.worldMapData = worldMapData
+                    self.isWorldMapLoaded = true
+                    self.hasPersistedWorldMap = true
+
+                    print("☁️ Loaded persisted world map from CloudKit (\(worldMapData.count) bytes)")
+
+                } catch {
+                    print("❌ Failed to load world map from CloudKit: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
@@ -446,6 +568,49 @@ class ARWorldMapPersistenceService: ObservableObject {
 
         DispatchQueue.main.async {
             _ = self.loadSharedWorldMap(sharedData)
+        }
+    }
+
+    // MARK: - Migration Methods
+
+    /// Migrates world map data from local storage to CloudKit
+    func migrateWorldMapToCloudKit() async -> Bool {
+        guard cloudProvider == .cloudKit, let container = cloudKitContainer else {
+            print("❌ CloudKit not configured for world map migration")
+            return false
+        }
+
+        // Load existing world map from local storage
+        guard let data = userDefaults.data(forKey: worldMapKey) else {
+            print("ℹ️ No local world map found to migrate")
+            return false
+        }
+
+        do {
+            // Unarchive to verify it's valid
+            guard let worldMap = try NSKeyedUnarchiver.unarchivedObject(ofClass: ARWorldMap.self, from: data) else {
+                print("❌ Invalid world map data in local storage")
+                return false
+            }
+
+            // Save to CloudKit
+            let record = CKRecord(recordType: worldMapRecordType)
+            record["worldMapData"] = data as CKRecordValue
+            record["quality"] = assessWorldMapQuality() as CKRecordValue
+            record["timestamp"] = Date() as CKRecordValue
+            let deviceId: String = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
+            record["deviceId"] = deviceId as CKRecordValue
+            record["migrationSource"] = "localStorage" as CKRecordValue
+
+            let database = container.privateCloudDatabase
+            _ = try await database.save(record)
+
+            print("✅ Migrated world map from local storage to CloudKit")
+            return true
+
+        } catch {
+            print("❌ Failed to migrate world map to CloudKit: \(error.localizedDescription)")
+            return false
         }
     }
 

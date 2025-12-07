@@ -71,8 +71,8 @@ extension ARCoordinator {
     }
 
     /// Stops collaborative AR session
-    func stopCollaborativeSession() {
-        self.coordinateSharingService?.stopCollaborativeSession()
+    func stopCollaborativeSession(cleanupCloudData: Bool = false) async {
+        await self.coordinateSharingService?.stopCollaborativeSession(cleanupCloudData: cleanupCloudData)
     }
 
     /// Gets diagnostic information about coordinate sharing

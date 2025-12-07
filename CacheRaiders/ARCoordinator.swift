@@ -33,6 +33,9 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     internal var vioSlamService: ARVIO_SLAM_Service? // VIO/SLAM enhancements
     var stateManager: ARStateManager? // State management for throttling and coordination
 
+    // Cloud infrastructure preference
+    private var cloudProvider: CloudGeoAnchorService.CloudProvider = .customServer
+
     weak var arView: ARView?
     var locationManager: LootBoxLocationManager? // Changed from private to allow extension access
     var userLocationManager: UserLocationManager?
@@ -64,6 +67,37 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         occlusionManager?.placedBoxes = placedBoxes
         distanceTracker?.placedBoxes = placedBoxes
         tapHandler?.placedBoxes = placedBoxes
+    }
+
+    /// Debug method to test CloudKit functionality
+    func debugTestCloudKit() {
+        coordinateSharingService?.debugTestCloudKit()
+    }
+
+    /// Switches the cloud infrastructure provider for world map persistence
+    /// - Parameter provider: The cloud provider to use (.localStorage or .cloudKit)
+    func switchWorldMapCloudProvider(to provider: ARWorldMapPersistenceService.CloudProvider) async {
+        guard let worldMapService = worldMapPersistenceService else { return }
+        await coordinateSharingService?.switchWorldMapCloudProvider(to: provider, worldMapService: worldMapService)
+    }
+
+    /// Migrates data from custom server to CloudKit infrastructure
+    func migrateToCloudKit() async throws {
+        try await coordinateSharingService?.migrateToCloudKit(worldMapService: worldMapPersistenceService)
+    }
+
+    /// Switches the cloud infrastructure provider for geo anchors
+    /// - Parameter provider: The cloud provider to use (.customServer or .cloudKit)
+    func switchCloudProvider(to provider: CloudGeoAnchorService.CloudProvider) async {
+        guard provider != cloudProvider else { return }
+
+        cloudProvider = provider
+        print("🔄 Switching to cloud provider: \(provider)")
+
+        // Switch provider in coordinate sharing service
+        await coordinateSharingService?.switchCloudProvider(to: provider)
+
+        print("✅ Successfully switched to \(provider) and synced anchors")
     }
 
     /// Choose the best anchor type based on available data and object type
@@ -215,9 +249,9 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         didSet {
             if isDialogOpen != oldValue {
                 if isDialogOpen {
-                    pauseARSession()
+                    pauseARSessionInternal()
                 } else {
-                    resumeARSession()
+                    resumeARSessionInternal()
                 }
             }
         }
@@ -455,6 +489,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         self.arView = arView
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
+        // Set this ARCoordinator as the reference in locationManager for pause/resume functionality
+        locationManager.arCoordinator = self
         self.nearbyLocationsBinding = nearbyLocations
         self.distanceToNearestBinding = distanceToNearest
         self.temperatureStatusBinding = temperatureStatus
@@ -559,7 +595,15 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             name: NSNotification.Name("ObjectDeletedRealtime"),
             object: nil
         )
-        
+
+        // Listen for real-time object updates via WebSocket
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleRealtimeObjectUpdated),
+            name: NSNotification.Name("ObjectUpdatedRealtime"),
+            object: nil
+        )
+
         // Initialize managers
         environmentManager = AREnvironmentManager(arView: arView, locationManager: locationManager)
         // Only initialize object recognizer if enabled (saves battery/processing)
@@ -578,6 +622,10 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         geospatialService = ARGeospatialService() // New ENU-based service
         coordinateSharingService = ARCoordinateSharingService(arView: arView) // Coordinate sharing for multi-user AR
         worldMapPersistenceService = ARWorldMapPersistenceService(arView: arView) // World map persistence for stable AR anchoring
+        worldMapPersistenceService?.configure(with: arView,
+                                             apiService: APIService.shared,
+                                             webSocketService: WebSocketService.shared,
+                                             cloudProvider: .localStorage) // Default to local storage, can be changed later
         enhancedPlaneAnchorService = AREnhancedPlaneAnchorService(arView: arView, arCoordinator: self) // Multi-plane anchoring for drift prevention
         vioSlamService = ARVIO_SLAM_Service(arView: arView, arCoordinator: self) // VIO/SLAM enhancements
         stateManager = ARStateManager() // State management for throttling and coordination
@@ -600,7 +648,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 with: arView,
                 webSocketService: WebSocketService.shared,
                 apiService: APIService.shared,
-                locationManager: locationManagerProperty
+                locationManager: locationManagerProperty,
+                cloudProvider: cloudProvider
             )
         }
 
@@ -715,6 +764,59 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     func handleLongPressObject(locationId: String) {
         Swift.print("📋 ========== LONG PRESS OBJECT DETAIL ==========")
         Swift.print("   Object ID: \(locationId)")
+
+        // Handle orphaned entities specially
+        if locationId.hasPrefix("orphan:") {
+            let orphanId = String(locationId.dropFirst(7)) // Remove "orphan:" prefix
+            Swift.print("   👻 Handling orphaned entity: \(orphanId)")
+
+            // Get the anchor for this orphaned object (it might be in the scene but not tracked)
+            var orphanAnchor: AnchorEntity? = nil
+            if let arView = arView {
+                // Search the scene for an anchor with this name
+                for anchor in arView.scene.anchors {
+                    if let anchorEntity = anchor as? AnchorEntity,
+                       anchorEntity.name == orphanId {
+                        orphanAnchor = anchorEntity
+                        break
+                    }
+                }
+            }
+
+            // Create a minimal detail object for the orphaned entity
+            let objectDetail = ARObjectDetail(
+                id: orphanId,
+                name: "Orphaned Object",
+                itemType: "Unknown (Orphaned)",
+                placerName: "Unknown",
+                datePlaced: nil,
+                gpsCoordinates: nil,
+                arCoordinates: orphanAnchor != nil ? {
+                    let transform = orphanAnchor!.transformMatrix(relativeTo: nil)
+                    return SIMD3<Float>(
+                        transform.columns.3.x,
+                        transform.columns.3.y,
+                        transform.columns.3.z
+                    )
+                }() : nil,
+                arOrigin: nil,
+                arOffsets: nil,
+                anchors: orphanAnchor != nil ? [orphanAnchor!.name] : []
+            )
+
+            Swift.print("   👻 Orphaned object details:")
+            Swift.print("      AR Coordinates: \(objectDetail.arCoordinateString)")
+            Swift.print("      Anchor found: \(orphanAnchor != nil)")
+
+            // Post notification to show the detail sheet
+            NotificationCenter.default.post(
+                name: NSNotification.Name("ShowObjectDetailSheet"),
+                object: objectDetail
+            )
+
+            Swift.print("✅ Posted notification to show orphaned object detail sheet")
+            return
+        }
 
         // Find the location object
         guard let location = locationManager?.locations.first(where: { $0.id == locationId }) else {
@@ -862,6 +964,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         distanceTracker?.stopDistanceLogging()
         occlusionManager?.stopOcclusionChecking()
         NotificationCenter.default.removeObserver(self, name: NSNotification.Name("ARPlacementObjectSaved"), object: nil)
+        NotificationCenter.default.removeObserver(self, name: NSNotification.Name("ObjectUpdatedRealtime"), object: nil)
         stopPeriodicGrounding()
 
         // WORLD MAP PERSISTENCE: Clean up on deinit
@@ -1559,8 +1662,12 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             vioSlamService?.processFrameForEnhancement(frame)
         }
 
-        // Apply enhanced stabilization to all active objects
-        applyEnhancedStabilization()
+        // Apply enhanced stabilization to all active objects (throttled to prevent instability)
+        // Only run stabilization every 6th frame (10fps) to prevent matrix operation overload
+        let shouldApplyStabilization = sessionFrameCount % 6 == 0
+        if shouldApplyStabilization {
+            applyEnhancedStabilization()
+        }
 
         // Track consecutive frames with no camera data (for detecting frozen camera)
         if frame.camera.trackingState == .notAvailable {
@@ -5112,8 +5219,13 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         }
     }
     
+    /// Public method to pause AR session (called from views that need to pause AR)
+    public func pauseARSession() {
+        pauseARSessionInternal()
+    }
+
     /// Pause AR session when sheet is shown (saves battery and prevents UI freezes)
-    private func pauseARSession() {
+    private func pauseARSessionInternal() {
         Swift.print("⏸️ [AR SESSION] pauseARSession called")
         Swift.print("   Thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
         Swift.print("   Timestamp: \(Date())")
@@ -5143,8 +5255,13 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         }
     }
     
+    /// Public method to resume AR session (called from views that need to resume AR)
+    public func resumeARSession() {
+        resumeARSessionInternal()
+    }
+
     /// Resume AR session when sheet is dismissed
-    private func resumeARSession() {
+    private func resumeARSessionInternal() {
         Swift.print("▶️ [AR SESSION] resumeARSession called")
         Swift.print("   Thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
         Swift.print("   Timestamp: \(Date())")
@@ -5228,9 +5345,9 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     /// Called when game mode changes to ensure clean state
     func clearAllARObjects() {
         guard let arView = arView else { return }
-        
+
         Swift.print("🗑️ Clearing all AR objects due to game mode change...")
-        
+
         // Remove all placed loot boxes
         let lootBoxCount = placedBoxes.count
         for (_, anchor) in placedBoxes {
@@ -5238,7 +5355,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         }
         findableObjects.removeAll()
         objectPlacementTimes.removeAll()
-        
+
         // Remove all placed NPCs
         let npcCount = placedNPCs.count
         for (_, anchor) in placedNPCs {
@@ -5248,18 +5365,91 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         skeletonPlaced = false
         corgiPlaced = false
         skeletonAnchor = nil
-        
+
         // Clear found loot boxes sets
         distanceTracker?.foundLootBoxes.removeAll()
         tapHandler?.foundLootBoxes.removeAll()
-        
+
         // Update tap handler's NPC reference
         tapHandler?.placedNPCs = placedNPCs
-        
+
         Swift.print("✅ Cleared \(lootBoxCount) loot boxes and \(npcCount) NPCs from AR scene")
+
+        // NUCLEAR CLEANUP: Remove ALL remaining anchors from the scene to prevent orphaned entities
+        // This is a safety measure in case some entities weren't properly tracked
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self, let arView = self.arView else { return }
+
+            var orphanedCount = 0
+            let allAnchors = arView.scene.anchors.map { $0 } // Create a copy to avoid mutation during iteration
+
+            for anchor in allAnchors {
+                // Keep only essential anchors (camera, system anchors)
+                // Remove any AnchorEntity that might be orphaned
+                if let anchorEntity = anchor as? AnchorEntity {
+                    // Check if this anchor has any children (indicating it might be a placed object)
+                    if !anchorEntity.children.isEmpty {
+                        // Additional check: if it has a UUID-like name, it's likely an orphaned object
+                        if anchorEntity.name.contains("-") && anchorEntity.name.count >= 36 {
+                            Swift.print("🧹 Removing orphaned anchor: \(anchorEntity.name)")
+                            anchorEntity.removeFromParent()
+                            orphanedCount += 1
+                        }
+                    }
+                }
+            }
+
+            if orphanedCount > 0 {
+                Swift.print("🧹 Nuclear cleanup removed \(orphanedCount) orphaned anchors")
+            }
+        }
     }
 
     // MARK: - Debug Methods
+
+    /// Debug method to identify and report orphaned entities in the AR scene
+    func debugOrphanedEntities() {
+        guard let arView = arView else {
+            Swift.print("❌ No AR view available for orphaned entity debug")
+            return
+        }
+
+        Swift.print("🔍 Orphaned Entities Debug:")
+        Swift.print("   Total scene anchors: \(arView.scene.anchors.count)")
+        Swift.print("   Tracked loot boxes: \(placedBoxes.count)")
+        Swift.print("   Tracked NPCs: \(placedNPCs.count)")
+        Swift.print("   Tracked findable objects: \(findableObjects.count)")
+
+        var orphanedAnchors: [(String, Int)] = [] // (name, childCount)
+
+        for anchor in arView.scene.anchors {
+            if let anchorEntity = anchor as? AnchorEntity {
+                let name = anchorEntity.name
+                let childCount = anchorEntity.children.count
+
+                // Check if this is likely an orphaned object
+                let isTrackedLootBox = placedBoxes.keys.contains(name)
+                let isTrackedNPC = placedNPCs.keys.contains(name)
+                let isTrackedFindable = findableObjects.keys.contains(name)
+
+                let isTracked = isTrackedLootBox || isTrackedNPC || isTrackedFindable
+
+                if !isTracked && !name.isEmpty {
+                    // This might be orphaned
+                    if childCount > 0 || (name.contains("-") && name.count >= 36) {
+                        orphanedAnchors.append((name, childCount))
+                        Swift.print("   👻 Potential orphan: '\(name)' (\(childCount) children, type: \(type(of: anchorEntity)))")
+                    }
+                }
+            }
+        }
+
+        if orphanedAnchors.isEmpty {
+            Swift.print("   ✅ No orphaned entities detected")
+        } else {
+            Swift.print("   ⚠️ Found \(orphanedAnchors.count) potential orphaned entities")
+        }
+    }
 
     /// Debug method to print current AR scene state information
     func debugARSceneState() {
@@ -5443,6 +5633,92 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 Swift.print("✅ Object '\(objectName)' removed from AR scene")
             } else {
                 Swift.print("ℹ️ Object '\(objectId)' was not currently placed in AR - nothing to remove")
+            }
+        }
+    }
+
+    @objc private func handleRealtimeObjectUpdated(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let location = userInfo["location"] as? LootBoxLocation else {
+            Swift.print("⚠️ Real-time object updated notification missing location data")
+            return
+        }
+
+        let objectId = location.id
+        let objectName = location.name
+        Swift.print("🔄 Real-time object updated: '\(objectName)' (ID: \(objectId), collected: \(location.collected))")
+
+        Task { @MainActor in
+            guard let arView = self.arView,
+                  let userLocation = self.userLocationManager?.currentLocation else {
+                Swift.print("⚠️ Cannot update object - AR view or user location not available")
+                return
+            }
+
+            // Check if this object is currently placed in AR
+            if let existingFindableObject = self.findableObjects[objectId] {
+                let wasCollected = existingFindableObject.location?.collected ?? false
+                let nowCollected = location.collected
+
+                if !wasCollected && nowCollected {
+                    // Object was just collected - remove it from AR
+                    Swift.print("   🗑️ Object '\(objectName)' was collected - removing from AR")
+
+                    existingFindableObject.anchor.removeFromParent()
+                    self.findableObjects.removeValue(forKey: objectId)
+                    self.objectsInViewport.remove(objectId)
+                    self.objectPlacementTimes.removeValue(forKey: objectId)
+
+                    // Add to found sets to prevent re-placement
+                    self.distanceTracker?.foundLootBoxes.insert(objectId)
+                    self.tapHandler?.foundLootBoxes.insert(objectId)
+
+                    // Update manager references
+                    self.updateManagerReferences()
+
+                    Swift.print("✅ Object '\(objectName)' removed from AR (collected by another user)")
+
+                } else if wasCollected && !nowCollected {
+                    // Object was uncollected (reset) - add it back to AR if it's nearby
+                    Swift.print("   🔄 Object '\(objectName)' was reset to uncollected - checking if it should be re-placed")
+
+                    // Clear found sets so it can be re-placed
+                    self.distanceTracker?.foundLootBoxes.remove(objectId)
+                    self.tapHandler?.foundLootBoxes.remove(objectId)
+
+                    // Check if it's nearby and should be placed
+                    let nearbyLocations = self.locationManager?.getNearbyLocations(userLocation: userLocation) ?? []
+                    if nearbyLocations.contains(where: { $0.id == objectId }) {
+                        Swift.print("   ✅ Object is nearby - re-placing in AR")
+                        self.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
+                    } else {
+                        Swift.print("   ℹ️ Object is not nearby - will appear when user moves closer")
+                    }
+                } else {
+                    // Object state didn't change in a way that affects AR placement
+                    // Just update the location reference in case other properties changed
+                    var updatedFindableObject = existingFindableObject
+                    updatedFindableObject.location = location
+                    self.findableObjects[objectId] = updatedFindableObject
+                    Swift.print("   ℹ️ Object state unchanged for AR placement")
+                }
+
+            } else {
+                // Object is not currently in AR
+                if !location.collected {
+                    // Object is uncollected and not in AR - check if it should be placed
+                    Swift.print("   ➕ Object '\(objectName)' is uncollected and not in AR - checking if it should be placed")
+
+                    let nearbyLocations = self.locationManager?.getNearbyLocations(userLocation: userLocation) ?? []
+                    if nearbyLocations.contains(where: { $0.id == objectId }) {
+                        Swift.print("   ✅ Object is nearby - placing in AR")
+                        self.checkAndPlaceBoxes(userLocation: userLocation, nearbyLocations: nearbyLocations)
+                    } else {
+                        Swift.print("   ℹ️ Object is not nearby - will appear when user moves closer")
+                    }
+                } else {
+                    Swift.print("   ℹ️ Object '\(objectName)' is collected and not in AR - no action needed")
+                }
             }
         }
     }

@@ -3,6 +3,7 @@ import RealityKit
 import ARKit
 import CoreLocation
 import Combine
+import CloudKit
 
 // MARK: - AR Coordinate Sharing Service
 /// Handles all AR coordinate sharing between devices including:
@@ -16,6 +17,7 @@ class ARCoordinateSharingService: ObservableObject {
 
     @Published var isCollaborativeSessionActive: Bool = false
     @Published var connectedPeers: [String] = []
+    @Published var isPersistentSession: Bool = false
     @Published var sharedWorldMapAvailable: Bool = false
 
     private weak var arView: ARView?
@@ -43,8 +45,14 @@ class ARCoordinateSharingService: ObservableObject {
     private weak var locationManager: LootBoxLocationManager?
 
     // Cloud geo anchor services
-    private var cloudGeoAnchorService: CloudGeoAnchorService?
-    private var cloudAnchorSharingService: CloudAnchorSharingService?
+    var cloudGeoAnchorService: CloudGeoAnchorService?
+    var cloudAnchorSharingService: CloudAnchorSharingService?
+    var cloudProvider: CloudGeoAnchorService.CloudProvider = .customServer
+
+    // CloudKit for collaboration persistence
+    private var cloudKitContainer: CKContainer?
+    private let collaborationRecordType = "ARCollaborationSession"
+    private var currentSessionRecord: CKRecord?
 
     // MARK: - Initialization
 
@@ -57,17 +65,24 @@ class ARCoordinateSharingService: ObservableObject {
     func configure(with arView: ARView,
                    webSocketService: WebSocketService,
                    apiService: APIService,
-                   locationManager: LootBoxLocationManager) {
+                   locationManager: LootBoxLocationManager,
+                   cloudProvider: CloudGeoAnchorService.CloudProvider = .customServer) {
         self.arView = arView
         self.webSocketService = webSocketService
         self.apiService = apiService
         self.locationManager = locationManager
+        self.cloudProvider = cloudProvider
 
         // Initialize cloud geo anchor services
         setupCloudGeoAnchors()
 
+        // Initialize CloudKit for collaboration persistence if using cloud provider
+        if cloudProvider == .cloudKit {
+            setupCloudKitCollaboration()
+        }
+
         setupWebSocketCallbacks()
-        print("✅ ARCoordinateSharingService configured with dependencies")
+        print("✅ ARCoordinateSharingService configured with dependencies (provider: \(cloudProvider))")
     }
 
     private func setupCloudGeoAnchors() {
@@ -75,7 +90,8 @@ class ARCoordinateSharingService: ObservableObject {
         cloudGeoAnchorService = CloudGeoAnchorService(arView: arView)
         cloudGeoAnchorService?.configure(with: arView ?? ARView(),
                                         apiService: apiService!,
-                                        webSocketService: webSocketService!)
+                                        webSocketService: webSocketService!,
+                                        cloudProvider: cloudProvider)
 
         // Initialize cloud anchor sharing service
         cloudAnchorSharingService = CloudAnchorSharingService()
@@ -83,7 +99,101 @@ class ARCoordinateSharingService: ObservableObject {
                                            webSocketService: webSocketService!,
                                            geoAnchorService: cloudGeoAnchorService!)
 
-        print("🛰️ Cloud geo anchor services initialized")
+        print("🛰️ Cloud geo anchor services initialized with provider: \(cloudProvider)")
+    }
+
+    // MARK: - CloudKit Collaboration Setup
+
+    private func setupCloudKitCollaboration() {
+        cloudKitContainer = CKContainer(identifier: "iCloud.com.shaydu.CacheRaiders")
+        print("☁️ CloudKit configured for collaboration persistence")
+    }
+
+    /// Saves the current collaboration session to CloudKit
+    func saveCollaborationSession() async throws {
+        guard cloudProvider == .cloudKit, let container = cloudKitContainer else {
+            throw NSError(domain: "ARCoordinateSharingService",
+                         code: -1,
+                         userInfo: [NSLocalizedDescriptionKey: "CloudKit not configured"])
+        }
+
+        let record = currentSessionRecord ?? CKRecord(recordType: collaborationRecordType)
+        record["sessionId"] = UUID().uuidString as CKRecordValue
+        record["timestamp"] = Date() as CKRecordValue
+        let deviceId: String = UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
+        record["deviceId"] = deviceId as CKRecordValue
+        record["connectedPeers"] = connectedPeers as CKRecordValue
+
+        // Save world map data if available
+        if let worldMapData = self.worldMapData {
+            record["worldMapData"] = worldMapData as CKRecordValue
+        }
+
+        let database = container.privateCloudDatabase
+        let savedRecord = try await database.save(record)
+        currentSessionRecord = savedRecord
+
+        print("☁️ Collaboration session saved to CloudKit")
+    }
+
+    /// Loads the most recent collaboration session from CloudKit
+    func loadCollaborationSession() async throws -> [String: Any]? {
+        guard cloudProvider == .cloudKit, let container = cloudKitContainer else {
+            throw NSError(domain: "ARCoordinateSharingService",
+                         code: -1,
+                         userInfo: [NSLocalizedDescriptionKey: "CloudKit not configured"])
+        }
+
+        let database = container.privateCloudDatabase
+        let query = CKQuery(recordType: collaborationRecordType, predicate: NSPredicate(value: true))
+        query.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: false)]
+
+        let (results, _) = try await database.records(matching: query, resultsLimit: 1)
+
+        guard let (_, recordResult) = results.first else {
+            print("ℹ️ No collaboration session found in CloudKit")
+            return nil
+        }
+
+        let record: CKRecord
+        do {
+            record = try recordResult.get()
+        } catch {
+            print("❌ Failed to get record from CloudKit result: \(error)")
+            return nil
+        }
+
+        currentSessionRecord = record
+
+        var sessionData: [String: Any] = [:]
+
+        if let sessionId = record["sessionId"] as? String {
+            sessionData["sessionId"] = sessionId
+        }
+
+        if let connectedPeers = record["connectedPeers"] as? [String] {
+            sessionData["connectedPeers"] = connectedPeers
+        }
+
+        if let worldMapData = record["worldMapData"] as? Data {
+            sessionData["worldMapData"] = worldMapData
+        }
+
+        print("☁️ Collaboration session loaded from CloudKit")
+        return sessionData
+    }
+
+    /// Deletes the current collaboration session from CloudKit
+    func deleteCollaborationSession() async throws {
+        guard let record = currentSessionRecord, let container = cloudKitContainer else {
+            return
+        }
+
+        let database = container.privateCloudDatabase
+        try await database.deleteRecord(withID: record.recordID)
+        currentSessionRecord = nil
+
+        print("🗑️ Collaboration session deleted from CloudKit")
     }
 
     // MARK: - WebSocket Integration
@@ -219,8 +329,8 @@ class ARCoordinateSharingService: ObservableObject {
 
     // MARK: - Collaborative Sessions
 
-    /// Starts a collaborative AR session
-    func startCollaborativeSession() {
+    /// Starts a collaborative AR session with optional CloudKit persistence
+    func startCollaborativeSession(persistent: Bool = false) {
         guard let configuration = arSession?.configuration as? ARWorldTrackingConfiguration else {
             print("⚠️ Cannot start collaborative session - no AR session")
             return
@@ -230,11 +340,24 @@ class ARCoordinateSharingService: ObservableObject {
         arSession?.run(configuration)
 
         isCollaborativeSessionActive = true
-        print("🤝 Started collaborative AR session")
+        isPersistentSession = persistent
+
+        // Save session to CloudKit if requested and available
+        if persistent && cloudProvider == .cloudKit {
+            Task {
+                do {
+                    try await saveCollaborationSession()
+                } catch {
+                    print("⚠️ Failed to save collaborative session to CloudKit: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        print("🤝 Started collaborative AR session\(persistent && cloudProvider == .cloudKit ? " (persistent)" : "")")
     }
 
-    /// Stops the collaborative session
-    func stopCollaborativeSession() {
+    /// Stops the collaborative session and optionally cleans up CloudKit data
+    func stopCollaborativeSession(cleanupCloudData: Bool = false) async {
         guard let configuration = arSession?.configuration as? ARWorldTrackingConfiguration else {
             return
         }
@@ -244,7 +367,47 @@ class ARCoordinateSharingService: ObservableObject {
 
         isCollaborativeSessionActive = false
         connectedPeers.removeAll()
-        print("🔚 Stopped collaborative AR session")
+
+        // Clean up CloudKit session data if requested
+        if cleanupCloudData && cloudProvider == .cloudKit {
+            do {
+                try await deleteCollaborationSession()
+            } catch {
+                print("⚠️ Failed to delete collaborative session from CloudKit: \(error.localizedDescription)")
+            }
+        }
+
+        print("🔚 Stopped collaborative AR session\(cleanupCloudData && cloudProvider == .cloudKit ? " (CloudKit cleaned up)" : "")")
+    }
+
+    /// Resumes a persistent collaborative session from CloudKit
+    func resumePersistentSession() async throws {
+        guard cloudProvider == .cloudKit else {
+            throw NSError(domain: "ARCoordinateSharingService",
+                         code: -1,
+                         userInfo: [NSLocalizedDescriptionKey: "CloudKit not configured for collaboration"])
+        }
+
+        guard let sessionData = try await loadCollaborationSession() else {
+            throw NSError(domain: "ARCoordinateSharingService",
+                         code: -2,
+                         userInfo: [NSLocalizedDescriptionKey: "No persistent session found"])
+        }
+
+        // Restore session state
+        if let peers = sessionData["connectedPeers"] as? [String] {
+            connectedPeers = peers
+        }
+
+        // Load world map if available
+        if let worldMapData = sessionData["worldMapData"] as? Data {
+            _ = loadWorldMap(worldMapData)
+        }
+
+        // Start collaborative session
+        startCollaborativeSession(persistent: true)
+
+        print("🔄 Resumed persistent collaborative session from CloudKit")
     }
 
     /// Handles incoming collaboration data from other devices
@@ -457,7 +620,9 @@ class ARCoordinateSharingService: ObservableObject {
 
     deinit {
         NotificationCenter.default.removeObserver(self)
-        stopCollaborativeSession()
+        Task {
+            await stopCollaborativeSession(cleanupCloudData: false)
+        }
         print("🗑️ ARCoordinateSharingService deinitialized")
     }
 
@@ -474,7 +639,7 @@ class ARCoordinateSharingService: ObservableObject {
         try await service.startGeoTracking()
 
         // Sync existing anchors from server
-        try await cloudGeoAnchorService?.syncGeoAnchorsFromServer()
+        try await cloudGeoAnchorService?.syncGeoAnchorsFromCloud()
 
         print("🛰️ Cloud geo tracking started and synced")
     }
@@ -649,6 +814,139 @@ extension LootBoxLocationManager {
 
                 print("📍 Updated coordinates for location \(objectId)")
             }
+        }
+    }
+
+    // MARK: - CloudKit Management
+
+    /// Debug method to test CloudKit functionality
+    func debugTestCloudKit() {
+        Task {
+            await testCloudKitFunctionality()
+        }
+    }
+
+    private func testCloudKitFunctionality() async {
+        print("🧪 Testing CloudKit functionality...")
+
+        // Test basic CloudKit connectivity
+        let testUtility = CloudKitTestUtility()
+        let connectivityOK = await testUtility.testCloudKitConnectivity()
+
+        if connectivityOK {
+            print("✅ CloudKit is available and working")
+            let diagnostics = testUtility.getDiagnostics()
+            print("   Container: \(diagnostics["containerIdentifier"] ?? "unknown")")
+
+            // Test our CloudKit geo anchor service if available
+            if let cloudKitService = self.cloudGeoAnchorService?.cloudKitService {
+                print("🧪 Testing CloudKitGeoAnchorService...")
+                let serviceDiagnostics = cloudKitService.getDiagnostics()
+                print("   Service available: \(serviceDiagnostics["cloudAvailable"] ?? false)")
+                print("   Offline mode: \(serviceDiagnostics["isOfflineMode"] ?? false)")
+                print("   Active anchors: \(serviceDiagnostics["activeAnchorsCount"] ?? 0)")
+            }
+        } else {
+            print("❌ CloudKit is not available - check iCloud account and app permissions")
+        }
+
+        print("✅ CloudKit test completed")
+    }
+
+    /// Migrates data from custom server to CloudKit infrastructure
+    func migrateToCloudKit(worldMapService: ARWorldMapPersistenceService?) async throws {
+        print("🔄 Starting migration to CloudKit infrastructure...")
+
+        // Switch cloud providers
+        await switchCloudProvider(to: .cloudKit)
+        if let worldMapService = worldMapService {
+            await switchWorldMapCloudProvider(to: .cloudKit, worldMapService: worldMapService)
+        }
+
+        // Migrate geo anchors
+        do {
+            if let cloudKitService = cloudGeoAnchorService?.cloudKitService {
+                try await cloudKitService.migrateFromCustomServer()
+            }
+        } catch {
+            print("⚠️ Geo anchor migration failed: \(error.localizedDescription)")
+        }
+
+        // Migrate world map
+        do {
+            if let worldMapService = worldMapService {
+                let success = await worldMapService.migrateWorldMapToCloudKit()
+                if success {
+                    print("✅ World map migrated to CloudKit")
+                } else {
+                    print("⚠️ World map migration failed or no local data to migrate")
+                }
+            }
+        }
+
+        // Clean up local data after successful migration
+        cleanupLocalDataAfterMigration()
+
+        print("✅ Migration to CloudKit completed")
+    }
+
+    /// Cleans up local data after successful migration to CloudKit
+    private func cleanupLocalDataAfterMigration() {
+        // Note: In a production app, you might want to ask user before deleting local data
+        // For now, we'll keep local data as backup
+        print("ℹ️ Local data preserved as backup after migration")
+    }
+
+    /// Switches the cloud infrastructure provider for geo anchors
+    /// - Parameter provider: The cloud provider to use (.customServer or .cloudKit)
+    func switchCloudProvider(to provider: CloudGeoAnchorService.CloudProvider) async {
+        guard provider != cloudProvider else { return }
+
+        cloudProvider = provider
+        print("🔄 Switching to cloud provider: \(provider)")
+
+        // Reconfigure coordinate sharing service with new provider
+        if let arView = arView,
+           let webSocketService = webSocketService,
+           let apiService = apiService,
+           let locationManager = locationManager {
+            configure(
+                with: arView,
+                webSocketService: webSocketService,
+                apiService: apiService,
+                locationManager: locationManager,
+                cloudProvider: provider
+            )
+        }
+
+        // Sync existing anchors with new provider
+        do {
+            try await requestCloudGeoAnchorSync()
+            print("✅ Successfully switched to \(provider) and synced anchors")
+        } catch {
+            print("⚠️ Failed to sync anchors after switching to \(provider): \(error.localizedDescription)")
+        }
+    }
+
+    /// Switches the cloud infrastructure provider for world map persistence
+    /// - Parameter provider: The cloud provider to use (.localStorage or .cloudKit)
+    /// - Parameter worldMapService: The world map persistence service to reconfigure
+    func switchWorldMapCloudProvider(to provider: ARWorldMapPersistenceService.CloudProvider, worldMapService: ARWorldMapPersistenceService) async {
+        // Reconfigure with new provider
+        if let arView = arView,
+           let apiService = apiService,
+           let webSocketService = webSocketService {
+            worldMapService.configure(with: arView,
+                                    apiService: apiService,
+                                    webSocketService: webSocketService,
+                                    cloudProvider: provider)
+        }
+
+        print("🔄 Switched world map persistence to provider: \(provider)")
+
+        // Reload world map with new provider if available
+        if worldMapService.loadPersistedWorldMap() {
+            print("✅ Reloaded world map with new cloud provider")
         }
     }
 }

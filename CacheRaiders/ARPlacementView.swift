@@ -290,15 +290,30 @@ struct ARPlacementView: View {
                     }
                 }
             }
+            .onChange(of: placementMode) { oldMode, newMode in
+                // Pause AR session when in selecting mode (form view), resume when in placing mode (AR view)
+                if newMode == .selecting {
+                    print("⏸️ [AR PLACEMENT MODE] Switching to selecting mode - pausing AR session")
+                    locationManager.arCoordinator?.pauseARSession()
+                } else if newMode == .placing {
+                    print("▶️ [AR PLACEMENT MODE] Switching to placing mode - resuming AR session")
+                    locationManager.arCoordinator?.resumeARSession()
+                }
+            }
             .onAppear {
                 print("🟢 [AR PLACEMENT LIFECYCLE] View appeared")
                 print("   Timestamp: \(Date())")
+                // Initially in selecting mode, so pause AR session
+                locationManager.arCoordinator?.pauseARSession()
             }
             .onDisappear {
                 print("🟢 [AR PLACEMENT LIFECYCLE] View dismissed - returning to main AR view")
                 print("   Timestamp: \(Date())")
                 print("   Main AR view should now restore all placed objects")
                 print("   Main AR view will run checkAndPlaceBoxes to restore objects")
+
+                // Resume AR session when placement view is dismissed
+                locationManager.arCoordinator?.resumeARSession()
 
                 // When view disappears, save any placed object if one exists
                 // This handles swipe-to-dismiss and navigation bar Done button

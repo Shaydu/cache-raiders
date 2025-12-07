@@ -38,6 +38,13 @@ class ARVIO_SLAM_Service: ObservableObject {
     private var stabilizationTransforms: [String: simd_float4x4] = [:]
     private var driftCompensation: [String: SIMD3<Float>] = [:]
 
+    // Stabilization health monitoring
+    private var stabilizationFailures: Int = 0
+    private var stabilizationDisabledUntil: TimeInterval = 0
+    private var lastCleanupTimestamp: TimeInterval = 0
+    private let maxConsecutiveFailures = 10
+    private let stabilizationDisableDuration: TimeInterval = 30.0 // 30 seconds
+
     // MARK: - Initialization
 
     init(arView: ARView?, arCoordinator: ARCoordinator?) {
@@ -136,8 +143,8 @@ class ARVIO_SLAM_Service: ObservableObject {
     }
 
     private func setupFrameProcessing() {
-        // Reduced from 30fps to 10fps to reduce CPU load and prevent camera freezing
-        frameProcessingTimer = Timer.scheduledTimer(withTimeInterval: 1.0/10.0, repeats: true) { [weak self] _ in
+        // Start with reduced frequency to prevent camera freezing
+        frameProcessingTimer = Timer.scheduledTimer(withTimeInterval: 1.0/5.0, repeats: true) { [weak self] _ in
             self?.processCurrentFrame()
         }
     }
@@ -150,17 +157,47 @@ class ARVIO_SLAM_Service: ObservableObject {
         guard currentTimestamp > lastFrameTimestamp else { return }
         lastFrameTimestamp = currentTimestamp
 
-        // Extract features for SLAM
-        processSLAMFeatures(frame)
-
-        // Update tracking quality
+        // Update tracking quality first to determine processing frequency
         updateTrackingQuality(frame)
 
-        // Perform pose optimization if needed
-        optimizeSLAMPose()
+        // Adapt processing frequency based on tracking quality
+        let adaptiveInterval = calculateAdaptiveInterval()
+        let timeSinceLastProcessing = currentTimestamp - lastCleanupTimestamp
 
-        // Periodically clean up invalid stabilization transforms
-        cleanupInvalidStabilizationTransforms()
+        // Extract features for SLAM - only process if tracking is good enough
+        if trackingQuality > 0.2 {
+            processSLAMFeatures(frame)
+        }
+
+        // Perform pose optimization if needed - less frequently when tracking is poor
+        if timeSinceLastProcessing > adaptiveInterval {
+            optimizeSLAMPose()
+
+            // Clean up invalid stabilization transforms with adaptive frequency
+            cleanupInvalidStabilizationTransforms()
+            lastCleanupTimestamp = currentTimestamp
+
+            // Check if stabilization should be re-enabled after disable period
+            if stabilizationDisabledUntil > 0 && currentTimestamp > stabilizationDisabledUntil {
+                stabilizationDisabledUntil = 0
+                stabilizationFailures = 0
+                print("🔄 VIO/SLAM: Stabilization re-enabled after recovery period")
+            }
+        }
+    }
+
+    /// Calculate adaptive processing interval based on tracking quality
+    /// Better tracking = more frequent processing, poor tracking = less frequent
+    private func calculateAdaptiveInterval() -> TimeInterval {
+        if trackingQuality > 0.8 {
+            return 1.0 // 1 second - good tracking, process frequently
+        } else if trackingQuality > 0.5 {
+            return 2.0 // 2 seconds - moderate tracking
+        } else if trackingQuality > 0.2 {
+            return 5.0 // 5 seconds - poor tracking, reduce frequency
+        } else {
+            return 10.0 // 10 seconds - very poor tracking, minimal processing
+        }
     }
 
     private func processSLAMFeatures(_ frame: ARFrame) {
@@ -239,18 +276,91 @@ class ARVIO_SLAM_Service: ObservableObject {
         }
     }
 
-    /// Applies stabilization transform to an AR object
-    func stabilizeObject(_ objectId: String, currentTransform: simd_float4x4) -> simd_float4x4 {
-        // Validate input transform first
-        guard isValidTransform(currentTransform) else {
-            print("⚠️ VIO/SLAM: Input transform is invalid, using identity")
-            return matrix_identity_float4x4
+    /// Check if stabilization is currently disabled due to excessive failures
+    private func isStabilizationDisabled() -> Bool {
+        let currentTime = Date().timeIntervalSince1970
+        return currentTime < stabilizationDisabledUntil
+    }
+
+    /// Record a stabilization failure and potentially disable stabilization
+    private func recordStabilizationFailure() {
+        stabilizationFailures += 1
+
+        // Clear all stabilization transforms immediately when failures start occurring
+        // This prevents corrupted transforms from persisting
+        if stabilizationFailures >= 3 {
+            print("🧹 VIO/SLAM: Clearing all stabilization transforms due to \(stabilizationFailures) failures")
+            stabilizationTransforms.removeAll()
+            driftCompensation.removeAll()
         }
 
-        // Get stabilization correction and validate it
+        if stabilizationFailures >= maxConsecutiveFailures {
+            let currentTime = Date().timeIntervalSince1970
+            stabilizationDisabledUntil = currentTime + stabilizationDisableDuration
+
+            print("🚫 VIO/SLAM: Stabilization disabled for \(stabilizationDisableDuration) seconds due to \(stabilizationFailures) consecutive failures")
+            print("   This prevents matrix instability from affecting AR experience")
+
+            // Reset failure counter and clear all stored data
+            stabilizationFailures = 0
+            stabilizationTransforms.removeAll()
+            driftCompensation.removeAll()
+        }
+    }
+
+    /// Record a successful stabilization to reset failure counter
+    private func recordStabilizationSuccess() {
+        if stabilizationFailures > 0 {
+            stabilizationFailures = 0
+            print("✅ VIO/SLAM: Stabilization recovered after previous failures")
+        }
+    }
+
+    /// Check if a stabilization correction is worthwhile to apply
+    /// Only apply corrections that are significant but not extreme
+    private func isCorrectionWorthwhile(original: simd_float4x4, corrected: simd_float4x4) -> Bool {
+        // Extract positions from transforms
+        let originalPos = SIMD3<Float>(original.columns.3.x, original.columns.3.y, original.columns.3.z)
+        let correctedPos = SIMD3<Float>(corrected.columns.3.x, corrected.columns.3.y, corrected.columns.3.z)
+
+        // Calculate position difference
+        let positionDelta = length(correctedPos - originalPos)
+
+        // Only apply corrections that are meaningful (> 1cm) but not extreme (> 10m)
+        let minCorrection: Float = 0.01  // 1cm minimum
+        let maxCorrection: Float = 10.0  // 10m maximum
+
+        return positionDelta >= minCorrection && positionDelta <= maxCorrection
+    }
+
+    /// Applies stabilization transform to an AR object
+    func stabilizeObject(_ objectId: String, currentTransform: simd_float4x4) -> simd_float4x4 {
+        // Check if stabilization is temporarily disabled
+        if isStabilizationDisabled() {
+            return currentTransform
+        }
+
+        // Validate input transform first - strict validation
+        guard isValidTransform(currentTransform) else {
+            recordStabilizationFailure()
+            print("⚠️ VIO/SLAM: Input transform is invalid, skipping stabilization")
+            // Clear any stored correction for this object to prevent future issues
+            stabilizationTransforms.removeValue(forKey: objectId)
+            return currentTransform
+        }
+
+        // Skip stabilization if tracking quality is too low
+        if trackingQuality < 0.3 {
+            if stabilizationFailures > 0 {
+                print("⚠️ VIO/SLAM: Skipping stabilization due to poor tracking quality (\(String(format: "%.2f", trackingQuality)))")
+            }
+            return currentTransform
+        }
+
+        // Get stabilization correction and validate it strictly
         let correction = stabilizationTransforms[objectId] ?? matrix_identity_float4x4
         guard isValidTransform(correction) else {
-            print("⚠️ VIO/SLAM: Stored correction transform is invalid, resetting to identity")
+            print("⚠️ VIO/SLAM: Stored correction transform is invalid, clearing")
             stabilizationTransforms.removeValue(forKey: objectId)
             return currentTransform
         }
@@ -259,41 +369,60 @@ class ARVIO_SLAM_Service: ObservableObject {
         if let vioCorrection = vioProcessor?.getStabilizationCorrection(),
            isValidTransform(vioCorrection) {
 
-            // Validate all inputs before multiplication
-            guard isValidTransform(currentTransform) && isValidTransform(correction) && isValidTransform(vioCorrection) else {
-                print("⚠️ VIO/SLAM: One or more input transforms invalid before multiplication")
+            // Triple validation before any multiplication
+            guard isValidTransform(currentTransform) &&
+                  isValidTransform(correction) &&
+                  isValidTransform(vioCorrection) else {
+                print("⚠️ VIO/SLAM: Pre-multiplication validation failed")
                 return currentTransform
             }
 
             let stabilizedTransform = currentTransform * correction * vioCorrection
 
-            // Validate the result of matrix multiplication to prevent NaN propagation
-            if isValidTransform(stabilizedTransform) {
+            // Strict validation of multiplication result
+            guard isValidTransform(stabilizedTransform) else {
+                recordStabilizationFailure()
+                print("⚠️ VIO/SLAM: Matrix multiplication produced invalid transform, using original")
+                // Clear all stored corrections for this object
+                stabilizationTransforms.removeValue(forKey: objectId)
+                return currentTransform
+            }
+
+            // Check if the correction is actually worthwhile to apply
+            if isCorrectionWorthwhile(original: currentTransform, corrected: stabilizedTransform) {
                 stabilizationTransforms[objectId] = stabilizedTransform
+                recordStabilizationSuccess()
                 return stabilizedTransform
             } else {
-                print("⚠️ VIO/SLAM: Matrix multiplication produced invalid transform, using original")
-                // Reset the stored correction since it led to invalid results
-                stabilizationTransforms.removeValue(forKey: objectId)
+                // Correction not worthwhile, use original without counting as failure
+                return currentTransform
             }
         }
 
-        // Fallback to basic stabilization - validate inputs again
+        // Fallback to basic stabilization - with strict validation
         guard isValidTransform(currentTransform) && isValidTransform(correction) else {
-            print("⚠️ VIO/SLAM: Input transforms invalid for fallback stabilization")
+            print("⚠️ VIO/SLAM: Fallback validation failed")
             stabilizationTransforms.removeValue(forKey: objectId)
             return currentTransform
         }
 
         let fallbackTransform = currentTransform * correction
 
-        // Validate fallback result too
-        if isValidTransform(fallbackTransform) {
+        // Strict validation of fallback result
+        guard isValidTransform(fallbackTransform) else {
+            recordStabilizationFailure()
+            print("⚠️ VIO/SLAM: Fallback stabilization produced invalid transform, using current")
+            // Clear stored correction since fallback failed
+            stabilizationTransforms.removeValue(forKey: objectId)
+            return currentTransform
+        }
+
+        // Check if the fallback correction is worthwhile
+        if isCorrectionWorthwhile(original: currentTransform, corrected: fallbackTransform) {
+            recordStabilizationSuccess()
             return fallbackTransform
         } else {
-            print("⚠️ VIO/SLAM: Fallback stabilization produced invalid transform, using current")
-            // Reset the stored correction since even fallback failed
-            stabilizationTransforms.removeValue(forKey: objectId)
+            // Fallback not worthwhile, use original
             return currentTransform
         }
     }
@@ -452,15 +581,34 @@ class ARVIO_SLAM_Service: ObservableObject {
     // MARK: - Diagnostics
 
     func getVIO_SLAM_Diagnostics() -> [String: Any] {
+        let invalidTransforms = stabilizationTransforms.filter { !isValidTransform($0.value) }.count
+        let isStabilizationDisabled = self.isStabilizationDisabled()
+
         return [
             "trackingQuality": trackingQuality,
             "vioConfidence": vioConfidence,
             "slamMapPoints": slamMapPoints,
             "inertialDataBufferSize": inertialDataBuffer.count,
             "stabilizedObjects": stabilizationTransforms.count,
+            "invalidStabilizationTransforms": invalidTransforms,
+            "stabilizationFailures": stabilizationFailures,
+            "stabilizationDisabled": isStabilizationDisabled,
             "featureTrackerActive": featureTracker != nil,
             "poseGraphNeedsOptimization": poseGraph?.needsOptimization ?? false
         ]
+    }
+
+    /// Print a summary of the current VIO/SLAM state for debugging
+    func printDiagnostics() {
+        let diagnostics = getVIO_SLAM_Diagnostics()
+        print("🔍 VIO/SLAM Diagnostics:")
+        print("   Tracking Quality: \(String(format: "%.2f", diagnostics["trackingQuality"] as! Double))")
+        print("   VIO Confidence: \(String(format: "%.2f", diagnostics["vioConfidence"] as! Double))")
+        print("   SLAM Map Points: \(diagnostics["slamMapPoints"] as! Int)")
+        print("   Stabilized Objects: \(diagnostics["stabilizedObjects"] as! Int)")
+        print("   Invalid Transforms: \(diagnostics["invalidStabilizationTransforms"] as! Int)")
+        print("   Stabilization Failures: \(diagnostics["stabilizationFailures"] as! Int)")
+        print("   Stabilization Disabled: \(diagnostics["stabilizationDisabled"] as! Bool)")
     }
 
     // MARK: - Utility Functions
@@ -485,8 +633,16 @@ class VIOProcessor {
     }
 
     func processCameraData(_ frame: ARFrame) {
+        let cameraTransform = frame.camera.transform
+
+        // Validate camera transform before storing - reject invalid transforms immediately
+        guard isValidTransform(cameraTransform) else {
+            print("⚠️ VIO Processor: Rejecting invalid camera transform from ARFrame")
+            return
+        }
+
         // Store only the camera transform, not the entire frame
-        cameraTransforms.append(frame.camera.transform)
+        cameraTransforms.append(cameraTransform)
         if cameraTransforms.count > 30 { // Keep last 30 transforms
             cameraTransforms.removeFirst()
         }

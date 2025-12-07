@@ -7,6 +7,7 @@ import Combine
 // MARK: - Cloud Geo Anchor Service
 /// Provides cloud-backed geo anchoring for stable, shared AR experiences.
 /// Uses ARGeoAnchors with server-side persistence for multi-user consistency.
+/// Supports both custom server and Apple's CloudKit infrastructure.
 class CloudGeoAnchorService: NSObject, ObservableObject {
 
     // MARK: - Properties
@@ -19,6 +20,15 @@ class CloudGeoAnchorService: NSObject, ObservableObject {
     private var arSession: ARSession? {
         return arView?.session
     }
+
+    // Cloud infrastructure selection
+    public enum CloudProvider {
+        case customServer  // Original implementation using custom backend
+        case cloudKit      // Apple's CloudKit infrastructure
+    }
+
+    private var cloudProvider: CloudProvider = .customServer
+    public var cloudKitService: CloudKitGeoAnchorService?
 
     // Geo tracking configuration
     private var geoTrackingConfig: ARGeoTrackingConfiguration?
@@ -49,13 +59,22 @@ class CloudGeoAnchorService: NSObject, ObservableObject {
 
     func configure(with arView: ARView,
                    apiService: APIService,
-                   webSocketService: WebSocketService) {
+                   webSocketService: WebSocketService,
+                   cloudProvider: CloudProvider = .customServer) {
         self.arView = arView
         self.apiService = apiService
         self.webSocketService = webSocketService
+        self.cloudProvider = cloudProvider
 
         setupWebSocketCallbacks()
-        print("✅ CloudGeoAnchorService configured")
+
+        // Initialize CloudKit service if selected
+        if cloudProvider == .cloudKit {
+            cloudKitService = CloudKitGeoAnchorService()
+            cloudKitService?.configure(apiService: apiService, webSocketService: webSocketService)
+        }
+
+        print("✅ CloudGeoAnchorService configured with provider: \(cloudProvider)")
     }
 
     // MARK: - Session Management
@@ -240,18 +259,34 @@ class CloudGeoAnchorService: NSObject, ObservableObject {
         )
 
         do {
-            try await apiService?.storeGeoAnchor(anchorData)
-            print("💾 Stored geo anchor data for '\(objectId)' on server")
+            switch cloudProvider {
+            case .customServer:
+                try await apiService?.storeGeoAnchor(anchorData)
+                print("💾 Stored geo anchor data for '\(objectId)' on custom server")
+            case .cloudKit:
+                try await cloudKitService?.storeGeoAnchor(anchorData)
+                print("☁️ Stored geo anchor data for '\(objectId)' in CloudKit")
+            }
         } catch {
             print("❌ Failed to store geo anchor data: \(error)")
         }
     }
 
-    /// Retrieves and resolves all geo anchors from server
-    func syncGeoAnchorsFromServer() async throws {
-        guard let apiService = apiService else { return }
+    /// Retrieves and resolves all geo anchors from cloud storage
+    func syncGeoAnchorsFromCloud() async throws {
+        let anchorDatas: [CloudGeoAnchorData]
 
-        let anchorDatas = try await apiService.fetchGeoAnchors()
+        switch cloudProvider {
+        case .customServer:
+            guard let apiService = apiService else { return }
+            anchorDatas = try await apiService.fetchGeoAnchors()
+            print("📡 Synced geo anchors from custom server")
+        case .cloudKit:
+            guard let cloudKitService = cloudKitService else { return }
+            anchorDatas = try await cloudKitService.fetchGeoAnchors()
+            print("☁️ Synced geo anchors from CloudKit")
+        }
+
         try await resolveGeoAnchors(anchorDatas: anchorDatas)
 
         print("🔄 Synced \(anchorDatas.count) geo anchors from server")
@@ -276,8 +311,14 @@ class CloudGeoAnchorService: NSObject, ObservableObject {
             deviceId: UIDevice.current.identifierForVendor?.uuidString ?? "unknown"
         )
 
-        try await apiService?.shareGeoAnchor(anchorDataStruct)
-        print("📤 Shared geo anchor for '\(objectId)' with other users")
+        switch cloudProvider {
+        case .customServer:
+            try await apiService?.shareGeoAnchor(anchorDataStruct)
+            print("📤 Shared geo anchor for '\(objectId)' with other users via custom server")
+        case .cloudKit:
+            try await cloudKitService?.shareGeoAnchor(anchorDataStruct)
+            print("🌐 Shared geo anchor for '\(objectId)' with other users via CloudKit")
+        }
     }
 
     // MARK: - Anchor Management

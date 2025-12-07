@@ -37,6 +37,10 @@ class ARDistanceTracker: ObservableObject {
     private var distanceLogger: Timer?
     private var previousDistance: Double?
     private var audioPingService: AudioPingService?
+
+    // Coordinate system health monitoring
+    private var coordinateDriftWarnings: Int = 0
+    private var lastCoordinateDriftWarning: TimeInterval = 0
     
     init(arView: ARView?, locationManager: LootBoxLocationManager?, userLocationManager: UserLocationManager?, treasureHuntService: TreasureHuntService? = nil) {
         self.arView = arView
@@ -81,6 +85,16 @@ class ARDistanceTracker: ObservableObject {
             cameraTransform.columns.3.y,
             cameraTransform.columns.3.z
         )
+
+        // Validate camera position - AR coordinates should be reasonable (< 10,000 units)
+        let maxReasonableCoordinate: Float = 10000.0
+        guard abs(cameraPosition.x) < maxReasonableCoordinate &&
+              abs(cameraPosition.y) < maxReasonableCoordinate &&
+              abs(cameraPosition.z) < maxReasonableCoordinate else {
+            monitorCoordinateSystemHealth(cameraPosition: cameraPosition)
+            Swift.print("⚠️ Invalid camera position in updateDistanceTexts, skipping")
+            return
+        }
         
         // Update distance text for each loot box
         for (locationId, anchor) in placedBoxes {
@@ -155,6 +169,17 @@ class ARDistanceTracker: ObservableObject {
 
         let cameraTransform = frame.camera.transform
         let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
+
+        // Validate camera position - AR coordinates should be reasonable (< 10,000 units)
+        let maxReasonableCoordinate: Float = 10000.0
+        guard abs(cameraPos.x) < maxReasonableCoordinate &&
+              abs(cameraPos.y) < maxReasonableCoordinate &&
+              abs(cameraPos.z) < maxReasonableCoordinate else {
+            monitorCoordinateSystemHealth(cameraPosition: cameraPos)
+            Swift.print("⚠️ Invalid camera position in updateNearestObjectDirection, skipping")
+            nearestObjectDirection = nil
+            return
+        }
 
         // Get forward vector for orientation
         let forward = SIMD3<Float>(-cameraTransform.columns.2.x, -cameraTransform.columns.2.y, -cameraTransform.columns.2.z)
@@ -383,6 +408,22 @@ class ARDistanceTracker: ObservableObject {
             cameraTransform.columns.3.y,
             cameraTransform.columns.3.z
         )
+
+        // Validate camera position - AR coordinates should be reasonable (< 10,000 units)
+        let maxReasonableCoordinate: Float = 10000.0
+        guard abs(cameraPosition.x) < maxReasonableCoordinate &&
+              abs(cameraPosition.y) < maxReasonableCoordinate &&
+              abs(cameraPosition.z) < maxReasonableCoordinate else {
+            monitorCoordinateSystemHealth(cameraPosition: cameraPosition)
+            Swift.print("⚠️ Invalid camera position in logDistanceToNearestLootBox, skipping")
+            // Clear distance binding to prevent showing invalid distances
+            DispatchQueue.main.async { [weak self] in
+                self?.distanceToNearestBinding?.wrappedValue = nil
+                self?.temperatureStatusBinding?.wrappedValue = nil
+                self?.nearestObjectDirectionBinding?.wrappedValue = nil
+            }
+            return
+        }
         
         // Priority 1: Check for selected object first
         var targetBox: (location: LootBoxLocation, distance: Double, anchor: AnchorEntity)? = nil
@@ -426,7 +467,20 @@ class ARDistanceTracker: ObservableObject {
             }
 
             // Calculate distance in AR world space (meters) - use object position for accuracy
-            let distance = Double(length(objectPosition - cameraPosition))
+            let rawDistance = Double(length(objectPosition - cameraPosition))
+
+            // Validate distance to prevent extreme values from corrupted coordinate systems
+            // AR coordinate systems can drift and produce distances in millions/billions of meters
+            // Cap at reasonable maximum for AR navigation (500m - beyond this objects aren't visible anyway)
+            let maxReasonableDistance: Double = 500.0
+            let distance = min(rawDistance, maxReasonableDistance)
+
+            // If distance was capped, log a warning
+            if rawDistance > maxReasonableDistance {
+                Swift.print("⚠️ AR Distance capped: raw=\(String(format: "%.0f", rawDistance))m, capped=\(String(format: "%.1f", distance))m")
+                Swift.print("   Camera pos: (\(String(format: "%.1f", cameraPosition.x)), \(String(format: "%.1f", cameraPosition.y)), \(String(format: "%.1f", cameraPosition.z)))")
+                Swift.print("   Object pos: (\(String(format: "%.1f", objectPosition.x)), \(String(format: "%.1f", objectPosition.y)), \(String(format: "%.1f", objectPosition.z)))")
+            }
             targetBox = (location: location, distance: distance, anchor: anchor)
         }
         
@@ -476,8 +530,17 @@ class ARDistanceTracker: ObservableObject {
                 }
             }
 
-                // Calculate distance in AR world space (meters) - use object position for accuracy
-                let distance = Double(length(objectPosition - cameraPosition))
+            // Calculate distance in AR world space (meters) - use object position for accuracy
+            let rawDistance = Double(length(objectPosition - cameraPosition))
+
+            // Validate distance to prevent extreme values from corrupted coordinate systems
+            let maxReasonableDistance: Double = 500.0
+            let distance = min(rawDistance, maxReasonableDistance)
+
+            // If distance was capped, log a warning (but don't spam logs)
+            if rawDistance > maxReasonableDistance && rawDistance.truncatingRemainder(dividingBy: 1000) < 1.0 {
+                Swift.print("⚠️ AR Distance capped in nearest calc: raw=\(String(format: "%.0f", rawDistance))m, capped=\(String(format: "%.1f", distance))m")
+            }
                 
                 if distance < minDistance {
                     minDistance = distance
@@ -799,7 +862,42 @@ class ARDistanceTracker: ObservableObject {
         textureCache.removeAll()
         Swift.print("🧹 ARDistanceTracker: Texture cache cleared")
     }
-    
+
+    /// Monitor coordinate system health and suggest recovery when coordinates drift too far
+    private func monitorCoordinateSystemHealth(cameraPosition: SIMD3<Float>) {
+        let maxReasonableCoordinate: Float = 10000.0
+        let isCoordinateDrifted = abs(cameraPosition.x) >= maxReasonableCoordinate ||
+                                  abs(cameraPosition.y) >= maxReasonableCoordinate ||
+                                  abs(cameraPosition.z) >= maxReasonableCoordinate
+
+        if isCoordinateDrifted {
+            coordinateDriftWarnings += 1
+            let currentTime = Date().timeIntervalSince1970
+
+            // Only log warnings every 30 seconds to avoid spam
+            if currentTime - lastCoordinateDriftWarning > 30.0 {
+                lastCoordinateDriftWarning = currentTime
+                Swift.print("🚨 AR Coordinate System Drift Detected!")
+                Swift.print("   Camera position: (\(String(format: "%.0f", cameraPosition.x)), \(String(format: "%.0f", cameraPosition.y)), \(String(format: "%.0f", cameraPosition.z)))")
+                Swift.print("   Warning count: \(coordinateDriftWarnings)")
+                Swift.print("   💡 Suggestion: Reset AR tracking to recover coordinate system")
+                Swift.print("   This can happen during long AR sessions or tracking interruptions")
+
+                // Reset warning counter periodically
+                if coordinateDriftWarnings > 10 {
+                    coordinateDriftWarnings = 0
+                    Swift.print("🔄 Reset coordinate drift warning counter")
+                }
+            }
+        } else {
+            // Reset warning counter when coordinates are healthy again
+            if coordinateDriftWarnings > 0 {
+                coordinateDriftWarnings = 0
+                Swift.print("✅ AR coordinate system recovered to normal range")
+            }
+        }
+    }
+
     deinit {
         distanceLogger?.invalidate()
     }

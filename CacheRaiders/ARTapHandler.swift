@@ -110,11 +110,11 @@ class ARTapHandler {
         // Check the tapped entity and all its parents
         var entityToCheck = tappedEntity
         var checkedEntities = Set<String>() // Track checked entity names to prevent loops
-        
+
         while let currentEntity = entityToCheck {
             let entityName = currentEntity.name
             Swift.print("🎯 Checking entity: '\(entityName)' (type: \(type(of: currentEntity)))")
-            
+
             // Entity.name is a String, not String?, so check if it's not empty
             if !entityName.isEmpty {
                 // Use entity name as unique identifier for loop prevention
@@ -123,8 +123,48 @@ class ARTapHandler {
                     break // Already checked this entity
                 }
                 checkedEntities.insert(entityKey)
-                
+
                 let idString = entityName
+
+                // CLEANUP: Check if this is a "ghost" entity (UUID-named but not tracked)
+                // This can happen when objects are cleared but entities remain in scene
+                // Instead of just removing them, treat them as collectible items that trigger confetti/sound
+                if idString.contains("-") && idString.count == 36 &&
+                   !placedBoxes.keys.contains(idString) &&
+                   !placedNPCs.keys.contains(idString) &&
+                   !findableObjects.keys.contains(idString) {
+                    Swift.print("👻 Found ghost entity '\(idString)' - treating as collectible item")
+
+                    // Create a minimal FindableObject for the ghost entity to trigger confetti/sound
+                    if let anchorEntity = currentEntity as? AnchorEntity ?? currentEntity.parent as? AnchorEntity {
+                        let ghostFindableObject = FindableObject(
+                            locationId: idString,
+                            anchor: anchorEntity,
+                            sphereEntity: currentEntity as? ModelEntity,
+                            container: nil,
+                            location: nil // No location data for ghosts
+                        )
+
+                        // Set a callback that just removes the entity
+                        ghostFindableObject.onFoundCallback = { [weak self] _ in
+                            DispatchQueue.main.async {
+                                anchorEntity.removeFromParent()
+                            }
+                        }
+
+                        // Trigger the find animation (confetti + sound) and removal
+                        ghostFindableObject.find {
+                            Swift.print("✅ Ghost entity '\(idString)' collected with confetti/sound")
+                        }
+
+                        return // Don't process as regular object
+                    } else {
+                        // Fallback: just remove the entity if we can't create a proper FindableObject
+                        Swift.print("⚠️ Could not create FindableObject for ghost entity - removing directly")
+                        currentEntity.removeFromParent()
+                        continue
+                    }
+                }
                 
                 // FIRST: Check if this is an NPC (skeleton, corgi, etc.)
                 // CRITICAL: NPCs should NEVER be treated as loot boxes, even if they're accidentally in placedBoxes
@@ -517,6 +557,7 @@ class ARTapHandler {
         let pressLocation = sender.location(in: arView)
         Swift.print("   Screen location: (\(pressLocation.x), \(pressLocation.y))")
         Swift.print("   Placed boxes: \(placedBoxes.count)")
+        Swift.print("   Placed box IDs: \(Array(placedBoxes.keys).sorted())")
 
         // Use ARObjectDetailService to detect object at press location
         guard let objectId = ARObjectDetailService.shared.detectObjectAtLocation(
@@ -524,12 +565,58 @@ class ARTapHandler {
             in: arView,
             placedBoxes: placedBoxes
         ) else {
-            Swift.print("   No object detected at long press location")
+            Swift.print("❌ No object detected at long press location")
+            Swift.print("👆 ========== LONG PRESS END (NO OBJECT) ==========")
             return
         }
 
         Swift.print("📋 Object long-pressed: \(objectId)")
+
+        // Handle orphaned entities specially
+        if objectId.hasPrefix("orphan:") {
+            let orphanId = String(objectId.dropFirst(7)) // Remove "orphan:" prefix
+            Swift.print("   👻 Long-pressed orphaned entity: \(orphanId)")
+
+            // Try to get the entity from the scene for AR coordinate extraction
+            if let tappedEntity = arView.entity(at: pressLocation),
+               let anchorEntity = tappedEntity as? AnchorEntity ?? tappedEntity.parent as? AnchorEntity {
+
+                let transform = anchorEntity.transformMatrix(relativeTo: nil)
+                let arCoordinates = SIMD3<Float>(
+                    transform.columns.3.x,
+                    transform.columns.3.y,
+                    transform.columns.3.z
+                )
+
+                // Create detail object for orphaned entity
+                let detail = ARObjectDetail(
+                    id: orphanId,
+                    name: "Orphaned Object (ID: \(orphanId))",
+                    itemType: "Unknown Type",
+                    placerName: "Unknown",
+                    datePlaced: nil,
+                    gpsCoordinates: nil,
+                    arCoordinates: arCoordinates,
+                    arOrigin: nil,
+                    arOffsets: nil,
+                    anchors: [anchorEntity.name]
+                )
+
+                Swift.print("   📋 Created detail view for orphaned entity")
+                // For now, we'll use the regular callback but with special handling
+                // In a full implementation, you'd want a separate callback for orphaned entities
+                onLongPressObject?(objectId)
+            } else {
+                Swift.print("   ⚠️ Could not extract AR coordinates for orphaned entity")
+                onLongPressObject?(objectId)
+            }
+
+            Swift.print("👆 ========== LONG PRESS END (ORPHANED ENTITY) ==========")
+            return
+        }
+
         Swift.print("   Triggering detail view callback")
+        Swift.print("👆 ========== LONG PRESS END (SUCCESS) ==========")
 
         // Trigger the callback to show object details
         onLongPressObject?(objectId)
