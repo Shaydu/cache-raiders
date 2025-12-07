@@ -20,7 +20,8 @@ const Config = {
         'Loot Cart',
         'Mysterious Sphere',
         'Mysterious Cube',
-        'Turkey'
+        'Turkey',
+        'Terror Engine'
     ],
     
     /**
@@ -34,7 +35,8 @@ const Config = {
         'Temple Relic': ['Temple Relic', 'Sacred Relic', 'Temple Treasure'],
         'Mysterious Sphere': ['Mysterious Sphere', 'Ancient Orb', 'Glowing Sphere'],
         'Mysterious Cube': ['Mysterious Cube'],
-        'Turkey': ['Animated Turkey', 'Rigged Turkey', 'Thanksgiving Turkey']
+        'Turkey': ['Animated Turkey', 'Rigged Turkey', 'Thanksgiving Turkey'],
+        'Terror Engine': ['Terror Engine', 'Ancient Engine', 'Leather Ghost Engine']
     },
     
     /**

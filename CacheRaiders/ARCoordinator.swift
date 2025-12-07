@@ -12,6 +12,8 @@ import UIKit
 // Import for NFC positioning service
 import Foundation
 
+// Utility classes are available within the same module
+
 // MARK: - AR Coordinator
 class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
@@ -327,82 +329,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     private func isObjectInViewport(locationId: String, anchor: AnchorEntity) -> Bool {
         guard let arView = arView,
               let frame = arView.session.currentFrame else { return false }
-        
-        // Get camera position and forward direction
-        let cameraTransform = frame.camera.transform
-        let cameraPos = SIMD3<Float>(
-            cameraTransform.columns.3.x,
-            cameraTransform.columns.3.y,
-            cameraTransform.columns.3.z
-        )
-        
-        // Camera forward direction is the negative Z axis in camera space (columns.2)
-        let cameraForward = SIMD3<Float>(
-            -cameraTransform.columns.2.x,
-            -cameraTransform.columns.2.y,
-            -cameraTransform.columns.2.z
-        )
-        
-        // Get the object's world position
-        let anchorTransform = anchor.transformMatrix(relativeTo: nil)
-        let objectPosition = SIMD3<Float>(
-            anchorTransform.columns.3.x,
-            anchorTransform.columns.3.y,
-            anchorTransform.columns.3.z
-        )
-        
-        // Try to find a more specific position from child entities (like the actual box/chalice)
-        var bestPosition = objectPosition
-        for child in anchor.children {
-            if let modelEntity = child as? ModelEntity {
-                let childTransform = modelEntity.transformMatrix(relativeTo: nil)
-                let childPosition = SIMD3<Float>(
-                    childTransform.columns.3.x,
-                    childTransform.columns.3.y,
-                    childTransform.columns.3.z
-                )
-                // Use the first child entity's position as it's likely the visible part
-                bestPosition = childPosition
-                break
-            }
-        }
-        
-        // CRITICAL: Check if object is in front of camera (not behind)
-        // Calculate vector from camera to object
-        let cameraToObject = bestPosition - cameraPos
-        let _ = length(cameraToObject) // Distance check (unused but calculated for future use)
-        
-        // Normalize camera forward direction for dot product
-        let normalizedForward = normalize(cameraForward)
-        let normalizedToObject = normalize(cameraToObject)
-        
-        // Dot product: positive = in front, negative = behind, zero = perpendicular
-        let dotProduct = dot(normalizedForward, normalizedToObject)
-        
-        // Only consider objects that are in front of the camera (dot product > 0)
-        // Use a small threshold (0.0) to avoid edge cases at exactly 90 degrees
-        guard dotProduct > 0.0 else {
-            return false // Object is behind camera
-        }
-        
-        // Project the position to screen coordinates
-        guard let screenPoint = arView.project(bestPosition) else {
-            return false // Object is behind camera or outside view
-        }
-        
-        // Check if the projected point is within the viewport bounds
-        let viewWidth = CGFloat(arView.bounds.width)
-        let viewHeight = CGFloat(arView.bounds.height)
-        
-        // Add a small margin to account for object size (objects slightly off-screen still count)
-        let margin: CGFloat = 50.0 // 50 point margin
-        
-        // Break down the complex expression into sub-expressions to help compiler type-checking
-        let xInBounds = screenPoint.x >= -margin && screenPoint.x <= viewWidth + margin
-        let yInBounds = screenPoint.y >= -margin && screenPoint.y <= viewHeight + margin
-        let isInViewport = xInBounds && yInBounds
-        
-        return isInViewport
+
+        return ARViewportUtilities.isObjectInViewport(locationId: locationId, anchor: anchor, arView: arView, frame: frame)
     }
     
     /// Check viewport visibility for all placed objects and play chime when objects enter
@@ -1393,7 +1321,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                         if gpsDistance < 1.0 {
                             // Offset by 5 meters in a random direction
                             let randomBearing = Double.random(in: 0..<360)
-                            let offsetCoordinate = newLoc.coordinate.coordinate(atDistance: 5.0, atBearing: randomBearing)
+                            let offsetCoordinate = newLoc.coordinate.coordinateAt(distance: 5.0, bearing: randomBearing)
 
                             locationToQueue = LootBoxLocation(
                                 id: location.id,
@@ -1433,7 +1361,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
                         if gpsDistance < 1.0 {
                             let randomBearing = Double.random(in: 0..<360)
-                            let offsetCoordinate = newLoc.coordinate.coordinate(atDistance: 5.0, atBearing: randomBearing)
+                            let offsetCoordinate = newLoc.coordinate.coordinateAt(distance: 5.0, bearing: randomBearing)
 
                             locationToQueue = LootBoxLocation(
                                 id: location.id,
@@ -1549,64 +1477,17 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
     // Generate position for indoor placement (simplified approach)
     private func generateIndoorPosition(cameraPos: SIMD3<Float>, minDistance: Float, maxDistance: Float) -> (x: Float, z: Float) {
-        // Simplified indoor placement: just place closer to camera in a smaller area
-        // Avoid complex wall boundary calculations that might be failing
-        Swift.print("🏠 Using simplified indoor placement")
-
-        let randomDistance = Float.random(in: minDistance...min(maxDistance, 4.0)) // Limit to 4m indoors
-        let randomAngle = Float.random(in: 0...(2 * Float.pi)) // Any direction
-
-        let x = cameraPos.x + randomDistance * cos(randomAngle)
-        let z = cameraPos.z + randomDistance * sin(randomAngle)
-
-        Swift.print("🏠 Indoor position: distance \(String(format: "%.1f", randomDistance))m, angle \(String(format: "%.1f", randomAngle * 180 / .pi))°")
-        return (x, z)
+        return ARPlacementUtilities.generateIndoorPosition(cameraPos: cameraPos, minDistance: minDistance, maxDistance: maxDistance)
     }
 
     // Check if a position is within room boundaries defined by walls
     private func isPositionWithinRoomBounds(x: Float, z: Float, cameraPos: SIMD3<Float>, walls: [ARPlaneAnchor]) -> Bool {
-        let testPos = SIMD3<Float>(x, cameraPos.y, z)
-
-        // For each wall, check if the position is on the correct side
-        for wall in walls {
-            let wallTransform = wall.transform
-            let wallPosition = SIMD3<Float>(
-                wallTransform.columns.3.x,
-                wallTransform.columns.3.y,
-                wallTransform.columns.3.z
-            )
-
-            // Get wall normal (direction the wall is facing)
-            let wallNormal = SIMD3<Float>(
-                wallTransform.columns.2.x,
-                wallTransform.columns.2.y,
-                wallTransform.columns.2.z
-            )
-
-            // Vector from wall to test position
-            let toTestPos = testPos - wallPosition
-
-            // If the dot product is positive, the position is on the "outside" of the wall
-            // We want positions on the "inside" (negative dot product)
-            let dotProduct = dot(wallNormal, toTestPos)
-
-            // Allow some tolerance - if clearly outside, reject
-            if dotProduct > 1.0 { // More than 1m outside the wall
-                return false
-            }
-        }
-
-        return true // Position is within bounds or no clear boundary violation
+        return ARPlacementUtilities.isPositionWithinRoomBounds(x: x, z: z, cameraPos: cameraPos, walls: walls)
     }
 
     // Get placement strategy - simplified for reliable sphere spawning
     private func getPlacementStrategy(isIndoors: Bool, searchDistance: Float) -> (minDistance: Float, maxDistance: Float, strategy: String) {
-        // Use indoor-like distances for reliable sphere spawning
-        return (
-            minDistance: 1.0, // Minimum 1 meter
-            maxDistance: 8.0,  // Maximum 8 meters (reasonable for indoor spaces)
-            strategy: "INDOOR-FRIENDLY MODE - close placement for spheres"
-        )
+        return ARPlacementUtilities.getPlacementStrategy(isIndoors: isIndoors, searchDistance: searchDistance)
     }
 
     // MARK: - AR-Enhanced Location
@@ -1617,34 +1498,9 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     func getAREnhancedLocation() -> (latitude: Double, longitude: Double, arOffsetX: Double, arOffsetY: Double, arOffsetZ: Double)? {
         guard let arView = arView,
               let frame = arView.session.currentFrame,
-              let arOrigin = _arOriginLocation else {
-            return nil
-        }
-        
-        // Get current camera position in AR world space
-        let cameraTransform = frame.camera.transform
-        let cameraPos = SIMD3<Float>(
-            cameraTransform.columns.3.x,
-            cameraTransform.columns.3.y,
-            cameraTransform.columns.3.z
-        )
-        
-        // Convert AR position to GPS coordinates
-        // AR origin is at (0,0,0) in AR space, so camera position is the offset
-        let distance = sqrt(cameraPos.x * cameraPos.x + cameraPos.z * cameraPos.z) // Horizontal distance
-        let bearing = atan2(Double(cameraPos.x), -Double(cameraPos.z)) * 180.0 / .pi // Bearing in degrees (0 = north)
-        let normalizedBearing = (bearing + 360.0).truncatingRemainder(dividingBy: 360.0)
-        
-        // Calculate GPS coordinate from AR origin
-        let enhancedGPS = arOrigin.coordinate.coordinate(atDistance: Double(distance), atBearing: normalizedBearing)
-        
-        return (
-            latitude: enhancedGPS.latitude,
-            longitude: enhancedGPS.longitude,
-            arOffsetX: Double(cameraPos.x),
-            arOffsetY: Double(cameraPos.y),
-            arOffsetZ: Double(cameraPos.z)
-        )
+              let arOrigin = locationManager?.sharedAROrigin else { return nil }
+
+        return ARGPSUtilities.getAREnhancedLocation(arView: arView, frame: frame, arOrigin: arOrigin)
     }
     // MARK: - Object Recognition (delegated to ARObjectRecognizer)
     // MARK: - ARSessionDelegate
@@ -1655,18 +1511,31 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             LootBoxEntity.globalPerformanceMode = .reduced
         }
 
-        // Process frame through VIO/SLAM service for enhanced tracking
-        // Throttle VIO/SLAM processing to prevent overwhelming newer devices
-        let shouldProcessVIO_SLAM = sessionFrameCount % 3 == 0 // Process every 3rd frame (20fps instead of 60fps)
+        // CRITICAL FIX: Move expensive operations to background queue to prevent ARFrame retention
+        // The ARSession delegate must return quickly to avoid the "retaining X ARFrames" warning
+        // This warning causes camera frames to stop being delivered, leading to frozen/black camera
+
+        // Process VIO/SLAM in background - reduced frequency to prevent frame backup
+        let shouldProcessVIO_SLAM = sessionFrameCount % 5 == 0 // Process every 5th frame (12fps instead of 20fps)
         if shouldProcessVIO_SLAM {
-            vioSlamService?.processFrameForEnhancement(frame)
+            // Create a weak reference to avoid retaining the frame
+            let frameTimestamp = frame.timestamp
+            backgroundProcessingQueue.async { [weak self] in
+                // Only process if we still exist and this is still the most recent frame
+                guard let self = self,
+                      let currentFrame = self.arView?.session.currentFrame,
+                      currentFrame.timestamp == frameTimestamp else { return }
+
+                self.vioSlamService?.processFrameForEnhancement(currentFrame)
+            }
         }
 
-        // Apply enhanced stabilization to all active objects (throttled to prevent instability)
-        // Only run stabilization every 6th frame (10fps) to prevent matrix operation overload
-        let shouldApplyStabilization = sessionFrameCount % 6 == 0
+        // Apply stabilization less frequently - every 10th frame instead of 6th (6fps)
+        let shouldApplyStabilization = sessionFrameCount % 10 == 0
         if shouldApplyStabilization {
-            applyEnhancedStabilization()
+            backgroundProcessingQueue.async { [weak self] in
+                self?.applyEnhancedStabilization()
+            }
         }
 
         // Track consecutive frames with no camera data (for detecting frozen camera)
@@ -1727,6 +1596,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         // 1. Accurate mode: Wait for GPS with good accuracy (< 20.0m) for AR-to-GPS conversion
         // 2. Degraded mode: Use AR-only positioning if GPS unavailable after timeout
 
+        // PERFORMANCE: Only do AR origin setup on first frame to avoid blocking delegate
         if _arOriginLocation == nil {
             Swift.print("🎯 [SESSION] AR origin is nil, attempting to set it")
             let cameraTransform = frame.camera.transform
@@ -1924,12 +1794,18 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             return
         }
         
-        // Perform object recognition on camera frame (throttled to improve framerate)
+        // Perform object recognition on camera frame (throttled and moved to background)
         // Only run recognition every 2 seconds to reduce CPU usage
         let recognitionNow = Date()
         if recognitionNow.timeIntervalSince(lastRecognitionTime) > 2.0 {
             lastRecognitionTime = recognitionNow
-            objectRecognizer?.performObjectRecognition(on: frame.capturedImage)
+            // Move object recognition to background to prevent frame retention
+            backgroundProcessingQueue.async { [weak self] in
+                guard let self = self else { return }
+                // Create a copy of the pixel buffer to avoid retaining the frame
+                let pixelBuffer = frame.capturedImage
+                self.objectRecognizer?.performObjectRecognition(on: pixelBuffer)
+            }
         }
 
         // Check for nearby locations when AR is tracking (throttled to reduce CPU usage)
@@ -4932,49 +4808,17 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         arOrigin: CLLocation,
         cameraTransform: simd_float4x4
     ) {
-        // Convert intended AR position back to GPS coordinates
-        // This gives us the "corrected" GPS coordinates that would place the object
-        // at the intended AR position when converted back through GPS->AR conversion
+        ARGPSUtilities.correctGPSCoordinates(
+            location: location,
+            intendedARPosition: intendedARPosition,
+            arOrigin: arOrigin,
+            cameraTransform: cameraTransform
+        )
 
-        // Calculate offset from AR origin (0,0,0) to intended position
-        let offset = intendedARPosition
-
-        // Convert offset to distance and bearing
-        let distanceX = Double(offset.x)
-        let distanceZ = Double(offset.z)
-        let distance = sqrt(distanceX * distanceX + distanceZ * distanceZ)
-
-        // Calculate bearing from AR origin
-        // In AR space: +X = East, +Z = North
-        let bearingRad = atan2(distanceX, distanceZ)
-        let bearingDeg = bearingRad * 180.0 / .pi
-        let compassBearing = (bearingDeg + 360).truncatingRemainder(dividingBy: 360)
-
-        // Calculate corrected GPS coordinate from AR origin
-        let correctedCoordinate = arOrigin.coordinate.coordinate(atDistance: distance, atBearing: compassBearing)
-
-        Swift.print("   📍 Calculated corrected GPS coordinates:")
-        Swift.print("      Original GPS: (\(String(format: "%.6f", location.latitude)), \(String(format: "%.6f", location.longitude)))")
-        Swift.print("      Corrected GPS: (\(String(format: "%.6f", correctedCoordinate.latitude)), \(String(format: "%.6f", correctedCoordinate.longitude)))")
-        Swift.print("      Distance from AR origin: \(String(format: "%.4f", distance))m")
-        Swift.print("      Bearing: \(String(format: "%.1f", compassBearing))°")
-
-        // Update GPS coordinates in the API
+        // Reload locations to pick up the corrected coordinates (this needs to stay in coordinator)
         Task {
-            do {
-                try await APIService.shared.updateObjectLocation(
-                    objectId: location.id,
-                    latitude: correctedCoordinate.latitude,
-                    longitude: correctedCoordinate.longitude
-                )
-                Swift.print("   ✅ GPS coordinates corrected and saved to API")
-
-                // Reload locations to pick up the corrected coordinates
-                await locationManager?.loadLocationsFromAPI(userLocation: userLocationManager?.currentLocation)
-                Swift.print("   🔄 Locations reloaded with corrected GPS coordinates")
-            } catch {
-                Swift.print("   ❌ Failed to update corrected GPS coordinates: \(error)")
-            }
+            await locationManager?.loadLocationsFromAPI(userLocation: userLocationManager?.currentLocation)
+            Swift.print("   🔄 Locations reloaded with corrected GPS coordinates")
         }
     }
     
@@ -5842,6 +5686,17 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         return boxEntity
     }
 
+    // MARK: - AR Mathematical Operations
+
+    /// Converts AR world position back to GPS coordinates using AR origin
+    /// - Parameters:
+    ///   - arPosition: Position in AR world space (relative to AR origin at 0,0,0)
+    ///   - arOrigin: GPS location of the AR origin point
+    /// - Returns: GPS coordinates corresponding to the AR position
+    private func convertARToGPS(arPosition: SIMD3<Float>, arOrigin: CLLocation) -> CLLocationCoordinate2D? {
+        return ARMathUtilities.convertARToGPS(arPosition: arPosition, arOrigin: arOrigin)
+    }
+
     /// Rotates AR coordinates based on compass heading to ensure consistent object orientation
     /// This ensures objects maintain the same orientation relative to magnetic north across different users/sessions
     private func rotateARCoordinatesForCompassHeading(_ arPosition: SIMD3<Float>, storedHeading: Double?, currentHeading: Double?) -> SIMD3<Float> {
@@ -5889,25 +5744,65 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         let headingDifference = currentHeading - storedHeading
         let rotationAngleRadians = headingDifference * .pi / 180.0
 
-        Swift.print("   🧭 Applying compass-based rotation to anchor transform:")
-        Swift.print("      Stored heading: \(String(format: "%.1f", storedHeading))°")
-        Swift.print("      Current heading: \(String(format: "%.1f", currentHeading))°")
-        Swift.print("      Rotation needed: \(String(format: "%.1f", headingDifference))°")
+        // Extract translation component
+        let translation = SIMD3<Float>(
+            transform.columns.3.x,
+            transform.columns.3.y,
+            transform.columns.3.z
+        )
 
-        // Create rotation matrix around Y-axis (up/down axis) for compass rotation
+        // Create rotation matrix around Y-axis
         let rotationMatrix = simd_float4x4([
-            SIMD4<Float>(Float(cos(rotationAngleRadians)), 0, Float(-sin(rotationAngleRadians)), 0), // X rotation
-            SIMD4<Float>(0, 1, 0, 0),                                                  // Y unchanged (up)
-            SIMD4<Float>(Float(sin(rotationAngleRadians)), 0, Float(cos(rotationAngleRadians)), 0),  // Z rotation
-            SIMD4<Float>(0, 0, 0, 1)                                                   // W (homogeneous coordinate)
+            SIMD4<Float>(Float(cos(rotationAngleRadians)), 0, Float(-sin(rotationAngleRadians)), 0),
+            SIMD4<Float>(0, 1, 0, 0),
+            SIMD4<Float>(Float(sin(rotationAngleRadians)), 0, Float(cos(rotationAngleRadians)), 0),
+            SIMD4<Float>(0, 0, 0, 1)
         ])
 
-        // Apply rotation to the transform matrix
+        // Apply rotation to the transform
         let rotatedTransform = rotationMatrix * transform
 
-        Swift.print("      Anchor transform rotated for compass alignment")
+        Swift.print("   🧭 Applied compass rotation to anchor transform:")
+        Swift.print("      Heading difference: \(String(format: "%.1f", Float(headingDifference)))°")
+        Swift.print("      Original transform translation: (\(String(format: "%.3f", translation.x)), \(String(format: "%.3f", translation.y)), \(String(format: "%.3f", translation.z)))")
 
         return rotatedTransform
+    }
+
+    /// Calculates the Euclidean distance between two 3D positions
+    /// - Parameters:
+    ///   - position1: First position
+    ///   - position2: Second position
+    /// - Returns: Distance in meters
+    private func distanceBetween(_ position1: SIMD3<Float>, _ position2: SIMD3<Float>) -> Float {
+        return length(position2 - position1)
+    }
+
+    /// Calculates horizontal distance (X-Z plane only) between two positions
+    /// - Parameters:
+    ///   - position1: First position
+    ///   - position2: Second position
+    /// - Returns: Horizontal distance in meters
+    private func horizontalDistanceBetween(_ position1: SIMD3<Float>, _ position2: SIMD3<Float>) -> Float {
+        let deltaX = position2.x - position1.x
+        let deltaZ = position2.z - position1.z
+        return sqrt(deltaX * deltaX + deltaZ * deltaZ)
+    }
+
+    /// Generates a random position within a specified distance range from a center point
+    /// - Parameters:
+    ///   - center: Center position
+    ///   - minDistance: Minimum distance from center
+    ///   - maxDistance: Maximum distance from center
+    /// - Returns: Random position within the distance range
+    private func generateRandomPosition(center: SIMD3<Float>, minDistance: Float, maxDistance: Float) -> SIMD3<Float> {
+        let randomDistance = Float.random(in: minDistance...maxDistance)
+        let randomAngle = Float.random(in: 0...(2 * Float.pi))
+
+        let x = center.x + randomDistance * cos(randomAngle)
+        let z = center.z + randomDistance * sin(randomAngle)
+
+        return SIMD3<Float>(x, center.y, z)
     }
 
     // MARK: - Enhanced AR Stabilization
@@ -6068,6 +5963,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     }
 
     /// Check if a transform matrix contains valid (non-NaN, non-infinite) values
+    /// - Parameter transform: The 4x4 transform matrix to validate
+    /// - Returns: True if all values are valid, false otherwise
     private func isValidTransform(_ transform: simd_float4x4) -> Bool {
         for column in 0..<4 {
             for row in 0..<4 {
@@ -6080,5 +5977,42 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         return true
     }
 
+}
 
+// MARK: - CLLocationCoordinate2D Extensions
+
+extension CLLocationCoordinate2D {
+    /// Calculate a new coordinate at a given distance and bearing from this coordinate
+    /// - Parameters:
+    ///   - distance: Distance in meters
+    ///   - bearing: Bearing in degrees (0 = North, 90 = East, etc.)
+    /// - Returns: New coordinate at the specified distance and bearing
+    func coordinateAt(distance: Double, bearing: Double) -> CLLocationCoordinate2D {
+        let earthRadius: Double = 6371000 // meters
+
+        let lat1 = self.latitude * .pi / 180.0
+        let lon1 = self.longitude * .pi / 180.0
+        let bearingRad = bearing * .pi / 180.0
+
+        let lat2 = asin(sin(lat1) * cos(distance / earthRadius) + cos(lat1) * sin(distance / earthRadius) * cos(bearingRad))
+        let lon2 = lon1 + atan2(sin(bearingRad) * sin(distance / earthRadius) * cos(lat1), cos(distance / earthRadius) - sin(lat1) * sin(lat2))
+
+        return CLLocationCoordinate2D(latitude: lat2 * 180.0 / .pi, longitude: lon2 * 180.0 / .pi)
+    }
+}
+
+// Extension to calculate coordinate at distance and bearing
+extension CLLocationCoordinate2D {
+    func coordinate(atDistance distance: Double, atBearing bearing: Double) -> CLLocationCoordinate2D {
+        let earthRadius: Double = 6371000 // meters
+
+        let lat1 = self.latitude * .pi / 180.0
+        let lon1 = self.longitude * .pi / 180.0
+        let bearingRad = bearing * .pi / 180.0
+
+        let lat2 = asin(sin(lat1) * cos(distance / earthRadius) + cos(lat1) * sin(distance / earthRadius) * cos(bearingRad))
+        let lon2 = lon1 + atan2(sin(bearingRad) * sin(distance / earthRadius) * cos(lat1), cos(distance / earthRadius) - sin(lat1) * sin(lat2))
+
+        return CLLocationCoordinate2D(latitude: lat2 * 180.0 / .pi, longitude: lon2 * 180.0 / .pi)
+    }
 }

@@ -13,6 +13,13 @@ struct FoundItemsView: View {
         locationManager.locations.filter { location in
             // Include uncollected items that are persisted (not temporary AR-only items)
             return !location.collected && location.shouldPersist
+        }.sorted { (item1, item2) -> Bool in
+            // Sort by distance (closest first)
+            guard let dist1 = distanceToItem(item1),
+                  let dist2 = distanceToItem(item2) else {
+                return false
+            }
+            return dist1 < dist2
         }
     }
 
@@ -21,6 +28,13 @@ struct FoundItemsView: View {
         locationManager.locations.filter { location in
             // Include collected items that are persisted (not temporary AR-only items)
             return location.collected && location.shouldPersist
+        }.sorted { (item1, item2) -> Bool in
+            // Sort by distance (closest first)
+            guard let dist1 = distanceToItem(item1),
+                  let dist2 = distanceToItem(item2) else {
+                return false
+            }
+            return dist1 < dist2
         }
     }
 
