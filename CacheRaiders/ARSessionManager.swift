@@ -236,14 +236,15 @@ class ARSessionManager: NSObject, ARSessionDelegate {
         } else {
             Swift.print("✅ Keeping horizontal plane: Y=\(String(format: "%.2f", planeY)), size=\(String(format: "%.2f", planeWidth))x\(String(format: "%.2f", planeHeight))")
 
-            // Auto-randomize spheres if needed
-            if !(arCoordinator?.hasAutoRandomized ?? false) && arCoordinator?.placedBoxes.isEmpty ?? true {
-                Swift.print("🎯 Auto-randomizing spheres on detected surface!")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                    self?.arCoordinator?.hasAutoRandomized = true
-                    // Note: randomizeLootBoxes() would be called here in the full implementation
-                }
-            }
+            // DISABLED: Auto-randomization - only manual object placement allowed
+            // Previously: Auto-randomize spheres if needed
+            // if !(arCoordinator?.hasAutoRandomized ?? false) && arCoordinator?.placedBoxes.isEmpty ?? true {
+            //     Swift.print("🎯 Auto-randomizing spheres on detected surface!")
+            //     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            //         self?.arCoordinator?.hasAutoRandomized = true
+            //         // Note: randomizeLootBoxes() would be called here in the full implementation
+            //     }
+            // }
         }
     }
 

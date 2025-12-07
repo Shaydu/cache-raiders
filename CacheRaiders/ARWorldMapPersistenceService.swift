@@ -24,7 +24,7 @@ class ARWorldMapPersistenceService: ObservableObject {
 
     // World map management
     private var currentWorldMap: ARWorldMap?
-    private var persistedWorldMap: ARWorldMap?
+    private(set) var persistedWorldMap: ARWorldMap?
     private var worldMapData: Data?
 
     // Object anchoring to world map
@@ -525,3 +525,4 @@ class ARWorldMapPersistenceService: ObservableObject {
         NotificationCenter.default.removeObserver(self)
     }
 }
+

@@ -990,6 +990,7 @@ struct SettingsView: View {
         Group {
             refreshFromAPIButton
             syncLocalItemsButton
+            clearUnsyncedObjectsButton
             viewDatabaseContentsButton
             viewLocalDatabaseContentsButton
             refreshDatabaseListButton
@@ -1052,10 +1053,44 @@ struct SettingsView: View {
             }
             .disabled(viewModel.isLoading)
             .padding(.vertical, 4)
-            
+
             Text("Use this to sync items that were created before API sync was enabled")
                 .font(.caption2)
                 .foregroundColor(.secondary)
+        }
+    }
+
+    private var clearUnsyncedObjectsButton: some View {
+        Group {
+            Button(action: {
+                guard !viewModel.isLoading else { return }
+                viewModel.isLoading = true
+                Task {
+                    await locationManager.clearUnsyncedLocalObjects()
+                    await MainActor.run {
+                        viewModel.displayAlert(title: "Cleanup Complete", message: "Removed unsynced local objects. Check console for details.")
+                        viewModel.isLoading = false
+                    }
+                }
+            }) {
+                HStack {
+                    if viewModel.isLoading {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "trash")
+                            .foregroundColor(.red)
+                    }
+                    Text("Clear Unsynced Local Objects")
+                        .foregroundColor(.red)
+                }
+            }
+            .disabled(viewModel.isLoading)
+            .padding(.vertical, 4)
+
+            Text("Remove local objects that don't exist on the server (⚠️ This deletes unsaved local data)")
+                .font(.caption2)
+                .foregroundColor(.red.opacity(0.7))
         }
     }
     

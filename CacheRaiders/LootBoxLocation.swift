@@ -1704,6 +1704,57 @@ class LootBoxLocationManager: ObservableObject {
         }
     }
     
+    /// Clear local objects that don't exist on the server
+    /// This removes unsynced local objects to ensure only server-managed objects remain
+    func clearUnsyncedLocalObjects() async {
+        guard useAPISync else { return }
+
+        do {
+            print("🧹 Checking for unsynced local objects to clean up...")
+
+            // Get all local locations
+            let localLocations = try await dataService.loadAllLocationsAsync()
+
+            // Get all server objects
+            let isHealthy = try await APIService.shared.checkHealth()
+            guard isHealthy else {
+                print("⚠️ Cannot clear unsynced objects - server not available")
+                return
+            }
+
+            let serverObjects = try await APIService.shared.getObjects(includeFound: true)
+            let serverObjectIds = Set(serverObjects.map { $0.id })
+
+            // Find local objects that don't exist on server
+            let unsyncedLocalObjects = localLocations.filter { !serverObjectIds.contains($0.id) }
+
+            if unsyncedLocalObjects.isEmpty {
+                print("✅ No unsynced local objects found - all local objects exist on server")
+                return
+            }
+
+            print("🗑️ Found \(unsyncedLocalObjects.count) unsynced local objects to remove:")
+            for obj in unsyncedLocalObjects {
+                print("   - '\(obj.name)' (ID: \(obj.id), Source: \(obj.source.rawValue))")
+            }
+
+            // Remove unsynced objects from Core Data
+            for obj in unsyncedLocalObjects {
+                try dataService.deleteLocation(obj.id)
+            }
+
+            // Clear from memory
+            await MainActor.run {
+                self.locations = self.locations.filter { serverObjectIds.contains($0.id) }
+                print("✅ Cleared \(unsyncedLocalObjects.count) unsynced local objects")
+                print("📊 Remaining objects: \(self.locations.count)")
+            }
+
+        } catch {
+            print("⚠️ Error clearing unsynced local objects: \(error.localizedDescription)")
+        }
+    }
+
     /// Sync pending changes to API when connection is restored
     /// This method should be called when the app detects it's back online
     func syncPendingChangesToAPI() async {

@@ -603,12 +603,36 @@ struct ContentView: View {
             }
         }()
 
-        if newSheet != nil && oldSheet == nil && !shouldSkipPauseResume {
-            // Sheet was presented (but not AR-related)
-            NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
-        } else if newSheet == nil && oldSheet != nil && !shouldSkipPauseResume {
-            // Sheet was dismissed (but not AR-related)
-            NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
+        // Check if we need to notify about dialog state changes (for processing optimization)
+        // Even AR-related sheets that don't pause AR session should set dialog state to skip heavy processing
+        let shouldNotifyDialogState = {
+            switch newSheet ?? oldSheet {
+            case .arPlacement:
+                // AR placement sheet does heavy processing that can freeze UI - notify dialog state
+                return true
+            default:
+                return false
+            }
+        }()
+
+        if newSheet != nil && oldSheet == nil {
+            // Sheet was presented
+            if !shouldSkipPauseResume {
+                // Non-AR-related sheet - pause AR session
+                NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
+            } else if shouldNotifyDialogState {
+                // AR-related sheet that needs dialog state notification (e.g., AR placement)
+                NotificationCenter.default.post(name: NSNotification.Name("SheetPresented"), object: nil)
+            }
+        } else if newSheet == nil && oldSheet != nil {
+            // Sheet was dismissed
+            if !shouldSkipPauseResume {
+                // Non-AR-related sheet - resume AR session
+                NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
+            } else if shouldNotifyDialogState {
+                // AR-related sheet that needs dialog state notification (e.g., AR placement)
+                NotificationCenter.default.post(name: NSNotification.Name("SheetDismissed"), object: nil)
+            }
         }
         // AR-related views: no pause/resume needed
     }

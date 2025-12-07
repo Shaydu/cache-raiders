@@ -712,32 +712,32 @@ struct NFCWritingView: View {
                 print("⚠️ Failed to extract ID from URL, using fallback: \(objectId)")
             }
 
-            // COMPREHENSIVE database object - store all metadata here
-            // This matches what was previously written to NFC but now lives in DB
-            var objectData: [String: Any] = [
-                "id": objectId,
-                "name": "\(type.displayName)",
-                "type": type.rawValue,
-                // GPS coordinates
-                "latitude": location.coordinate.latitude,
-                "longitude": location.coordinate.longitude,
-                // Object properties
-                "radius": 3.0,  // Smaller radius for NFC objects since they're precise
-                "grounding_height": 0.0,
-                // Creator information
-                "created_by": username
-            ]
+            // Create LootBoxLocation object with all the data
+            // This ensures consistency with other placement methods
+            var lootBoxLocation = LootBoxLocation(
+                id: objectId,
+                name: "\(type.displayName)",
+                type: type,
+                latitude: location.coordinate.latitude,
+                longitude: location.coordinate.longitude,
+                radius: 3.0,  // Smaller radius for NFC objects since they're precise
+                collected: false,
+                source: .map,
+                created_by: username,
+                nfc_tag_id: nfcResult.tagId,  // CRITICAL: Store NFC tag ID for lookups
+                multifindable: true  // NFC-placed items are multifindable
+            )
 
             // CRITICAL: Add AR offset coordinates if captured from active AR session
             // This enables centimeter-level precision when users are nearby
             if let arX = arOffsetX, let arY = arOffsetY, let arZ = arOffsetZ,
                let originLat = arOriginLat, let originLon = arOriginLon {
-                objectData["ar_offset_x"] = arX
-                objectData["ar_offset_y"] = arY
-                objectData["ar_offset_z"] = arZ
-                objectData["ar_origin_latitude"] = originLat
-                objectData["ar_origin_longitude"] = originLon
-                objectData["ar_placement_timestamp"] = ISO8601DateFormatter().string(from: Date())
+                lootBoxLocation.ar_offset_x = arX
+                lootBoxLocation.ar_offset_y = arY
+                lootBoxLocation.ar_offset_z = arZ
+                lootBoxLocation.ar_origin_latitude = originLat
+                lootBoxLocation.ar_origin_longitude = originLon
+                lootBoxLocation.ar_placement_timestamp = Date()
 
                 print("✅ Including AR offset coordinates for PRECISION placement:")
                 print("   AR Origin: (\(String(format: "%.8f", originLat)), \(String(format: "%.8f", originLon)))")
@@ -751,49 +751,16 @@ struct NFCWritingView: View {
             print("   NFC tag contains: \(compactMessage)")
             print("   Database contains: Full coordinates, timestamps, user info, AR offsets")
 
-            let jsonData = try JSONSerialization.data(withJSONObject: objectData)
+            // Use APIService.createObject to ensure all fields are properly sent
+            let apiObject = try await APIService.shared.createObject(lootBoxLocation)
 
-            let baseURL = APIService.shared.baseURL
-            guard let url = URL(string: "\(baseURL)/api/objects") else {
+            // Successfully created object - convert API response to LootBoxLocation
+            guard let object = APIService.shared.convertToLootBoxLocation(apiObject) else {
                 throw NSError(domain: "NFCWriting", code: -1,
-                             userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+                             userInfo: [NSLocalizedDescriptionKey: "Failed to convert API response to LootBoxLocation"])
             }
 
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = jsonData
-
-            let (data, response) = try await URLSession.shared.data(for: request)
-
-            guard let httpResponse = response as? HTTPURLResponse else {
-                throw NSError(domain: "NFCWriting", code: -1,
-                             userInfo: [NSLocalizedDescriptionKey: "Invalid response"])
-            }
-
-            print("📥 Server response: \(httpResponse.statusCode)")
-            if let responseString = String(data: data, encoding: .utf8) {
-                print("   Response body: \(responseString)")
-            }
-
-            if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 {
-                // CRITICAL: Object is created with collected: false
-                // This means the PLACER does NOT get credit for finding it
-                // Other players must scan it using "Scan NFC Token" to register a find
-                let object = LootBoxLocation(
-                    id: objectId,
-                    name: "\(type.displayName)",
-                    type: type,
-                    latitude: location.coordinate.latitude,
-                    longitude: location.coordinate.longitude,
-                    radius: 3.0,  // Match the reduced radius
-                    collected: false,  // NOT collected by placer - must be scanned to find
-                    source: .map,
-                    nfc_tag_id: nfcResult.tagId,  // CRITICAL: Store NFC tag ID for /nfc/<id> lookups
-                    multifindable: true // NFC-placed items are multifindable
-                )
-
-                DispatchQueue.main.async {
+            DispatchQueue.main.async {
                     self.createdObject = object
                     self.currentStep = .success
 

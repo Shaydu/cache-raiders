@@ -4640,15 +4640,17 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             } else {
                 Swift.print("⚠️ Location not found in locationManager, creating temporary location")
 
-                // CRITICAL: Get object type from notification data, or default to chalice
+                // CRITICAL: Get object type and name from notification data
                 let objectTypeString = notification.userInfo?["objectType"] as? String ?? "chalice"
                 let objectType = LootBoxType(rawValue: objectTypeString) ?? .chalice
+                let objectName = notification.userInfo?["objectName"] as? String ?? "New AR Object"
                 Swift.print("   Using object type from notification: \(objectType.displayName)")
+                Swift.print("   Using object name from notification: \(objectName)")
 
                 // Create temporary location for immediate placement
                 var tempLocation = LootBoxLocation(
                     id: objectId,
-                    name: "New AR Object", // Will be updated when locations reload
+                    name: objectName, // Use the actual name from notification data
                     type: objectType, // Use type from notification
                     latitude: gpsCoordinate.latitude,
                     longitude: gpsCoordinate.longitude,

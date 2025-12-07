@@ -151,9 +151,15 @@ struct ARPlacementView: View {
 
                                 // CRITICAL FIX: Instead of reloading and hoping AR offsets are saved,
                                 // directly notify the main AR view with the placement data
+                                // CRITICAL: Calculate the object name that was used for API creation
+                                let actualObjectName = newObjectName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                    ? "New \(objectType.displayName)"
+                                    : newObjectName.trimmingCharacters(in: .whitespacesAndNewlines)
+
                                 // This ensures immediate placement without waiting for API roundtrip
                                 let placementData: [String: Any] = [
                                     "objectId": objectId,
+                                    "objectName": actualObjectName, // Include the actual name used for the object
                                     "objectType": objectType.rawValue, // CRITICAL: Include type for fallback case
                                     "gpsCoordinate": CLLocationCoordinate2D(latitude: gpsCoordinate.latitude, longitude: gpsCoordinate.longitude),
                                     "arPosition": [arPosition.x, arPosition.y, arPosition.z],
