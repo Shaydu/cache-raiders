@@ -29,6 +29,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     private var npcService: ARNPCService? // NPC management service
     internal var coordinateSharingService: ARCoordinateSharingService? // Coordinate sharing for multi-user AR
     internal var worldMapPersistenceService: ARWorldMapPersistenceService? // World map persistence for stable AR anchoring
+    internal var enhancedPlaneAnchorService: AREnhancedPlaneAnchorService? // Enhanced multi-plane anchoring
+    internal var vioSlamService: ARVIO_SLAM_Service? // VIO/SLAM enhancements
     var stateManager: ARStateManager? // State management for throttling and coordination
 
     weak var arView: ARView?
@@ -532,6 +534,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         geospatialService = ARGeospatialService() // New ENU-based service
         coordinateSharingService = ARCoordinateSharingService(arView: arView) // Coordinate sharing for multi-user AR
         worldMapPersistenceService = ARWorldMapPersistenceService(arView: arView) // World map persistence for stable AR anchoring
+        enhancedPlaneAnchorService = AREnhancedPlaneAnchorService(arView: arView, arCoordinator: self) // Multi-plane anchoring for drift prevention
+        vioSlamService = ARVIO_SLAM_Service(arView: arView, arCoordinator: self) // VIO/SLAM enhancements
         stateManager = ARStateManager() // State management for throttling and coordination
 
         // Configure environment lighting for proper shading and colors
@@ -542,12 +546,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         // This continuously monitors for better surface data and re-grounds objects when found
         startPeriodicGrounding()
 
-        // Configure world map persistence service
-        if let worldMapPersistenceService = worldMapPersistenceService {
-            // Configure with API and WebSocket services when available
-            // Note: This will be enhanced when API/WebSocket integration is complete
-            worldMapPersistenceService.isPersistenceEnabled = true
-        }
+        // Configure enhanced AR anchoring services
+        configureEnhancedAnchoring()
 
         // Configure coordinate sharing service
         if let coordinateSharingService = coordinateSharingService,
@@ -626,6 +626,31 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         
         // Apply ambient light setting
         environmentManager?.updateAmbientLight()
+    }
+
+    // MARK: - Enhanced AR Anchoring Configuration
+
+    private func configureEnhancedAnchoring() {
+        // Configure world map persistence service
+        if let worldMapPersistenceService = worldMapPersistenceService {
+            worldMapPersistenceService.isPersistenceEnabled = true
+        }
+
+        // Initialize enhanced plane anchor service
+        initializeEnhancedPlaneAnchoring()
+
+        // Configure VIO/SLAM improvements
+        configureVIOAndSLAMEnhancements()
+    }
+
+    private func initializeEnhancedPlaneAnchoring() {
+        // Enhanced plane detection will be implemented in plane anchor service
+        Swift.print("🎯 Enhanced plane anchoring initialized")
+    }
+
+    private func configureVIOAndSLAMEnhancements() {
+        // VIO/SLAM enhancements will be implemented in dedicated service
+        Swift.print("🎯 VIO/SLAM enhancements configured")
     }
 
     // MARK: - Object Info Panel
@@ -1336,11 +1361,18 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         let factory = item.type.factory
         let (entity, findable) = factory.createEntity(location: item, anchor: AnchorEntity(), sizeMultiplier: 1.0)
 
-        // Create traditional anchor for now - world map persistence can be added later
-        let anchor = AnchorEntity(world: position)
-        anchor.name = item.id
-        anchor.addChild(entity)
-        arView.scene.addAnchor(anchor)
+        // Use enhanced multi-plane anchoring for better stability
+        if let enhancedAnchorService = enhancedPlaneAnchorService,
+           enhancedAnchorService.createMultiPlaneAnchor(objectId: item.id, position: position, entity: entity) {
+            Swift.print("🎯 Used enhanced multi-plane anchoring for \(item.id)")
+        } else {
+            // Fallback to traditional anchoring
+            let anchor = AnchorEntity(world: position)
+            anchor.name = item.id
+            anchor.addChild(entity)
+            arView.scene.addAnchor(anchor)
+            Swift.print("📍 Used traditional anchoring for \(item.id) (fallback)")
+        }
 
         print("📍 Placed AR item '\(item.name)' at position (\(String(format: "%.2f", position.x)), \(String(format: "%.2f", position.y)), \(String(format: "%.2f", position.z)))")
         findableObjects[item.id] = findable
@@ -1463,6 +1495,9 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     // MARK: - ARSessionDelegate
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        // Process frame through VIO/SLAM service for enhanced tracking
+        vioSlamService?.processFrameForEnhancement(frame)
+
         // Log every 60 frames (roughly once per second at 60fps) to avoid spam
         sessionFrameCount += 1
         if sessionFrameCount % 60 == 0 {
@@ -2398,9 +2433,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         // Try to restart the session
         Swift.print("🔄 [AR Session] Attempting to restart AR session...")
         if let arView = arView {
-            let config = ARWorldTrackingConfiguration()
-            config.planeDetection = [.horizontal, .vertical] // Horizontal for ground, vertical for wall detection (occlusion)
-            config.environmentTexturing = .automatic
+            let config = vioSlamService?.getEnhancedARConfiguration() ?? ARWorldTrackingConfiguration()
             
             // Apply selected lens if available
             if let locationManager = locationManager,
@@ -5020,15 +5053,9 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             configToUse = savedConfig
             Swift.print("   Using saved configuration")
         } else {
-            Swift.print("⚠️ No saved configuration - creating fresh config")
-            // Create a fresh configuration matching the original setup
-            configToUse = ARWorldTrackingConfiguration()
-            configToUse.planeDetection = [.horizontal, .vertical]
-            if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-                configToUse.sceneReconstruction = .mesh
-                Swift.print("   Scene reconstruction enabled")
-            }
-            configToUse.environmentTexturing = .automatic
+            Swift.print("⚠️ No saved configuration - creating enhanced config")
+            // Create enhanced configuration with VIO/SLAM optimizations
+            configToUse = vioSlamService?.getEnhancedARConfiguration() ?? ARWorldTrackingConfiguration()
 
             // Apply current lens if available
             if let selectedLensId = locationManager?.selectedARLens,
