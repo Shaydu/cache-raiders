@@ -13,7 +13,7 @@ class ChaliceLootContainer {
         let baseSize = type.size * sizeMultiplier
         
         // Load the chalice model
-        let chalice = loadChaliceModel(size: baseSize, type: type)
+        let chalice = loadChaliceModel(size: baseSize, type: type, id: id)
         
         // Create prize that sits inside the chalice
         let prize = createPrize(type: type, size: baseSize)
@@ -49,14 +49,15 @@ class ChaliceLootContainer {
         )
     }
     
-    /// Loads a chalice USDZ model (randomly chooses between available models)
+    /// Loads a chalice USDZ model (deterministically chooses based on object ID to ensure consistency)
     /// Note: Make sure "Chalice.usdz" and "Chalice-basic.usdz" are added to the Xcode project and included in the app bundle
-    private static func loadChaliceModel(size: Float, type: LootBoxType) -> ModelEntity {
-        // List of available chalice models (in order of preference)
+    private static func loadChaliceModel(size: Float, type: LootBoxType, id: String) -> ModelEntity {
+        // List of available chalice models
         let chaliceModels = ["Chalice", "Chalice-basic"]
-        
-        // Randomly select a model (or try them in order if random fails)
-        let selectedModel = chaliceModels.randomElement() ?? chaliceModels[0]
+
+        // Deterministically select a model based on object ID hash to ensure the same object always gets the same model
+        let hashValue = abs(id.hashValue)
+        let selectedModel = chaliceModels[hashValue % chaliceModels.count]
         
         // Try to load the selected model
         guard let modelURL = Bundle.main.url(forResource: selectedModel, withExtension: "usdz") else {

@@ -46,7 +46,7 @@ struct ARPlacementView: View {
                                 TextField("Object Name (optional)", text: $newObjectName)
                                     .textFieldStyle(RoundedBorderTextFieldStyle())
                                     .help("Leave empty for auto-generated name like 'New Chalice'. Max 50 characters.")
-                                    .onChange(of: newObjectName) { newValue in
+                                    .onChange(of: newObjectName) { oldValue, newValue in
                                         // Limit to 50 characters
                                         if newValue.count > 50 {
                                             newObjectName = String(newValue.prefix(50))
