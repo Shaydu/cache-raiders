@@ -56,8 +56,7 @@ services:
       - ./static:/app/static
       # Mount logs directory for debugging (create on host if needed)
       - ./logs:/app/logs
-      # Mount .env file so it's accessible in container (for other settings)
-      - ./.env:/app/.env
+      # .env file not needed - all env vars set in docker-compose.yml
     # Don't use env_file for LLM settings - use environment section to ensure container settings take precedence
     environment:
       - FLASK_ENV=production

@@ -4620,8 +4620,19 @@ if __name__ == '__main__':
     load_game_mode_from_db()  # Load persisted game mode from database
     load_llm_settings_from_db()  # Load persisted LLM provider/model from database
     port = int(os.environ.get('PORT', 5001))  # Use 5001 as default to avoid conflicts
-    # Use get_local_ip() which checks HOST_IP env var first for consistency
-    local_ip = get_local_ip()
+
+    # Use get_local_ip() which checks HOST_IP env var first, fallback to dynamic detection
+    try:
+        local_ip = get_local_ip()
+    except RuntimeError as e:
+        print(f"⚠️ HOST_IP not set, attempting dynamic IP detection...")
+        try:
+            local_ip = get_local_ip_dynamic()
+            print(f"✅ Auto-detected IP: {local_ip}")
+        except Exception as detect_error:
+            print(f"❌ Could not detect IP automatically: {detect_error}")
+            print("   Please set HOST_IP environment variable or use start-unified.sh")
+            raise e
     
     # Start Ollama keepalive thread if using Ollama provider
     # Check actual provider from llm_service (which may have been loaded from database)
