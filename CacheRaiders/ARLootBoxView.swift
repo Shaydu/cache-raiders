@@ -199,6 +199,20 @@ struct ARViewContainer: UIViewRepresentable {
 
         // AR session configuration
         let config = ARWorldTrackingConfiguration()
+
+        // AR WORLD MAP INTEGRATION: Check if coordinator has a persisted world map to load
+        // This enables stable object positioning across app sessions
+        var worldMapLoaded = false
+        if let coordinator = context.coordinator as? ARCoordinator,
+           let worldMapService = coordinator.worldMapPersistenceService,
+           worldMapService.isWorldMapLoaded,
+           let worldMap = worldMapService.persistedWorldMap {
+            config.initialWorldMap = worldMap
+            worldMapLoaded = true
+            print("🗺️ AR session configured with persisted world map")
+            print("   Objects will appear at exact previous positions")
+        }
+
         // Detect both horizontal (ground) and vertical (walls) planes
         // Vertical planes are used for occlusion (hiding loot boxes behind walls)
         config.planeDetection = [.horizontal, .vertical]

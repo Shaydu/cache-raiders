@@ -481,6 +481,24 @@ class ARWorldMapPersistenceService: ObservableObject {
         ]
     }
 
+    // MARK: - World Transform Storage
+
+    /// Store the world transform for an object (for persistence)
+    /// - Parameters:
+    ///   - objectId: Unique identifier for the object
+    ///   - transform: The world transform matrix to store
+    func storeObjectWorldTransform(_ objectId: String, transform: simd_float4x4) {
+        objectWorldTransforms[objectId] = transform
+        print("🗺️ Stored world transform for object: \(objectId)")
+    }
+
+    /// Retrieve stored world transform for an object
+    /// - Parameter objectId: Unique identifier for the object
+    /// - Returns: The stored world transform, or nil if not found
+    func getStoredWorldTransform(_ objectId: String) -> simd_float4x4? {
+        return objectWorldTransforms[objectId]
+    }
+
     // MARK: - Cleanup
 
     func clearAllPersistence() {

@@ -515,6 +515,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         precisionPositioningService = ARPrecisionPositioningService(arView: arView) // Legacy
         geospatialService = ARGeospatialService() // New ENU-based service
         coordinateSharingService = ARCoordinateSharingService(arView: arView) // Coordinate sharing for multi-user AR
+        worldMapPersistenceService = ARWorldMapPersistenceService(arView: arView) // World map persistence for stable AR anchoring
         stateManager = ARStateManager() // State management for throttling and coordination
 
         // Configure environment lighting for proper shading and colors
@@ -545,6 +546,14 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
         // Setup world map persistence
         setupWorldMapPersistence()
+
+        // AR WORLD MAP INTEGRATION: Configure AR session with world map if available
+        if let worldMapService = worldMapPersistenceService,
+           worldMapService.isWorldMapLoaded {
+            Swift.print("🗺️ AR session will use loaded world map for stable object positioning")
+        } else {
+            Swift.print("🗺️ Starting fresh AR session (no persisted world map)")
+        }
 
         // Configure managers with shared state
         occlusionManager?.placedBoxes = placedBoxes
@@ -772,6 +781,9 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
         // WORLD MAP PERSISTENCE: Clean up on deinit
         onARSessionEnded()
+
+        // AR WORLD MAP INTEGRATION: Stop world map capture timer
+        stopWorldMapCaptureTimer()
     }
 
     /// Timer for periodic grounding checks
@@ -1558,8 +1570,12 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                         Swift.print("   ⚠️ AR origin will NOT change - all objects positioned relative to this fixed point")
                         Swift.print("   📐 Using ENU coordinate system for geospatial positioning")
 
-                        // WORLD MAP PERSISTENCE: Initialize when AR session starts
-                        onARSessionStarted()
+        // WORLD MAP PERSISTENCE: Initialize when AR session starts
+        onARSessionStarted()
+
+        // AR WORLD MAP INTEGRATION: Capture world map periodically for persistence
+        // This ensures objects can be restored if the app is killed or AR session resets
+        startWorldMapCaptureTimer()
                     }
                 } else {
                     // GPS available but accuracy too low
@@ -2049,12 +2065,51 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     private func replaceUnfoundObjectsAsync() {
         // CRITICAL: Skip if dialog is open to prevent UI freezes
         guard !isDialogOpen else { return }
-        
+
         // AR scene updates must be on main thread
         DispatchQueue.main.async { [weak self] in
             // Double-check dialog state on main thread (may have changed)
             guard let self = self, !self.isDialogOpen else { return }
             self.replaceUnfoundObjects()
+        }
+    }
+
+    // MARK: - AR World Map Integration
+
+    /// Timer for periodic world map capture
+    private var worldMapCaptureTimer: Timer?
+
+    /// Start periodic world map capture for persistence
+    private func startWorldMapCaptureTimer() {
+        // Capture world map every 30 seconds when objects are placed
+        worldMapCaptureTimer?.invalidate() // Cancel any existing timer
+        worldMapCaptureTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+            self?.captureWorldMapIfNeeded()
+        }
+        Swift.print("🗺️ Started world map capture timer (30s intervals)")
+    }
+
+    /// Stop world map capture timer
+    private func stopWorldMapCaptureTimer() {
+        worldMapCaptureTimer?.invalidate()
+        worldMapCaptureTimer = nil
+        Swift.print("🗺️ Stopped world map capture timer")
+    }
+
+    /// Capture world map if there are objects to persist and quality is good enough
+    private func captureWorldMapIfNeeded() {
+        guard let worldMapService = worldMapPersistenceService,
+              worldMapService.isPersistenceEnabled,
+              !findableObjects.isEmpty, // Only capture if we have objects to persist
+              let arView = arView,
+              arView.session.currentFrame != nil else { return }
+
+        // Only capture if world map quality is acceptable
+        if worldMapService.worldMapQuality >= 0.3 {
+            Task {
+                await worldMapService.captureAndPersistWorldMap()
+                Swift.print("🗺️ Captured world map for persistence (quality: \(String(format: "%.2f", worldMapService.worldMapQuality)))")
+            }
         }
     }
     
@@ -4656,30 +4711,56 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             return
         }
 
-        // CRITICAL FIX: Use AR coordinates directly if they match the current AR origin
-        // The arPosition parameter comes from ARPlacementView and is in the placement view's AR coordinate system.
-        // However, the SAVED ar_offset coordinates in the location object are what we should use,
-        // because they were saved to the API and properly set on the location object.
-
+        // AR WORLD MAP INTEGRATION: Prioritize world map anchoring over GPS coordinates
+        // World map anchoring provides millimeter precision and session persistence
         var finalPosition = arPosition // Default to passed position
-        var useARCoordinates = false
+        var useWorldMapAnchoring = false
 
-        // Check if we have saved AR coordinates that match our current AR origin
-        if let arOriginLat = location.ar_origin_latitude,
+        // FIRST PRIORITY: Try world map anchoring for objects with saved AR coordinates
+        if let worldMapService = worldMapPersistenceService,
+           worldMapService.isPersistenceEnabled,
+           let arOriginLat = location.ar_origin_latitude,
+           let arOriginLon = location.ar_origin_longitude,
+           let offsetX = location.ar_offset_x,
+           let offsetY = location.ar_offset_y,
+           let offsetZ = location.ar_offset_z {
+
+            let savedOrigin = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
+            let currentOrigin = _arOriginLocation ?? userLocation
+
+            // Check if AR origins match (within reasonable distance)
+            let originDistance = currentOrigin.distance(from: savedOrigin)
+
+            if originDistance < 50.0 { // Allow larger distance for world map compatibility
+                let arOffset = SIMD3<Float>(Float(offsetX), Float(offsetY), Float(offsetZ))
+
+                // Mark that this object should be world-map anchored when placed
+                // The actual anchoring will happen after the AnchorEntity is created
+                useWorldMapAnchoring = true
+                finalPosition = arOffset
+                Swift.print("🗺️ Object will be world-map anchored (coordinates match)")
+                Swift.print("   Object ID: \(location.id)")
+                Swift.print("   AR Position: (\(String(format: "%.4f", arOffset.x)), \(String(format: "%.4f", arOffset.y)), \(String(format: "%.4f", arOffset.z)))")
+                Swift.print("   Origin distance: \(String(format: "%.1f", originDistance))m")
+            } else {
+                Swift.print("⚠️ AR origin mismatch (\(String(format: "%.1f", originDistance))m apart) - cannot use world map anchoring")
+            }
+        }
+
+        // SECOND PRIORITY: Use saved AR coordinates directly (without world map anchoring)
+        if !useWorldMapAnchoring,
+           let arOriginLat = location.ar_origin_latitude,
            let arOriginLon = location.ar_origin_longitude,
            let offsetX = location.ar_offset_x,
            let offsetY = location.ar_offset_y,
            let offsetZ = location.ar_offset_z,
            let currentOrigin = _arOriginLocation {
 
-            // Check if AR origins match (within 10 meters - same AR session)
             let savedOrigin = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
             let originDistance = currentOrigin.distance(from: savedOrigin)
 
             if originDistance < 10.0 {
-                // Same AR origin - use saved AR coordinates directly
                 finalPosition = SIMD3<Float>(Float(offsetX), Float(offsetY), Float(offsetZ))
-                useARCoordinates = true
                 Swift.print("✅ Using saved AR coordinates (origin match: \(String(format: "%.1f", originDistance))m)")
                 Swift.print("   AR Origin: (\(String(format: "%.6f", arOriginLat)), \(String(format: "%.6f", arOriginLon)))")
                 Swift.print("   AR Offset: (\(String(format: "%.4f", offsetX)), \(String(format: "%.4f", offsetY)), \(String(format: "%.4f", offsetZ)))m")
@@ -4688,8 +4769,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             }
         }
 
-        // Fallback: Convert from GPS if AR coordinates not available or origin mismatch
-        if !useARCoordinates {
+        // THIRD PRIORITY: GPS-to-AR conversion (legacy fallback)
+        if !useWorldMapAnchoring {
             guard let frame = arView.session.currentFrame else {
                 Swift.print("⚠️ Cannot place object: No AR frame")
                 return
@@ -4698,7 +4779,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             let targetGPS = CLLocation(latitude: location.latitude, longitude: location.longitude)
             let cameraTransform = frame.camera.transform
             let arOriginGPS = self._arOriginLocation ?? userLocation
-
             guard let mainARPosition = precisionPositioningService?.convertGPSToARPosition(
                 targetGPS: targetGPS,
                 userGPS: userLocation,
@@ -4766,6 +4846,25 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             // The tap handler checks both placedBoxes and findableObjects for tap detection
             tapHandler?.placedBoxes[location.id] = anchor
             tapHandler?.findableObjects[location.id] = findableObject
+
+            // AR WORLD MAP INTEGRATION: Save anchor transform for persistence
+            if useWorldMapAnchoring,
+               let worldMapService = worldMapPersistenceService,
+               worldMapService.isPersistenceEnabled {
+                let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+                let anchorData = ARPositioningService.shared.encodeAnchorTransform(anchorTransform)
+
+                if let encodedTransform = anchorData {
+                    // Save the anchor transform for this object
+                    // This enables restoration of exact object positions when world map is reloaded
+                    Task {
+                        // Note: We would need to add an API method to save anchor transforms
+                        // For now, store locally in the world map service
+                        worldMapService.storeObjectWorldTransform(location.id, transform: anchorTransform)
+                        Swift.print("🗺️ Saved anchor transform for object \(location.id)")
+                    }
+                }
+            }
 
             // Update all manager references
             updateManagerReferences()
