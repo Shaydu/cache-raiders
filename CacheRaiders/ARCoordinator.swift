@@ -1520,7 +1520,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         // CRITICAL: Set AR origin on first frame if not set - NEVER change it after
         // Changing the AR origin causes all objects to drift/shift position
         // Supports two modes:
-        // 1. Accurate mode: Wait for GPS with good accuracy (< 7.5m) for precise AR-to-GPS conversion
+        // 1. Accurate mode: Wait for GPS with good accuracy (< 20.0m) for AR-to-GPS conversion
         // 2. Degraded mode: Use AR-only positioning if GPS unavailable after timeout
 
         if _arOriginLocation == nil {
@@ -1535,9 +1535,9 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             // Try to get GPS location
             if let userLocation = userLocationManager?.currentLocation {
                 Swift.print("🎯 [SESSION] User location available: (\(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)), accuracy: \(userLocation.horizontalAccuracy)m")
-                // Check GPS accuracy - for < 7.5m resolution, we need < 7.5m GPS accuracy
-                if userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 7.5 {
-                    Swift.print("🎯 [SESSION] GPS accuracy good (< 7.5m), setting AR origin")
+                // Check GPS accuracy - accept up to 20m for better UX (consistent with placement view)
+                if userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 20.0 {
+                    Swift.print("🎯 [SESSION] GPS accuracy good (< 20.0m), setting AR origin")
                     // ACCURATE MODE: GPS available with good accuracy
                     // Step 1: Set ENU origin from GPS (geospatial coordinate frame)
                     if geospatialService?.setENUOrigin(from: userLocation) == true {
@@ -1586,13 +1586,13 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                             // Timeout reached - enter degraded mode
                             enterDegradedMode(cameraPos: cameraPos, frame: frame)
                         } else {
-                            Swift.print("⏳ Waiting for better GPS accuracy (current: \(String(format: "%.2f", userLocation.horizontalAccuracy))m, need: < 7.5m)")
+                            Swift.print("⏳ Waiting for better GPS accuracy (current: \(String(format: "%.2f", userLocation.horizontalAccuracy))m, need: < 20.0m)")
                         }
                     } else {
                         // First time seeing low accuracy - start timer
                         arOriginSetTime = Date()
                         Swift.print("⚠️ GPS accuracy too low: \(String(format: "%.2f", userLocation.horizontalAccuracy))m")
-                        Swift.print("   Will wait \(Int(waitTime))s for better GPS, then enter degraded AR-only mode")
+                        Swift.print("   Will wait \(Int(waitTime))s for GPS accuracy < 20.0m, then enter degraded AR-only mode")
                     }
                 }
             } else {
@@ -1619,7 +1619,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         // Note: This check happens even when _arOriginLocation == nil because degraded mode sets it to nil
         // The existing code above will also try to set origin, but this provides explicit degraded mode exit
         if isDegradedMode, let userLocation = userLocationManager?.currentLocation {
-            // Use hysteresis: require better accuracy (< 6.5m) to exit degraded mode than to enter (< 7.5m)
+            // Use hysteresis: require better accuracy (< 6.5m) to exit degraded mode than to enter (< 20.0m)
             // This prevents rapid mode switching when GPS accuracy fluctuates around the threshold
             if userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 6.5 {
                 // GPS accuracy improved significantly - exit degraded mode and set AR origin
@@ -2642,7 +2642,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             // In degraded mode, GPS-based objects cannot be placed UNLESS manually placed
             if isDegradedMode && !hasIntendedPosition {
                 Swift.print("⚠️ Cannot place GPS-based object '\(location.name)' using GPS: Operating in degraded AR-only mode")
-                Swift.print("   GPS-based objects require accurate GPS fix (< 7.5m accuracy)")
+                Swift.print("   GPS-based objects require GPS accuracy < 20.0m")
                 Swift.print("   🎯 Switching to AR-only placement for this object")
                 
                 // Use AR-only placement instead of GPS-based placement
@@ -2674,7 +2674,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
             guard let arOrigin = _arOriginLocation else {
                 Swift.print("⚠️ Cannot place \(location.name): AR origin not set yet")
-                Swift.print("   Waiting for AR origin to be established (requires GPS accuracy < 7.5m)")
+                Swift.print("   Waiting for AR origin to be established (requires GPS accuracy < 20.0m)")
                 Swift.print("   Will enter degraded mode if GPS unavailable")
                 return
             }
@@ -4418,7 +4418,14 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                    let createdBy = foundLocation.created_by {
                     
                     // Format: "Found <username>'s <itemname>!"
-                    let username = createdBy == APIService.shared.currentUserID ? "Your" : "\(createdBy)'s"
+                    let username: String
+                    if createdBy == APIService.shared.currentUserID {
+                        username = "Your"
+                    } else if createdBy == "admin-web-ui" {
+                        username = "Admin"
+                    } else {
+                        username = "Another user's"
+                    }
                     self?.collectionNotificationBinding?.wrappedValue = "🎉 Found \(username) \(objectName)!"
                 } else {
                     // Fallback to original message
@@ -4820,12 +4827,19 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             // Add to anchor
             anchor.addChild(entity)
 
-            // Ground the object properly
-            let bounds = entity.visualBounds(relativeTo: anchor)
-            let currentMinY = bounds.min.y
-            let desiredMinY: Float = 0
-            let deltaY = desiredMinY - currentMinY
-            entity.position.y += deltaY
+            // Ground the object properly - but skip for AR-placed objects that already have precise positioning
+            // AR-placed objects from placement view are already positioned correctly on surfaces
+            if location.ar_offset_x == nil || location.ar_offset_y == nil || location.ar_offset_z == nil {
+                // Only apply grounding for GPS-based objects that don't have precise AR coordinates
+                let bounds = entity.visualBounds(relativeTo: anchor)
+                let currentMinY = bounds.min.y
+                let desiredMinY: Float = 0
+                let deltaY = desiredMinY - currentMinY
+                entity.position.y += deltaY
+                Swift.print("📏 Applied grounding adjustment: ΔY=\(String(format: "%.3f", deltaY))m")
+            } else {
+                Swift.print("📏 Skipped grounding for AR-placed object (already positioned correctly)")
+            }
 
             // Add to scene
             arView.scene.addAnchor(anchor)

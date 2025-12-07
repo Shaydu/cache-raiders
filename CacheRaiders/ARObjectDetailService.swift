@@ -136,9 +136,15 @@ class ARObjectDetailService {
         // Get placer name - convert user ID to display name
         var placerName: String? = nil
         if let createdBy = location.created_by {
-            // Use same logic as ARCoordinator: "Your" for current user, "[UserID]'s" for others
+            // Use same logic as ARCoordinator: "Your" for current user, "Admin" for admin-placed, "Another user's" for others
             let currentUserId = APIService.shared.currentUserID
-            placerName = createdBy == currentUserId ? "Your" : "\(createdBy)'s"
+            if createdBy == currentUserId {
+                placerName = "Your"
+            } else if createdBy == "admin-web-ui" {
+                placerName = "Admin"
+            } else {
+                placerName = "Another user's"
+            }
         } else {
             // If no creator info, show as Admin/System placed
             placerName = location.source == .api ? "Admin" : "Unknown"

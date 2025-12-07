@@ -5,6 +5,8 @@ import CoreLocation
 struct FoundItemsView: View {
     let locationManager: LootBoxLocationManager
     let userLocationManager: UserLocationManager
+    let onToggleCollected: (String) -> Void
+    let onDeleteLocation: (String) -> Void
 
     // Get all unfound items (not collected locations that are persisted)
     private var unfoundItems: [LootBoxLocation] {
@@ -46,7 +48,13 @@ struct FoundItemsView: View {
     private func placerName(for item: LootBoxLocation) -> String {
         if let createdBy = item.created_by {
             let currentUserId = APIService.shared.currentUserID
-            return createdBy == currentUserId ? "Your" : "\(createdBy)'s"
+            if createdBy == currentUserId {
+                return "Your"
+            } else if createdBy == "admin-web-ui" {
+                return "Admin"
+            } else {
+                return "Another user's"
+            }
         } else {
             return item.source == .api ? "Admin" : "Unknown"
         }
@@ -99,6 +107,23 @@ struct FoundItemsView: View {
         }
         .padding(.vertical, 8)
         .listRowBackground(Color.black.opacity(0.2))
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            // Toggle found/unfound action
+            Button {
+                onToggleCollected(item.id)
+            } label: {
+                Label(isFound ? "Mark Unfound" : "Mark Found",
+                      systemImage: isFound ? "circle" : "checkmark.circle.fill")
+            }
+            .tint(isFound ? .orange : .green)
+
+            // Delete action
+            Button(role: .destructive) {
+                onDeleteLocation(item.id)
+            } label: {
+                Label("Delete", systemImage: "trash.fill")
+            }
+        }
     }
 
     var body: some View {

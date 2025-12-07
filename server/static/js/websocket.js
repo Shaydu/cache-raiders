@@ -116,7 +116,7 @@ const WebSocketManager = {
                 console.log('📦 Received object_created event:', data.id, data.name);
                 if (ObjectsManager && typeof ObjectsManager.addObjectMarker === 'function') {
                     // Get current zoom level for marker sizing
-                    const currentZoom = MapManager.getMap() ? MapManager.getMap().getZoom() : 15;
+                    const currentZoom = ObjectsManager.getCurrentZoomLevel();
                     ObjectsManager.addObjectMarker(data, currentZoom);
                 } else if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
                     // Fallback: reload all objects if specific add isn't available

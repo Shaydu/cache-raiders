@@ -137,7 +137,7 @@ echo "⏳ Waiting for containers to start..."
 sleep 10
 
 # 7. Check if containers started successfully
-if ! docker ps --format "{{.Names}}" | grep -q "cache-raiders-api"; then
+if ! docker ps --format "{{.Names}}" | grep -q "server-api-1"; then
     echo "❌ API container failed to start"
     echo "   Check logs: docker compose logs api"
     exit 1

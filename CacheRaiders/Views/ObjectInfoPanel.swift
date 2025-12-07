@@ -50,7 +50,15 @@ struct ObjectInfoPanel: View {
                     InfoRow(label: "Type", value: location.type.displayName)
 
                     if let createdBy = location.created_by {
-                        InfoRow(label: "Placed by", value: createdBy == APIService.shared.currentUserID ? "You" : "Another user")
+                        let placerDisplay: String
+                        if createdBy == APIService.shared.currentUserID {
+                            placerDisplay = "You"
+                        } else if createdBy == "admin-web-ui" {
+                            placerDisplay = "Admin"
+                        } else {
+                            placerDisplay = "Another user"
+                        }
+                        InfoRow(label: "Placed by", value: placerDisplay)
                     }
 
                     // Placement method

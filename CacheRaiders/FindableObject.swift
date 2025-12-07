@@ -58,45 +58,16 @@ class FindableObject: Findable {
     }
     
     /// Triggers the find behavior: sound, confetti, animation, increment count, disappear
-    /// This is the main entry point - confetti and sound are default behaviors for all findables
+    /// This is the main entry point - confetti and sound are handled by factory methods
     func find(onComplete: @escaping () -> Void) {
         let objectName = itemDescription()
-        
+
         Swift.print("🎉 Finding object: \(objectName)")
-        
-        // DEFAULT BEHAVIOR #1: Create confetti effect immediately
-        // (Sound will play automatically when confetti is created)
-        Swift.print("🎊 Creating confetti effect...")
-        
-        // Get world position of anchor before it's removed
-        let anchorTransform = anchor.transformMatrix(relativeTo: nil)
-        let anchorWorldPos = SIMD3<Float>(
-            anchorTransform.columns.3.x,
-            anchorTransform.columns.3.y + 0.15, // Slightly above object center
-            anchorTransform.columns.3.z
-        )
-        
-        // Create confetti at world position using temporary anchor approach
-        // This will persist even after the object anchor is removed
-        if let scene = anchor.scene {
-            // Create temporary anchor at world position for confetti
-            let confettiAnchor = AnchorEntity(world: anchorWorldPos)
-            scene.addAnchor(confettiAnchor)
-            
-            // Create confetti relative to this temporary anchor
-            LootBoxAnimation.createConfettiEffect(at: SIMD3<Float>(0, 0, 0), parent: confettiAnchor)
-            
-            // Auto-remove confetti anchor after animation completes (2 seconds + buffer)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                confettiAnchor.removeFromParent()
-            }
-        } else {
-            // Fallback: use legacy approach with original anchor
-            LootBoxAnimation.createConfettiEffect(at: SIMD3<Float>(0, 0.15, 0), parent: anchor)
-        }
-        
-        // DEFAULT BEHAVIOR #2: Perform find animation (overrideable by child classes)
-        // This method determines which animation to play based on location type
+
+        // NOTE: Confetti and sound effects are now handled by individual factory methods
+        // to ensure proper timing and prevent duplicate effects
+
+        // Perform find animation (which includes confetti, sound, and object removal)
         performFindAnimation(onComplete: onComplete)
     }
     

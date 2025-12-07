@@ -89,7 +89,26 @@ struct SheetContentView: View {
         case .objectDetail(let detail):
             ARObjectDetailView(objectDetail: detail)
         case .foundItems:
-            FoundItemsView(locationManager: locationManager, userLocationManager: userLocationManager)
+            NavigationView {
+                FoundItemsView(
+                    locationManager: locationManager,
+                    userLocationManager: userLocationManager,
+                    onToggleCollected: { locationId in
+                        locationManager.toggleCollected(locationId)
+                    },
+                    onDeleteLocation: { locationId in
+                        locationManager.deleteLocation(byId: locationId)
+                    }
+                )
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button("Done") {
+                                dismiss()
+                            }
+                        }
+                    }
+            }
         case .gpsDetails:
             GPSDetailsView(userLocationManager: userLocationManager, dismiss: dismiss)
         }

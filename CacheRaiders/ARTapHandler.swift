@@ -60,6 +60,12 @@ class ARTapHandler {
     
     @objc func handleTap(_ sender: UITapGestureRecognizer) {
         Swift.print("👆 ========== TAP DETECTED ==========")
+        Swift.print("   Gesture recognizer state: \(sender.state.rawValue)")
+        Swift.print("   Tap location in view: \(sender.location(in: sender.view))")
+        Swift.print("   ARView exists: \(arView != nil)")
+        Swift.print("   LocationManager exists: \(locationManager != nil)")
+        Swift.print("   Current frame exists: \(arView?.session.currentFrame != nil)")
+
         guard let arView = arView,
               let locationManager = locationManager,
               let frame = arView.session.currentFrame else {

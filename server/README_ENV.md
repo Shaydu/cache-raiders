@@ -4,6 +4,54 @@
 
 Your OpenAI API key is stored in `server/.env` which is **NOT committed to git** (it's in `.gitignore`).
 
+## 🍎 Apple MapKit JS Setup (for Admin Panel)
+
+The admin panel now uses Apple Maps instead of OpenStreetMap to match the iOS app experience.
+
+### Required Environment Variables
+
+Add these to your `server/.env` file:
+
+```bash
+# Apple MapKit JS Configuration
+MAPKIT_TEAM_ID=your_team_id_here
+MAPKIT_KEY_ID=your_key_id_here
+MAPKIT_PRIVATE_KEY_PATH=/path/to/AuthKey_XXXXXXX.p8
+```
+
+### Setup Steps
+
+1. **Create Apple Developer Account**
+   - Go to [Apple Developer](https://developer.apple.com/account/)
+   - Join the Apple Developer Program if not already a member
+
+2. **Create Maps Identifier**
+   - In your developer account, go to "Certificates, Identifiers & Profiles"
+   - Click "+" → "Maps IDs"
+   - Enter a description and identifier (e.g., `com.yourdomain.cacheraiders.maps`)
+   - Click "Continue" and "Register"
+
+3. **Generate Private Key**
+   - In the Maps Identifier details, click "Create Key"
+   - Give it a name and check the Maps Services box
+   - Download the `.p8` file and store it securely
+   - Note the Key ID (something like `ABC123DEF4`)
+
+4. **Get Team ID**
+   - In your developer account, go to "Membership"
+   - Copy your Team ID (10-character string)
+
+5. **Configure Environment**
+   - Set `MAPKIT_TEAM_ID` to your Team ID
+   - Set `MAPKIT_KEY_ID` to your Key ID
+   - Set `MAPKIT_PRIVATE_KEY_PATH` to the full path of your `.p8` file
+
+### Security Notes
+
+- The `.p8` private key file should be stored securely and not committed to git
+- The server generates JWT tokens that expire after 1 hour
+- MapKit JS requests are authenticated server-side to protect your credentials
+
 ## Setup Instructions
 
 1. **The `.env` file is already created** with your API key

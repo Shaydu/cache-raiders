@@ -123,15 +123,21 @@ struct ChaliceFactory: LootBoxFactory {
             confettiPosition = entity.position
         }
         LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
-        
+
         // Play sound
         playFindSound()
-        
-        // Open the chalice
-        if let container = container {
-            openChalice(container: container, onComplete: onComplete)
-        } else {
-            onComplete()
+
+        // CRITICAL FIX: Ensure object doesn't disappear until confetti animation completes
+        // Confetti animation takes ~2-3 seconds, so delay object removal
+        let confettiDuration = 2.5 // Wait for confetti to complete
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + confettiDuration) {
+            // Open the chalice after confetti completes
+            if let container = container {
+                self.openChalice(container: container, onComplete: onComplete)
+            } else {
+                onComplete()
+            }
         }
     }
     
@@ -260,11 +266,17 @@ struct TreasureChestFactory: LootBoxFactory {
         }
         LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
         playFindSound()
-        
-        if let container = container {
-            openBox(container: container, onComplete: onComplete)
-        } else {
-            onComplete()
+
+        // CRITICAL FIX: Ensure object doesn't disappear until confetti animation completes
+        // Confetti animation takes ~2-3 seconds, so delay object removal
+        let confettiDuration = 2.5 // Wait for confetti to complete
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + confettiDuration) {
+            if let container = container {
+                self.openBox(container: container, onComplete: onComplete)
+            } else {
+                onComplete()
+            }
         }
     }
     
@@ -423,11 +435,17 @@ struct LootChestFactory: LootBoxFactory {
         }
         LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
         playFindSound()
-        
-        if let container = container {
-            openBox(container: container, onComplete: onComplete)
-        } else {
-            onComplete()
+
+        // CRITICAL FIX: Ensure object doesn't disappear until confetti animation completes
+        // Confetti animation takes ~2-3 seconds, so delay object removal
+        let confettiDuration = 2.5 // Wait for confetti to complete
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + confettiDuration) {
+            if let container = container {
+                self.openBox(container: container, onComplete: onComplete)
+            } else {
+                onComplete()
+            }
         }
     }
     
@@ -586,11 +604,17 @@ struct LootCartFactory: LootBoxFactory {
         }
         LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
         playFindSound()
-        
-        if let container = container {
-            openCart(container: container, onComplete: onComplete)
-        } else {
-            onComplete()
+
+        // CRITICAL FIX: Ensure object doesn't disappear until confetti animation completes
+        // Confetti animation takes ~2-3 seconds, so delay object removal
+        let confettiDuration = 2.5 // Wait for confetti to complete
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + confettiDuration) {
+            if let container = container {
+                self.openCart(container: container, onComplete: onComplete)
+            } else {
+                onComplete()
+            }
         }
     }
     
@@ -747,11 +771,17 @@ struct TempleRelicFactory: LootBoxFactory {
         }
         LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
         playFindSound()
-        
-        if let container = container {
-            openBox(container: container, onComplete: onComplete)
-        } else {
-            onComplete()
+
+        // CRITICAL FIX: Ensure object doesn't disappear until confetti animation completes
+        // Confetti animation takes ~2-3 seconds, so delay object removal
+        let confettiDuration = 2.5 // Wait for confetti to complete
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + confettiDuration) {
+            if let container = container {
+                self.openBox(container: container, onComplete: onComplete)
+            } else {
+                onComplete()
+            }
         }
     }
     
@@ -917,7 +947,14 @@ struct SphereFactory: LootBoxFactory {
         }
         LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
         playFindSound()
-        animateSphereFind(orb: entity, onComplete: onComplete)
+
+        // CRITICAL FIX: Ensure object doesn't disappear until confetti animation completes
+        // Confetti animation takes ~2-3 seconds, so delay object removal
+        let confettiDuration = 2.5 // Wait for confetti to complete
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + confettiDuration) {
+            self.animateSphereFind(orb: entity, onComplete: onComplete)
+        }
     }
     
     func animateLoop(entity: ModelEntity) {
@@ -1086,17 +1123,23 @@ struct CubeFactory: LootBoxFactory {
         }
         LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
         playFindSound()
-        
-        // Simple fade out animation for cubes
-        entity.move(
-            to: Transform(scale: SIMD3<Float>(0, 0, 0), rotation: entity.orientation, translation: entity.position),
-            relativeTo: entity.parent,
-            duration: 0.5,
-            timingFunction: .easeOut
-        )
-        
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            onComplete()
+
+        // CRITICAL FIX: Ensure object doesn't disappear until confetti animation completes
+        // Confetti animation takes ~2-3 seconds, so delay object removal
+        let confettiDuration = 2.5 // Wait for confetti to complete
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + confettiDuration) {
+            // Simple fade out animation for cubes after confetti completes
+            entity.move(
+                to: Transform(scale: SIMD3<Float>(0, 0, 0), rotation: entity.orientation, translation: entity.position),
+                relativeTo: entity.parent,
+                duration: 0.5,
+                timingFunction: .easeOut
+            )
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                onComplete()
+            }
         }
     }
     
@@ -1196,15 +1239,21 @@ struct TurkeyFactory: LootBoxFactory {
             confettiPosition = entity.position
         }
         LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
-        
+
         // Play sound
         playFindSound()
-        
-        // Open the turkey
-        if let container = container {
-            openTurkey(container: container, onComplete: onComplete)
-        } else {
-            onComplete()
+
+        // CRITICAL FIX: Ensure object doesn't disappear until confetti animation completes
+        // Confetti animation takes ~2-3 seconds, so delay object removal
+        let confettiDuration = 2.5 // Wait for confetti to complete
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + confettiDuration) {
+            // Open the turkey after confetti completes
+            if let container = container {
+                self.openTurkey(container: container, onComplete: onComplete)
+            } else {
+                onComplete()
+            }
         }
     }
     
@@ -1412,11 +1461,17 @@ struct TerrorEngineFactory: LootBoxFactory {
         // Play sound
         playFindSound()
 
-        // Open the terror engine
-        if let container = container {
-            openTerrorEngine(container: container, onComplete: onComplete)
-        } else {
-            onComplete()
+        // CRITICAL FIX: Ensure object doesn't disappear until confetti animation completes
+        // Confetti animation takes ~2-3 seconds, so delay object removal
+        let confettiDuration = 2.5 // Wait for confetti to complete
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + confettiDuration) {
+            // Open the terror engine after confetti completes
+            if let container = container {
+                self.openTerrorEngine(container: container, onComplete: onComplete)
+            } else {
+                onComplete()
+            }
         }
     }
 

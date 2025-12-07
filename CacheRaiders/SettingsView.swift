@@ -989,6 +989,8 @@ struct SettingsView: View {
     private var apiSyncButtonsView: some View {
         Group {
             refreshFromAPIButton
+            syncPendingChangesButton
+            markExistingObjectsForSyncButton
             syncLocalItemsButton
             clearUnsyncedObjectsButton
             viewDatabaseContentsButton
@@ -1027,7 +1029,68 @@ struct SettingsView: View {
         .disabled(viewModel.isLoading)
         .padding(.vertical, 4)
     }
-    
+
+    private var syncPendingChangesButton: some View {
+        Button(action: {
+            guard !viewModel.isLoading else { return }
+            viewModel.isLoading = true
+            Task {
+                print("🔄 [Manual Sync] User triggered syncPendingChangesToAPI")
+                await locationManager.syncPendingChangesToAPI()
+                await MainActor.run {
+                    viewModel.displayAlert(title: "Sync Complete", message: "Checked for pending local changes to sync to server. Check console for details.")
+                    viewModel.isLoading = false
+                }
+            }
+        }) {
+            HStack {
+                if viewModel.isLoading {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Image(systemName: "arrow.up.circle")
+                }
+                Text("Sync Pending Changes")
+            }
+        }
+        .disabled(viewModel.isLoading)
+        .padding(.vertical, 4)
+    }
+
+    private var markExistingObjectsForSyncButton: some View {
+        Button(action: {
+            guard !viewModel.isLoading else { return }
+            viewModel.isLoading = true
+            Task {
+                print("🔄 [Manual Sync] User triggered markAllExistingObjectsForSync")
+                do {
+                    try locationManager.markAllExistingObjectsForSync()
+                    await MainActor.run {
+                        viewModel.displayAlert(title: "Objects Marked", message: "All existing local objects have been marked for sync. Use 'Sync Pending Changes' to push them to server.")
+                        viewModel.isLoading = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        viewModel.displayAlert(title: "Error", message: "Failed to mark objects for sync: \(error.localizedDescription)")
+                        viewModel.isLoading = false
+                    }
+                }
+            }
+        }) {
+            HStack {
+                if viewModel.isLoading {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Image(systemName: "checkmark.circle")
+                }
+                Text("Mark Existing Objects for Sync")
+            }
+        }
+        .disabled(viewModel.isLoading)
+        .padding(.vertical, 4)
+    }
+
     private var syncLocalItemsButton: some View {
         Group {
             Button(action: {

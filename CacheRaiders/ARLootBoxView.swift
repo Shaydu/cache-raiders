@@ -190,6 +190,14 @@ struct ARViewContainer: UIViewRepresentable {
         let arView = ARView(frame: .zero)
         print("   Created new ARView instance: \(ObjectIdentifier(arView))")
 
+        // Ensure ARView is configured for touch interaction
+        arView.isUserInteractionEnabled = true
+        arView.isMultipleTouchEnabled = true
+        print("👆 [ARVIEW SETUP] isUserInteractionEnabled: \(arView.isUserInteractionEnabled)")
+        print("👆 [ARVIEW SETUP] isMultipleTouchEnabled: \(arView.isMultipleTouchEnabled)")
+        print("👆 [ARVIEW SETUP] ARView frame: \(arView.frame)")
+        print("👆 [ARVIEW SETUP] ARView bounds: \(arView.bounds)")
+
         // CRITICAL: Load latest locations from API when entering AR mode
         // This ensures any objects placed via admin interface appear immediately
         Task {
@@ -353,13 +361,32 @@ struct ARViewContainer: UIViewRepresentable {
         NFCARIntegrationService.shared.setup(with: arView)
 
         // Tap gesture for placing and collecting loot boxes - ADD AFTER setupARView so tapHandler is initialized
+        print("👆 [GESTURE SETUP] Adding tap gesture recognizer")
+        print("   Coordinator tapHandler exists: \(context.coordinator.tapHandler != nil)")
+        print("   ARView isUserInteractionEnabled: \(arView.isUserInteractionEnabled)")
         let tapGesture = UITapGestureRecognizer(target: context.coordinator.tapHandler, action: #selector(ARTapHandler.handleTap(_:)))
+        tapGesture.cancelsTouchesInView = false
+        tapGesture.delaysTouchesBegan = false
+        tapGesture.delaysTouchesEnded = false
         arView.addGestureRecognizer(tapGesture)
+        print("✅ Tap gesture added to ARView")
+        print("   Tap gesture target: \(tapGesture.target != nil ? "SET" : "NIL")")
+        print("   Tap gesture action: \(tapGesture.action != nil ? "SET" : "NIL")")
 
         // Long press gesture for viewing object details
+        print("👆 [GESTURE SETUP] Adding long press gesture recognizer")
         let longPressGesture = UILongPressGestureRecognizer(target: context.coordinator.tapHandler, action: #selector(ARTapHandler.handleLongPress(_:)))
         longPressGesture.minimumPressDuration = 0.5 // 500ms for long press
         arView.addGestureRecognizer(longPressGesture)
+        print("✅ Long press gesture added to ARView")
+
+        // Debug: Check all gesture recognizers on the ARView
+        print("👆 [GESTURE DEBUG] ARView gesture recognizers: \(arView.gestureRecognizers?.count ?? 0)")
+        if let gestures = arView.gestureRecognizers {
+            for (index, gesture) in gestures.enumerated() {
+                print("   Gesture \(index): \(type(of: gesture)) - target: \(gesture.description)")
+            }
+        }
 
         return arView
     }

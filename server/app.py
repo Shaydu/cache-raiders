@@ -16,9 +16,10 @@ import threading
 import time
 import requests
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from dotenv import load_dotenv
+import jwt
 
 # Set up file logging for map requests debugging
 log_dir = os.path.join(os.path.dirname(__file__), 'logs')
@@ -1940,6 +1941,48 @@ def get_nfc_details(nfc_id: str):
 
     except Exception as e:
         conn.close()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/mapkit/token', methods=['GET'])
+def get_mapkit_token():
+    """Generate JWT token for Apple MapKit JS authentication."""
+    try:
+        # Get MapKit credentials from environment variables
+        team_id = os.getenv('MAPKIT_TEAM_ID')
+        key_id = os.getenv('MAPKIT_KEY_ID')
+        private_key_path = os.getenv('MAPKIT_PRIVATE_KEY_PATH')
+
+        if not all([team_id, key_id, private_key_path]):
+            return jsonify({
+                'error': 'MapKit credentials not configured',
+                'details': 'MAPKIT_TEAM_ID, MAPKIT_KEY_ID, and MAPKIT_PRIVATE_KEY_PATH environment variables required'
+            }), 500
+
+        # Read private key
+        if not os.path.exists(private_key_path):
+            return jsonify({
+                'error': 'MapKit private key file not found',
+                'path': private_key_path
+            }), 500
+
+        with open(private_key_path, 'r') as f:
+            private_key = f.read()
+
+        # Create JWT payload
+        now = datetime.utcnow()
+        payload = {
+            'iss': team_id,
+            'iat': now,
+            'exp': now + timedelta(hours=1),  # Token valid for 1 hour
+        }
+
+        # Generate JWT
+        token = jwt.encode(payload, private_key, algorithm='ES256', headers={'kid': key_id})
+
+        return jsonify({'token': token})
+
+    except Exception as e:
+        print(f"❌ Error generating MapKit token: {e}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/server-info', methods=['GET'])

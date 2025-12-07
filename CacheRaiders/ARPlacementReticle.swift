@@ -117,11 +117,12 @@ class ARPlacementReticle: ObservableObject {
     func getPlacementPosition() -> SIMD3<Float>? {
         guard let anchor = reticleAnchor else { return nil }
         // Get anchor's world position using transform matrix
-        // The reticle entity has a Y offset of 0.01m for visibility, but X/Z are at anchor origin
+        // Return the anchor position (surface level) since crosshairs now sit on surface
+        // This ensures the object's base sits exactly on the crosshairs
         let transform = anchor.transformMatrix(relativeTo: nil)
         let anchorWorldPos = SIMD3<Float>(
             transform.columns.3.x,
-            transform.columns.3.y, // Anchor Y (ground level)
+            transform.columns.3.y, // Surface level (where crosshairs now sit)
             transform.columns.3.z
         )
         return anchorWorldPos
@@ -147,7 +148,7 @@ class ARPlacementReticle: ObservableObject {
 
         // Create reticle visual - a glowing ring with crosshairs
         let reticle = createReticleVisual()
-        reticle.position = SIMD3<Float>(0, 0.01, 0) // Slightly above ground to prevent z-fighting
+        reticle.position = SIMD3<Float>(0, 0, 0) // At ground level so crosshairs sit on surface
 
         anchor.addChild(reticle)
         arView.scene.addAnchor(anchor)

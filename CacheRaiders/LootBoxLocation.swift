@@ -571,26 +571,33 @@ class LootBoxLocationManager: ObservableObject {
         
         // Fetch game mode when WebSocket connects (in case it changed while disconnected)
         WebSocketService.shared.onConnected = { [weak self] in
-            guard let self = self else { return }
+            guard let self = self else {
+                print("⚠️ [WebSocket] onConnected callback: self is nil")
+                return
+            }
 
-            print("🔌 WebSocket connected - fetching current game mode from server")
-            print("   Current local game mode: \(self.gameMode.rawValue) (\(self.gameMode.displayName))")
+            print("🔌 [WebSocket] onConnected callback fired!")
+            print("   📱 Device UUID: \(APIService.shared.currentUserID)")
+            print("   🌐 API Base URL: \(APIService.shared.baseURL)")
+            print("   🎮 Current local game mode: \(self.gameMode.rawValue) (\(self.gameMode.displayName))")
 
             // Fetch current game mode to ensure we're in sync with server (with retries)
             Task {
                 await self.fetchGameModeFromServer(retryCount: 2)
 
                 // Automatically sync with server when WebSocket connects
-                // This replicates what the "Refresh from API" button does in settings
-                print("🔄 WebSocket connected - automatically syncing with server...")
+                // HYBRID APPROACH: Two-way sync on connect
+                print("🔄 [WebSocket] Starting automatic two-way sync...")
 
-                // Load ALL locations from API (same as settings refresh button)
-                await self.loadLocationsFromAPI(userLocation: nil, includeFound: true)
-
-                // Sync any pending local changes back to server
+                // 1. First sync any local changes back to server (safety net)
+                print("   📤 Step 1: Syncing local changes to server...")
                 await self.syncPendingChangesToAPI()
 
-                print("✅ Auto-sync complete - device and server are now synchronized")
+                // 2. Then load ALL locations from API (same as settings refresh button)
+                print("   📥 Step 2: Loading all locations from server...")
+                await self.loadLocationsFromAPI(userLocation: nil, includeFound: true)
+
+                print("✅ [WebSocket] Auto-sync complete - device and server are now synchronized")
             }
         }
 
@@ -1457,6 +1464,11 @@ class LootBoxLocationManager: ObservableObject {
                     self.isRefreshingFromAPI = true
                 }
 
+                // HYBRID SYNC: Two-way sync for safety net
+                // 1. First sync any local changes back to server
+                await self.syncPendingChangesToAPI()
+
+                // 2. Then load latest state from server
                 await self.loadLocationsFromAPI(userLocation: self.lastKnownUserLocation)
 
                 await MainActor.run {
@@ -1752,7 +1764,7 @@ class LootBoxLocationManager: ObservableObject {
 
             // Remove unsynced objects from Core Data
             for obj in unsyncedLocalObjects {
-                try dataService.deleteLocation(obj.id)
+                try dataService.deleteLocation(byId: obj.id)
             }
 
             // Clear from memory
@@ -1770,19 +1782,44 @@ class LootBoxLocationManager: ObservableObject {
     /// Sync pending changes to API when connection is restored
     /// This method should be called when the app detects it's back online
     func syncPendingChangesToAPI() async {
-        guard useAPISync else { return }
-        
+        guard useAPISync else {
+            print("ℹ️ API sync disabled - skipping syncPendingChangesToAPI")
+            return
+        }
+
         do {
             // Get items that need syncing
             let itemsNeedingSync = try dataService.getItemsNeedingSync()
-            
+
+            print("🔍 [Sync Debug] Checking local database for objects needing sync...")
+            print("   📊 Total items in local DB: \(try? dataService.getItemCount() ?? 0)")
+
+            // Also check all items and their sync status
+            let allItems = try dataService.getAllItems()
+            let itemsWithSyncFlag = allItems.filter { $0.needs_sync }
+            let itemsWithAPISync = allItems.filter { $0.shouldSyncToAPI }
+
+            print("   🔄 Items with needs_sync=true: \(itemsWithSyncFlag.count)")
+            print("   🌐 Items with shouldSyncToAPI=true: \(itemsWithAPISync.count)")
+            print("   📦 Items returned by getItemsNeedingSync(): \(itemsNeedingSync.count)")
+
+            if !itemsNeedingSync.isEmpty {
+                print("   📋 Objects needing sync:")
+                for item in itemsNeedingSync.prefix(5) { // Show first 5
+                    print("     • \(item.id): '\(item.name)' (\(item.source.rawValue), shouldSync: \(item.shouldSyncToAPI))")
+                }
+                if itemsNeedingSync.count > 5 {
+                    print("     • ... and \(itemsNeedingSync.count - 5) more")
+                }
+            }
+
             if itemsNeedingSync.isEmpty {
                 print("ℹ️ No pending changes to sync")
                 return
             }
-            
+
             print("🔄 Syncing \(itemsNeedingSync.count) pending changes to API...")
-            
+
             // Check API health first
             let isHealthy = try await APIService.shared.checkHealth()
             guard isHealthy else {
@@ -1829,12 +1866,17 @@ class LootBoxLocationManager: ObservableObject {
     
     /// Save location to API
     func saveLocationToAPI(_ location: LootBoxLocation) async {
+        print("🔄 [Sync Debug] saveLocationToAPI called for: '\(location.name)' (ID: \(location.id))")
+        print("   📊 Source: \(location.source.rawValue)")
+        print("   🌐 shouldSyncToAPI: \(location.shouldSyncToAPI)")
+        print("   📍 GPS: (\(String(format: "%.8f", location.latitude)), \(String(format: "%.8f", location.longitude)))")
+
         // Don't sync to API if offline mode is enabled
         if OfflineModeManager.shared.isOfflineMode {
             print("📴 Offline mode enabled - location '\(location.name)' saved to local database, will sync when online")
             return
         }
-        
+
         guard useAPISync else {
             print("⚠️ API sync is disabled - location '\(location.name)' (ID: \(location.id)) not synced to shared database")
             return
@@ -1845,17 +1887,19 @@ class LootBoxLocationManager: ObservableObject {
             print("⏭️ Skipping API sync for AR-only item (no GPS): '\(location.name)' (ID: \(location.id))")
             return
         }
-        
+
         print("🔄 Attempting to sync location '\(location.name)' (ID: \(location.id), Type: \(location.type.displayName)) to API...")
         print("   GPS: (\(String(format: "%.8f", location.latitude)), \(String(format: "%.8f", location.longitude)))")
-        
+
         do {
+            print("📡 [Sync Debug] Calling APIService.shared.createObject()...")
             let createdObject = try await APIService.shared.createObject(location)
             print("✅ Successfully synced location '\(location.name)' (ID: \(location.id)) to shared API database")
             print("   API returned object ID: \(createdObject.id)")
-            
+
             // Mark as synced in Core Data
             try? dataService.markAsSynced(location.id)
+            print("   💾 Marked as synced in local database")
         } catch {
             print("❌ Error saving location '\(location.name)' (ID: \(location.id)) to API: \(error.localizedDescription)")
             print("   Location saved to Core Data - will sync when online")
@@ -1924,14 +1968,33 @@ class LootBoxLocationManager: ObservableObject {
     }
     
     /// Sync all local locations to API (useful for migration or if items were created before API sync was enabled)
+    /// Mark all existing local objects for sync (for objects created before sync system)
+    func markAllExistingObjectsForSync() throws {
+        print("🔄 [Fix Existing Objects] Marking all existing local objects for sync...")
+
+        let allItems = try dataService.getAllItems()
+        var markedCount = 0
+
+        for item in allItems {
+            // Only mark items that should sync to API but aren't already marked
+            if item.shouldSyncToAPI && !item.needs_sync {
+                try dataService.markNeedsSync(item.id)
+                markedCount += 1
+                print("   📝 Marked for sync: '\(item.name)' (ID: \(item.id))")
+            }
+        }
+
+        print("✅ [Fix Existing Objects] Marked \(markedCount) existing objects for sync")
+    }
+
     func syncAllLocationsToAPI() async {
         guard useAPISync else {
             print("⚠️ API sync is disabled - enable it in Settings first")
             return
         }
-        
+
         print("🔄 Syncing \(locations.count) local locations to shared API database...")
-        
+
         var syncedCount = 0
         let errorCount = 0
         
@@ -2110,6 +2173,23 @@ class LootBoxLocationManager: ObservableObject {
         }
         print("🧹 Cleared collected status for all \(locations.count) loot boxes")
         saveLocations() // Persist the changes
+    }
+
+    /// Delete a location by ID
+    func deleteLocation(byId id: String) {
+        // Remove from memory first
+        locations.removeAll { $0.id == id }
+
+        // Remove from database
+        do {
+            try dataService.deleteLocation(byId: id)
+            print("🗑️ Deleted location with ID: \(id)")
+        } catch {
+            print("⚠️ Error deleting location from database: \(error.localizedDescription)")
+        }
+
+        // Save updated locations
+        saveLocations()
     }
 }
 

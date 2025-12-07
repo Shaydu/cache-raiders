@@ -341,12 +341,24 @@ class GameItemDataService {
         return gameItems.compactMap { convertToLootBoxLocation($0) }
     }
     
+    /// Mark item as needing sync
+    func markNeedsSync(_ locationId: String) throws {
+        let context = viewContext
+        let fetchRequest: NSFetchRequest<GameItem> = GameItem.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "id == %@", locationId)
+
+        if let gameItem = try context.fetch(fetchRequest).first {
+            gameItem.needs_sync = true
+            try saveContext(context)
+        }
+    }
+
     /// Mark item as synced
     func markAsSynced(_ locationId: String) throws {
         let context = viewContext
         let fetchRequest: NSFetchRequest<GameItem> = GameItem.fetchRequest()
         fetchRequest.predicate = NSPredicate(format: "id == %@", locationId)
-        
+
         if let gameItem = try context.fetch(fetchRequest).first {
             gameItem.needs_sync = false
             gameItem.last_synced_at = Date()
