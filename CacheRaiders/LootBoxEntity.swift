@@ -431,10 +431,11 @@ class LootBoxEntity {
         )
         
         // Very dark, weathered material
-        var material = SimpleMaterial()
-        material.color = .init(tint: UIColor(red: 0.12, green: 0.1, blue: 0.08, alpha: 1.0)) // Almost black aged wood
-        material.roughness = 0.95
-        material.metallic = 0.05
+        let material = SimpleMaterial(
+            color: UIColor(red: 0.12, green: 0.1, blue: 0.08, alpha: 1.0), // Almost black aged wood
+            roughness: 0.95,
+            isMetallic: false
+        )
         
         let entity = ModelEntity(mesh: mainBody, materials: [material])
         
@@ -463,10 +464,11 @@ class LootBoxEntity {
         )
         
         // Dark weathered stone material
-        var material = SimpleMaterial()
-        material.color = .init(tint: UIColor(red: 0.18, green: 0.15, blue: 0.12, alpha: 1.0)) // Dark stone
-        material.roughness = 0.95
-        material.metallic = 0.05
+        let material = SimpleMaterial(
+            color: UIColor(red: 0.18, green: 0.15, blue: 0.12, alpha: 1.0), // Dark stone
+            roughness: 0.95,
+            isMetallic: false
+        )
         
         let entity = ModelEntity(mesh: pedestal, materials: [material])
         
@@ -507,10 +509,11 @@ class LootBoxEntity {
         )
         
         // Very dark, ancient wood/stone
-        var material = SimpleMaterial()
-        material.color = .init(tint: UIColor(red: 0.15, green: 0.12, blue: 0.1, alpha: 1.0))
-        material.roughness = 0.9
-        material.metallic = 0.1
+        let material = SimpleMaterial(
+            color: UIColor(red: 0.15, green: 0.12, blue: 0.1, alpha: 1.0),
+            roughness: 0.9,
+            isMetallic: false
+        )
         
         let entity = ModelEntity(mesh: mainBox, materials: [material])
         

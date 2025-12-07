@@ -264,10 +264,11 @@ class ARPlacementReticle: ObservableObject {
     }
 
     private func updateReticleColor(_ reticle: ModelEntity, color: UIColor) {
-        var material = SimpleMaterial()
-        material.color = .init(tint: color)
-        material.roughness = 0.0
-        material.metallic = 1.0
+        let material = SimpleMaterial(
+            color: color,
+            roughness: 0.0,
+            isMetallic: true
+        )
         reticle.model?.materials = [material]
     }
 
@@ -292,10 +293,11 @@ class ARPlacementReticle: ObservableObject {
             return unlitMaterial
         } else {
             // Use SimpleMaterial for normal lighting conditions
-            var material = SimpleMaterial()
-            material.color = .init(tint: UIColor(red: 0.2, green: 0.6, blue: 1.0, alpha: 0.6))
-            material.roughness = 0.0
-            material.metallic = 1.0
+            let material = SimpleMaterial(
+                color: UIColor(red: 0.2, green: 0.6, blue: 1.0, alpha: 0.6),
+                roughness: 0.0,
+                isMetallic: true
+            )
             return material
         }
     }
@@ -311,10 +313,11 @@ class ARPlacementReticle: ObservableObject {
             return unlitMaterial
         } else {
             // Use SimpleMaterial for normal lighting conditions
-            var material = SimpleMaterial()
-            material.color = .init(tint: UIColor(red: 0.2, green: 0.8, blue: 1.0, alpha: 0.8))
-            material.roughness = 0.0
-            material.metallic = 1.0
+            let material = SimpleMaterial(
+                color: UIColor(red: 0.2, green: 0.8, blue: 1.0, alpha: 0.8),
+                roughness: 0.0,
+                isMetallic: true
+            )
             return material
         }
     }

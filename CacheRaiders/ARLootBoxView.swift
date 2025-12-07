@@ -17,6 +17,8 @@ struct ARLootBoxView: View {
     @Binding var currentTargetObject: LootBoxLocation?
     @Binding var conversationNPC: ConversationNPC?
     @ObservedObject var treasureHuntService: TreasureHuntService
+    @Binding var placementProgress: (current: Int, total: Int)
+    @Binding var isPlacementInProgress: Bool
 
     @StateObject private var conversationManager = ARConversationManager()
 
@@ -34,7 +36,9 @@ struct ARLootBoxView: View {
                 currentTargetObject: $currentTargetObject,
                 conversationNPC: $conversationNPC,
                 conversationManager: conversationManager,
-                treasureHuntService: treasureHuntService
+                treasureHuntService: treasureHuntService,
+                placementProgress: $placementProgress,
+                isPlacementInProgress: $isPlacementInProgress
             )
             .edgesIgnoringSafeArea(.all)
 
@@ -181,6 +185,8 @@ struct ARViewContainer: UIViewRepresentable {
     @Binding var conversationNPC: ConversationNPC?
     @ObservedObject var conversationManager: ARConversationManager
     @ObservedObject var treasureHuntService: TreasureHuntService
+    @Binding var placementProgress: (current: Int, total: Int)
+    @Binding var isPlacementInProgress: Bool
     
     func makeUIView(context: Context) -> ARView {
         print("🔵 [AR LIFECYCLE] makeUIView called")
@@ -297,6 +303,7 @@ struct ARViewContainer: UIViewRepresentable {
         // CRITICAL: Setup ARView and set delegate BEFORE running the session
         // This ensures session(_:didUpdate:) delegate methods are received from the very first frame
         context.coordinator.setupARView(arView, locationManager: locationManager, userLocationManager: userLocationManager, nearbyLocations: $nearbyLocations, distanceToNearest: $distanceToNearest, temperatureStatus: $temperatureStatus, collectionNotification: $collectionNotification, nearestObjectDirection: $nearestObjectDirection, currentTargetObjectName: $currentTargetObjectName, currentTargetObject: $currentTargetObject, conversationNPC: $conversationNPC, conversationManager: conversationManager, treasureHuntService: treasureHuntService)
+
 
         // CRITICAL: Store shared ARView reference in locationManager for placement view
         // This allows the placement view to use the same AR session instead of creating a new one

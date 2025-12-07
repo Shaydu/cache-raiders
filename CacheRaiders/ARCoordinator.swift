@@ -159,6 +159,14 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     var lastViewUpdateTime: Date = Date()
     var lastLocationsCount: Int = 0
     let viewUpdateThrottleInterval: TimeInterval = 0.1 // 100ms (10 FPS for UI updates)
+
+    // PERFORMANCE: Batched object placement queue to prevent UI freezing during initial load
+    private var placementQueue: [LootBoxLocation] = []
+    private var placementBatchSize: Int = 2 // Place 2 objects per batch
+    private var placementBatchDelay: TimeInterval = 0.1 // 100ms delay between batches
+    private var isPlacementInProgress: Bool = false
+    private var currentProgress: Int = 0 // Track how many objects have been placed so far
+    private var totalOriginallyQueued: Int = 0 // Track total number of objects originally queued
     
     // Throttling for nearby locations logging
     private var lastNearbyLogTime: Date = Date.distantPast
@@ -463,13 +471,13 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         // Listen for sheet presentation notifications to pause/resume AR session
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleDialogOpened),
+            selector: #selector(handleDialogOpened(_:)),
             name: NSNotification.Name("SheetPresented"),
             object: nil
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(handleDialogClosed),
+            selector: #selector(handleDialogClosed(_:)),
             name: NSNotification.Name("SheetDismissed"),
             object: nil
         )
@@ -1131,10 +1139,15 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
         // Note: Story mode check happens at the top of this function - we return early if in story mode
         // So all code below only executes in open mode
-        
+
+        // PERFORMANCE: Use batched placement instead of synchronous placement to prevent UI freezing
+        // Collect all valid locations that need to be placed
+        var locationsToQueue: [LootBoxLocation] = []
+
         for location in nearbyLocations {
             // Stop if we've reached the limit
-            guard placedBoxes.count < maxObjects else {
+            guard placedBoxes.count + locationsToQueue.count < maxObjects else {
+                Swift.print("⏭️ Would exceed max object limit (\(maxObjects)), stopping collection")
                 break
             }
 
@@ -1146,7 +1159,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 // If so, we should skip entirely rather than create a duplicate with same ID
                 if location.latitude != 0 && location.longitude != 0 {
                     let newLoc = CLLocation(latitude: location.latitude, longitude: location.longitude)
-                    
+
                     // Check if this would trigger GPS collision offset
                     var wouldOffset = false
                     for (existingId, _) in placedBoxes {
@@ -1159,7 +1172,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                             }
                         }
                     }
-                    
+
                     if wouldOffset {
                         Swift.print("⏭️ Skipping GPS collision case for already-placed object '\\(location.name)' - would create duplicate with same ID")
                         continue
@@ -1175,7 +1188,6 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 continue
             }
 
-
             // Skip if already collected (critical check to prevent re-placement after finding)
             // Check multiple sources to ensure we don't place collected objects
             let isInFoundSets = distanceTracker?.foundLootBoxes.contains(location.id) ?? false || tapHandler?.foundLootBoxes.contains(location.id) ?? false
@@ -1188,145 +1200,106 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 }
                 continue
             }
-            
-            // Log that we're attempting to place this object
-            Swift.print("✅ Attempting to place unfound object '\\(location.name)' (ID: \\(location.id), type: \\(location.type.displayName))")
-            
-            // CRITICAL: Check for GPS collision - if another object with same/similar GPS coordinates is already placed
-            // We should skip entirely rather than create modified locations with the same ID
-            if location.latitude != 0 && location.longitude != 0 {
-                let newLoc = CLLocation(latitude: location.latitude, longitude: location.longitude)
-                
-                // Check against already-placed objects
-                for (existingId, _) in placedBoxes {
-                    // Find the location for this existing object
-                    if let existingLocation = nearbyLocations.first(where: { $0.id == existingId }) {
-                        // Check if GPS coordinates are very close (within 1 meter)
-                        let existingLoc = CLLocation(latitude: existingLocation.latitude, longitude: existingLocation.longitude)
-                        let gpsDistance = existingLoc.distance(from: newLoc)
 
-                        if gpsDistance < 1.0 {
-                            Swift.print("⏭️ Skipping GPS collision for '\\(location.name)' - object \\(existingId) already placed at similar coordinates")
-                            continue // Skip to next location in the loop
-                        }
-                    }
-                }
-            }
-            
-            // Log that we're attempting to place this object
-            Swift.print("✅ Attempting to place unfound object '\\(location.name)' (ID: \\(location.id), type: \\(location.type.displayName))")
-            
-            // CRITICAL: Check for GPS collision - if another object with same/similar GPS coordinates is already placed OR in the current batch
-            // Instead of skipping, offset the location by 5m in a random direction
-            var locationToPlace = location
-            if location.latitude != 0 && location.longitude != 0 {
-                let newLoc = CLLocation(latitude: location.latitude, longitude: location.longitude)
-                var offsetApplied = false
-                
-                // First check against already-placed objects
-                for (existingId, _) in placedBoxes {
-                    // Find the location for this existing object
-                    if let existingLocation = nearbyLocations.first(where: { $0.id == existingId }) {
-                        // Check if GPS coordinates are very close (within 1 meter)
-                        let existingLoc = CLLocation(latitude: existingLocation.latitude, longitude: existingLocation.longitude)
-                        let gpsDistance = existingLoc.distance(from: newLoc)
-
-                        if gpsDistance < 1.0 {
-                            // Offset by 5 meters in a random direction
-                            let randomBearing = Double.random(in: 0..<360) // Random direction 0-360 degrees
-                            let offsetCoordinate = newLoc.coordinate.coordinate(atDistance: 5.0, atBearing: randomBearing)
-                            
-                            // Create a new location with offset coordinates
-                            locationToPlace = LootBoxLocation(
-                                id: location.id,
-                                name: location.name,
-                                type: location.type,
-                                latitude: offsetCoordinate.latitude,
-                                longitude: offsetCoordinate.longitude,
-                                radius: location.radius,
-                                collected: location.collected,
-                                source: location.source
-                            )
-                            // Copy AR-related properties if they exist
-                            locationToPlace.grounding_height = location.grounding_height
-                            locationToPlace.ar_origin_latitude = location.ar_origin_latitude
-                            locationToPlace.ar_origin_longitude = location.ar_origin_longitude
-                            locationToPlace.ar_offset_x = location.ar_offset_x
-                            locationToPlace.ar_offset_y = location.ar_offset_y
-                            locationToPlace.ar_offset_z = location.ar_offset_z
-                            locationToPlace.ar_placement_timestamp = location.ar_placement_timestamp
-
-                            offsetApplied = true
-                            break
-                        }
-                    }
-                }
-
-                // Also check against other locations in the current batch (to prevent placing duplicates in same loop)
-                if !offsetApplied {
-                    for otherLocation in nearbyLocations {
-                        // Skip self and already-placed objects (we checked those above)
-                        if otherLocation.id == location.id || placedBoxes[otherLocation.id] != nil {
-                            continue
-                        }
-
-                        // Check if GPS coordinates are very close (within 1 meter)
-                        let otherLoc = CLLocation(latitude: otherLocation.latitude, longitude: otherLocation.longitude)
-                        let gpsDistance = newLoc.distance(from: otherLoc)
-
-                        if gpsDistance < 1.0 {
-                            // Offset by 5 meters in a random direction
-                            let randomBearing = Double.random(in: 0..<360) // Random direction 0-360 degrees
-                            let offsetCoordinate = newLoc.coordinate.coordinate(atDistance: 5.0, atBearing: randomBearing)
-                            
-                            // Create a new location with offset coordinates
-                            locationToPlace = LootBoxLocation(
-                                id: location.id,
-                                name: location.name,
-                                type: location.type,
-                                latitude: offsetCoordinate.latitude,
-                                longitude: offsetCoordinate.longitude,
-                                radius: location.radius,
-                                collected: location.collected,
-                                source: location.source
-                            )
-                            // Copy AR-related properties if they exist
-                            locationToPlace.grounding_height = location.grounding_height
-                            locationToPlace.ar_origin_latitude = location.ar_origin_latitude
-                            locationToPlace.ar_origin_longitude = location.ar_origin_longitude
-                            locationToPlace.ar_offset_x = location.ar_offset_x
-                            locationToPlace.ar_offset_y = location.ar_offset_y
-                            locationToPlace.ar_offset_z = location.ar_offset_z
-                            locationToPlace.ar_placement_timestamp = location.ar_placement_timestamp
-
-                            offsetApplied = true
-                            break
-                        }
-                    }
-                }
-            }
-
-            // Only place locations with valid GPS coordinates (database/API objects)
+            // Skip AR-only locations (no GPS coordinates)
             if location.isAROnly {
                 continue
             }
 
-            // Determine placement method based on type
-            // Use locationToPlace (which may have been offset to avoid GPS collisions)
-            if locationToPlace.type == .sphere {
-                // Spheres with GPS coordinates should be placed via GPS positioning
-                if locationToPlace.latitude != 0 || locationToPlace.longitude != 0 {
-                    Swift.print("   📍 Placing sphere: \(locationToPlace.name) at GPS (\(locationToPlace.latitude), \(locationToPlace.longitude))")
-                    placeARSphereAtLocation(locationToPlace, in: arView)
-                } else {
-                    // Sphere with no GPS - skip it (should be placed via randomizeLootBoxes)
-                    Swift.print("   ⏭️ Skipping sphere with no GPS: \(locationToPlace.name)")
-                    continue
+            // Handle GPS collision by offsetting location
+            var locationToQueue = location
+            if location.latitude != 0 && location.longitude != 0 {
+                let newLoc = CLLocation(latitude: location.latitude, longitude: location.longitude)
+                var offsetApplied = false
+
+                // First check against already-placed objects
+                for (existingId, _) in placedBoxes {
+                    if let existingLocation = nearbyLocations.first(where: { $0.id == existingId }) {
+                        let existingLoc = CLLocation(latitude: existingLocation.latitude, longitude: existingLocation.longitude)
+                        let gpsDistance = existingLoc.distance(from: newLoc)
+
+                        if gpsDistance < 1.0 {
+                            // Offset by 5 meters in a random direction
+                            let randomBearing = Double.random(in: 0..<360)
+                            let offsetCoordinate = newLoc.coordinate.coordinate(atDistance: 5.0, atBearing: randomBearing)
+
+                            locationToQueue = LootBoxLocation(
+                                id: location.id,
+                                name: location.name,
+                                type: location.type,
+                                latitude: offsetCoordinate.latitude,
+                                longitude: offsetCoordinate.longitude,
+                                radius: location.radius,
+                                collected: location.collected,
+                                source: location.source
+                            )
+                            // Copy AR-related properties
+                            locationToQueue.grounding_height = location.grounding_height
+                            locationToQueue.ar_origin_latitude = location.ar_origin_latitude
+                            locationToQueue.ar_origin_longitude = location.ar_origin_longitude
+                            locationToQueue.ar_offset_x = location.ar_offset_x
+                            locationToQueue.ar_offset_y = location.ar_offset_y
+                            locationToQueue.ar_offset_z = location.ar_offset_z
+                            locationToQueue.ar_placement_timestamp = location.ar_placement_timestamp
+
+                            offsetApplied = true
+                            Swift.print("🔄 Applied GPS collision offset for '\(location.name)'")
+                            break
+                        }
+                    }
                 }
-            } else {
-                Swift.print("   📍 Placing \(locationToPlace.type.displayName): \(locationToPlace.name) at GPS (\(locationToPlace.latitude), \(locationToPlace.longitude))")
-                placeLootBoxAtLocation(locationToPlace, in: arView)
+
+                // Also check against other locations in the current batch
+                if !offsetApplied {
+                    for otherLocation in nearbyLocations {
+                        if otherLocation.id == location.id || placedBoxes[otherLocation.id] != nil {
+                            continue
+                        }
+
+                        let otherLoc = CLLocation(latitude: otherLocation.latitude, longitude: otherLocation.longitude)
+                        let gpsDistance = newLoc.distance(from: otherLoc)
+
+                        if gpsDistance < 1.0 {
+                            let randomBearing = Double.random(in: 0..<360)
+                            let offsetCoordinate = newLoc.coordinate.coordinate(atDistance: 5.0, atBearing: randomBearing)
+
+                            locationToQueue = LootBoxLocation(
+                                id: location.id,
+                                name: location.name,
+                                type: location.type,
+                                latitude: offsetCoordinate.latitude,
+                                longitude: offsetCoordinate.longitude,
+                                radius: location.radius,
+                                collected: location.collected,
+                                source: location.source
+                            )
+                            // Copy AR-related properties
+                            locationToQueue.grounding_height = location.grounding_height
+                            locationToQueue.ar_origin_latitude = location.ar_origin_latitude
+                            locationToQueue.ar_origin_longitude = location.ar_origin_longitude
+                            locationToQueue.ar_offset_x = location.ar_offset_x
+                            locationToQueue.ar_offset_y = location.ar_offset_y
+                            locationToQueue.ar_offset_z = location.ar_offset_z
+                            locationToQueue.ar_placement_timestamp = location.ar_placement_timestamp
+
+                            offsetApplied = true
+                            Swift.print("🔄 Applied GPS collision offset for '\(location.name)' (batch collision)")
+                            break
+                        }
+                    }
+                }
             }
+
+            // Add to queue for batched placement
+            locationsToQueue.append(locationToQueue)
+        }
+
+        // Queue all collected locations for batched placement
+        if !locationsToQueue.isEmpty {
+            Swift.print("📋 Queuing \(locationsToQueue.count) objects for batched placement to prevent UI freezing")
+            queueObjectsForPlacement(locationsToQueue)
+        } else {
+            Swift.print("📭 No objects to place")
         }
 
         let elapsed = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
@@ -2080,6 +2053,153 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             guard let self = self, !self.isDialogOpen else { return }
             self.replaceUnfoundObjects()
         }
+    }
+
+    // MARK: - Batched Placement System
+
+    /// Queue objects for batched placement to prevent UI freezing during initial load
+    private func queueObjectsForPlacement(_ locations: [LootBoxLocation]) {
+        guard !isPlacementInProgress else {
+            Swift.print("⚠️ Placement already in progress, ignoring new queue request")
+            return
+        }
+
+        // Filter out objects that are already placed or collected
+        let validLocations = locations.filter { location in
+            // Skip if already placed
+            if placedBoxes[location.id] != nil {
+                return false
+            }
+
+            // Skip if collected
+            let isInFoundSets = distanceTracker?.foundLootBoxes.contains(location.id) ?? false ||
+                               tapHandler?.foundLootBoxes.contains(location.id) ?? false
+            if location.collected || isInFoundSets {
+                return false
+            }
+
+            // Skip tap-created locations
+            if location.latitude == 0 && location.longitude == 0 {
+                return false
+            }
+
+            return true
+        }
+
+        if validLocations.isEmpty {
+            Swift.print("📭 No valid objects to place in queue")
+            return
+        }
+
+        placementQueue = validLocations
+        currentProgress = 0
+        totalOriginallyQueued = validLocations.count
+        // Post notification to update UI
+        NotificationCenter.default.post(name: NSNotification.Name("PlacementProgressUpdate"),
+                                      object: nil,
+                                      userInfo: ["current": 0, "total": validLocations.count])
+        Swift.print("📋 Queued \(validLocations.count) objects for batched placement")
+        startBatchedPlacement()
+    }
+
+    /// Start the batched placement process
+    private func startBatchedPlacement() {
+        guard !placementQueue.isEmpty && !isPlacementInProgress else { return }
+
+        isPlacementInProgress = true
+        Swift.print("🚀 Starting batched placement of \(placementQueue.count) objects")
+
+        // Process first batch immediately
+        processNextPlacementBatch()
+    }
+
+    /// Process the next batch of objects to place
+    private func processNextPlacementBatch() {
+        // CRITICAL: Cancel placement if dialog is open to prevent UI freezing
+        guard !isDialogOpen, !placementQueue.isEmpty, let arView = arView else {
+            if placementQueue.isEmpty {
+                finishBatchedPlacement()
+            } else if isDialogOpen {
+                Swift.print("🛑 Cancelling placement batch - dialog is open")
+                cancelBatchedPlacement()
+            }
+            return
+        }
+
+        // Take next batch from queue
+        let batchSize = min(placementBatchSize, placementQueue.count)
+        let batch = Array(placementQueue.prefix(batchSize))
+        placementQueue.removeFirst(batchSize)
+
+        // Calculate progress (batch.count items are being processed now)
+        let remainingInQueue = placementQueue.count
+        let currentBatch = batch.count
+        let totalProgress = remainingInQueue + currentBatch
+
+        Swift.print("📦 Processing batch of \(currentBatch) objects (\(remainingInQueue) remaining in queue)")
+
+        // Place each object in the batch
+        for location in batch {
+            if location.type == .sphere {
+                placeARSphereAtLocation(location, in: arView)
+            } else {
+                placeLootBoxAtLocation(location, in: arView)
+            }
+        }
+
+        // Update progress
+        currentProgress += batch.count
+
+        // Update progress via notification
+        NotificationCenter.default.post(name: NSNotification.Name("PlacementProgressUpdate"),
+                                      object: nil,
+                                      userInfo: ["current": currentProgress, "total": totalOriginallyQueued])
+
+        // Schedule next batch if queue isn't empty
+        if !placementQueue.isEmpty {
+            DispatchQueue.main.asyncAfter(deadline: .now() + placementBatchDelay) { [weak self] in
+                self?.processNextPlacementBatch()
+            }
+        } else {
+            finishBatchedPlacement()
+        }
+    }
+
+    /// Finish the batched placement process
+    private func finishBatchedPlacement() {
+        isPlacementInProgress = false
+        placementQueue.removeAll()
+        currentProgress = 0
+        totalOriginallyQueued = 0
+        // Post notification to reset progress
+        NotificationCenter.default.post(name: NSNotification.Name("PlacementProgressUpdate"),
+                                      object: nil,
+                                      userInfo: ["current": 0, "total": 0])
+        Swift.print("✅ Batched placement completed")
+    }
+
+    /// Cancel any ongoing batched placement
+    private func cancelBatchedPlacement() {
+        placementQueue.removeAll()
+        isPlacementInProgress = false
+        currentProgress = 0
+        totalOriginallyQueued = 0
+        // Post notification to update UI
+        NotificationCenter.default.post(name: NSNotification.Name("PlacementProgressUpdate"),
+                                      object: nil,
+                                      userInfo: ["current": 0, "total": 0])
+        Swift.print("🛑 Batched placement cancelled")
+    }
+
+    /// Handle dialog opened notification - cancel placement to prevent UI freezing
+    @objc private func handleDialogOpened() {
+        isDialogOpen = true
+        cancelBatchedPlacement()
+    }
+
+    /// Handle dialog closed notification
+    @objc private func handleDialogClosed() {
+        isDialogOpen = false
     }
 
     // MARK: - AR World Map Integration
@@ -4728,91 +4848,14 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             return
         }
 
-        // AR WORLD MAP INTEGRATION: Prioritize world map anchoring over GPS coordinates
-        // World map anchoring provides millimeter precision and session persistence
-        var finalPosition = arPosition // Default to passed position
-        var useWorldMapAnchoring = false
+        // CRITICAL FIX: For fresh AR placements from placement view, use the exact position provided
+        // Don't try to be smart with world map anchoring or saved coordinates for fresh placements
+        // The placement view already calculated the perfect position at the crosshairs
+        let finalPosition = arPosition
+        let useWorldMapAnchoring = false
 
-        // FIRST PRIORITY: Try world map anchoring for objects with saved AR coordinates
-        if let worldMapService = worldMapPersistenceService,
-           worldMapService.isPersistenceEnabled,
-           let arOriginLat = location.ar_origin_latitude,
-           let arOriginLon = location.ar_origin_longitude,
-           let offsetX = location.ar_offset_x,
-           let offsetY = location.ar_offset_y,
-           let offsetZ = location.ar_offset_z {
-
-            let savedOrigin = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
-            let currentOrigin = _arOriginLocation ?? userLocation
-
-            // Check if AR origins match (within reasonable distance)
-            let originDistance = currentOrigin.distance(from: savedOrigin)
-
-            if originDistance < 50.0 { // Allow larger distance for world map compatibility
-                let arOffset = SIMD3<Float>(Float(offsetX), Float(offsetY), Float(offsetZ))
-
-                // Mark that this object should be world-map anchored when placed
-                // The actual anchoring will happen after the AnchorEntity is created
-                useWorldMapAnchoring = true
-                finalPosition = arOffset
-                Swift.print("🗺️ Object will be world-map anchored (coordinates match)")
-                Swift.print("   Object ID: \(location.id)")
-                Swift.print("   AR Position: (\(String(format: "%.4f", arOffset.x)), \(String(format: "%.4f", arOffset.y)), \(String(format: "%.4f", arOffset.z)))")
-                Swift.print("   Origin distance: \(String(format: "%.1f", originDistance))m")
-            } else {
-                Swift.print("⚠️ AR origin mismatch (\(String(format: "%.1f", originDistance))m apart) - cannot use world map anchoring")
-            }
-        }
-
-        // SECOND PRIORITY: Use saved AR coordinates directly (without world map anchoring)
-        if !useWorldMapAnchoring,
-           let arOriginLat = location.ar_origin_latitude,
-           let arOriginLon = location.ar_origin_longitude,
-           let offsetX = location.ar_offset_x,
-           let offsetY = location.ar_offset_y,
-           let offsetZ = location.ar_offset_z,
-           let currentOrigin = _arOriginLocation {
-
-            let savedOrigin = CLLocation(latitude: arOriginLat, longitude: arOriginLon)
-            let originDistance = currentOrigin.distance(from: savedOrigin)
-
-            if originDistance < 10.0 {
-                finalPosition = SIMD3<Float>(Float(offsetX), Float(offsetY), Float(offsetZ))
-                Swift.print("✅ Using saved AR coordinates (origin match: \(String(format: "%.1f", originDistance))m)")
-                Swift.print("   AR Origin: (\(String(format: "%.6f", arOriginLat)), \(String(format: "%.6f", arOriginLon)))")
-                Swift.print("   AR Offset: (\(String(format: "%.4f", offsetX)), \(String(format: "%.4f", offsetY)), \(String(format: "%.4f", offsetZ)))m")
-            } else {
-                Swift.print("⚠️ AR origin mismatch (\(String(format: "%.1f", originDistance))m apart) - falling back to GPS conversion")
-            }
-        }
-
-        // THIRD PRIORITY: GPS-to-AR conversion (legacy fallback)
-        if !useWorldMapAnchoring {
-            guard let frame = arView.session.currentFrame else {
-                Swift.print("⚠️ Cannot place object: No AR frame")
-                return
-            }
-
-            let targetGPS = CLLocation(latitude: location.latitude, longitude: location.longitude)
-            let cameraTransform = frame.camera.transform
-            let arOriginGPS = self._arOriginLocation ?? userLocation
-            guard let mainARPosition = precisionPositioningService?.convertGPSToARPosition(
-                targetGPS: targetGPS,
-                userGPS: userLocation,
-                cameraTransform: cameraTransform,
-                arOriginGPS: arOriginGPS
-            ) else {
-                Swift.print("⚠️ Cannot convert GPS to AR position for object: \(location.name)")
-                return
-            }
-
-            // Use grounding height if available, otherwise use converted Y position
-            let finalY = location.grounding_height.map { Float($0) } ?? mainARPosition.y
-            finalPosition = SIMD3<Float>(mainARPosition.x, finalY, mainARPosition.z)
-
-            Swift.print("📍 Using GPS-converted position (fallback)")
-            Swift.print("   GPS: (\(String(format: "%.6f", location.latitude)), \(String(format: "%.6f", location.longitude)))")
-        }
+        Swift.print("🎯 Using exact AR position from placement view (no repositioning)")
+        Swift.print("   AR Position: (\(String(format: "%.4f", arPosition.x)), \(String(format: "%.4f", arPosition.y)), \(String(format: "%.4f", arPosition.z)))")
 
         Swift.print("🎯 Placing object '\(location.name)' (ID: \(location.id)) in main AR view")
         Swift.print("   Final AR Position: (\(String(format: "%.4f", finalPosition.x)), \(String(format: "%.4f", finalPosition.y)), \(String(format: "%.4f", finalPosition.z)))")

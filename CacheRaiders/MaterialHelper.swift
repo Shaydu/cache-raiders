@@ -37,19 +37,31 @@ class MaterialHelper {
     static func createNonEmissiveMaterial(from baseMaterial: Material) -> Material {
         // Handle SimpleMaterial - return as-is (already non-emissive)
         if let simpleMaterial = baseMaterial as? SimpleMaterial {
-            var restoredMaterial = SimpleMaterial()
-            restoredMaterial.color = simpleMaterial.color
-            restoredMaterial.roughness = simpleMaterial.roughness
-            restoredMaterial.metallic = simpleMaterial.metallic
+            // Extract the float value from MaterialScalarParameter
+            let metallicValue: Float
+            switch simpleMaterial.metallic {
+            case .float(let value):
+                metallicValue = value
+            case .texture:
+                // For texture-based parameters, default to non-metallic
+                metallicValue = 0.0
+            }
+
+            let restoredMaterial = SimpleMaterial(
+                color: simpleMaterial.color.tint,
+                roughness: simpleMaterial.roughness,
+                isMetallic: metallicValue > 0.5
+            )
             return restoredMaterial
         }
         
         // Handle UnlitMaterial - convert to SimpleMaterial to restore lighting
         if let unlitMaterial = baseMaterial as? UnlitMaterial {
-            var simpleMaterial = SimpleMaterial()
-            simpleMaterial.color = unlitMaterial.color
-            simpleMaterial.roughness = 0.4 // Default roughness
-            simpleMaterial.metallic = 0.3 // Default metallic
+            let simpleMaterial = SimpleMaterial(
+                color: unlitMaterial.color.tint,
+                roughness: 0.4, // Default roughness
+                isMetallic: false
+            )
             return simpleMaterial
         }
         

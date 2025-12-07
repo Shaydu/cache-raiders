@@ -135,10 +135,11 @@ struct RotatingModelView: View {
     private func createFallbackModel() {
         // Create a simple cube as fallback
         let mesh = MeshResource.generateBox(size: size)
-        var material = SimpleMaterial()
-        material.color = .init(tint: UIColor.blue.withAlphaComponent(0.8))
-        material.roughness = 0.3
-        material.metallic = 0.5
+        let material = SimpleMaterial(
+            color: UIColor.blue.withAlphaComponent(0.8),
+            roughness: 0.3,
+            isMetallic: true
+        )
 
         let cubeEntity = ModelEntity(mesh: mesh, materials: [material])
         self.modelEntity = cubeEntity

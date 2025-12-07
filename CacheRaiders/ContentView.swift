@@ -32,6 +32,10 @@ struct ContentView: View {
 
     // PERFORMANCE: Task for debouncing location updates to prevent excessive API calls
     @State private var locationUpdateTask: Task<Void, Never>?
+
+    // AR object placement progress tracking (to prevent UI hanging during initial load)
+    @State private var placementProgress: (current: Int, total: Int) = (0, 0)
+    @State private var isPlacementInProgress: Bool = false
     
     // Computed property for loot box counter - counts ALL locations from database (not just nearby)
     // This matches the admin panel which shows all objects, not just nearby ones
@@ -376,7 +380,28 @@ struct ContentView: View {
                     .cornerRadius(10)
                     .offset(y: -54)
             }
-            
+
+            // Show placement progress indicator when loading objects
+            if isPlacementInProgress && placementProgress.total > 0 {
+                VStack(spacing: 4) {
+                    Text("Loading AR objects...")
+                        .font(.subheadline)
+                        .foregroundColor(.white)
+                    ProgressView(value: Double(placementProgress.current), total: Double(placementProgress.total))
+                        .progressViewStyle(.linear)
+                        .frame(width: 150)
+                        .tint(.blue)
+                    Text("\(placementProgress.current)/\(placementProgress.total)")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.8))
+                }
+                .padding()
+                .background(.ultraThinMaterial)
+                .cornerRadius(10)
+                .offset(y: -80)
+                .transition(.opacity)
+            }
+
             if let notification = collectionNotification {
                 Text(notification)
                     .font(.title2)
@@ -497,7 +522,9 @@ struct ContentView: View {
             currentTargetObjectName: $currentTargetObjectName,
             currentTargetObject: $currentTargetObject,
             conversationNPC: $conversationNPC,
-            treasureHuntService: treasureHuntService
+            treasureHuntService: treasureHuntService,
+            placementProgress: $placementProgress,
+            isPlacementInProgress: $isPlacementInProgress
         )
         .ignoresSafeArea()
 
@@ -579,6 +606,22 @@ struct ContentView: View {
             // Show the object detail sheet
             DispatchQueue.main.async {
                 self.presentedSheet = .objectDetail(detail: objectDetail)
+            }
+        }
+
+        // Listen for placement progress updates to show loading indicator
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("PlacementProgressUpdate"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let userInfo = notification.userInfo,
+               let current = userInfo["current"] as? Int,
+               let total = userInfo["total"] as? Int {
+                DispatchQueue.main.async {
+                    self.placementProgress = (current, total)
+                    self.isPlacementInProgress = total > 0 && current < total
+                }
             }
         }
 
