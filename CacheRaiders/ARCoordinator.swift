@@ -1361,18 +1361,26 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         let factory = item.type.factory
         let (entity, findable) = factory.createEntity(location: item, anchor: AnchorEntity(), sizeMultiplier: 1.0)
 
-        // Use enhanced multi-plane anchoring for better stability
-        if let enhancedAnchorService = enhancedPlaneAnchorService,
-           enhancedAnchorService.createMultiPlaneAnchor(objectId: item.id, position: position, entity: entity) {
-            Swift.print("🎯 Used enhanced multi-plane anchoring for \(item.id)")
+        // Create the anchor entity first
+        let anchor = AnchorEntity(world: position)
+        anchor.name = item.id
+        anchor.addChild(entity)
+
+        // Try enhanced multi-plane anchoring for better stability
+        var usedEnhancedAnchoring = false
+        if let enhancedAnchorService = enhancedPlaneAnchorService {
+            usedEnhancedAnchoring = enhancedAnchorService.createMultiPlaneAnchor(objectId: item.id, anchorEntity: anchor)
+            if usedEnhancedAnchoring {
+                Swift.print("🎯 Used enhanced multi-plane anchoring for \(item.id)")
+            } else {
+                Swift.print("📍 Used traditional anchoring for \(item.id) (insufficient planes for enhancement)")
+            }
         } else {
-            // Fallback to traditional anchoring
-            let anchor = AnchorEntity(world: position)
-            anchor.name = item.id
-            anchor.addChild(entity)
-            arView.scene.addAnchor(anchor)
-            Swift.print("📍 Used traditional anchoring for \(item.id) (fallback)")
+            Swift.print("📍 Used traditional anchoring for \(item.id) (enhanced service unavailable)")
         }
+
+        // Add anchor to scene
+        arView.scene.addAnchor(anchor)
 
         print("📍 Placed AR item '\(item.name)' at position (\(String(format: "%.2f", position.x)), \(String(format: "%.2f", position.y)), \(String(format: "%.2f", position.z)))")
         findableObjects[item.id] = findable
@@ -1497,6 +1505,9 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         // Process frame through VIO/SLAM service for enhanced tracking
         vioSlamService?.processFrameForEnhancement(frame)
+
+        // Apply enhanced stabilization to all active objects
+        applyEnhancedStabilization()
 
         // Log every 60 frames (roughly once per second at 60fps) to avoid spam
         sessionFrameCount += 1
@@ -5508,6 +5519,61 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         Swift.print("      Anchor transform rotated for compass alignment")
 
         return rotatedTransform
+    }
+
+    // MARK: - Enhanced AR Stabilization
+
+    /// Applies enhanced stabilization to all active AR objects using VIO/SLAM and multi-plane anchoring
+    private func applyEnhancedStabilization() {
+        // Apply stabilization to all findable objects
+        for (objectId, findableObject) in findableObjects {
+            stabilizeObject(objectId: objectId, findableObject: findableObject)
+        }
+    }
+
+    /// Stabilizes a specific object using enhanced anchoring techniques
+    private func stabilizeObject(objectId: String, findableObject: FindableObject) {
+        let currentTransform = findableObject.anchor.transform
+        let currentPosition = SIMD3<Float>(currentTransform.columns.3.x, currentTransform.columns.3.y, currentTransform.columns.3.z)
+
+        var targetTransform = currentTransform
+        var needsUpdate = false
+
+        // Apply VIO/SLAM stabilization
+        if let vioSlamService = vioSlamService {
+            targetTransform = vioSlamService.stabilizeObject(objectId, currentTransform: targetTransform)
+            needsUpdate = true
+
+            // Apply drift compensation
+            let compensatedPosition = vioSlamService.compensateDrift(for: objectId, currentPosition: SIMD3<Float>(targetTransform.columns.3.x, targetTransform.columns.3.y, targetTransform.columns.3.z))
+            targetTransform.columns.3 = SIMD4<Float>(compensatedPosition.x, compensatedPosition.y, compensatedPosition.z, 1.0)
+        }
+
+        // Enhanced plane anchor corrections are handled by the GeometricStabilizer timer
+        // which directly modifies the anchor entity position
+
+        // Apply gradual stabilization to avoid sudden jumps
+        if needsUpdate && targetTransform != currentTransform {
+            // Smooth the transition to prevent jarring movements
+            let smoothingFactor: Float = 0.1 // 10% correction per frame
+            let smoothedTransform = interpolateTransform(from: currentTransform, to: targetTransform, factor: smoothingFactor)
+            findableObject.anchor.transform = smoothedTransform
+        }
+    }
+
+    /// Interpolates between two transforms for smooth stabilization
+    private func interpolateTransform(from: simd_float4x4, to: simd_float4x4, factor: Float) -> simd_float4x4 {
+        // Interpolate translation
+        let fromPos = SIMD3<Float>(from.columns.3.x, from.columns.3.y, from.columns.3.z)
+        let toPos = SIMD3<Float>(to.columns.3.x, to.columns.3.y, to.columns.3.z)
+        let interpolatedPos = fromPos + (toPos - fromPos) * factor
+
+        // For now, just interpolate position. Rotation interpolation would be more complex
+        // and may not be necessary for small corrections
+        var result = from
+        result.columns.3 = SIMD4<Float>(interpolatedPos.x, interpolatedPos.y, interpolatedPos.z, 1.0)
+
+        return result
     }
 
 

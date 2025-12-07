@@ -43,10 +43,9 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
     /// Creates an object anchored to multiple planes for enhanced stability
     /// - Parameters:
     ///   - objectId: Unique identifier for the object
-    ///   - position: Initial position in AR space
-    ///   - entity: The RealityKit entity to anchor
+    ///   - anchorEntity: The existing AnchorEntity to enhance with multi-plane stability
     /// - Returns: Success status of multi-plane anchoring
-    func createMultiPlaneAnchor(objectId: String, position: SIMD3<Float>, entity: Entity) -> Bool {
+    func createMultiPlaneAnchor(objectId: String, anchorEntity: AnchorEntity) -> Bool {
         guard let arView = arView else {
             print("⚠️ No AR view available for multi-plane anchoring")
             return false
@@ -74,12 +73,7 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
             stabilityScore: calculateAnchorGroupStability(planes: nearbyPlanes, constraints: constraints)
         )
 
-        // Create the anchor entity with multi-plane stabilization
-        let anchorEntity = AnchorEntity(world: position)
-        anchorEntity.name = "multi_plane_\(objectId)"
-        anchorEntity.addChild(entity)
-
-        // Add geometric stabilizer
+        // Add geometric stabilizer to the existing anchor entity
         let stabilizer = GeometricStabilizer(
             anchorGroup: anchorGroup,
             anchorEntity: anchorEntity,
@@ -90,8 +84,6 @@ class AREnhancedPlaneAnchorService: NSObject, ObservableObject {
         activePlaneAnchors[objectId] = anchorGroup
         geometricStabilizers[objectId] = stabilizer
         planeConstraints[objectId] = constraints
-
-        arView.scene.addAnchor(anchorEntity)
 
         print("🎯 Created multi-plane anchor for '\(objectId)' using \(nearbyPlanes.count) planes (stability: \(String(format: "%.2f", anchorGroup.stabilityScore)))")
 
