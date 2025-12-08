@@ -21,7 +21,8 @@ const Config = {
         'Mysterious Sphere',
         'Mysterious Cube',
         'Turkey',
-        'Terror Engine'
+        'Terror Engine',
+        'Your Mom'
     ],
     
     /**
@@ -36,7 +37,8 @@ const Config = {
         'Mysterious Sphere': ['Mysterious Sphere', 'Ancient Orb', 'Glowing Sphere'],
         'Mysterious Cube': ['Mysterious Cube'],
         'Turkey': ['Animated Turkey', 'Rigged Turkey', 'Thanksgiving Turkey'],
-        'Terror Engine': ['Terror Engine', 'Ancient Engine', 'Leather Ghost Engine']
+        'Terror Engine': ['Terror Engine', 'Ancient Engine', 'Leather Ghost Engine', 'Krasue Engine', 'Grim Reaper Engine', 'Dark Angel Engine'],
+        'Your Mom': ['Your Mom', 'Mystery Figure', 'Legendary Character']
     },
     
     /**

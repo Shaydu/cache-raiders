@@ -12,10 +12,15 @@ import UIKit
 // Import for NFC positioning service
 import Foundation
 
+// MARK: - SIMD Type Aliases (moved to class scope to avoid global conflicts)
+typealias Vector3 = SIMD3<Float>
+typealias Vector4 = SIMD4<Float>
+typealias Matrix4x4 = float4x4
+
 // Utility classes are available within the same module
 
 // MARK: - AR Coordinator
-class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
+class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProvider {
 
     // Managers
     private var environmentManager: AREnvironmentManager?
@@ -63,6 +68,13 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
     let objectPlaced = PassthroughSubject<String, Never>() // Publisher for object placement events
     var shouldForceReplacement: Bool = false // Force re-placement after reset when AR is ready
+    // MARK: - Debug Configuration
+    #if DEBUG
+        private let enableComplexSIMDDebugging = false // Set to true if you need full SIMD debugging
+    #else
+        private let enableComplexSIMDDebugging = true
+    #endif
+
     // MARK: - Helper Methods
     private func updateManagerReferences() {
         // Update all managers that reference placedBoxes (backward compatibility)
@@ -103,7 +115,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     }
 
     /// Choose the best anchor type based on available data and object type
-    private func createOptimalAnchor(for position: SIMD3<Float>, screenPoint: CGPoint?, objectType: LootBoxType, in arView: ARView) -> AnchorEntity {
+    private func createOptimalAnchor(for position: Vector3, screenPoint: CGPoint?, objectType: LootBoxType, in arView: ARView) -> AnchorEntity {
 
         // Try plane anchor first if we have screen coordinates (for surface-attached objects)
         if let screenPoint = screenPoint {
@@ -258,6 +270,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             }
         }
     }
+    private var lastSessionOperationTime: TimeInterval = 0 // Track last pause/resume operation time
     
     // Store AR configuration for resuming
     private var savedARConfiguration: ARWorldTrackingConfiguration?
@@ -606,8 +619,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         tapHandler?.placedNPCs = placedNPCs // Pass NPCs to tap handler
         
         // Set up tap handler callbacks
-        tapHandler?.onFindLootBox = { [weak self] locationId, anchor, cameraPos, sphereEntity in
-            self?.findLootBox(locationId: locationId, anchor: anchor, cameraPosition: cameraPos, sphereEntity: sphereEntity)
+        tapHandler?.onFindLootBox = { [weak self] locationId, anchor, cameraPos, sphereEntity, tapWorldPosition in
+            self?.findLootBox(locationId: locationId, anchor: anchor, cameraPosition: cameraPos, sphereEntity: sphereEntity, tapWorldPosition: tapWorldPosition)
         }
         tapHandler?.onPlaceLootBoxAtTap = { [weak self] location, result in
             self?.placeLootBoxAtTapLocation(location, tapResult: result, in: arView)
@@ -1515,8 +1528,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         // The ARSession delegate must return quickly to avoid the "retaining X ARFrames" warning
         // This warning causes camera frames to stop being delivered, leading to frozen/black camera
 
-        // Process VIO/SLAM in background - reduced frequency to prevent frame backup
-        let shouldProcessVIO_SLAM = sessionFrameCount % 5 == 0 // Process every 5th frame (12fps instead of 20fps)
+        // FURTHER OPTIMIZED: Process VIO/SLAM less frequently to prevent frame backup and retention
+        let shouldProcessVIO_SLAM = sessionFrameCount % 30 == 0 // Process every 30th frame (2fps) to reduce processing load
         if shouldProcessVIO_SLAM {
             // Create a weak reference to avoid retaining the frame
             let frameTimestamp = frame.timestamp
@@ -1530,8 +1543,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             }
         }
 
-        // Apply stabilization less frequently - every 10th frame instead of 6th (6fps)
-        let shouldApplyStabilization = sessionFrameCount % 10 == 0
+        // Apply stabilization much less frequently - every 20th frame (3fps) to reduce load
+        let shouldApplyStabilization = sessionFrameCount % 20 == 0
         if shouldApplyStabilization {
             backgroundProcessingQueue.async { [weak self] in
                 self?.applyEnhancedStabilization()
@@ -1612,45 +1625,53 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
                 // Check GPS accuracy - accept up to 20m for better UX (consistent with placement view)
                 if userLocation.horizontalAccuracy >= 0 && userLocation.horizontalAccuracy < 20.0 {
                     Swift.print("🎯 [SESSION] GPS accuracy good (< 20.0m), setting AR origin")
-                    // ACCURATE MODE: GPS available with good accuracy
-                    // Step 1: Set ENU origin from GPS (geospatial coordinate frame)
+
+                    // Always set AR origin location (required for placement to work)
+                    _arOriginLocation = userLocation
+                    locationManager?.sharedAROrigin = userLocation // Share AR origin with placement view
+                    arOriginSetTime = Date()
+
+                    // Try to set ENU origin from GPS (geospatial coordinate frame)
                     if geospatialService?.setENUOrigin(from: userLocation) == true {
-                        _arOriginLocation = userLocation
-                        locationManager?.sharedAROrigin = userLocation // Share AR origin with placement view
-                        arOriginSetTime = Date()
+                        // ACCURATE MODE: ENU origin set successfully
                         isDegradedMode = false
-                        Swift.print("✅ [SESSION] AR origin successfully set!")
-                        
-                        // Step 2: Set AR session origin (VIO tracking origin at 0,0,0)
-                        // Set fixed ground level at AR origin (using surface detection if available)
-                        let groundLevel: Float
-                        if let surfaceY = groundingService?.findHighestBlockingSurface(x: 0, z: 0, cameraPos: cameraPos) {
-                            // Use detected surface for accurate ground level
-                            groundLevel = surfaceY
-                            Swift.print("📍 AR Origin ground level from surface detection: \(String(format: "%.2f", groundLevel))m")
-                        } else {
-                            // Fallback: estimate from camera position
-                            groundLevel = cameraPos.y - 1.5
-                            Swift.print("📍 AR Origin ground level estimated: \(String(format: "%.2f", groundLevel))m (camera Y: \(String(format: "%.2f", cameraPos.y))m)")
-                        }
-                        
-                        arOriginGroundLevel = groundLevel
-                        geospatialService?.setARSessionOrigin(arPosition: SIMD3<Float>(0, 0, 0), groundLevel: groundLevel)
-                        precisionPositioningService?.setAROriginGroundLevel(groundLevel) // Legacy compatibility
-                        
-                        Swift.print("✅ AR Origin SET (ACCURATE MODE) at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
-                        Swift.print("   GPS accuracy: \(String(format: "%.2f", userLocation.horizontalAccuracy))m")
-                        Swift.print("   Ground level: \(String(format: "%.2f", groundLevel))m (FIXED - never changes)")
-                        Swift.print("   ⚠️ AR origin will NOT change - all objects positioned relative to this fixed point")
-                        Swift.print("   📐 Using ENU coordinate system for geospatial positioning")
-
-        // WORLD MAP PERSISTENCE: Initialize when AR session starts
-        onARSessionStarted()
-
-        // AR WORLD MAP INTEGRATION: Capture world map periodically for persistence
-        // This ensures objects can be restored if the app is killed or AR session resets
-        startWorldMapCaptureTimer()
+                        Swift.print("✅ [SESSION] AR origin successfully set (ACCURATE MODE)!")
+                    } else {
+                        // DEGRADED MODE: ENU origin failed, but GPS accuracy is acceptable
+                        isDegradedMode = true
+                        Swift.print("⚠️ [SESSION] AR origin set in DEGRADED MODE (ENU origin failed)")
+                        Swift.print("   GPS accuracy: \(String(format: "%.2f", userLocation.horizontalAccuracy))m (acceptable but not optimal)")
                     }
+
+                    // Step 2: Set AR session origin (VIO tracking origin at 0,0,0)
+                    // Set fixed ground level at AR origin (using surface detection if available)
+                    let groundLevel: Float
+                    if let surfaceY = groundingService?.findHighestBlockingSurface(x: 0, z: 0, cameraPos: cameraPos) {
+                        // Use detected surface for accurate ground level
+                        groundLevel = surfaceY
+                        Swift.print("📍 AR Origin ground level from surface detection: \(String(format: "%.2f", groundLevel))m")
+                    } else {
+                        // Fallback: estimate from camera position
+                        groundLevel = cameraPos.y - 1.5
+                        Swift.print("📍 AR Origin ground level estimated: \(String(format: "%.2f", groundLevel))m (camera Y: \(String(format: "%.2f", cameraPos.y))m)")
+                    }
+
+                    arOriginGroundLevel = groundLevel
+                    geospatialService?.setARSessionOrigin(arPosition: SIMD3<Float>(0, 0, 0), groundLevel: groundLevel)
+                    precisionPositioningService?.setAROriginGroundLevel(groundLevel) // Legacy compatibility
+
+                    Swift.print("✅ AR Origin SET at: \(userLocation.coordinate.latitude), \(userLocation.coordinate.longitude)")
+                    Swift.print("   GPS accuracy: \(String(format: "%.2f", userLocation.horizontalAccuracy))m")
+                    Swift.print("   Mode: \(isDegradedMode ? "DEGRADED" : "ACCURATE")")
+                    Swift.print("   Ground level: \(String(format: "%.2f", groundLevel))m (FIXED - never changes)")
+                    Swift.print("   ⚠️ AR origin will NOT change - all objects positioned relative to this fixed point")
+
+                    // WORLD MAP PERSISTENCE: Initialize when AR session starts
+                    onARSessionStarted()
+
+                    // AR WORLD MAP INTEGRATION: Capture world map periodically for persistence
+                    // This ensures objects can be restored if the app is killed or AR session resets
+                    startWorldMapCaptureTimer()
                 } else {
                     // GPS available but accuracy too low
                     // Wait up to 10 seconds for better GPS, then enter degraded mode
@@ -3686,19 +3707,8 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         Swift.print("📍 Height difference (camera - box): \(String(format: "%.2f", cameraPos.y - groundedPosition.y))m")
         
         // Determine object type based on location type from dropdown selection
-        let selectedObjectType: PlacedObjectType
-        switch location.type {
-        case .chalice:
-            selectedObjectType = .chalice
-        case .sphere:
-            selectedObjectType = .sphere
-        case .cube:
-            selectedObjectType = .cube
-        case .templeRelic, .treasureChest, .lootChest, .lootCart, .turkey, .terrorEngine:
-            selectedObjectType = .treasureBox
-        default:
-            selectedObjectType = .treasureBox // Default to treasure box for any new types
-        }
+        // Uses polymorphic mapping instead of switch statement
+        let selectedObjectType = location.type.placedObjectType
 
         Swift.print("🎲 Placing \(selectedObjectType) (\(location.type.displayName)) for \(location.name)")
         Swift.print("   Location ID: \(location.id)")
@@ -4563,7 +4573,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     }
     // MARK: - Find Loot Box Helper
     /// Finds any findable object using the FindableObject base class behavior
-    private func findLootBox(locationId: String, anchor: AnchorEntity, cameraPosition: SIMD3<Float>, sphereEntity: ModelEntity?) {
+    private func findLootBox(locationId: String, anchor: AnchorEntity, cameraPosition: SIMD3<Float>, sphereEntity: ModelEntity?, tapWorldPosition: SIMD3<Float>?) {
         guard !(distanceTracker?.foundLootBoxes.contains(locationId) ?? false) else {
             return // Already found
         }
@@ -4656,7 +4666,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         // This will trigger: confetti, sound, animation
         // The object will be removed in the completion callback
         let objectName = findableObject.itemDescription()
-        findableObject.find { [weak self] in
+        findableObject.find(tapWorldPosition: tapWorldPosition) { [weak self] in
             // Show discovery notification AFTER animation completes
             DispatchQueue.main.async { [weak self] in
                 // Get the object to access created_by field
@@ -4961,7 +4971,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             anchor.name = location.id
 
             // Get factory and create entity
-            let factory = LootBoxFactoryRegistry.factory(for: location.type)
+            let factory = location.type.factory
             // CRITICAL: Use the findableObject returned by factory - it has proper sphere/container references
             // Use the scale parameter from the placement view to maintain consistent size
             let (entity, findableObject) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: scale)
@@ -5050,13 +5060,27 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
     /// Handle dialog opened notification - pause AR session
     @objc private func handleDialogOpened(_ notification: Notification) {
         isDialogOpen = true
-        pauseARSession()
+        // Throttle pause operations to prevent rapid pause/resume cycles that break camera calibration
+        let currentTime = ProcessInfo.processInfo.systemUptime
+        if currentTime - lastSessionOperationTime >= 1.0 { // Minimum 1 second between operations
+            pauseARSession()
+            lastSessionOperationTime = currentTime
+        } else {
+            Swift.print("⏸️ Skipping AR session pause - too soon after last operation")
+        }
     }
 
     /// Handle dialog closed notification - resume AR session
     @objc private func handleDialogClosed(_ notification: Notification) {
         isDialogOpen = false
-        resumeARSession()
+        // Throttle resume operations to prevent rapid pause/resume cycles that break camera calibration
+        let currentTime = ProcessInfo.processInfo.systemUptime
+        if currentTime - lastSessionOperationTime >= 1.0 { // Minimum 1 second between operations
+            resumeARSession()
+            lastSessionOperationTime = currentTime
+        } else {
+            Swift.print("▶️ Skipping AR session resume - too soon after last operation")
+        }
         // Clear conversationNPC binding to allow re-tapping
         DispatchQueue.main.async { [weak self] in
             self?.conversationNPCBinding?.wrappedValue = nil
@@ -5138,9 +5162,9 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
         // CRITICAL FIX: Use .resetTracking option to ensure camera feed comes back
         // Empty options [] can leave the session in a paused state
-        let resumeOptions: ARSession.RunOptions = [.resetTracking]
-        Swift.print("▶️ Resuming AR session with resetTracking option")
-        Swift.print("   This ensures camera feed is restored after pause")
+        let resumeOptions: ARSession.RunOptions = [.resetTracking, .removeExistingAnchors]
+        Swift.print("▶️ Resuming AR session with resetTracking + removeExistingAnchors options")
+        Swift.print("   This ensures camera feed is restored and calibration data is fresh")
 
         arView.session.run(configToUse, options: resumeOptions)
         Swift.print("   ✅ Session resumed with resetTracking")
@@ -5817,7 +5841,21 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
     /// Stabilizes a specific object using enhanced anchoring techniques
     private func stabilizeObject(objectId: String, findableObject: FindableObject) {
-        let currentTransform = findableObject.anchor.transformMatrix(relativeTo: nil)
+        // Safety check: ensure anchor is still in the scene and has a valid transform
+        guard findableObject.anchor.parent != nil || findableObject.anchor.scene != nil else {
+            Swift.print("⚠️ Cannot stabilize object \(objectId) - anchor not attached to scene")
+            return
+        }
+
+        // Safely get the transform matrix
+        let currentTransform: simd_float4x4
+        do {
+            currentTransform = findableObject.anchor.transformMatrix(relativeTo: nil)
+        } catch {
+            Swift.print("⚠️ Failed to get transform matrix for object \(objectId): \(error)")
+            return
+        }
+
         let currentPosition = SIMD3<Float>(currentTransform.columns.3.x, currentTransform.columns.3.y, currentTransform.columns.3.z)
 
         var targetTransform = currentTransform
@@ -5853,9 +5891,14 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
 
     /// DEBUG: Comprehensive AR status report for troubleshooting invisible objects
     func debugARStatus() {
+        // Create thread-safe copies to prevent crashes during concurrent modification
+        let findableObjectsCopy = findableObjects
+        let objectsInViewportCopy = objectsInViewport
+        let placedBoxesCopy = findableObjectsCopy.mapValues { $0.anchor }
+
         Swift.print("🔍 === AR STATUS REPORT ===")
-        Swift.print("📍 Placed objects: \(placedBoxes.count)")
-        Swift.print("👁️ Objects in viewport: \(objectsInViewport.count)")
+        Swift.print("📍 Placed objects: \(placedBoxesCopy.count)")
+        Swift.print("👁️ Objects in viewport: \(objectsInViewportCopy.count)")
         Swift.print("🎮 Game mode: \(locationManager?.gameMode.displayName ?? "Unknown")")
         Swift.print("📏 Search distance: \(locationManager?.maxSearchDistance ?? 0)m")
 
@@ -5866,7 +5909,7 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
             Swift.print("📍 Nearby objects: \(nearby.count)")
             for location in nearby {
                 let distance = userLocation.distance(from: location.location)
-                let isPlaced = placedBoxes[location.id] != nil
+                let isPlaced = placedBoxesCopy[location.id] != nil
                 let isCollected = location.collected
                 Swift.print("   • \(location.name): \(String(format: "%.1f", distance))m away, placed: \(isPlaced), collected: \(isCollected)")
             }
@@ -5890,6 +5933,19 @@ class ARCoordinator: NSObject, ARSessionDelegate, AROriginProvider {
         guard let arView = arView else {
             Swift.print("❌ Cannot restart AR session: no ARView available")
             return
+        }
+
+        // Check current camera state before forcing restart
+        if let currentFrame = arView.session.currentFrame {
+            if case .notAvailable = currentFrame.camera.trackingState {
+                Swift.print("⚠️ Camera tracking is not available - restart may not help")
+                Swift.print("   Waiting for camera to become available before restart...")
+                // Delay restart to give camera time to recover
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                    self?.forceRestartARSession()
+                }
+                return
+            }
         }
 
         // Stop the current session

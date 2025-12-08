@@ -15,7 +15,7 @@ protocol Findable {
     func itemDescription() -> String
     
     /// Triggers the find behavior: sound, confetti, animation, increment count, disappear
-    func find(onComplete: @escaping () -> Void)
+    func find(tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void)
 }
 
 // MARK: - Findable Object Base Class
@@ -59,7 +59,7 @@ class FindableObject: Findable {
     
     /// Triggers the find behavior: sound, confetti, animation, increment count, disappear
     /// This is the main entry point - confetti and sound are handled by factory methods
-    func find(onComplete: @escaping () -> Void) {
+    func find(tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
         let objectName = itemDescription()
 
         Swift.print("🎉 Finding object: \(objectName)")
@@ -68,13 +68,15 @@ class FindableObject: Findable {
         // to ensure proper timing and prevent duplicate effects
 
         // Perform find animation (which includes confetti, sound, and object removal)
-        performFindAnimation(onComplete: onComplete)
+        performFindAnimation(tapWorldPosition: tapWorldPosition, onComplete: onComplete)
     }
     
     /// Performs the find animation based on location type
     /// This method can be overridden by child classes to customize animation behavior
-    /// - Parameter onComplete: Callback when animation completes
-    func performFindAnimation(onComplete: @escaping () -> Void) {
+    /// - Parameters:
+    ///   - tapWorldPosition: The world position where the user tapped (for confetti positioning)
+    ///   - onComplete: Callback when animation completes
+    func performFindAnimation(tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
         guard let location = location else {
             // No location - just complete immediately
             onFoundCallback?(locationId)
@@ -86,14 +88,23 @@ class FindableObject: Findable {
         }
         
         let _ = itemDescription() // Object name (unused but kept for potential logging)
-        
-        // Get anchor world position for cleanup
-        let anchorTransform = anchor.transformMatrix(relativeTo: nil)
-        let anchorWorldPos = SIMD3<Float>(
-            anchorTransform.columns.3.x,
-            anchorTransform.columns.3.y,
-            anchorTransform.columns.3.z
-        )
+
+        // Use tap position for confetti if available, otherwise fall back to anchor position
+        // This ensures confetti originates from where the user actually tapped on the object
+        let confettiWorldPos: SIMD3<Float>
+        if let tapPos = tapWorldPosition {
+            confettiWorldPos = tapPos
+            Swift.print("🎊 Using tap position for confetti: (\(String(format: "%.2f", tapPos.x)), \(String(format: "%.2f", tapPos.y)), \(String(format: "%.2f", tapPos.z)))")
+        } else {
+            // Fallback to anchor position if no tap position available
+            let anchorTransform = anchor.transformMatrix(relativeTo: nil)
+            confettiWorldPos = SIMD3<Float>(
+                anchorTransform.columns.3.x,
+                anchorTransform.columns.3.y,
+                anchorTransform.columns.3.z
+            )
+            Swift.print("🎊 Using anchor position for confetti (fallback): (\(String(format: "%.2f", confettiWorldPos.x)), \(String(format: "%.2f", confettiWorldPos.y)), \(String(format: "%.2f", confettiWorldPos.z)))")
+        }
         
         // Find the sphere entity if not already set
         var orb: ModelEntity? = sphereEntity
@@ -134,8 +145,12 @@ class FindableObject: Findable {
         let safeCompletion = {
             if !completionCalled {
                 completionCalled = true
+                Swift.print("🗑️ Removing anchor from scene: \(self.anchor.name)")
+                Swift.print("   Anchor has \(self.anchor.children.count) children before removal")
+                Swift.print("   Anchor parent: \(self.anchor.parent != nil ? "has parent" : "no parent")")
                 self.anchor.removeFromParent()
                 self.onFoundCallback?(location.id)
+                Swift.print("✅ Anchor removal completed")
                 onComplete()
             }
         }
@@ -160,7 +175,7 @@ class FindableObject: Findable {
                 factory.animateFind(
                     entity: container.container,
                     container: container,
-                    tapWorldPosition: anchorWorldPos
+                    tapWorldPosition: confettiWorldPos
                 ) {
                     safeCompletion()
                 }
@@ -178,13 +193,15 @@ class FindableObject: Findable {
         factory.animateFind(
             entity: entityToAnimate,
             container: container,
-            tapWorldPosition: anchorWorldPos
+            tapWorldPosition: confettiWorldPos
         ) {
             safeCompletion()
         }
         
-        // Safety timeout: remove anchor after 3 seconds even if animation doesn't complete
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+        // Safety timeout: remove anchor after 5 seconds even if animation doesn't complete
+        // (accounts for confetti 2.5s + animation 1.2s + buffer)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) {
+            Swift.print("⏰ Safety timeout triggered - forcing object removal")
             safeCompletion()
         }
     }
@@ -197,7 +214,7 @@ class FindableObject: Findable {
     /// - Returns: Adjusted position that respects minimum distance, or nil if too close
     static func ensureMinimumDistance(from position: SIMD3<Float>, to cameraPosition: SIMD3<Float>, minDistance: Float = 5.0) -> SIMD3<Float>? {
         let distance = length(position - cameraPosition)
-        
+
         if distance < minDistance {
             // Move position to exactly minDistance away
             let direction = normalize(position - cameraPosition)
@@ -205,8 +222,47 @@ class FindableObject: Findable {
             Swift.print("⚠️ Adjusted findable object position to \(minDistance)m minimum distance from camera")
             return adjustedPosition
         }
-        
+
         return position
+    }
+}
+
+// MARK: - Polymorphic Findable Factory
+extension FindableObject {
+    /// Polymorphic factory method to create any type of findable object
+    /// This eliminates the need for type-specific creation logic and makes all creation object-type agnostic
+    ///
+    /// - Parameters:
+    ///   - findableType: The LootBoxType that determines what kind of findable object to create
+    ///   - location: The LootBoxLocation containing metadata for the object
+    ///   - anchor: The AnchorEntity to attach the object to
+    ///   - sizeMultiplier: Size scaling factor (default: 1.0)
+    /// - Returns: A Findable object of the appropriate type, fully configured and ready to use
+    static func createNewFindable(findableType: LootBoxType, location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float = 1.0) -> Findable {
+        // Get the factory for this type - this is where polymorphism happens
+        let factory = findableType.factory
+
+        // Create the entity and findable object using the factory
+        let (entity, findableObject) = factory.createEntity(location: location, anchor: anchor, sizeMultiplier: sizeMultiplier)
+
+        // Attach the visual entity to the anchor
+        anchor.addChild(entity)
+
+        // Ensure the entity is enabled and visible
+        entity.isEnabled = true
+
+        // Return the findable object (which implements the Findable protocol)
+        return findableObject
+    }
+
+    /// Convenience method to create a findable object from a location (infers type from location.type)
+    /// - Parameters:
+    ///   - location: The LootBoxLocation containing both type and metadata
+    ///   - anchor: The AnchorEntity to attach the object to
+    ///   - sizeMultiplier: Size scaling factor (default: 1.0)
+    /// - Returns: A Findable object configured for the location
+    static func createFromLocation(_ location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float = 1.0) -> Findable {
+        return createNewFindable(findableType: location.type, location: location, anchor: anchor, sizeMultiplier: sizeMultiplier)
     }
 }
 

@@ -128,7 +128,7 @@ const ObjectsManager = {
                         font-size: ${size * 0.6}px;
                         color: white;
                     ">${iconSymbol}</div>
-                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                    ${displayName ? `<div style="font-size: 10px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
                 </div>
             `;
         } else if (isNFCObject) {
@@ -154,7 +154,7 @@ const ObjectsManager = {
                         font-weight: bold;
                         position: relative;
                     ">N${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">N</div>` : ''}</div>
-                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                    ${displayName ? `<div style="font-size: 10px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
                 </div>
             `;
         } else if (isARObject) {
@@ -180,7 +180,7 @@ const ObjectsManager = {
                         font-weight: bold;
                         position: relative;
                     ">AR${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">AR</div>` : ''}</div>
-                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                    ${displayName ? `<div style="font-size: 10px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
                 </div>
             `;
         } else if (isAdminObject) {
@@ -206,7 +206,7 @@ const ObjectsManager = {
                         font-weight: bold;
                         position: relative;
                     ">A${isCollected ? `<div style="position: absolute; top: 50%; left: 50%; width: ${size * 0.8}px; height: ${size * 0.8}px; transform: translate(-50%, -50%); background: linear-gradient(45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%), linear-gradient(-45deg, transparent 40%, #ff0000 40%, #ff0000 60%, transparent 60%); z-index: 1;"></div><div style="position: relative; z-index: 2;">A</div>` : ''}</div>
-                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                    ${displayName ? `<div style="font-size: 10px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
                 </div>
             `;
         } else if (isCollected) {
@@ -231,7 +231,7 @@ const ObjectsManager = {
                                   stroke-linejoin="round"/>
                         </svg>
                     </div>
-                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                    ${displayName ? `<div style="font-size: 10px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
                 </div>
             `;
         } else {
@@ -242,7 +242,7 @@ const ObjectsManager = {
             iconHtml = `
                 <div style="display: flex; flex-direction: column; align-items: center;">
                     <div style="background: ${markerColor}; width: ${size}px; height: ${size}px; border-radius: 50%; border: ${borderWidth}px solid ${borderColor}; box-shadow: 0 0 ${size/2}px rgba(255, 215, 0, 0.6);"></div>
-                    ${displayName ? `<div style="font-size: 7px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                    ${displayName ? `<div style="font-size: 10px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
                 </div>
             `;
         }
@@ -562,7 +562,7 @@ const ObjectsManager = {
                     justify-content: center;
                     font-size: ${fontSize}px;
                 ">${iconEmoji}</div>
-                ${displayName ? `<div style="font-size: 8px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
+                ${displayName ? `<div style="font-size: 10px; color: #fff; text-shadow: 1px 1px 1px rgba(0,0,0,0.8); text-align: center; margin-top: 6px; max-width: ${size + 20}px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${displayName}</div>` : ''}
             </div>
         `;
 

@@ -49,11 +49,22 @@ protocol LootBoxFactory {
     
     /// List of possible item names/descriptions for this type
     var itemNames: [String] { get }
+
+    /// Creates a wireframe mesh for preview/placement visualization
+    /// - Parameter size: The base size of the object
+    /// - Returns: A MeshResource for wireframe rendering
+    func createWireframeMesh(size: Float) -> MeshResource
+
+    /// Creates a prize mesh for collection animation (returns nil for simple objects)
+    /// - Parameter size: The base size of the object
+    /// - Returns: A tuple of (mesh, materialModifier) or nil if no prize
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)?
 }
 
 // MARK: - Factory Implementations
 
 struct ChaliceFactory: LootBoxFactory {
+    static let shared = ChaliceFactory()
     var iconName: String { "cup.and.saucer.fill" }
     var modelNames: [String] { ["Chalice", "Chalice-basic"] }
     var color: UIColor { UIColor(red: 0.8, green: 0.7, blue: 0.5, alpha: 1.0) } // Metallic bronze/gold
@@ -108,6 +119,7 @@ struct ChaliceFactory: LootBoxFactory {
     }
     
     func animateFind(entity: ModelEntity, container: LootBoxContainer?, tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
+        Swift.print("🎭 ChaliceFactory.animateFind called")
         // Create confetti effect
         let parentEntity = container?.container.parent ?? entity.parent ?? entity
         let confettiPosition: SIMD3<Float>
@@ -119,8 +131,10 @@ struct ChaliceFactory: LootBoxFactory {
                 parentTransform.columns.3.z
             )
             confettiPosition = tapPos - parentWorldPos
+            Swift.print("🎊 Chalice confetti at relative position: (\(String(format: "%.2f", confettiPosition.x)), \(String(format: "%.2f", confettiPosition.y)), \(String(format: "%.2f", confettiPosition.z)))")
         } else {
             confettiPosition = entity.position
+            Swift.print("🎊 Chalice confetti at entity position (fallback)")
         }
         LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
 
@@ -130,12 +144,15 @@ struct ChaliceFactory: LootBoxFactory {
         // CRITICAL FIX: Ensure object doesn't disappear until confetti animation completes
         // Confetti animation takes ~2-3 seconds, so delay object removal
         let confettiDuration = 2.5 // Wait for confetti to complete
+        Swift.print("⏰ Delaying chalice opening by \(confettiDuration)s for confetti")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + confettiDuration) {
+            Swift.print("🎬 Starting chalice opening animation")
             // Open the chalice after confetti completes
             if let container = container {
                 self.openChalice(container: container, onComplete: onComplete)
             } else {
+                Swift.print("❌ No container found for chalice, calling onComplete directly")
                 onComplete()
             }
         }
@@ -151,34 +168,36 @@ struct ChaliceFactory: LootBoxFactory {
     }
     
     private func openChalice(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+        Swift.print("🏆 Starting chalice prize animation")
         container.prize.isEnabled = true
-        
+
         let prizeStartPos = container.prize.position
         let prizeEndPos = SIMD3<Float>(prizeStartPos.x, prizeStartPos.y + 0.4, prizeStartPos.z)
-        
+
         let prizeTransform = Transform(
             scale: container.prize.scale,
             rotation: container.prize.orientation,
             translation: prizeEndPos
         )
-        
+
         container.prize.move(
             to: prizeTransform,
             relativeTo: container.container,
             duration: 1.0,
             timingFunction: .easeOut
         )
-        
+
         animatePrizeRotation(prize: container.prize, duration: 1.0)
-        
+
         var completionCalled = false
         let safeCompletion = {
             if !completionCalled {
                 completionCalled = true
+                Swift.print("🏆 Chalice prize animation completed, calling onComplete")
                 onComplete()
             }
         }
-        
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             safeCompletion()
         }
@@ -200,14 +219,33 @@ struct ChaliceFactory: LootBoxFactory {
                 prize.orientation = simd_quatf(angle: currentRotation, axis: SIMD3<Float>(0, 1, 0))
             }
         }
-        
+
         DispatchQueue.main.asyncAfter(deadline: .now() + Double(duration)) {
             timer.invalidate()
         }
     }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateCylinder(height: size * 0.6, radius: size * 0.3)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        let mesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.6, depth: size * 0.3, cornerRadius: 0.05)
+        let materialModifier: (Material) -> Material = { material in
+            var modifiedMaterial = material
+            if var phongMaterial = modifiedMaterial as? PhysicallyBasedMaterial {
+                phongMaterial.roughness = 0.2
+                phongMaterial.metallic = 0.8
+                return phongMaterial
+            }
+            return material
+        }
+        return (mesh, materialModifier)
+    }
 }
 
 struct TreasureChestFactory: LootBoxFactory {
+    static let shared = TreasureChestFactory()
     var iconName: String { "shippingbox.fill" }
     var modelNames: [String] { ["Treasure_Chest"] }
     var color: UIColor { UIColor(red: 0.6, green: 0.4, blue: 0.2, alpha: 1.0) } // Brown/wooden
@@ -374,9 +412,28 @@ struct TreasureChestFactory: LootBoxFactory {
             timer.invalidate()
         }
     }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateBox(width: size * 0.6, height: size * 0.6, depth: size * 0.6)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        let mesh = MeshResource.generateBox(width: size * 0.5, height: size * 0.3, depth: size * 0.5, cornerRadius: 0.03)
+        let materialModifier: (Material) -> Material = { material in
+            var modifiedMaterial = material
+            if var phongMaterial = modifiedMaterial as? PhysicallyBasedMaterial {
+                phongMaterial.roughness = 0.2
+                phongMaterial.metallic = 0.9
+                return phongMaterial
+            }
+            return material
+        }
+        return (mesh, materialModifier)
+    }
 }
 
 struct LootChestFactory: LootBoxFactory {
+    static let shared = LootChestFactory()
     var iconName: String { "shippingbox.fill" }
     var modelNames: [String] { ["Stylized_Container"] }
     var color: UIColor { UIColor(red: 0.5, green: 0.4, blue: 0.3, alpha: 1.0) } // Darker brown/wooden
@@ -543,9 +600,28 @@ struct LootChestFactory: LootBoxFactory {
             timer.invalidate()
         }
     }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateBox(width: size * 0.6, height: size * 0.6, depth: size * 0.6)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        let mesh = MeshResource.generateBox(width: size * 0.5, height: size * 0.3, depth: size * 0.5, cornerRadius: 0.03)
+        let materialModifier: (Material) -> Material = { material in
+            var modifiedMaterial = material
+            if var phongMaterial = modifiedMaterial as? PhysicallyBasedMaterial {
+                phongMaterial.roughness = 0.2
+                phongMaterial.metallic = 0.9
+                return phongMaterial
+            }
+            return material
+        }
+        return (mesh, materialModifier)
+    }
 }
 
 struct LootCartFactory: LootBoxFactory {
+    static let shared = LootCartFactory()
     var iconName: String { "cart.fill" }
     var modelNames: [String] { ["Mine_Cart_Gold"] }
     var color: UIColor { UIColor(red: 0.9, green: 0.7, blue: 0.3, alpha: 1.0) } // Golden cart
@@ -710,9 +786,28 @@ struct LootCartFactory: LootBoxFactory {
             timer.invalidate()
         }
     }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateBox(width: size * 0.6, height: size * 0.6, depth: size * 0.6)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        let mesh = MeshResource.generateBox(width: size * 0.5, height: size * 0.3, depth: size * 0.5, cornerRadius: 0.03)
+        let materialModifier: (Material) -> Material = { material in
+            var modifiedMaterial = material
+            if var phongMaterial = modifiedMaterial as? PhysicallyBasedMaterial {
+                phongMaterial.roughness = 0.2
+                phongMaterial.metallic = 0.9
+                return phongMaterial
+            }
+            return material
+        }
+        return (mesh, materialModifier)
+    }
 }
 
 struct TempleRelicFactory: LootBoxFactory {
+    static let shared = TempleRelicFactory()
     var iconName: String { "building.columns.fill" }
     var modelNames: [String] { ["Stylised_Treasure_Chest", "Treasure_Chest"] }
     var color: UIColor { UIColor(red: 0.4, green: 0.3, blue: 0.2, alpha: 1.0) } // Dark stone
@@ -879,9 +974,28 @@ struct TempleRelicFactory: LootBoxFactory {
             timer.invalidate()
         }
     }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateCylinder(height: size * 0.6, radius: size * 0.3)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        let mesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.5, depth: size * 0.4, cornerRadius: 0.04)
+        let materialModifier: (Material) -> Material = { material in
+            var modifiedMaterial = material
+            if var phongMaterial = modifiedMaterial as? PhysicallyBasedMaterial {
+                phongMaterial.roughness = 0.3
+                phongMaterial.metallic = 0.7
+                return phongMaterial
+            }
+            return material
+        }
+        return (mesh, materialModifier)
+    }
 }
 
 struct SphereFactory: LootBoxFactory {
+    static let shared = SphereFactory()
     var iconName: String { "circle.fill" }
     var modelNames: [String] { [] }
     var color: UIColor { UIColor(red: 0.9, green: 0.1, blue: 0.1, alpha: 1.0) } // Red/orange sphere
@@ -1020,9 +1134,18 @@ struct SphereFactory: LootBoxFactory {
             timer.invalidate()
         }
     }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateSphere(radius: size * 0.3)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        return nil // Spheres don't have prizes
+    }
 }
 
 struct CubeFactory: LootBoxFactory {
+    static let shared = CubeFactory()
     var iconName: String { "cube.fill" }
     var modelNames: [String] { [] }
     var color: UIColor { UIColor(red: 0.2, green: 0.6, blue: 0.9, alpha: 1.0) } // Blue cube
@@ -1171,9 +1294,18 @@ struct CubeFactory: LootBoxFactory {
     func playFindSound() {
         LootBoxAnimation.playOpeningSoundWithHaptics()
     }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateBox(width: size * 0.4, height: size * 0.4, depth: size * 0.4)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        return nil // Cubes don't have prizes
+    }
 }
 
 struct TurkeyFactory: LootBoxFactory {
+    static let shared = TurkeyFactory()
     var iconName: String { "cup.and.saucer.fill" }
     var modelNames: [String] { ["Dancing_Turkey", "Turkey_Rigged"] } // Try Dancing_Turkey first (has animation)
     var color: UIColor { UIColor(red: 0.7, green: 0.5, blue: 0.3, alpha: 1.0) } // Brown/tan turkey
@@ -1398,15 +1530,34 @@ struct TurkeyFactory: LootBoxFactory {
             LootBoxAnimation.openChalice(container: container, onComplete: onComplete)
         }
     }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateCylinder(height: size * 0.6, radius: size * 0.3)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        let mesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.5, depth: size * 0.4, cornerRadius: 0.04)
+        let materialModifier: (Material) -> Material = { material in
+            var modifiedMaterial = material
+            if var phongMaterial = modifiedMaterial as? PhysicallyBasedMaterial {
+                phongMaterial.roughness = 0.3
+                phongMaterial.metallic = 0.7
+                return phongMaterial
+            }
+            return material
+        }
+        return (mesh, materialModifier)
+    }
 }
 
 struct TerrorEngineFactory: LootBoxFactory {
+    static let shared = TerrorEngineFactory()
     var iconName: String { "engine.combustion.fill" }
-    var modelNames: [String] { ["Terror_Engine_-_Leather_Ghost"] }
+    var modelNames: [String] { ["Terror_Engine_-_Leather_Ghost", "Terror_Engine_-_Krasue", "Terror_Engine_-_Grim_Reaper_MonsterOLD", "Grim_Reaper__Headless_Dark_Angel_of_Death"] }
     var color: UIColor { UIColor(red: 0.3, green: 0.2, blue: 0.1, alpha: 1.0) } // Dark leather/metal
     var glowColor: UIColor { UIColor(red: 0.8, green: 0.4, blue: 0.2, alpha: 1.0) } // Fiery orange glow
     var size: Float { 0.8 }
-    var itemNames: [String] { ["Terror Engine", "Ancient Engine", "Leather Ghost Engine"] }
+    var itemNames: [String] { ["Terror Engine", "Ancient Engine", "Leather Ghost Engine", "Krasue Engine", "Grim Reaper Engine", "Dark Angel Engine"] }
 
     func itemDescription() -> String {
         return itemNames.randomElement() ?? "Terror Engine"
@@ -1538,34 +1689,157 @@ struct TerrorEngineFactory: LootBoxFactory {
             timer.invalidate()
         }
     }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateCylinder(height: size * 0.6, radius: size * 0.3)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        let mesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.6, depth: size * 0.3, cornerRadius: 0.05)
+        let materialModifier: (Material) -> Material = { material in
+            var modifiedMaterial = material
+            if var phongMaterial = modifiedMaterial as? PhysicallyBasedMaterial {
+                phongMaterial.roughness = 0.2
+                phongMaterial.metallic = 0.8
+                return phongMaterial
+            }
+            return material
+        }
+        return (mesh, materialModifier)
+    }
 }
 
-// MARK: - Factory Registry (replaces switch statement for better decoupling)
-/// Centralized registry for all loot box factories
-/// This eliminates the need for switch statements when accessing factories
-struct LootBoxFactoryRegistry {
-    private static var factories: [LootBoxType: LootBoxFactory] = [
-        .chalice: ChaliceFactory(),
-        .treasureChest: TreasureChestFactory(),
-        .lootChest: LootChestFactory(),
-        .lootCart: LootCartFactory(),
-        .templeRelic: TempleRelicFactory(),
-        .sphere: SphereFactory(),
-        .cube: CubeFactory(),
-        .turkey: TurkeyFactory(),
-        .terrorEngine: TerrorEngineFactory()
-    ]
-    
-    static func factory(for type: LootBoxType) -> LootBoxFactory {
-        guard let factory = factories[type] else {
-            fatalError("No factory registered for LootBoxType: \(type)")
-        }
-        return factory
+// MARK: - Your Mom Factory
+struct YourMomFactory: LootBoxFactory {
+    static let shared = YourMomFactory()
+    var iconName: String { "person.fill" }
+    var modelNames: [String] { ["your_mom"] }
+    var color: UIColor { UIColor(red: 0.6, green: 0.4, blue: 0.8, alpha: 1.0) } // Purple/indigo
+    var glowColor: UIColor { UIColor(red: 0.7, green: 0.5, blue: 0.9, alpha: 1.0) } // Bright purple glow
+    var size: Float { 0.5 }
+    var itemNames: [String] { ["Your Mom", "Mystery Figure", "Legendary Character"] }
+
+    func itemDescription() -> String {
+        return itemNames.randomElement() ?? "Your Mom"
     }
-    
-    /// Registers a new factory for a loot box type (for extensibility)
-    static func register(_ factory: LootBoxFactory, for type: LootBoxType) {
-        factories[type] = factory
+
+    func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
+        let container = createContainer(location: location, sizeMultiplier: sizeMultiplier)!
+        let entity = container.container
+        entity.name = location.id
+        entity.position = SIMD3<Float>(0, 0, 0)
+
+        let findableObject = FindableObject(
+            locationId: location.id,
+            anchor: anchor,
+            sphereEntity: nil,
+            container: container,
+            location: location
+        )
+
+        return (entity, findableObject)
+    }
+
+    func createContainer(location: LootBoxLocation, sizeMultiplier: Float) -> LootBoxContainer? {
+        let baseContainer = BoxLootContainer.create(type: location.type, id: location.id, sizeMultiplier: sizeMultiplier)
+        return LootBoxContainer(
+            container: baseContainer.container,
+            box: baseContainer.box,
+            lid: baseContainer.lid,
+            prize: baseContainer.prize,
+            builtInAnimation: baseContainer.builtInAnimation,
+            open: { container, onComplete in
+                self.openBox(container: container, onComplete: onComplete)
+            }
+        )
+    }
+
+    func animateFind(entity: ModelEntity, container: LootBoxContainer?, tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
+        let parentEntity = container?.container.parent ?? entity.parent ?? entity
+        let confettiPosition: SIMD3<Float>
+        if let tapPos = tapWorldPosition {
+            let parentTransform = parentEntity.transformMatrix(relativeTo: nil)
+            let parentWorldPos = SIMD3<Float>(
+                parentTransform.columns.3.x,
+                parentTransform.columns.3.y,
+                parentTransform.columns.3.z
+            )
+            confettiPosition = tapPos - parentWorldPos
+        } else {
+            confettiPosition = entity.position
+        }
+        LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
+        playFindSound()
+
+        let confettiDuration = 2.5
+        DispatchQueue.main.asyncAfter(deadline: .now() + confettiDuration) {
+            if let container = container {
+                self.openBox(container: container, onComplete: onComplete)
+            } else {
+                onComplete()
+            }
+        }
+    }
+
+    func animateLoop(entity: ModelEntity) {
+        // Gentle floating animation
+        var currentTime: Float = 0
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { [weak entity] timer in
+            guard let entity = entity, entity.parent != nil, entity.isEnabled else {
+                timer.invalidate()
+                return
+            }
+
+            currentTime += 0.016
+            let floatOffset = sin(currentTime * 2) * 0.05 // Gentle up/down floating
+            entity.position.y = floatOffset
+        }
+        RunLoop.current.add(timer, forMode: .common)
+    }
+
+    func playFindSound() {
+        LootBoxAnimation.playOpeningSoundWithHaptics()
+    }
+
+    private func openBox(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+        // Simple fade out animation
+        container.box.move(
+            to: Transform(scale: SIMD3<Float>(0, 0, 0), rotation: container.box.orientation, translation: container.box.position),
+            relativeTo: container.box.parent,
+            duration: 0.5,
+            timingFunction: .easeOut
+        )
+
+        // Show prize and complete
+        container.prize.isEnabled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            onComplete()
+        }
+    }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateBox(width: size * 0.6, height: size * 0.6, depth: size * 0.6)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        let mesh = MeshResource.generateBox(width: size * 0.5, height: size * 0.3, depth: size * 0.5, cornerRadius: 0.03)
+        let materialModifier: (Material) -> Material = { material in
+            var modifiedMaterial = material
+            if var phongMaterial = modifiedMaterial as? PhysicallyBasedMaterial {
+                phongMaterial.roughness = 0.2
+                phongMaterial.metallic = 0.9
+                return phongMaterial
+            }
+            return material
+        }
+        return (mesh, materialModifier)
     }
 }
+
+// MARK: - Factory Constants (compile-time polymorphism)
+/// All factories are now static constants, eliminating runtime registry lookups
+/// When adding a new LootBoxType, simply:
+/// 1. Create a new Factory struct with `static let shared = Self()`
+/// 2. Add the case to LootBoxType.factory switch statement
+/// 3. Add the case to LootBoxType.placedObjectType if needed
 

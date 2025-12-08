@@ -503,7 +503,7 @@ struct OpenGameNFCScannerView: View {
 
         // If no pre-programmed type or invalid, assign random type from available types
         // Exclude turkey as it's seasonal and less common for random assignment
-        let availableTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .lootChest, .lootCart, .sphere, .cube, .turkey, .terrorEngine]
+        let availableTypes: [LootBoxType] = [.chalice, .templeRelic, .treasureChest, .lootChest, .lootCart, .sphere, .cube, .turkey, .terrorEngine, .yourMom]
         return availableTypes.randomElement() ?? .treasureChest
     }
 

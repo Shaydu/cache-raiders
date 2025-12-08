@@ -64,7 +64,8 @@ class ARDirectionArrow {
     ///   - targetPosition: Position of the nearest object in AR world space
     ///   - cameraPosition: Current camera position
     ///   - cameraTransform: Current camera transform matrix
-    func updateArrow(targetPosition: SIMD3<Float>, cameraPosition: SIMD3<Float>, cameraTransform: simd_float4x4) {
+    ///   - userHeading: Optional user's compass heading in degrees (0 = north, 90 = east, etc.)
+    func updateArrow(targetPosition: SIMD3<Float>, cameraPosition: SIMD3<Float>, cameraTransform: simd_float4x4, userHeading: Double? = nil) {
         guard let arView = arView else { return }
         
         // Calculate direction from camera to target
@@ -92,7 +93,20 @@ class ARDirectionArrow {
             0,
             -cameraTransform.columns.2.z
         )
-        let normalizedForward = normalize(cameraForward)
+
+        // Use user's compass heading to align navigation with real world direction
+        // This matches the admin panel's calculation (heading + 180° adjustment)
+        var normalizedForward = normalize(cameraForward)
+        if let userHeading = userHeading {
+            // Convert compass heading to radians and add 180° (same as admin panel)
+            let adjustedHeadingRadians = (userHeading + 180.0) * .pi / 180.0
+
+            // Create a forward vector aligned with user's compass heading
+            // In AR space: -Z is typically north, +X is east
+            let compassForwardX = Float(sin(adjustedHeadingRadians))  // East component
+            let compassForwardZ = Float(-cos(adjustedHeadingRadians)) // North component (negative because -Z is north)
+            normalizedForward = SIMD3<Float>(compassForwardX, 0, compassForwardZ)
+        }
         
         // Position arrow in front of camera
         let arrowPosition = cameraPosition + normalizedForward * arrowDistance + SIMD3<Float>(0, arrowOffsetY, 0)

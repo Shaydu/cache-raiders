@@ -1202,17 +1202,7 @@ struct LootTypeCard: View {
     }
 
     private func iconForLootType(_ type: LootBoxType) -> String {
-        switch type {
-        case .chalice: return "cup.and.saucer.fill"
-        case .templeRelic: return "building.columns.fill"
-        case .treasureChest: return "shippingbox.fill"
-        case .lootChest: return "archivebox.fill"
-        case .lootCart: return "cart.fill"
-        case .sphere: return "circle.fill"
-        case .cube: return "square.fill"
-        case .turkey: return "bird.fill"
-        case .terrorEngine: return "engine.combustion.fill"
-        }
+        return type.factory.iconName
     }
 }
 

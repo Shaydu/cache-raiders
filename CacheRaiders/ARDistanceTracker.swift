@@ -182,7 +182,25 @@ class ARDistanceTracker: ObservableObject {
         }
 
         // Get forward vector for orientation
-        let forward = SIMD3<Float>(-cameraTransform.columns.2.x, -cameraTransform.columns.2.y, -cameraTransform.columns.2.z)
+        let cameraForward = SIMD3<Float>(-cameraTransform.columns.2.x, -cameraTransform.columns.2.y, -cameraTransform.columns.2.z)
+
+        // Use user's compass heading to align navigation with real world direction
+        // This matches the admin panel's calculation (heading + 180° adjustment)
+        var forward = cameraForward
+        if let userHeading = userLocationManager?.heading {
+            // Convert compass heading to radians and add 180° (same as admin panel)
+            let adjustedHeadingRadians = (Double(userHeading) + 180.0) * .pi / 180.0
+
+            // Create a forward vector aligned with user's compass heading
+            // In AR space: -Z is typically north, +X is east
+            let compassForwardX = Float(sin(adjustedHeadingRadians))  // East component
+            let compassForwardZ = Float(-cos(adjustedHeadingRadians)) // North component (negative because -Z is north)
+            forward = SIMD3<Float>(compassForwardX, 0, compassForwardZ)
+
+            print("🧭 [Navigation] Using compass heading: \(String(format: "%.1f", userHeading))° → adjusted: \(String(format: "%.1f", (userHeading + 180.0).truncatingRemainder(dividingBy: 360.0)))°")
+        } else {
+            print("🧭 [Navigation] No compass heading available, using camera forward vector")
+        }
 
         // Check for selected object first, otherwise find nearest
         var targetPosition: SIMD3<Float>? = nil
@@ -322,66 +340,24 @@ class ARDistanceTracker: ObservableObject {
         // Normalize the horizontal direction
         let normalizedDirection = normalize(horizontalDirection)
 
-        // Calculate angle in screen space for UI arrow
-        // The icon "location.north.line.fill" points up by default
-        // We need to calculate the angle where:
-        // - 0° = up (target is straight ahead/forward relative to device heading)
-        // - 90° = right (target is to the right)
-        // - 180° = down (target is behind)
-        // - 270° = left (target is to the left)
+        // Calculate angle using AR position (most accurate for placed objects)
+        // Convert direction vector to angle
 
-        // CRITICAL FIX: Adjust for device compass heading
-        // The current calculation gives direction relative to camera forward,
-        // but navigation should be relative to magnetic north (device heading)
-        var adjustedDirection = normalizedDirection
+        // Calculate angle from forward direction (use horizontal component only)
+        let horizontalForward = SIMD3<Float>(forward.x, 0, forward.z)
+        let angleRad = atan2(horizontalDirection.x * horizontalForward.z - horizontalDirection.z * horizontalForward.x,
+                            horizontalDirection.x * horizontalForward.x + horizontalDirection.z * horizontalForward.z)
 
-        if let deviceHeading = userLocationManager?.heading {
-            // Rotate the target direction by the inverse of device heading
-            // This makes the direction relative to magnetic north instead of camera forward
-            let headingRad = Float(deviceHeading * .pi / 180.0)
-            let cosHeading = cos(-headingRad)  // Negative to rotate opposite to heading
-            let sinHeading = sin(-headingRad)
-
-            // Rotate direction vector around Y axis (up)
-            let x = adjustedDirection.x * cosHeading - adjustedDirection.z * sinHeading
-            let z = adjustedDirection.x * sinHeading + adjustedDirection.z * cosHeading
-            adjustedDirection = SIMD3<Float>(x, 0, z)
-            adjustedDirection = normalize(adjustedDirection)
-        }
-
-        // Get camera's right and forward vectors (horizontal only)
-        let cameraForward = normalize(SIMD3<Float>(forward.x, 0, forward.z))
-        let cameraRight = normalize(cross(SIMD3<Float>(0, 1, 0), cameraForward))
-
-        // Project adjusted target direction onto camera's right and forward vectors
-        let rightComponent = dot(adjustedDirection, cameraRight)  // + = right, - = left
-        let forwardComponent = dot(adjustedDirection, cameraForward)  // + = forward, - = behind
-
-        // Calculate angle in screen space
-        // For screen coordinates: atan2(y, x) where:
-        // - y = forwardComponent (positive = forward = up on screen)
-        // - x = rightComponent (positive = right)
-        // We want: 0° = up (forward), 90° = right
-        // So: angle = atan2(forwardComponent, rightComponent)
-        // However, atan2 gives: 0° = +x (right), 90° = +y (up)
-        // We want: 0° = up, 90° = right
-        // So we need: angle = atan2(rightComponent, forwardComponent) + 90°
-        // Or simpler: angle = atan2(forwardComponent, rightComponent) - 90°
-        // Actually, let's use: angle = atan2(rightComponent, forwardComponent)
-        // This gives: 0° when forward, 90° when right, 180° when behind, 270° when left
-        // But icon points up, so we need to rotate: angle = atan2(rightComponent, forwardComponent) - 90°
-        var angle = atan2(rightComponent, forwardComponent) * 180.0 / .pi - 90.0
+        var angle = Float(angleRad * 180.0 / .pi)
 
         // Normalize to 0-360 range
         if angle < 0 {
             angle += 360
         }
 
-        // Snap to 15-degree intervals for better accuracy while still being smooth
-        // Round to nearest 15° (0°, 15°, 30°, 45°, 60°, 75°, 90°, etc.)
-        let interval: Float = 15.0
-        angle = round(angle / interval) * interval
+        print("🧭 [Navigation] AR-based direction: \(String(format: "%.1f", angle))°")
 
+        // Use precise angle without snapping for accurate navigation
         nearestObjectDirection = Double(angle)
         
         // Update binding
@@ -640,15 +616,25 @@ class ARDistanceTracker: ObservableObject {
         
         if let selectedId = locationManager.selectedDatabaseObjectId,
            let selectedLocation = locationManager.locations.first(where: { $0.id == selectedId && !$0.collected }) {
+            // Validate user location coordinates
+            let validCoordinates = userLocation.coordinate.latitude.isFinite &&
+                                  userLocation.coordinate.longitude.isFinite
+
+            if !validCoordinates {
+                print("⚠️ [Distance Tracker] Invalid user location coordinates, using GPS distance fallback")
+            }
+
             // CRITICAL FIX: For AR-placed objects, calculate distance in AR space, not GPS space
             // GPS coordinates for AR-placed objects are estimates and can be very inaccurate
             let distance: Double
-            if selectedLocation.hasARPositioning {
-                // Calculate AR distance using AR coordinates
-                distance = selectedLocation.arDistance(from: userLocation, arOrigin: locationManager.sharedAROrigin)
+            if selectedLocation.hasARData, let arDistance = selectedLocation.arDistance(from: userLocation, arOrigin: locationManager.sharedAROrigin) {
+                // Calculate AR distance using AR coordinates for millimeter precision
+                distance = arDistance
+                print("🎯 [Distance] Using AR distance: \(String(format: "%.2f", distance))m (\(formatDistance(distance))) for object \(selectedLocation.name)")
             } else {
                 // Fall back to GPS distance for non-AR objects
                 distance = userLocation.distance(from: selectedLocation.location)
+                print("📍 [Distance] Using GPS distance: \(String(format: "%.2f", distance))m (\(formatDistance(distance))) for object \(selectedLocation.name)")
             }
             targetLocation = (location: selectedLocation, distance: distance)
         }

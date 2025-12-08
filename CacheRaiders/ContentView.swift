@@ -473,6 +473,7 @@ struct ContentView: View {
                     sheetType: sheetType,
                     locationManager: locationManager,
                     userLocationManager: userLocationManager,
+                    nearestObjectDirection: $nearestObjectDirection,
                     treasureHuntService: treasureHuntService,
                     gridTreasureMapService: gridTreasureMapService,
                     inventoryService: inventoryService,

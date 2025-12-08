@@ -149,6 +149,87 @@ struct LootBoxLocation: Codable, Identifiable, Equatable {
                ar_offset_y != nil &&
                ar_offset_z != nil
     }
+
+    /// Calculates AR distance from user location to this object using AR coordinates
+    /// - Parameters:
+    ///   - userLocation: User's current GPS location
+    ///   - arOrigin: Shared AR origin (optional, falls back to object's AR origin)
+    /// - Returns: Distance in meters, or nil if AR distance cannot be calculated
+    func arDistance(from userLocation: CLLocation, arOrigin: CLLocation? = nil) -> Double? {
+        // Validate input parameters
+        guard userLocation.coordinate.latitude.isFinite &&
+              userLocation.coordinate.longitude.isFinite else {
+            return nil
+        }
+
+        // Use provided arOrigin or fall back to this object's AR origin
+        guard let arOriginGPS = arOrigin ?? (ar_origin_latitude != nil && ar_origin_longitude != nil ?
+            CLLocation(latitude: ar_origin_latitude!, longitude: ar_origin_longitude!) : nil) else {
+            return nil
+        }
+
+        // Validate AR origin coordinates
+        guard arOriginGPS.coordinate.latitude.isFinite &&
+              arOriginGPS.coordinate.longitude.isFinite else {
+            return nil
+        }
+
+        // Check if this object has AR positioning data
+        guard let arOffsetX = ar_offset_x,
+              let arOffsetY = ar_offset_y,
+              let arOffsetZ = ar_offset_z else {
+            return nil
+        }
+
+        // Validate AR offset values
+        guard arOffsetX.isFinite && arOffsetY.isFinite && arOffsetZ.isFinite else {
+            return nil
+        }
+
+        let objectARPosition = SIMD3<Double>(Double(arOffsetX), Double(arOffsetY), Double(arOffsetZ))
+
+        // Convert user GPS location to AR coordinates using the same AR origin
+        // Use the same conversion logic as ARMathUtilities.convertARToGPS but in reverse
+        let userOffset = userLocation.distance(from: arOriginGPS)
+        let userBearing = arOriginGPS.bearing(to: userLocation)
+
+        // Validate calculated values
+        guard userOffset.isFinite && userBearing.isFinite else {
+            return nil
+        }
+
+        // Convert GPS bearing and distance to AR coordinates
+        // AR space: +X = East, +Z = North (matching ARMathUtilities convention)
+        let bearingRad = userBearing * .pi / 180.0
+        let userARX = userOffset * sin(bearingRad)  // East component
+        let userARZ = userOffset * cos(bearingRad)  // North component
+        let userARY = 0.0 // Assume user is at ground level for horizontal distance
+
+        // Validate AR coordinate calculations
+        guard userARX.isFinite && userARZ.isFinite && userARY.isFinite else {
+            return nil
+        }
+
+        let userARPosition = SIMD3<Double>(userARX, userARY, userARZ)
+
+        // Calculate 3D distance between user and object in AR space
+        let delta = objectARPosition - userARPosition
+        let distanceSquared = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z
+
+        // Validate distance squared
+        guard distanceSquared.isFinite && distanceSquared >= 0 else {
+            return nil
+        }
+
+        let distance = sqrt(distanceSquared)
+
+        // Validate final distance
+        guard distance.isFinite && distance >= 0 else {
+            return nil
+        }
+
+        return distance
+    }
     
     // MARK: - Initializers
     

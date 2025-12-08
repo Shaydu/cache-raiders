@@ -18,6 +18,7 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
     weak var treasureHuntService: TreasureHuntService? // Reference to treasure hunt service for discovery logic
     private var locationUpdateTimer: Timer? // Timer for automatic periodic location updates
     private var locationUpdateInterval: TimeInterval = 5.0 // Default 5 seconds, will be fetched from server (admin panel setting)
+    private var lastHeadingUpdateTime: TimeInterval = 0 // Throttle compass heading updates
     
     override init() {
         super.init()
@@ -236,8 +237,16 @@ class UserLocationManager: NSObject, ObservableObject, CLLocationManagerDelegate
         // Update heading from compass (more accurate than GPS course)
         // CLHeading.trueHeading gives magnetic north-corrected heading
         if newHeading.headingAccuracy >= 0 {
-            heading = newHeading.trueHeading
-            print("🧭 Compass heading updated: \(String(format: "%.1f", newHeading.trueHeading))° (accuracy: \(String(format: "%.1f", newHeading.headingAccuracy))°)")
+            // Throttle updates to prevent excessive logging and UI updates
+            let currentTime = Date().timeIntervalSince1970
+            if currentTime - lastHeadingUpdateTime > 0.1 { // Update at most 10 times per second
+                heading = newHeading.trueHeading
+                lastHeadingUpdateTime = currentTime
+                print("🧭 Compass heading updated: \(String(format: "%.1f", newHeading.trueHeading))° (accuracy: \(String(format: "%.1f", newHeading.headingAccuracy))°)")
+            } else {
+                // Still update the heading value but don't log or trigger UI updates
+                heading = newHeading.trueHeading
+            }
         }
     }
 

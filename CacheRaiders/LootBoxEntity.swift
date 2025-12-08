@@ -14,6 +14,7 @@ enum LootBoxType: String, CaseIterable, Codable {
     case cube = "Mysterious Cube"
     case turkey = "Turkey"
     case terrorEngine = "Terror Engine"
+    case yourMom = "Your Mom"
 
     var displayName: String {
         return self.rawValue
@@ -30,6 +31,7 @@ enum LootBoxType: String, CaseIterable, Codable {
         case .cube: return .systemCyan
         case .turkey: return .systemBrown
         case .terrorEngine: return .systemPink
+        case .yourMom: return .systemIndigo
         }
     }
 
@@ -43,9 +45,30 @@ enum LootBoxType: String, CaseIterable, Codable {
         return factory.size
     }
 
-    /// Returns the factory for this loot box type (uses registry instead of switch)
+    /// Returns the factory for this loot box type (compile-time constants eliminate runtime lookups)
     var factory: LootBoxFactory {
-        return LootBoxFactoryRegistry.factory(for: self)
+        switch self {
+        case .chalice: return ChaliceFactory.shared
+        case .treasureChest: return TreasureChestFactory.shared
+        case .lootChest: return LootChestFactory.shared
+        case .lootCart: return LootCartFactory.shared
+        case .templeRelic: return TempleRelicFactory.shared
+        case .sphere: return SphereFactory.shared
+        case .cube: return CubeFactory.shared
+        case .turkey: return TurkeyFactory.shared
+        case .terrorEngine: return TerrorEngineFactory.shared
+        case .yourMom: return YourMomFactory.shared
+        }
+    }
+
+    /// Returns the corresponding PlacedObjectType for AR placement (eliminates switch statements)
+    var placedObjectType: PlacedObjectType {
+        switch self {
+        case .chalice: return .chalice
+        case .sphere: return .sphere
+        case .cube: return .cube
+        default: return .treasureBox // All containers use treasure box placement
+        }
     }
 }
 
@@ -140,34 +163,23 @@ class LootBoxEntity {
         let size = factory.size * sizeMultiplier * 0.6 // Smaller than box
         
         var prizeMesh: MeshResource
-        var prizeMaterial = SimpleMaterial()
+        var prizeMaterial = PhysicallyBasedMaterial()
         
         // Use factory to determine prize shape based on type
         // This could be further refactored to be a factory method, but for now we use a simple heuristic
         // Container-based types (chalice, chest, cart, relic) get box prizes
         // Simple types (sphere, cube) don't use this method
         
-        // Special cases for specific types (could be moved to factories if needed)
-        switch type {
-        case .chalice:
-            prizeMesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.6, depth: size * 0.3, cornerRadius: 0.05)
-            prizeMaterial.roughness = 0.2
-            prizeMaterial.metallic = 0.8
-        case .treasureChest, .lootChest, .lootCart:
-            prizeMesh = MeshResource.generateBox(width: size * 0.5, height: size * 0.3, depth: size * 0.5, cornerRadius: 0.03)
-            prizeMaterial.roughness = 0.2
-            prizeMaterial.metallic = 0.9
-        case .sphere, .cube:
-            // Spheres and cubes don't have prizes - they are handled directly in ARCoordinator
-            fatalError("Spheres and cubes should not be created using LootBoxEntity.createPrize")
-        default:
-            // Default prize shape for container types
-            prizeMesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.5, depth: size * 0.4, cornerRadius: 0.04)
-            prizeMaterial.roughness = 0.3
-            prizeMaterial.metallic = 0.7
+        // Use factory polymorphism to create prize mesh
+        if let (mesh, materialModifier) = type.factory.createPrizeMesh(size: size) {
+            prizeMesh = mesh
+            prizeMaterial = materialModifier(prizeMaterial) as! PhysicallyBasedMaterial
+        } else {
+            // No prize mesh for this type (e.g., spheres, cubes)
+            fatalError("\(type.displayName) should not be created using LootBoxEntity.createPrize")
         }
         
-        prizeMaterial.color = .init(tint: factory.color)
+        prizeMaterial.baseColor = .init(tint: factory.color)
         
         let prizeEntity = ModelEntity(mesh: prizeMesh, materials: [prizeMaterial])
         

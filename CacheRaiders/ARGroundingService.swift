@@ -309,6 +309,9 @@ class ARGroundingService {
         case .treasureChest, .lootChest, .templeRelic, .lootCart, .terrorEngine:
             // Larger containers: place on floor
             return cameraPos.y - 1.5
+        case .yourMom:
+            // Your mom objects: place at default height
+            return cameraPos.y - 1.2
         }
     }
 

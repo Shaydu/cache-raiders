@@ -108,7 +108,8 @@ class GameItemDataService {
             }
         }
 
-        // Use ARPositioningService to handle AR positioning data
+        // Only update AR positioning data when it's provided by the API
+        // Don't clear existing AR data if the API doesn't provide it
         if let arData = ARPositioningService.shared.extractARPositioning(from: location),
            let origin = arData.origin,
            let offsets = arData.offsets {
@@ -117,14 +118,9 @@ class GameItemDataService {
             gameItem.ar_offset_x = offsets.x
             gameItem.ar_offset_y = offsets.y
             gameItem.ar_offset_z = offsets.z
-        } else {
-            // Clear AR positioning data
-            gameItem.ar_origin_latitude = 0.0
-            gameItem.ar_origin_longitude = 0.0
-            gameItem.ar_offset_x = 0.0
-            gameItem.ar_offset_y = 0.0
-            gameItem.ar_offset_z = 0.0
         }
+        // Note: We don't clear AR positioning data when it's not provided by API
+        // The existing AR positioning data (if any) should be preserved
 
         gameItem.ar_placement_timestamp = location.ar_placement_timestamp
         gameItem.ar_anchor_transform = location.ar_anchor_transform

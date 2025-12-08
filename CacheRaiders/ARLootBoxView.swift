@@ -478,6 +478,18 @@ struct ARViewContainer: UIViewRepresentable {
         // Only proceed if session is already running AND lens needs update
         // Skip if config is nil (session not fully started yet)
         if !configIsNil && needsLensUpdate {
+            // CRITICAL: Check if camera tracking is available before resetting session
+            // Resetting session when camera is frozen/unavailable causes calibration data loss
+            let currentFrame = uiView.session.currentFrame
+            let trackingState = currentFrame?.camera.trackingState
+
+            if case .notAvailable = trackingState {
+                print("⚠️ [UPDATEVIEW] Camera tracking not available - skipping lens change to prevent calibration issues")
+                print("   Lens change will be applied when camera tracking is restored")
+                // Don't update lastAppliedLensId yet - we'll retry on next update
+                return
+            }
+
             print("🎯 [UPDATEVIEW] Lens changed - re-running AR session with new configuration")
             let config = ARWorldTrackingConfiguration()
             config.planeDetection = [.horizontal, .vertical] // Horizontal for ground, vertical for walls (occlusion)
@@ -485,7 +497,7 @@ struct ARViewContainer: UIViewRepresentable {
             // These warnings (e.g., 'arInPlacePostProcessCombinedPermute14.rematerial') can be safely ignored
             // They are internal framework materials used for AR post-processing effects
             config.environmentTexturing = .automatic
-            
+
             // Apply selected lens if available
             if let selectedLensId = currentLensId,
                let videoFormat = ARLensHelper.getVideoFormat(for: selectedLensId) {
@@ -497,10 +509,10 @@ struct ARViewContainer: UIViewRepresentable {
 
             // When lens changes, fully reset the session to apply the new video format
             // This requires removing anchors and resetting tracking for the FOV change to take effect
-            let options: ARSession.RunOptions = needsLensUpdate 
-                ? [.resetTracking, .removeExistingAnchors] 
+            let options: ARSession.RunOptions = needsLensUpdate
+                ? [.resetTracking, .removeExistingAnchors]
                 : [.resetTracking, .removeExistingAnchors]
-            
+
             uiView.session.run(config, options: options)
             
             // If we changed the lens, we need to re-place objects after the session resets

@@ -4,7 +4,8 @@ import CoreLocation
 // MARK: - Location Configuration View
 struct LocationConfigView: View {
     @ObservedObject var locationManager: LootBoxLocationManager
-    @StateObject private var userLocationManager = UserLocationManager()
+    @ObservedObject var userLocationManager: UserLocationManager
+    @Binding var nearestObjectDirection: Double?
     @Environment(\.dismiss) var dismiss
     
     var body: some View {
@@ -13,7 +14,7 @@ struct LocationConfigView: View {
                 // Large map view taking most of the screen
                 ZStack {
                     if !locationManager.locations.isEmpty || userLocationManager.currentLocation != nil {
-                        LootBoxMapView(locationManager: locationManager, userLocationManager: userLocationManager)
+                        LootBoxMapView(locationManager: locationManager, userLocationManager: userLocationManager, nearestObjectDirection: $nearestObjectDirection)
                             .ignoresSafeArea(edges: [.leading, .trailing])
                     } else {
                         VStack {

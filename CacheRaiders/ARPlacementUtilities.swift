@@ -170,6 +170,8 @@ class ARPlacementUtilities {
             return defaultHeight - 0.1 // Slightly lower for box-like objects
         case .sphere, .cube:
             return defaultHeight // Default height for geometric objects
+        case .yourMom:
+            return defaultHeight // Default height for your mom objects
         }
     }
 

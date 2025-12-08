@@ -37,6 +37,7 @@ class ARVIO_SLAM_Service: ObservableObject {
     // Stabilization
     private var stabilizationTransforms: [String: simd_float4x4] = [:]
     private var driftCompensation: [String: SIMD3<Float>] = [:]
+    private let stabilizationQueue = DispatchQueue(label: "com.cacheraiders.stabilization", attributes: .concurrent)
 
     // Stabilization health monitoring
     private var stabilizationFailures: Int = 0
@@ -44,6 +45,11 @@ class ARVIO_SLAM_Service: ObservableObject {
     private var lastCleanupTimestamp: TimeInterval = 0
     private let maxConsecutiveFailures = 10
     private let stabilizationDisableDuration: TimeInterval = 30.0 // 30 seconds
+
+    // Recovery throttling to prevent excessive recovery attempts
+    private var lastRecoveryTime: TimeInterval = 0
+    private let minRecoveryInterval: TimeInterval = 3.0 // Minimum 3 seconds between recovery attempts
+    private var consecutiveRecoveryAttempts: Int = 0
 
     // MARK: - Initialization
 
@@ -261,18 +267,26 @@ class ARVIO_SLAM_Service: ObservableObject {
 
     /// Periodically cleans up invalid stabilization transforms to prevent accumulation of corrupted data
     private func cleanupInvalidStabilizationTransforms() {
-        let invalidKeys = stabilizationTransforms.keys.filter { key in
-            let transform = stabilizationTransforms[key]!
-            return !isValidTransform(transform)
-        }
+        stabilizationQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
 
-        for key in invalidKeys {
-            print("🧹 VIO/SLAM: Removing invalid stabilization transform for object \(key)")
-            stabilizationTransforms.removeValue(forKey: key)
-        }
+            // Find keys with invalid transforms
+            var invalidKeys: [String] = []
+            for key in self.stabilizationTransforms.keys {
+                if let transform = self.stabilizationTransforms[key], !self.isValidTransform(transform) {
+                    invalidKeys.append(key)
+                }
+            }
 
-        if !invalidKeys.isEmpty {
-            print("🧹 VIO/SLAM: Cleaned up \(invalidKeys.count) invalid stabilization transforms")
+            // Remove invalid transforms
+            for key in invalidKeys {
+                print("🧹 VIO/SLAM: Removing invalid stabilization transform for object \(key)")
+                self.stabilizationTransforms.removeValue(forKey: key)
+            }
+
+            if !invalidKeys.isEmpty {
+                print("🧹 VIO/SLAM: Cleaned up \(invalidKeys.count) invalid stabilization transforms")
+            }
         }
     }
 
@@ -290,8 +304,10 @@ class ARVIO_SLAM_Service: ObservableObject {
         // This prevents corrupted transforms from persisting
         if stabilizationFailures >= 3 {
             print("🧹 VIO/SLAM: Clearing all stabilization transforms due to \(stabilizationFailures) failures")
-            stabilizationTransforms.removeAll()
-            driftCompensation.removeAll()
+            stabilizationQueue.async(flags: .barrier) { [weak self] in
+                self?.stabilizationTransforms.removeAll()
+                self?.driftCompensation.removeAll()
+            }
         }
 
         if stabilizationFailures >= maxConsecutiveFailures {
@@ -303,8 +319,10 @@ class ARVIO_SLAM_Service: ObservableObject {
 
             // Reset failure counter and clear all stored data
             stabilizationFailures = 0
-            stabilizationTransforms.removeAll()
-            driftCompensation.removeAll()
+            stabilizationQueue.async(flags: .barrier) { [weak self] in
+                self?.stabilizationTransforms.removeAll()
+                self?.driftCompensation.removeAll()
+            }
         }
     }
 
@@ -358,10 +376,15 @@ class ARVIO_SLAM_Service: ObservableObject {
         }
 
         // Get stabilization correction and validate it strictly
-        let correction = stabilizationTransforms[objectId] ?? matrix_identity_float4x4
+        var correction = matrix_identity_float4x4
+        stabilizationQueue.sync {
+            correction = stabilizationTransforms[objectId] ?? matrix_identity_float4x4
+        }
         guard isValidTransform(correction) else {
             print("⚠️ VIO/SLAM: Stored correction transform is invalid, clearing")
-            stabilizationTransforms.removeValue(forKey: objectId)
+            stabilizationQueue.async(flags: .barrier) {
+                self.stabilizationTransforms.removeValue(forKey: objectId)
+            }
             return currentTransform
         }
 
@@ -384,13 +407,17 @@ class ARVIO_SLAM_Service: ObservableObject {
                 recordStabilizationFailure()
                 print("⚠️ VIO/SLAM: Matrix multiplication produced invalid transform, using original")
                 // Clear all stored corrections for this object
-                stabilizationTransforms.removeValue(forKey: objectId)
+                stabilizationQueue.async(flags: .barrier) {
+                    self.stabilizationTransforms.removeValue(forKey: objectId)
+                }
                 return currentTransform
             }
 
             // Check if the correction is actually worthwhile to apply
             if isCorrectionWorthwhile(original: currentTransform, corrected: stabilizedTransform) {
-                stabilizationTransforms[objectId] = stabilizedTransform
+                stabilizationQueue.async(flags: .barrier) {
+                    self.stabilizationTransforms[objectId] = stabilizedTransform
+                }
                 recordStabilizationSuccess()
                 return stabilizedTransform
             } else {
@@ -402,7 +429,9 @@ class ARVIO_SLAM_Service: ObservableObject {
         // Fallback to basic stabilization - with strict validation
         guard isValidTransform(currentTransform) && isValidTransform(correction) else {
             print("⚠️ VIO/SLAM: Fallback validation failed")
-            stabilizationTransforms.removeValue(forKey: objectId)
+            stabilizationQueue.async(flags: .barrier) {
+                self.stabilizationTransforms.removeValue(forKey: objectId)
+            }
             return currentTransform
         }
 
@@ -413,7 +442,9 @@ class ARVIO_SLAM_Service: ObservableObject {
             recordStabilizationFailure()
             print("⚠️ VIO/SLAM: Fallback stabilization produced invalid transform, using current")
             // Clear stored correction since fallback failed
-            stabilizationTransforms.removeValue(forKey: objectId)
+            stabilizationQueue.async(flags: .barrier) {
+                self.stabilizationTransforms.removeValue(forKey: objectId)
+            }
             return currentTransform
         }
 
@@ -429,7 +460,9 @@ class ARVIO_SLAM_Service: ObservableObject {
 
     /// Compensates for drift in object positioning
     func compensateDrift(for objectId: String, currentPosition: SIMD3<Float>) -> SIMD3<Float> {
-        let driftCompensation = self.driftCompensation[objectId] ?? SIMD3<Float>(0, 0, 0)
+        let driftCompensation = stabilizationQueue.sync {
+            self.driftCompensation[objectId] ?? SIMD3<Float>(0, 0, 0)
+        }
 
         // Apply SLAM-based drift compensation
         if let slamCorrection = slamMap?.getDriftCorrection(for: currentPosition),
@@ -458,13 +491,17 @@ class ARVIO_SLAM_Service: ObservableObject {
 
     /// Applies pose corrections from SLAM optimization
     private func applyPoseCorrections(_ optimizedPoses: [String: simd_float4x4]) {
-        for (objectId, optimizedPose) in optimizedPoses {
-            if isValidTransform(optimizedPose) {
-                stabilizationTransforms[objectId] = optimizedPose
-            } else {
-                print("⚠️ VIO/SLAM: Rejecting invalid optimized pose for object \(objectId)")
-                // Remove invalid transform to prevent future issues
-                stabilizationTransforms.removeValue(forKey: objectId)
+        stabilizationQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+
+            for (objectId, optimizedPose) in optimizedPoses {
+                if self.isValidTransform(optimizedPose) {
+                    self.stabilizationTransforms[objectId] = optimizedPose
+                } else {
+                    print("⚠️ VIO/SLAM: Rejecting invalid optimized pose for object \(objectId)")
+                    // Remove invalid transform to prevent future issues
+                    self.stabilizationTransforms.removeValue(forKey: objectId)
+                }
             }
         }
     }
@@ -506,15 +543,38 @@ class ARVIO_SLAM_Service: ObservableObject {
         // Update SLAM with new frame
         featureTracker?.processFrame(frame)
 
-        // Check for tracking degradation and apply corrections
+        // Check for tracking degradation and apply corrections (throttled)
         if case .limited = frame.camera.trackingState {
-            applyTrackingRecovery()
+            let currentTime = ProcessInfo.processInfo.systemUptime
+            if currentTime - lastRecoveryTime >= minRecoveryInterval {
+                applyTrackingRecovery()
+                lastRecoveryTime = currentTime
+                consecutiveRecoveryAttempts += 1
+
+                // If we've had too many consecutive recovery attempts, increase the interval
+                if consecutiveRecoveryAttempts >= 5 {
+                    print("⚠️ [VIO/SLAM] Too many consecutive recovery attempts (\(consecutiveRecoveryAttempts)), extending recovery interval")
+                    // Don't reset the counter here, let it continue to warn
+                }
+            } else {
+                // Skip recovery but still log occasionally to avoid spam
+                let timeSinceLastRecovery = currentTime - lastRecoveryTime
+                if consecutiveRecoveryAttempts > 0 && timeSinceLastRecovery >= minRecoveryInterval * 0.8 {
+                    print("🔄 [VIO/SLAM] Skipping recovery attempt (last recovery \(String(format: "%.1f", timeSinceLastRecovery))s ago, min interval \(minRecoveryInterval)s)")
+                }
+            }
+        } else {
+            // Reset recovery attempt counter when tracking is normal
+            if consecutiveRecoveryAttempts > 0 {
+                print("✅ [VIO/SLAM] Tracking recovered, resetting recovery counter")
+                consecutiveRecoveryAttempts = 0
+            }
         }
     }
 
     /// Applies recovery measures when tracking is limited
     private func applyTrackingRecovery() {
-        print("🔄 Applying VIO/SLAM tracking recovery")
+        print("🔄 Applying VIO/SLAM tracking recovery (attempt #\(consecutiveRecoveryAttempts))")
 
         // Use inertial data to maintain pose estimation
         if let inertialPose = vioProcessor?.getInertialPose() {
@@ -536,8 +596,11 @@ class ARVIO_SLAM_Service: ObservableObject {
         }
 
         // Apply inertial pose corrections to all tracked objects
-        for objectId in stabilizationTransforms.keys {
-            stabilizationTransforms[objectId] = inertialPose
+        stabilizationQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            for objectId in self.stabilizationTransforms.keys {
+                self.stabilizationTransforms[objectId] = inertialPose
+            }
         }
 
         print("📱 Applied inertial stabilization")
@@ -551,8 +614,11 @@ class ARVIO_SLAM_Service: ObservableObject {
         }
 
         // Apply SLAM-based relocalization
-        for objectId in stabilizationTransforms.keys {
-            stabilizationTransforms[objectId] = relocalizationPose
+        stabilizationQueue.async(flags: .barrier) { [weak self] in
+            guard let self = self else { return }
+            for objectId in self.stabilizationTransforms.keys {
+                self.stabilizationTransforms[objectId] = relocalizationPose
+            }
         }
 
         print("🗺️ Applied SLAM relocalization")
@@ -581,7 +647,11 @@ class ARVIO_SLAM_Service: ObservableObject {
     // MARK: - Diagnostics
 
     func getVIO_SLAM_Diagnostics() -> [String: Any] {
-        let invalidTransforms = stabilizationTransforms.filter { !isValidTransform($0.value) }.count
+        let (invalidTransforms, stabilizedObjectsCount) = stabilizationQueue.sync {
+            let invalidCount = stabilizationTransforms.filter { !isValidTransform($0.value) }.count
+            let count = stabilizationTransforms.count
+            return (invalidCount, count)
+        }
         let isStabilizationDisabled = self.isStabilizationDisabled()
 
         return [
@@ -589,7 +659,7 @@ class ARVIO_SLAM_Service: ObservableObject {
             "vioConfidence": vioConfidence,
             "slamMapPoints": slamMapPoints,
             "inertialDataBufferSize": inertialDataBuffer.count,
-            "stabilizedObjects": stabilizationTransforms.count,
+            "stabilizedObjects": stabilizedObjectsCount,
             "invalidStabilizationTransforms": invalidTransforms,
             "stabilizationFailures": stabilizationFailures,
             "stabilizationDisabled": isStabilizationDisabled,

@@ -379,45 +379,11 @@ struct CollectedItemCell: View {
     }
     
     private var itemIcon: String {
-        switch item.type {
-        case .chalice:
-            return "trophy.fill"
-        case .templeRelic:
-            return "star.fill"
-        case .treasureChest, .lootChest:
-            return "shippingbox.fill"
-        case .lootCart:
-            return "cart.fill"
-        case .turkey:
-            return "bird.fill"
-        case .sphere:
-            return "circle.fill"
-        case .cube:
-            return "cube.fill"
-        case .terrorEngine:
-            return "gearshape.2.fill"
-        }
+        return item.type.factory.iconName
     }
     
     private var itemColor: Color {
-        switch item.type {
-        case .chalice:
-            return .yellow
-        case .templeRelic:
-            return .purple
-        case .treasureChest, .lootChest:
-            return .orange
-        case .lootCart:
-            return .brown
-        case .turkey:
-            return .red
-        case .sphere:
-            return .blue
-        case .cube:
-            return .green
-        case .terrorEngine:
-            return .pink
-        }
+        return Color(uiColor: item.type.factory.color)
     }
 }
 

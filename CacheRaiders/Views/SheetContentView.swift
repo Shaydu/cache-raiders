@@ -8,6 +8,7 @@ struct SheetContentView: View {
     let sheetType: SheetType
     let locationManager: LootBoxLocationManager
     let userLocationManager: UserLocationManager
+    @Binding var nearestObjectDirection: Double?
     let treasureHuntService: TreasureHuntService
     let gridTreasureMapService: GridTreasureMapService
     let inventoryService: InventoryService
@@ -16,7 +17,7 @@ struct SheetContentView: View {
     var body: some View {
         switch sheetType {
         case .locationConfig:
-            LocationConfigView(locationManager: locationManager)
+            LocationConfigView(locationManager: locationManager, userLocationManager: userLocationManager, nearestObjectDirection: $nearestObjectDirection)
         case .arPlacement:
             ARPlacementView(locationManager: locationManager, userLocationManager: userLocationManager)
         case .nfcScanner:
@@ -63,6 +64,7 @@ struct SheetContentView: View {
                 LootBoxMapView(
                     locationManager: locationManager,
                     userLocationManager: userLocationManager,
+                    nearestObjectDirection: $nearestObjectDirection,
                     onObjectTap: { location in
                         // Create object detail using the existing service
                         let objectDetail = ARObjectDetailService.shared.extractObjectDetails(

@@ -14,11 +14,13 @@ struct MapAnnotationItem: Identifiable {
 struct LootBoxMapView: View {
     @ObservedObject var locationManager: LootBoxLocationManager
     @ObservedObject var userLocationManager: UserLocationManager
+    @Binding var nearestObjectDirection: Double?
     let onObjectTap: (LootBoxLocation) -> Void
 
-    init(locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, onObjectTap: @escaping (LootBoxLocation) -> Void = { _ in }) {
+    init(locationManager: LootBoxLocationManager, userLocationManager: UserLocationManager, nearestObjectDirection: Binding<Double?>, onObjectTap: @escaping (LootBoxLocation) -> Void = { _ in }) {
         self.locationManager = locationManager
         self.userLocationManager = userLocationManager
+        self._nearestObjectDirection = nearestObjectDirection
         self.onObjectTap = onObjectTap
     }
     @State private var position = MapCameraPosition.region(MKCoordinateRegion(
@@ -173,13 +175,15 @@ struct LootBoxMapView: View {
                                 VStack(spacing: 4) {
                                     // Rotate the icon based on user's heading/direction of travel
                                     // MapKit uses 0 = north, so we rotate the icon to match
+                                    // Apply same 180° adjustment as admin panel for iOS course/direction of travel
                                     // Use location.north.line.fill for a directional indicator
+                                    let adjustedHeading = (userLocationManager.heading ?? 0) + 180.0
                                     Image(systemName: "location.north.line.fill")
                                         .foregroundColor(.blue)
                                         .font(.title2)
                                         .background(Circle().fill(.white))
                                         .shadow(radius: 3)
-                                        .rotationEffect(.degrees(userLocationManager.heading ?? 0))
+                                        .rotationEffect(.degrees(adjustedHeading))
 
                                     Text("You")
                                         .font(.caption)
@@ -422,6 +426,31 @@ struct LootBoxMapView: View {
                     Spacer()
                 }
                 .transition(.opacity)
+            }
+
+            // Direction indicator overlay (shows when navigating to target)
+            if let direction = nearestObjectDirection, !direction.isNaN, direction.isFinite {
+                GeometryReader { geometry in
+                    VStack {
+                        HStack {
+                            Spacer()
+                            ZStack {
+                                Circle()
+                                    .fill(Color.blue.opacity(0.2))
+                                    .frame(width: 60, height: 60)
+                                Image(systemName: "location.north.line.fill")
+                                    .font(.title)
+                                    .foregroundColor(.blue)
+                                    .rotationEffect(.degrees(direction))
+                                    .shadow(radius: 2)
+                            }
+                            .padding(.trailing, 20)
+                            .padding(.top, geometry.safeAreaInsets.top + 20)
+                        }
+                        Spacer()
+                    }
+                }
+                .ignoresSafeArea()
             }
         }
         .onAppear {

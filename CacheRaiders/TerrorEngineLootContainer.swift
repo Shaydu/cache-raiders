@@ -50,7 +50,7 @@ class TerrorEngineLootContainer {
 
     /// Loads a terror engine USDZ model and checks for built-in animations
     private static func loadTerrorEngineModel(size: Float, type: LootBoxType) -> (ModelEntity, AnimationResource?) {
-        let modelNames = ["Terror_Engine_-_Leather_Ghost"]
+        let modelNames = ["Terror_Engine_-_Leather_Ghost", "Terror_Engine_-_Krasue", "Terror_Engine_-_Grim_Reaper_MonsterOLD", "Grim_Reaper__Headless_Dark_Angel_of_Death"]
 
         for modelName in modelNames {
             if let modelURL = Bundle.main.url(forResource: modelName, withExtension: "usdz") {

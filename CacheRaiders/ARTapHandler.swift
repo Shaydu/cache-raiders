@@ -29,7 +29,7 @@ class ARTapHandler {
     var lastTapPlacementTime: Date?
 
     // Callback for finding loot boxes
-    var onFindLootBox: ((String, AnchorEntity, SIMD3<Float>, ModelEntity?) -> Void)?
+    var onFindLootBox: ((String, AnchorEntity, SIMD3<Float>, ModelEntity?, SIMD3<Float>?) -> Void)?
 
     // Callback for placing loot box at tap location
     var onPlaceLootBoxAtTap: ((LootBoxLocation, ARRaycastResult) -> Void)?
@@ -85,23 +85,30 @@ class ARTapHandler {
         Swift.print("   onNPCTap callback exists: \(onNPCTap != nil)")
         Swift.print("   onFindLootBox callback exists: \(onFindLootBox != nil)")
 
-        // Get screen center for crosshair placement
-        let screenCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
+        // Check if tapped on existing loot box
+        // First try direct entity hit
+        let tappedEntity: Entity? = arView.entity(at: tapLocation)
 
-        // Get tap world position using raycast from SCREEN CENTER (crosshairs)
+        // Get tap world position - prefer the actual tapped entity's position over raycast to plane
         var tapWorldPosition: SIMD3<Float>? = nil
-        if let raycastResult = arView.raycast(from: screenCenter, allowing: .estimatedPlane, alignment: .horizontal).first {
+        if let tappedEntity = tappedEntity {
+            // Use the actual tapped entity's world position for precise confetti placement
+            let entityTransform = tappedEntity.transformMatrix(relativeTo: nil)
+            tapWorldPosition = SIMD3<Float>(
+                entityTransform.columns.3.x,
+                entityTransform.columns.3.y,
+                entityTransform.columns.3.z
+            )
+            Swift.print("   👆 Tap world position (from entity): (\(String(format: "%.2f", tapWorldPosition!.x)), \(String(format: "%.2f", tapWorldPosition!.y)), \(String(format: "%.2f", tapWorldPosition!.z)))")
+        } else if let raycastResult = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .horizontal).first {
+            // Fallback to raycast if no entity was hit
             tapWorldPosition = SIMD3<Float>(
                 raycastResult.worldTransform.columns.3.x,
                 raycastResult.worldTransform.columns.3.y,
                 raycastResult.worldTransform.columns.3.z
             )
-            Swift.print("   📍 Crosshair world position: (\(String(format: "%.2f", tapWorldPosition!.x)), \(String(format: "%.2f", tapWorldPosition!.y)), \(String(format: "%.2f", tapWorldPosition!.z)))")
+            Swift.print("   👆 Tap world position (raycast fallback): (\(String(format: "%.2f", tapWorldPosition!.x)), \(String(format: "%.2f", tapWorldPosition!.y)), \(String(format: "%.2f", tapWorldPosition!.z)))")
         }
-        
-        // Check if tapped on existing loot box
-        // First try direct entity hit
-        let tappedEntity: Entity? = arView.entity(at: tapLocation)
         var locationId: String? = nil
 
         Swift.print("🎯 Tap entity hit test result: \(tappedEntity != nil ? "hit entity" : "no entity hit")")
@@ -153,7 +160,7 @@ class ARTapHandler {
                         }
 
                         // Trigger the find animation (confetti + sound) and removal
-                        ghostFindableObject.find {
+                        ghostFindableObject.find(tapWorldPosition: tapWorldPosition) {
                             Swift.print("✅ Ghost entity '\(idString)' collected with confetti/sound")
                         }
 
@@ -455,7 +462,7 @@ class ARTapHandler {
 
             // Use callback to find loot box
             Swift.print("🎯 Finding object: \(idString) (type: sphere=\(sphereEntity != nil), has findableObject=\(findableObjects[idString] != nil))")
-            onFindLootBox?(idString, anchor, cameraPos, sphereEntity)
+            onFindLootBox?(idString, anchor, cameraPos, sphereEntity, tapWorldPosition)
             return
         }
         
@@ -478,7 +485,7 @@ class ARTapHandler {
         Swift.print("🎯 Attempting manual placement via tap...")
 
         // Use screen CENTER (crosshairs) instead of tap location for precise placement
-        // screenCenter is already declared above at line 49
+        let screenCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
         Swift.print("🎯 Placing at crosshairs (screen center): (\(screenCenter.x), \(screenCenter.y))")
 
         if let result = arView.raycast(from: screenCenter, allowing: .estimatedPlane, alignment: .horizontal).first,

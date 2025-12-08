@@ -36,7 +36,7 @@ struct ARPlacementView: View {
             List {
                 Section("Create New Object") {
                     Picker("Object Type", selection: $selectedObjectType) {
-                        ForEach([LootBoxType.chalice, .templeRelic, .treasureChest, .lootChest, .lootCart, .sphere, .cube, .turkey, .terrorEngine], id: \.self) { type in
+                        ForEach([LootBoxType.chalice, .templeRelic, .treasureChest, .lootChest, .lootCart, .sphere, .cube, .turkey, .terrorEngine, .yourMom], id: \.self) { type in
                             Text(type.displayName).tag(type)
                         }
                     }
@@ -105,8 +105,54 @@ struct ARPlacementView: View {
                 if placementMode == .selecting {
                     selectingView
                 } else {
-                    // AR placement view with placement reticle and overlay - temporarily simplified
-                    Text("AR Placement View Temporarily Disabled")
+                    ARPlacementARViewWrapper(
+                        locationManager: locationManager,
+                        userLocationManager: userLocationManager,
+                        selectedObject: selectedObject,
+                        objectType: selectedObject?.type ?? selectedObjectType,
+                        isNewObject: isPlacingNew,
+                        onPlace: { coordinate, arPosition, arOrigin, groundingHeight, scale, screenPoint in
+                            Task {
+                                do {
+                                    if isPlacingNew {
+                                        // Create new object
+                                        let objectId = await createNewObject(
+                                            type: selectedObjectType,
+                                            name: newObjectName,
+                                            coordinate: coordinate,
+                                            arPosition: arPosition,
+                                            arOrigin: arOrigin,
+                                            groundingHeight: groundingHeight,
+                                            scale: scale,
+                                            screenPoint: screenPoint
+                                        )
+                                        print("✅ [Placement] Created new object: \(objectId)")
+                                    } else if let selectedObject = selectedObject {
+                                        // Update existing object
+                                        try await updateObjectLocation(
+                                            objectId: selectedObject.id,
+                                            coordinate: coordinate,
+                                            arPosition: arPosition,
+                                            arOrigin: arOrigin,
+                                            groundingHeight: groundingHeight,
+                                            scale: scale,
+                                            screenPoint: screenPoint
+                                        )
+                                        print("✅ [Placement] Updated existing object: \(selectedObject.id)")
+                                    }
+                                } catch {
+                                    print("❌ [Placement] Failed to save object: \(error)")
+                                }
+                            }
+                        },
+                        onCancel: {
+                            placementMode = .selecting
+                        },
+                        onDone: {
+                            dismiss()
+                        },
+                        scaleMultiplier: $scaleMultiplier
+                    )
                 }
             }
             .onChange(of: placementMode) { oldMode, newMode in
@@ -862,31 +908,10 @@ struct ARPlacementView: View {
                 wireframeMaterial.color = .init(tint: UIColor.cyan.withAlphaComponent(0.6))
                 wireframeMaterial.roughness = 1.0
                 wireframeMaterial.metallic = 0.0
-                
-                // Create wireframe based on object type
-                let wireframeEntity: ModelEntity
-                
-                switch type {
-                case .chalice, .templeRelic, .turkey:
-                    // Cylinder wireframe for chalice/turkey
-                    let mesh = MeshResource.generateCylinder(height: size * 0.6, radius: size * 0.3)
-                    wireframeEntity = ModelEntity(mesh: mesh, materials: [wireframeMaterial])
-                    
-                case .treasureChest, .lootChest, .lootCart, .terrorEngine:
-                    // Box wireframe for chest and engine
-                    let mesh = MeshResource.generateBox(width: size * 0.6, height: size * 0.6, depth: size * 0.6)
-                    wireframeEntity = ModelEntity(mesh: mesh, materials: [wireframeMaterial])
-                    
-                case .sphere:
-                    // Sphere wireframe
-                    let mesh = MeshResource.generateSphere(radius: size * 0.3)
-                    wireframeEntity = ModelEntity(mesh: mesh, materials: [wireframeMaterial])
-                    
-                case .cube:
-                    // Cube wireframe
-                    let mesh = MeshResource.generateBox(width: size * 0.4, height: size * 0.4, depth: size * 0.4)
-                    wireframeEntity = ModelEntity(mesh: mesh, materials: [wireframeMaterial])
-                }
+
+                // Create wireframe using factory polymorphism
+                let mesh = type.factory.createWireframeMesh(size: size)
+                let wireframeEntity = ModelEntity(mesh: mesh, materials: [wireframeMaterial])
                 
                 // Add outline effect by creating a slightly larger wireframe behind
                 let outlineEntity = wireframeEntity.clone(recursive: false)
@@ -928,6 +953,8 @@ struct ARPlacementView: View {
                     shadowYOffset = -size * 0.3 - 0.01 // Spheres
                 case .cube:
                     shadowYOffset = -size * 0.2 - 0.01 // Cubes (smaller)
+                case .yourMom:
+                    shadowYOffset = -size * 0.25 - 0.01 // Your mom objects
                 }
                 shadowEntity.position = SIMD3<Float>(0, shadowYOffset, 0)
                 
@@ -1134,18 +1161,13 @@ struct ARPlacementView: View {
                     return
                 }
                 
-                print("✅ Placement button tapped - placing at reticle position: \(reticlePosition)")
+                print("✅ Placement button tapped - saving object at reticle position: \(reticlePosition)")
                 print("   Reticle X: \(String(format: "%.4f", reticlePosition.x)), Y: \(String(format: "%.4f", reticlePosition.y)), Z: \(String(format: "%.4f", reticlePosition.z))")
-                
+
                 // Get screen coordinates for raycasting (plane anchor support)
                 let screenPoint = placementReticle?.getPlacementScreenPoint()
                 print("   Screen coordinates: \(screenPoint != nil ? "(\(String(format: "%.1f", screenPoint!.x)), \(String(format: "%.1f", screenPoint!.y)))" : "unavailable")")
-                
-                // CRITICAL: Hide preview object and mark as placed immediately when user initiates placement
-                // This prevents the preview from lingering after placement
-                hasPlacedObject = true
-                hidePreviewObject()
-                
+
                 // Use reticle position directly - it's already at the correct X/Z and Y (surface level)
                 // The crosshairs now sit on the surface so objects sit on the crosshairs
                 let adjustedPosition = SIMD3<Float>(
@@ -1153,29 +1175,23 @@ struct ARPlacementView: View {
                     reticlePosition.y, // Use surface Y level where crosshairs sit
                     reticlePosition.z
                 )
-                
+
                 print("   Adjusted position: X: \(String(format: "%.4f", adjustedPosition.x)), Y: \(String(format: "%.4f", adjustedPosition.y)), Z: \(String(format: "%.4f", adjustedPosition.z))")
-                
+
                 // Convert AR world position to GPS coordinates (fallback)
                 let gpsCoordinate = arOriginGPS.flatMap { convertARToGPS(arPosition: adjustedPosition, arOrigin: $0) }
-                
+
                 // Always use AR coordinates for mm-precision (primary)
                 // GPS is only for fallback when AR session restarts
                 let surfaceY = Double(adjustedPosition.y)
-                print("✅ Placing object at AR position: \(adjustedPosition) (mm-precision, adjusted for reticle offset), GPS fallback: \(gpsCoordinate?.latitude ?? 0), \(gpsCoordinate?.longitude ?? 0), Y: \(surfaceY)m, scale: \(scaleMultiplier)x")
-                
-                // Store placement data for potential later save (if user presses Done instead of Place)
-                pendingPlacementData = (
-                    gpsCoordinate: gpsCoordinate ?? arOriginGPS?.coordinate ?? CLLocationCoordinate2D(),
-                    arPosition: adjustedPosition,
-                    arOrigin: arOriginGPS,
-                    groundingHeight: surfaceY,
-                    scale: scaleMultiplier
-                )
-                
+                print("✅ Saving object at AR position: \(adjustedPosition) (mm-precision, adjusted for reticle offset), GPS fallback: \(gpsCoordinate?.latitude ?? 0), \(gpsCoordinate?.longitude ?? 0), Y: \(surfaceY)m, scale: \(scaleMultiplier)x")
+
                 // Save to API (for persistence across app restarts)
                 // Include screen coordinates for plane anchor raycasting
                 onPlace(gpsCoordinate ?? arOriginGPS?.coordinate ?? CLLocationCoordinate2D(), adjustedPosition, arOriginGPS, surfaceY, scaleMultiplier, screenPoint)
+
+                // Mark as placed to prevent any preview objects from lingering
+                hasPlacedObject = true
             }
             
             /// Saves the currently placed object (called when Done button is pressed)
@@ -1204,7 +1220,7 @@ struct ARPlacementView: View {
                 placedObjectEntity = nil
                 
                 // Get factory for this object type
-                let factory = LootBoxFactoryRegistry.factory(for: location.type)
+                let factory = location.type.factory
                 
                 // Create anchor at placement position
                 let anchor = AnchorEntity(world: position)
@@ -1423,6 +1439,8 @@ struct ARPlacementView: View {
                     shadowYOffset = -scaledObjectSize * 0.3 - 0.01
                 case .cube:
                     shadowYOffset = -scaledObjectSize * 0.2 - 0.01
+                case .yourMom:
+                    shadowYOffset = -scaledObjectSize * 0.25 - 0.01
                 }
                 shadow.position = SIMD3<Float>(0, shadowYOffset, 0)
             }
@@ -1540,7 +1558,7 @@ struct ARPlacementView: View {
                 )
                 
                 // Get factory for this object type
-                let factory = LootBoxFactoryRegistry.factory(for: objectType)
+                let factory = objectType.factory
                 
                 // Create anchor at preview position
                 let anchor = AnchorEntity(world: position)
