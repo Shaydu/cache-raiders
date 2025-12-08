@@ -162,7 +162,7 @@ struct ARPlacementView: View {
                     locationManager.arCoordinator?.pauseARSession()
                 } else if newMode == .placing {
                     print("▶️ [AR PLACEMENT MODE] Switching to placing mode - resuming AR session")
-                    locationManager.arCoordinator?.resumeARSession()
+                    locationManager.arCoordinator?.resumeARSessionPreservingAnchors()
                 }
             }
             .onAppear {
@@ -177,8 +177,8 @@ struct ARPlacementView: View {
                 print("   Main AR view should now restore all placed objects")
                 print("   Main AR view will run checkAndPlaceBoxes to restore objects")
                 
-                // Resume AR session when placement view is dismissed
-                locationManager.arCoordinator?.resumeARSession()
+                // Resume AR session when placement view is dismissed (preserve anchors that were just placed)
+                locationManager.arCoordinator?.resumeARSessionPreservingAnchors()
                 
                 // When view disappears, save any placed object if one exists
                 // This handles swipe-to-dismiss and navigation bar Done button
@@ -317,6 +317,27 @@ struct ARPlacementView: View {
             try await APIService.shared.updateGroundingHeight(objectId: objectId, height: groundingHeight)
             // Note: Scale is stored locally or could be added to API in the future
             print("📏 [Placement] Object scale set to \(scale)x (stored locally)")
+
+            // CRITICAL: Post notification to trigger immediate re-placement in main AR view
+            // This ensures the moved object appears at its new location immediately
+            let placementData: [String: Any] = [
+                "objectId": objectId,
+                "gpsCoordinate": coordinate,
+                "arPosition": [arPosition.x, arPosition.y, arPosition.z],
+                "arOrigin": [arOrigin?.coordinate.latitude ?? 0, arOrigin?.coordinate.longitude ?? 0],
+                "groundingHeight": groundingHeight,
+                "scale": scale,
+                "screenPoint": screenPoint != nil ? [screenPoint!.x, screenPoint!.y] : nil,
+                "objectType": locationManager.locations.first(where: { $0.id == objectId })?.type.displayName ?? "unknown",
+                "objectName": locationManager.locations.first(where: { $0.id == objectId })?.name ?? "Unknown"
+            ] as [String: Any]
+
+            NotificationCenter.default.post(
+                name: NSNotification.Name("ARPlacementObjectSaved"),
+                object: nil,
+                userInfo: placementData
+            )
+            print("🔔 [Placement] Posted ARPlacementObjectSaved notification for updated object placement")
         } catch {
             print("❌ Failed to update object location: \(error)")
         }
@@ -407,7 +428,44 @@ struct ARPlacementView: View {
             try await APIService.shared.updateGroundingHeight(objectId: createdAPIObject.id, height: groundingHeight)
             // Note: Scale is stored locally or could be added to API in the future
             print("📏 [Placement] Object scale set to \(scale)x (stored locally)")
-            
+
+            // CRITICAL: Post notification to trigger immediate placement in main AR view
+            // This ensures the object appears immediately when placed, before the placement view dismisses
+            let placementData: [String: Any] = [
+                "objectId": createdAPIObject.id,
+                "gpsCoordinate": coordinate,
+                "arPosition": [arPosition.x, arPosition.y, arPosition.z],
+                "arOrigin": [arOrigin?.coordinate.latitude ?? 0, arOrigin?.coordinate.longitude ?? 0],
+                "groundingHeight": groundingHeight,
+                "scale": scale,
+                "screenPoint": screenPoint != nil ? [screenPoint!.x, screenPoint!.y] : nil,
+                "objectType": createdAPIObject.type,
+                "objectName": createdAPIObject.name
+            ] as [String: Any]
+
+            print("📤 [Placement] Sending ARPlacementObjectSaved notification for object: \(createdAPIObject.id)")
+            print("   Data keys: \(placementData.keys.sorted())")
+            print("   AR Position: (\(arPosition.x), \(arPosition.y), \(arPosition.z))")
+            print("   Timestamp: \(Date().timeIntervalSince1970)")
+
+            NotificationCenter.default.post(
+                name: NSNotification.Name("ARPlacementObjectSaved"),
+                object: nil,
+                userInfo: placementData
+            )
+            print("✅ [Placement] Posted ARPlacementObjectSaved notification for immediate placement")
+            print("   📡 Notification sent - main AR view should now place the object")
+
+            // Give the main AR view a moment to process the notification and place the object
+            // This prevents the user from dismissing the placement view before the object appears
+            Task {
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
+                await MainActor.run {
+                    print("⏱️ [Placement] Delay completed - object should now be visible in main AR view")
+                    print("   💡 You can now tap 'Done' to return to the main AR view")
+                }
+            }
+
             // Return the ID from the API (it might be different from the local UUID)
             return createdAPIObject.id
         } catch {
@@ -416,8 +474,9 @@ struct ARPlacementView: View {
             return objectId
         }
     }
-    
-    // MARK: - AR Placement AR View Wrapper (combines AR view + overlay)
+}
+
+// MARK: - AR Placement AR View Wrapper (combines AR view + overlay)
     struct ARPlacementARViewWrapper: View {
         @ObservedObject var locationManager: LootBoxLocationManager
         @ObservedObject var userLocationManager: UserLocationManager
@@ -451,7 +510,8 @@ struct ARPlacementView: View {
                         set: { coordinator = $0 }
                     )
                 )
-                
+
+
                 // Placement overlay UI
                 ObjectPlacementOverlay(
                     isPlacementMode: $isPlacementMode,
@@ -527,17 +587,10 @@ struct ARPlacementView: View {
                 arView.session.run(config, options: [.resetTracking, .removeExistingAnchors])
             }
             
-            // Add tap gesture for placement
-            let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleTap(_:)))
-            arView.addGestureRecognizer(tapGesture)
-            
-            // Add long press gesture for drag-to-place
+            // Add long press gesture for drag-to-place (removed tap gesture to prevent duplicate placement)
             let longPressGesture = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleLongPress(_:)))
             longPressGesture.minimumPressDuration = 0.3 // 300ms to activate
             arView.addGestureRecognizer(longPressGesture)
-            
-            // Make tap gesture require long press to fail (so tap still works for quick placement)
-            tapGesture.require(toFail: longPressGesture)
             
             context.coordinator.setup(arView: arView, locationManager: locationManager, userLocationManager: userLocationManager, selectedObject: selectedObject, objectType: objectType, isNewObject: isNewObject, placementReticle: placementReticle)
             context.coordinator.onPlace = onPlace
@@ -554,8 +607,8 @@ struct ARPlacementView: View {
             let previousScale = context.coordinator.scaleMultiplier
             if abs(previousScale - scaleMultiplier) > 0.01 { // Only update if change is significant (> 1%)
                 context.coordinator.scaleMultiplier = scaleMultiplier
-                // Update wireframe preview scale
-                context.coordinator.updateWireframeScale()
+                // Update model preview scale
+                context.coordinator.updateModelScale()
             }
         }
         
@@ -625,8 +678,28 @@ struct ARPlacementView: View {
             deinit {
                 NotificationCenter.default.removeObserver(self)
             }
-            
-            
+
+            /// Update the scale of preview models when scale multiplier changes
+            func updateModelScale() {
+                // Update preview wireframe scale if it exists
+                if let previewWireframe = previewWireframeEntity {
+                    previewWireframe.scale = SIMD3<Float>(scaleMultiplier, scaleMultiplier, scaleMultiplier)
+                }
+
+                // Update any model preview anchors (existing objects shown during placement)
+                for (_, anchor) in modelPreviewAnchors {
+                    if let modelEntity = anchor.children.first as? ModelEntity {
+                        modelEntity.scale = SIMD3<Float>(scaleMultiplier, scaleMultiplier, scaleMultiplier)
+                    }
+                }
+
+                // Update placed object preview if it exists
+                if let placedEntity = placedObjectEntity {
+                    placedEntity.scale = SIMD3<Float>(scaleMultiplier, scaleMultiplier, scaleMultiplier)
+                }
+            }
+
+
             /// Clean up all placement view additions (wireframes, previews, crosshairs)
             /// Called when placement view is dismissed to prevent artifacts in main AR view
             func cleanupPlacementView() {
@@ -636,12 +709,12 @@ struct ARPlacementView: View {
                 stopDisplayLink()
                 print("   Stopped display link")
                 
-                // Remove all wireframe anchors (existing objects shown during placement)
-                for (id, anchor) in wireframeAnchors {
+                // Remove all model preview anchors (existing objects shown during placement)
+                for (id, anchor) in modelPreviewAnchors {
                     anchor.removeFromParent()
-                    print("   Removed wireframe for object: \(id)")
+                    print("   Removed model preview for object: \(id)")
                 }
-                wireframeAnchors.removeAll()
+                modelPreviewAnchors.removeAll()
                 
                 // Remove crosshair anchor
                 if let crosshair = crosshairAnchor {
@@ -661,16 +734,20 @@ struct ARPlacementView: View {
                 // Remove placement reticle
                 placementReticle?.hide()
                 print("   Hidden placement reticle")
-                
+
+                // Remove any preview object that might still be lingering
+                hidePreviewObject()
+                print("   Hidden preview object")
+
                 // NOTE: We intentionally do NOT remove placedObjectAnchor here because:
                 // 1. We removed the call to placeObjectImmediately, so there's no preview object anymore
                 // 2. If there were a placed object, removing it here would cause it to disappear
                 //    before the main AR view can re-place it at the saved coordinates
-                
-                print("✅ [Placement] Cleanup complete - \(wireframeAnchors.count) wireframes removed")
+
+                print("✅ [Placement] Cleanup complete - \(modelPreviewAnchors.count) model previews removed")
             }
             
-            var wireframeAnchors: [String: AnchorEntity] = [:]
+            var modelPreviewAnchors: [String: AnchorEntity] = [:]
             var precisionPositioningService: ARPrecisionPositioningService?
             
             // Dragging state
@@ -696,10 +773,19 @@ struct ARPlacementView: View {
                 placementReticle.arView = arView
                 placementReticle.locationManager = locationManager
                 placementReticle.show()
-                
+
                 // CRITICAL: Force initial update to ensure reticle anchor is positioned
                 // This ensures getPlacementPosition() returns a valid position immediately
                 placementReticle.update()
+
+                // Provide haptic feedback when entering AR placement mode
+                // This indicates that the AR frame is ready and tap listener is active
+                DispatchQueue.main.async {
+                    let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+                    impactFeedback.prepare()
+                    impactFeedback.impactOccurred()
+                    print("📳 HAPTIC: AR placement mode activated - tap listener ready")
+                }
                 
                 // Initialize precision positioning service
                 precisionPositioningService = ARPrecisionPositioningService(arView: arView)
@@ -749,8 +835,8 @@ struct ARPlacementView: View {
                 // Create crosshairs (keeping old system for now)
                 createCrosshairs()
                 
-                // Place all existing objects as wireframes
-                placeAllObjectsAsWireframes()
+                // Place all existing objects as real models
+                placeAllObjectsAsModels()
                 
                 // Update crosshair and reticle positions after setup
                 updateCrosshairPosition()
@@ -793,12 +879,12 @@ struct ARPlacementView: View {
                 updatePreviewObjectForSharedSession()
             }
             
-            func placeAllObjectsAsWireframes() {
+            func placeAllObjectsAsModels() {
                 guard let arView = arView,
                       let frame = arView.session.currentFrame,
                       let userLocation = userLocationManager?.currentLocation,
                       let arOrigin = arOriginGPS else {
-                    print("⚠️ Cannot place wireframes: Missing AR view, frame, or location")
+                    print("⚠️ Cannot place model previews: Missing AR view, frame, or location")
                     return
                 }
                 
@@ -826,34 +912,29 @@ struct ARPlacementView: View {
                         let groundY = cameraPos.y - 1.5
                         let finalPosition = SIMD3<Float>(targetPosition.x, groundY, targetPosition.z)
                         
-                        // Create a highlighted wireframe for selected object
-                        let wireframeEntity = createWireframeModel(for: location.type, size: location.type.size)
-                        
-                        // Make it yellow/gold to indicate it's selected
-                        // But preserve the shadow's UnlitMaterial
-                        for child in wireframeEntity.children {
-                            if let modelEntity = child as? ModelEntity {
-                                // Skip shadow entity - keep its UnlitMaterial
-                                if modelEntity.name == "shadow" {
-                                    continue
-                                }
-                                
-                                if var model = modelEntity.model {
-                                    var material = SimpleMaterial()
-                                    material.color = .init(tint: UIColor.systemYellow.withAlphaComponent(0.8))
-                                    material.roughness = 1.0
-                                    material.metallic = 0.0
-                                    model.materials = [material]
-                                    modelEntity.model = model
-                                }
-                            }
-                        }
-                        
+                        // Create the actual model for selected object (scaled appropriately)
+                        let tempAnchor = AnchorEntity()
+                        let (entity, _) = location.type.factory.createEntity(location: location, anchor: tempAnchor, sizeMultiplier: 1.0)
+                        entity.isEnabled = true
+
                         let anchor = AnchorEntity(world: finalPosition)
-                        anchor.addChild(wireframeEntity)
+                        anchor.addChild(entity)
+
+                        // Center the existing object horizontally on its position
+                        let bounds = entity.visualBounds(relativeTo: anchor)
+                        let entityCenterX = (bounds.min.x + bounds.max.x) / 2.0
+                        let entityCenterZ = (bounds.min.z + bounds.max.z) / 2.0
+                        entity.position.x -= entityCenterX
+                        entity.position.z -= entityCenterZ
+
+                        // Ground the object
+                        let currentMinY = bounds.min.y
+                        let desiredMinY: Float = 0
+                        let deltaY = desiredMinY - currentMinY
+                        entity.position.y += deltaY
                         arView.scene.addAnchor(anchor)
                         
-                        wireframeAnchors[location.id] = anchor
+                        modelPreviewAnchors[location.id] = anchor
                         print("✅ Placed selected object '\(location.name)' in front of camera at \(finalPosition)")
                         continue
                     }
@@ -876,71 +957,86 @@ struct ARPlacementView: View {
                         // Use stored grounding height if available
                         let finalY = location.grounding_height.map { Float($0) } ?? arPosition.y
                         let finalPosition = SIMD3<Float>(arPosition.x, finalY, arPosition.z)
-                        // Create wireframe model
-                        let wireframeEntity = createWireframeModel(for: location.type, size: location.type.size)
-                        
+                        // Create the actual model
+                        let tempAnchor = AnchorEntity()
+                        let (entity, _) = location.type.factory.createEntity(location: location, anchor: tempAnchor, sizeMultiplier: 1.0)
+                        entity.isEnabled = true
+
                         // Create anchor at AR position
                         let anchor = AnchorEntity(world: finalPosition)
-                        anchor.addChild(wireframeEntity)
+                        anchor.addChild(entity)
+
+                        // Center the existing object horizontally on its position
+                        let bounds = entity.visualBounds(relativeTo: anchor)
+                        let entityCenterX = (bounds.min.x + bounds.max.x) / 2.0
+                        let entityCenterZ = (bounds.min.z + bounds.max.z) / 2.0
+                        entity.position.x -= entityCenterX
+                        entity.position.z -= entityCenterZ
+
+                        // Use stored grounding height or ground the object
+                        if location.grounding_height == nil {
+                            let currentMinY = bounds.min.y
+                            let desiredMinY: Float = 0
+                            let deltaY = desiredMinY - currentMinY
+                            entity.position.y += deltaY
+                        }
                         arView.scene.addAnchor(anchor)
                         
-                        wireframeAnchors[location.id] = anchor
+                        modelPreviewAnchors[location.id] = anchor
                     }
                 }
                 
-                print("✅ Placed \(wireframeAnchors.count) objects as wireframes")
+                print("✅ Placed \(modelPreviewAnchors.count) objects as model previews")
             }
             
-            func updateWireframes() {
-                // Remove old wireframes
-                for (_, anchor) in wireframeAnchors {
+            func updateModels() {
+                // Remove old model previews
+                for (_, anchor) in modelPreviewAnchors {
                     anchor.removeFromParent()
                 }
-                wireframeAnchors.removeAll()
-                
-                // Place updated wireframes
-                placeAllObjectsAsWireframes()
-            }
-            
-            func createWireframeModel(for type: LootBoxType, size: Float) -> ModelEntity {
-                // Create wireframe material (unlit, semi-transparent, colored outline)
-                var wireframeMaterial = SimpleMaterial()
-                wireframeMaterial.color = .init(tint: UIColor.cyan.withAlphaComponent(0.6))
-                wireframeMaterial.roughness = 1.0
-                wireframeMaterial.metallic = 0.0
+                modelPreviewAnchors.removeAll()
 
-                // Create wireframe using factory polymorphism
+                // Place updated model previews
+                placeAllObjectsAsModels()
+            }
+
+            func createWireframeModel(for type: LootBoxType, size: Float) -> ModelEntity {
+                // Create a more distinctive wireframe appearance using bright colors and lines
+                let wireframeColor = UIColor.systemYellow // Bright yellow for wireframes
+                let wireframeAlpha: CGFloat = 0.8 // More opaque for better visibility
+
+                // Create wireframe using factory polymorphism - but make it look more wireframe-like
                 let mesh = type.factory.createWireframeMesh(size: size)
-                let wireframeEntity = ModelEntity(mesh: mesh, materials: [wireframeMaterial])
-                
-                // Add outline effect by creating a slightly larger wireframe behind
-                let outlineEntity = wireframeEntity.clone(recursive: false)
-                if var outlineModel = outlineEntity.model {
-                    var outlineMaterial = SimpleMaterial()
-                    outlineMaterial.color = .init(tint: UIColor.cyan.withAlphaComponent(0.3))
-                    outlineMaterial.roughness = 1.0
-                    outlineMaterial.metallic = 0.0
-                    outlineModel.materials = [outlineMaterial]
-                    outlineEntity.model = outlineModel
-                }
-                outlineEntity.scale *= 1.05 // Slightly larger for outline effect
-                
+
+                // Create multiple wireframe lines for a more wireframe appearance
+                let wireframeEntity1 = ModelEntity(mesh: mesh, materials: [createWireframeMaterial(color: wireframeColor, alpha: wireframeAlpha)])
+                let wireframeEntity2 = ModelEntity(mesh: mesh, materials: [createWireframeMaterial(color: wireframeColor, alpha: wireframeAlpha * 0.6)])
+                let wireframeEntity3 = ModelEntity(mesh: mesh, materials: [createWireframeMaterial(color: wireframeColor, alpha: wireframeAlpha * 0.4)])
+
+                // Offset the entities slightly to create a layered wireframe effect
+                wireframeEntity2.scale = SIMD3<Float>(1.02, 1.02, 1.02)
+                wireframeEntity3.scale = SIMD3<Float>(1.04, 1.04, 1.04)
+
+                // Add some rotation to the layers for a more dynamic wireframe look
+                wireframeEntity2.orientation = simd_quatf(angle: Float.pi * 0.1, axis: SIMD3<Float>(0, 1, 0))
+                wireframeEntity3.orientation = simd_quatf(angle: Float.pi * 0.2, axis: SIMD3<Float>(1, 0, 0))
+
                 // Create simple shadow plane that scales with the object
                 // Shadow size is proportional to object size
                 let shadowSize = size * 0.8 // Shadow is 80% of object size
-                
+
                 // Create a flat plane for the shadow (not a box) - this ensures it's always visible as a 2D square
                 // Use a plane mesh that lies flat on the ground (X-Z plane)
                 let shadowMesh = MeshResource.generatePlane(width: shadowSize, depth: shadowSize)
                 // Use UnlitMaterial for shadow to ensure it's always visible regardless of lighting
                 var shadowMaterial = UnlitMaterial()
-                shadowMaterial.color = .init(tint: UIColor.black.withAlphaComponent(0.5))
+                shadowMaterial.color = .init(tint: UIColor.yellow.withAlphaComponent(0.3)) // Yellow shadow to match wireframe
                 let shadowEntity = ModelEntity(mesh: shadowMesh, materials: [shadowMaterial])
                 shadowEntity.name = "shadow" // Tag shadow for easy identification
-                
+
                 // Rotate the plane to lie flat on the ground (rotate 90 degrees around X axis)
                 shadowEntity.orientation = simd_quatf(angle: -Float.pi / 2, axis: SIMD3<Float>(1, 0, 0))
-                
+
                 // Position shadow slightly below the object (on the ground)
                 // Position depends on object type - adjust based on object height
                 let shadowYOffset: Float
@@ -955,20 +1051,31 @@ struct ARPlacementView: View {
                     shadowYOffset = -size * 0.2 - 0.01 // Cubes (smaller)
                 case .yourMom:
                     shadowYOffset = -size * 0.25 - 0.01 // Your mom objects
+                case .darkKnight, .grimReaper, .terrorGrimReaper, .krasue:
+                    shadowYOffset = -size * 0.35 - 0.01 // Character models
                 }
                 shadowEntity.position = SIMD3<Float>(0, shadowYOffset, 0)
-                
+
                 // Ensure shadow is enabled and visible
                 shadowEntity.isEnabled = true
-                
+
                 let container = ModelEntity()
-                container.addChild(outlineEntity)
-                container.addChild(wireframeEntity)
+                container.addChild(wireframeEntity3) // Back layer
+                container.addChild(wireframeEntity2) // Middle layer
+                container.addChild(wireframeEntity1) // Front layer (most opaque)
                 container.addChild(shadowEntity)
-                
+
                 return container
             }
-            
+
+            private func createWireframeMaterial(color: UIColor, alpha: CGFloat) -> SimpleMaterial {
+                var material = SimpleMaterial()
+                material.color = .init(tint: color.withAlphaComponent(alpha))
+                material.roughness = 1.0
+                material.metallic = 0.0
+                return material
+            }
+
             func createCrosshairs() {
                 guard arView != nil else { return }
                 
@@ -1052,68 +1159,6 @@ struct ARPlacementView: View {
                 }
             }
             
-            @objc func handleTap(_ sender: UITapGestureRecognizer) {
-                // Don't handle tap if we're dragging
-                guard !isDragging else { return }
-                
-                guard let arView = arView,
-                      let _ = arView.session.currentFrame,
-                      let _ = userLocationManager?.currentLocation,
-                      let _ = arOriginGPS else {
-                    print("⚠️ Cannot place: Missing AR view, frame, or location")
-                    return
-                }
-                
-                let tapLocation = sender.location(in: arView)
-                
-                // Raycast to find tap position
-                guard let raycastResult = arView.raycast(from: tapLocation, allowing: .estimatedPlane, alignment: .horizontal).first else {
-                    print("⚠️ No surface found at tap location")
-                    return
-                }
-                
-                let tapWorldPos = SIMD3<Float>(
-                    raycastResult.worldTransform.columns.3.x,
-                    raycastResult.worldTransform.columns.3.y,
-                    raycastResult.worldTransform.columns.3.z
-                )
-                
-                // Convert AR world position to GPS coordinates (fallback)
-                let gpsCoordinate = arOriginGPS.flatMap { convertARToGPS(arPosition: tapWorldPos, arOrigin: $0) }
-                
-                // Always use AR coordinates for mm-precision (primary)
-                // GPS is only for fallback when AR session restarts
-                let surfaceY = Double(tapWorldPos.y)
-                print("✅ Placing object at AR position: \(tapWorldPos) (mm-precision), GPS fallback: \(gpsCoordinate?.latitude ?? 0), \(gpsCoordinate?.longitude ?? 0), Y: \(surfaceY)m, scale: \(scaleMultiplier)x")
-                
-                // Store placement data for potential later save (if user presses Done instead of Place)
-                pendingPlacementData = (
-                    gpsCoordinate: gpsCoordinate ?? arOriginGPS?.coordinate ?? CLLocationCoordinate2D(),
-                    arPosition: tapWorldPos,
-                    arOrigin: arOriginGPS,
-                    groundingHeight: surfaceY,
-                    scale: scaleMultiplier
-                )
-                
-                // Place object immediately in AR scene
-                let objectId = selectedObject?.id ?? UUID().uuidString
-                let locationName = selectedObject?.name ?? "New \(objectType.displayName)"
-                let tempLocation = LootBoxLocation(
-                    id: objectId,
-                    name: locationName,
-                    type: objectType,
-                    latitude: gpsCoordinate?.latitude ?? arOriginGPS?.coordinate.latitude ?? 0,
-                    longitude: gpsCoordinate?.longitude ?? arOriginGPS?.coordinate.longitude ?? 0,
-                    radius: 5.0,
-                    grounding_height: surfaceY,
-                    source: .map // Use .map so object shows on map immediately
-                )
-                
-                placeObjectImmediately(at: tapWorldPos, location: tempLocation, in: arView)
-                
-                // Note: onPlace is NOT called here - user must press "Place Object" or "Done" to save
-                print("💡 Object placed in AR scene. Press 'Place Object' to save, or 'Done' to save and dismiss.")
-            }
             
             /// Handles placement button tap from overlay UI
             @objc func handlePlacementButtonTap() {
@@ -1164,6 +1209,12 @@ struct ARPlacementView: View {
                 print("✅ Placement button tapped - saving object at reticle position: \(reticlePosition)")
                 print("   Reticle X: \(String(format: "%.4f", reticlePosition.x)), Y: \(String(format: "%.4f", reticlePosition.y)), Z: \(String(format: "%.4f", reticlePosition.z))")
 
+                // Provide haptic feedback when placement begins
+                let placementFeedback = UIImpactFeedbackGenerator(style: .medium)
+                placementFeedback.prepare()
+                placementFeedback.impactOccurred()
+                print("📳 HAPTIC: Object placement initiated")
+
                 // Get screen coordinates for raycasting (plane anchor support)
                 let screenPoint = placementReticle?.getPlacementScreenPoint()
                 print("   Screen coordinates: \(screenPoint != nil ? "(\(String(format: "%.1f", screenPoint!.x)), \(String(format: "%.1f", screenPoint!.y)))" : "unavailable")")
@@ -1186,12 +1237,43 @@ struct ARPlacementView: View {
                 let surfaceY = Double(adjustedPosition.y)
                 print("✅ Saving object at AR position: \(adjustedPosition) (mm-precision, adjusted for reticle offset), GPS fallback: \(gpsCoordinate?.latitude ?? 0), \(gpsCoordinate?.longitude ?? 0), Y: \(surfaceY)m, scale: \(scaleMultiplier)x")
 
+                // IMMEDIATELY place the object in the MAIN AR view for visual feedback
+                // This ensures the user sees the object appear immediately when tapping "Place Object"
+                let tempLocation = LootBoxLocation(
+                    id: "temp-placement-\(UUID().uuidString)",
+                    name: "Placing \(objectType.displayName)",
+                    type: objectType,
+                    latitude: gpsCoordinate?.latitude ?? arOriginGPS?.coordinate.latitude ?? 0,
+                    longitude: gpsCoordinate?.longitude ?? arOriginGPS?.coordinate.longitude ?? 0,
+                    radius: 5.0,
+                    grounding_height: surfaceY,
+                    source: .map
+                )
+
+                // Place immediately in the main AR view via the coordinator
+                if let userLocation = userLocationManager?.currentLocation,
+                   let coordinator = locationManager?.arCoordinator {
+                    coordinator.placeObjectAtARPosition(tempLocation, arPosition: adjustedPosition, userLocation: userLocation, scale: scaleMultiplier, screenPoint: screenPoint)
+                    print("✅ [Placement] Object placed immediately in main AR view for visual feedback")
+                } else {
+                    print("⚠️ [Placement] Cannot place immediately - no user location or coordinator available")
+                }
+
+                // Now do the async API work for persistence
                 // Save to API (for persistence across app restarts)
                 // Include screen coordinates for plane anchor raycasting
                 onPlace(gpsCoordinate ?? arOriginGPS?.coordinate ?? CLLocationCoordinate2D(), adjustedPosition, arOriginGPS, surfaceY, scaleMultiplier, screenPoint)
 
                 // Mark as placed to prevent any preview objects from lingering
                 hasPlacedObject = true
+
+                // Provide haptic feedback when object is successfully placed
+                DispatchQueue.main.async {
+                    let successFeedback = UINotificationFeedbackGenerator()
+                    successFeedback.prepare()
+                    successFeedback.notificationOccurred(.success)
+                    print("📳 HAPTIC: Object placed successfully")
+                }
             }
             
             /// Saves the currently placed object (called when Done button is pressed)
@@ -1343,29 +1425,10 @@ struct ARPlacementView: View {
                     raycastResult.worldTransform.columns.3.z
                 )
                 
-                // Create wireframe model for the object type with scale applied
-                let wireframeContainer = createWireframeModel(for: objectType, size: objectType.size * scaleMultiplier)
-                
-                // Make it more visible when dragging (brighter, larger)
-                // Update materials on all children to make them yellow (except shadow)
-                for child in wireframeContainer.children {
-                    if let modelEntity = child as? ModelEntity {
-                        // Skip shadow entity - keep it black
-                        if modelEntity.position.y < -0.01 { // Shadow is positioned below
-                            draggingShadowEntity = modelEntity
-                            continue
-                        }
-                        
-                        if var model = modelEntity.model {
-                            var material = SimpleMaterial()
-                            material.color = .init(tint: UIColor.yellow.withAlphaComponent(0.8))
-                            material.roughness = 1.0
-                            material.metallic = 0.0
-                            model.materials = [material]
-                            modelEntity.model = model
-                        }
-                    }
-                }
+                // Create real model for the object type with scale applied
+                let tempAnchor = AnchorEntity()
+                let (wireframeContainer, _) = objectType.factory.createEntity(location: LootBoxLocation(id: "temp", name: "temp", type: objectType, latitude: 0, longitude: 0, radius: 1.0), anchor: tempAnchor, sizeMultiplier: scaleMultiplier)
+                wireframeContainer.isEnabled = true
                 wireframeContainer.scale *= 1.2 // Make it slightly larger when dragging
                 
                 // Create anchor at the touch position
@@ -1377,72 +1440,66 @@ struct ARPlacementView: View {
                 draggingAnchor = anchor
                 isDragging = true
                 
-                print("🎯 Started dragging wireframe at \(worldPos)")
+                print("🎯 Started dragging model at \(worldPos)")
             }
             
             func updateDragging(at location: CGPoint, in arView: ARView, frame: ARFrame) {
                 guard let anchor = draggingAnchor,
                       let wireframe = draggingWireframeEntity else { return }
-                
+
+
+                func updateShadowScale() {
+                    // Shadow scales automatically with the container, so we just need to update position
+                    // Avoid expensive recursive search - shadow is a direct child of the container
+                    let modelContainer = wireframe
+
+                    // Find shadow directly (it's a child of the container, no need for recursion)
+                    guard let shadow = modelContainer.children.first(where: { ($0 as? ModelEntity)?.name == "shadow" }) as? ModelEntity else {
+                        return
+                    }
+
+                    // Only update shadow position to match scaled object height
+                    // The shadow mesh will scale automatically with the parent container
+                    let scaledObjectSize = objectType.size * scaleMultiplier
+                    let shadowYOffset: Float
+                    switch objectType {
+                    case .chalice, .templeRelic, .turkey:
+                        shadowYOffset = -scaledObjectSize * 0.3 - 0.01
+                    case .treasureChest, .lootChest, .lootCart, .terrorEngine:
+                        shadowYOffset = -scaledObjectSize * 0.3 - 0.01
+                    case .sphere:
+                        shadowYOffset = -scaledObjectSize * 0.3 - 0.01
+                    case .cube:
+                        shadowYOffset = -scaledObjectSize * 0.2 - 0.01
+                    case .yourMom:
+                        shadowYOffset = -scaledObjectSize * 0.25 - 0.01
+                    case .darkKnight, .grimReaper, .terrorGrimReaper, .krasue:
+                        shadowYOffset = -scaledObjectSize * 0.35 - 0.01
+                    }
+                    shadow.position = SIMD3<Float>(0, shadowYOffset, 0)
+                }
+
                 // Raycast to find new position
                 guard let raycastResult = arView.raycast(from: location, allowing: .estimatedPlane, alignment: .horizontal).first else {
                     return // Keep at last valid position if no surface found
                 }
-                
+
                 let newWorldPos = SIMD3<Float>(
                     raycastResult.worldTransform.columns.3.x,
                     raycastResult.worldTransform.columns.3.y,
                     raycastResult.worldTransform.columns.3.z
                 )
-                
+
                 // Update anchor position
                 anchor.position = newWorldPos
-                
-                // Update wireframe scale if it changed
+
+                // Update model scale if it changed
                 // Remove old scale multiplier (1.2) and apply new scale
                 let baseScale: Float = 1.2 // The drag preview scale
                 wireframe.scale = SIMD3<Float>(baseScale * scaleMultiplier, baseScale * scaleMultiplier, baseScale * scaleMultiplier)
-                
+
                 // Update shadow scale to match object scale
                 updateShadowScale()
-            }
-            
-            func updateWireframeScale() {
-                guard let wireframe = draggingWireframeEntity else { return }
-                let baseScale: Float = 1.2 // The drag preview scale
-                wireframe.scale = SIMD3<Float>(baseScale * scaleMultiplier, baseScale * scaleMultiplier, baseScale * scaleMultiplier)
-                
-                // Update shadow scale to match object scale
-                updateShadowScale()
-            }
-            
-            func updateShadowScale() {
-                // Shadow scales automatically with the container, so we just need to update position
-                // Avoid expensive recursive search - shadow is a direct child of the container
-                guard let wireframeContainer = draggingWireframeEntity else { return }
-                
-                // Find shadow directly (it's a child of the container, no need for recursion)
-                guard let shadow = wireframeContainer.children.first(where: { ($0 as? ModelEntity)?.name == "shadow" }) as? ModelEntity else {
-                    return
-                }
-                
-                // Only update shadow position to match scaled object height
-                // The shadow mesh will scale automatically with the parent container
-                let scaledObjectSize = objectType.size * scaleMultiplier
-                let shadowYOffset: Float
-                switch objectType {
-                case .chalice, .templeRelic, .turkey:
-                    shadowYOffset = -scaledObjectSize * 0.3 - 0.01
-                case .treasureChest, .lootChest, .lootCart, .terrorEngine:
-                    shadowYOffset = -scaledObjectSize * 0.3 - 0.01
-                case .sphere:
-                    shadowYOffset = -scaledObjectSize * 0.3 - 0.01
-                case .cube:
-                    shadowYOffset = -scaledObjectSize * 0.2 - 0.01
-                case .yourMom:
-                    shadowYOffset = -scaledObjectSize * 0.25 - 0.01
-                }
-                shadow.position = SIMD3<Float>(0, shadowYOffset, 0)
             }
             
             func endDragging(at location: CGPoint, in arView: ARView, frame: ARFrame, userLocation: CLLocation, arOrigin: CLLocation) {
@@ -1563,27 +1620,33 @@ struct ARPlacementView: View {
                 // Create anchor at preview position
                 let anchor = AnchorEntity(world: position)
                 
-                // Create the preview object entity using factory
-                let (entity, _) = factory.createEntity(location: tempLocation, anchor: anchor, sizeMultiplier: scaleMultiplier)
-                
-                // Make preview semi-transparent by modifying materials
-                if let modelEntity = entity as? ModelEntity, let model = modelEntity.model {
-                    var updatedMaterials = model.materials
-                    for (index, material) in updatedMaterials.enumerated() {
-                        if var simpleMaterial = material as? SimpleMaterial {
-                            // Create a new material with reduced opacity
-                            var transparentMaterial = SimpleMaterial()
-                            transparentMaterial.color = .init(tint: UIColor.white.withAlphaComponent(0.7))
-                            transparentMaterial.roughness = simpleMaterial.roughness
-                            transparentMaterial.metallic = simpleMaterial.metallic
-                            updatedMaterials[index] = transparentMaterial
-                        }
-                    }
-                    modelEntity.model?.materials = updatedMaterials
-                }
-                
-                // Add entity to anchor
+                // Create preview as real model at exact final size
+                // This shows exactly what the object will look like when placed
+                let tempAnchor = AnchorEntity()
+                let (entity, _) = objectType.factory.createEntity(location: tempLocation, anchor: tempAnchor, sizeMultiplier: scaleMultiplier)
+                entity.isEnabled = true
+
+                // Add entity to anchor first (needed for bounds calculation)
                 anchor.addChild(entity)
+
+                // Center the preview object horizontally on the crosshairs position
+                let bounds = entity.visualBounds(relativeTo: anchor)
+                let entityCenterX = (bounds.min.x + bounds.max.x) / 2.0
+                let entityCenterZ = (bounds.min.z + bounds.max.z) / 2.0
+
+                // Offset the entity so its horizontal center aligns with the anchor position (crosshairs)
+                entity.position.x -= entityCenterX
+                entity.position.z -= entityCenterZ
+
+                // Ground the preview: ensure the visual mesh sits exactly on the ground
+                let currentMinY = bounds.min.y
+                let desiredMinY: Float = 0  // We want the bottom of the object at anchor Y
+                let deltaY = desiredMinY - currentMinY
+                entity.position.y += deltaY
+
+                let formattedDeltaY = String(format: "%.3f", deltaY)
+                let formattedOffset = String(format: "%.3f", entityCenterX)
+                print("✅ [Preview Position] Centered and grounded preview - Offset: X=\(formattedOffset), Z=\(formattedOffset), Ground ΔY=\(formattedDeltaY)m")
                 
                 // Add anchor to scene
                 arView.scene.addAnchor(anchor)
@@ -1602,16 +1665,23 @@ struct ARPlacementView: View {
                     // Always update position for visual accuracy - this is cheap
                     if let existingAnchor = previewObjectAnchor {
                         existingAnchor.position = reticlePos
+                        // Debug: Log preview position updates (throttled to reduce spam)
+                        let now = Date()
+                        if now.timeIntervalSince(lastPreviewUpdateTime) >= 1.0 { // Log every second
+                            print("👻 [Preview] Updated existing preview position: (\(String(format: "%.2f", reticlePos.x)), \(String(format: "%.2f", reticlePos.y)), \(String(format: "%.2f", reticlePos.z)))")
+                        }
                     } else {
                         // Only create expensive 3D model with throttling
                         let now = Date()
                         if now.timeIntervalSince(lastPreviewUpdateTime) >= previewUpdateInterval {
                             lastPreviewUpdateTime = now
+                            print("👻 [Preview] Creating new preview object at position: (\(String(format: "%.2f", reticlePos.x)), \(String(format: "%.2f", reticlePos.y)), \(String(format: "%.2f", reticlePos.z)))")
                             updatePreviewObjectPosition(to: reticlePos)
                         }
                     }
                 } else if hasPlacedObject {
                     // Hide preview once object is placed
+                    print("👻 [Preview] Hiding preview object - placement completed")
                     hidePreviewObject()
                 }
             }
@@ -1645,8 +1715,8 @@ struct ARPlacementView: View {
                     // Hide preview once object is placed
                     hidePreviewObject()
                 }
-            }
         }
     }
 }
 // Extension moved to ARCoordinator.swift to avoid scope issues
+

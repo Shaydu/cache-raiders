@@ -10,13 +10,13 @@ class BoxLootContainer {
         let container = ModelEntity()
         container.name = id
         
-        let baseSize = type.size * sizeMultiplier
+        let finalSize = type.arSize * sizeMultiplier
         
         // Load the treasure chest model
-        let (box, lid, builtInAnimation) = loadTreasureChestModel(size: baseSize, type: type, id: id)
-        
+        let (box, lid, builtInAnimation) = loadTreasureChestModel(size: finalSize, type: type, id: id)
+
         // Create prize that sits inside the box
-        let prize = createPrize(type: type, size: baseSize)
+        let prize = createPrize(type: type, size: finalSize)
         prize.position = SIMD3<Float>(0, 0, 0) // Center of box
         prize.isEnabled = false // Hidden until opened
         
@@ -43,7 +43,7 @@ class BoxLootContainer {
 
         // CRITICAL: Add collision component to container for tap detection
         // The container entity needs collision so arView.entity(at:) can detect taps
-        let collisionSize: Float = baseSize * 1.2 // Slightly larger than model for easier tapping
+        let collisionSize: Float = finalSize * 1.2 // Slightly larger than model for easier tapping
         container.collision = CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(collisionSize, collisionSize, collisionSize))])
 
         return LootBoxContainer(

@@ -26,13 +26,9 @@ class ARTapHandler {
     var collectionNotificationBinding: Binding<String?>?
     var sphereModeActive: Bool = false
 
-    var lastTapPlacementTime: Date?
-
     // Callback for finding loot boxes
     var onFindLootBox: ((String, AnchorEntity, SIMD3<Float>, ModelEntity?, SIMD3<Float>?) -> Void)?
 
-    // Callback for placing loot box at tap location
-    var onPlaceLootBoxAtTap: ((LootBoxLocation, ARRaycastResult) -> Void)?
 
     // Callback for NPC taps (takes NPC ID string, ARCoordinator will convert to NPCType)
     var onNPCTap: ((String) -> Void)?
@@ -464,89 +460,6 @@ class ARTapHandler {
             Swift.print("🎯 Finding object: \(idString) (type: sphere=\(sphereEntity != nil), has findableObject=\(findableObjects[idString] != nil))")
             onFindLootBox?(idString, anchor, cameraPos, sphereEntity, tapWorldPosition)
             return
-        }
-        
-        // If no location-based system or not at a location, allow manual placement
-        // Place a test loot box where user taps (for testing without locations)
-        if placedBoxes.count >= 3 {
-            Swift.print("🎯 Maximum 3 objects reached - cannot place more via tap")
-            return
-        }
-
-        // Prevent rapid duplicate tap placements (debounce)
-        let now = Date()
-        if let lastTap = lastTapPlacementTime,
-           now.timeIntervalSince(lastTap) < 1.0 {
-            Swift.print("⚠️ Tap placement blocked - too soon since last placement (\(String(format: "%.1f", now.timeIntervalSince(lastTap)))s ago)")
-            return
-        }
-        lastTapPlacementTime = now
-
-        Swift.print("🎯 Attempting manual placement via tap...")
-
-        // Use screen CENTER (crosshairs) instead of tap location for precise placement
-        let screenCenter = CGPoint(x: arView.bounds.midX, y: arView.bounds.midY)
-        Swift.print("🎯 Placing at crosshairs (screen center): (\(screenCenter.x), \(screenCenter.y))")
-
-        if let result = arView.raycast(from: screenCenter, allowing: .estimatedPlane, alignment: .horizontal).first,
-           let frame = arView.session.currentFrame {
-            let cameraY = frame.camera.transform.columns.3.y
-            let hitY = result.worldTransform.columns.3.y
-            Swift.print("🎯 Raycast hit surface at Y=\(String(format: "%.2f", hitY)), camera Y=\(String(format: "%.2f", cameraY))")
-
-            if hitY <= cameraY - 0.2 {
-                // CRITICAL: Capture AR offset coordinates for <10cm accuracy
-                // Get the hit position in AR world coordinates (where user tapped)
-                let hitTransform = result.worldTransform
-                let arOffsetX = Double(hitTransform.columns.3.x)
-                let arOffsetY = Double(hitTransform.columns.3.y)
-                let arOffsetZ = Double(hitTransform.columns.3.z)
-
-                // CRITICAL: Use AR session's origin, not current user location
-                // Current user location may drift from where AR session started
-                guard let arSessionOrigin = arOriginProvider?.arOriginLocation ?? arCoordinator?.arOriginLocation else {
-                    Swift.print("⚠️ No AR origin set - cannot save AR tap placement with precision")
-                    Swift.print("   AR session must be initialized with GPS origin first")
-                    return
-                }
-
-                let arOriginLat = arSessionOrigin.coordinate.latitude
-                let arOriginLon = arSessionOrigin.coordinate.longitude
-
-                Swift.print("✅ Captured AR tap placement with <10cm accuracy:")
-                Swift.print("   AR Origin GPS: (\(String(format: "%.8f", arOriginLat)), \(String(format: "%.8f", arOriginLon)))")
-                Swift.print("   AR Offsets: X=\(String(format: "%.4f", arOffsetX))m, Y=\(String(format: "%.4f", arOffsetY))m, Z=\(String(format: "%.4f", arOffsetZ))m")
-
-                // Generate unique name for tap-placed artifact
-                let tapCount = placedBoxes.count + 1
-                let now = Date()
-                let testLocation = LootBoxLocation(
-                    id: UUID().uuidString,
-                    name: "Test Artifact #\(tapCount)",
-                    type: .templeRelic,
-                    latitude: arOriginLat,  // Use GPS location, not 0
-                    longitude: arOriginLon,  // Use GPS location, not 0
-                    radius: 3.0,  // Smaller radius since we have precise AR coordinates
-                    source: .map,  // Use .map so object syncs to API and is visible to all users
-                    created_by: APIService.shared.currentUserID,  // Track who created this object
-                    last_modified: now,  // Set creation timestamp for display
-                    ar_origin_latitude: arOriginLat,
-                    ar_origin_longitude: arOriginLon,
-                    ar_offset_x: arOffsetX,
-                    ar_offset_y: arOffsetY,
-                    ar_offset_z: arOffsetZ,
-                    ar_placement_timestamp: now
-                )
-                // For manual tap placement, allow closer placement (1-2m instead of 3-5m)
-                // Add to locationManager FIRST so it's tracked, then place it
-                // This ensures the location exists before placement and prevents duplicates
-                locationManager.addLocation(testLocation)
-                onPlaceLootBoxAtTap?(testLocation, result)
-            } else {
-                Swift.print("⚠️ Tap raycast hit likely ceiling (hitY=\(String(format: "%.2f", hitY)) > cameraY-0.2=\(String(format: "%.2f", cameraY - 0.2))). Ignoring manual placement.")
-            }
-        } else {
-            Swift.print("⚠️ Raycast failed - no horizontal plane detected. Move device to scan floor/surfaces.")
         }
     }
 

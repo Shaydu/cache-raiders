@@ -162,39 +162,25 @@ class ARPlacementUtilities {
         // For now, return a default height relative to camera
         let defaultHeight = cameraPos.y - 1.5 // 1.5m below camera
 
-        // Object type specific adjustments
-        switch objectType {
-        case .chalice, .templeRelic, .turkey:
-            return defaultHeight + 0.1 // Slightly higher for standing objects
-        case .treasureChest, .lootChest, .lootCart, .terrorEngine:
-            return defaultHeight - 0.1 // Slightly lower for box-like objects
-        case .sphere, .cube:
-            return defaultHeight // Default height for geometric objects
-        case .yourMom:
-            return defaultHeight // Default height for your mom objects
-        }
+        // Apply object type specific height adjustment from factory
+        return defaultHeight + objectType.groundHeightOffset
     }
 
     // MARK: - Object Centering
 
-    /// Centers an object on its base relative to the anchor position
-    /// This ensures objects appear centered on crosshairs/placement reticle
+    /// Ensures object is positioned correctly relative to anchor
+    /// Most 3D models have their origin at the base center, so no horizontal centering is needed
+    /// The crosshairs indicate where the object's base should be positioned
     /// - Parameters:
-    ///   - entity: The entity to center
+    ///   - entity: The entity to position
     ///   - anchor: The anchor the entity is attached to
     static func centerEntityOnBase(entity: ModelEntity, anchor: AnchorEntity) {
-        // Calculate the horizontal bounds of the entity relative to anchor
-        let entityBounds = entity.visualBounds(relativeTo: anchor)
-        let entityCenterX = (entityBounds.min.x + entityBounds.max.x) / 2.0
-        let entityCenterZ = (entityBounds.min.z + entityBounds.max.z) / 2.0
+        // For most 3D models (USDZ files), the origin is already at the base center
+        // No horizontal centering needed - the entity origin should align with crosshairs
+        // Vertical positioning is handled separately by grounding
 
-        // Offset the entity so its center aligns with the anchor position (crosshairs)
-        entity.position.x -= entityCenterX
-        entity.position.z -= entityCenterZ
-
-        Swift.print("🎯 [Centering] Object centered on crosshairs:")
-        Swift.print("   Entity bounds: X=[\(String(format: "%.3f", entityBounds.min.x)), \(String(format: "%.3f", entityBounds.max.x))], Z=[\(String(format: "%.3f", entityBounds.min.z)), \(String(format: "%.3f", entityBounds.max.z))]")
-        Swift.print("   Entity center: X=\(String(format: "%.3f", entityCenterX)), Z=\(String(format: "%.3f", entityCenterZ))")
-        Swift.print("   Applied offset: X=\(String(format: "%.3f", -entityCenterX)), Z=\(String(format: "%.3f", -entityCenterZ))")
+        Swift.print("🎯 [Positioning] Object positioned at crosshairs (no centering applied):")
+        Swift.print("   Entity is positioned with origin at anchor center (crosshairs location)")
+        Swift.print("   Vertical positioning will be handled by grounding")
     }
 }

@@ -349,6 +349,7 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
     /// Check viewport visibility for all placed objects and play chime when objects enter
     /// PERFORMANCE: Optimized to limit checks and avoid expensive operations
     private func checkViewportVisibility() {
+        Swift.print("👁️ [Viewport Check] Starting viewport visibility check for \(placedBoxes.count) objects")
         guard let arView = arView else { return }
         
         // PERFORMANCE: Limit viewport checks to prevent freeze with many objects
@@ -381,6 +382,7 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
                 
                 // If object just entered viewport (wasn't visible before), play chime and log details
                 if !objectsInViewport.contains(locationId) {
+                    Swift.print("👁️ 🎯 OBJECT ENTERED VIEWPORT: \(locationId) - triggering chime and haptic")
                     playViewportChime(for: locationId)
                     
                     // Get object details for logging (cached lookup to avoid expensive search)
@@ -621,9 +623,6 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
         // Set up tap handler callbacks
         tapHandler?.onFindLootBox = { [weak self] locationId, anchor, cameraPos, sphereEntity, tapWorldPosition in
             self?.findLootBox(locationId: locationId, anchor: anchor, cameraPosition: cameraPos, sphereEntity: sphereEntity, tapWorldPosition: tapWorldPosition)
-        }
-        tapHandler?.onPlaceLootBoxAtTap = { [weak self] location, result in
-            self?.placeLootBoxAtTapLocation(location, tapResult: result, in: arView)
         }
         tapHandler?.onNPCTap = { [weak self] npcId in
             // Convert NPC ID string to NPCType
@@ -3126,62 +3125,6 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
         placeLootBoxInFrontOfCamera(location: location, in: arView)
     }
     
-    // Place a loot box at tap location (allows closer placement for manual taps)
-    private func placeLootBoxAtTapLocation(_ location: LootBoxLocation, tapResult: ARRaycastResult, in arView: ARView) {
-        guard let frame = arView.session.currentFrame else {
-            Swift.print("⚠️ No AR frame available for tap placement")
-            return
-        }
-        
-        let cameraTransform = frame.camera.transform
-        let cameraPos = SIMD3<Float>(cameraTransform.columns.3.x, cameraTransform.columns.3.y, cameraTransform.columns.3.z)
-        
-        let hitY = tapResult.worldTransform.columns.3.y
-        let hitX = tapResult.worldTransform.columns.3.x
-        let hitZ = tapResult.worldTransform.columns.3.z
-        
-        var boxPosition = SIMD3<Float>(hitX, hitY, hitZ)
-        
-        // For manual tap placement, allow closer placement (minimum 1m instead of 3-5m)
-        let distanceFromCamera = length(boxPosition - cameraPos)
-        let minDistance: Float = 1.0 // Allow closer placement for manual taps
-        
-        if distanceFromCamera < minDistance {
-            // Adjust position to be at minimum distance
-            let direction = normalize(boxPosition - cameraPos)
-            boxPosition = cameraPos + direction * minDistance
-            // Recalculate Y from highest blocking surface at new position
-            if let surfaceY = groundingService?.findHighestBlockingSurface(x: boxPosition.x, z: boxPosition.z, cameraPos: cameraPos) {
-                boxPosition.y = surfaceY
-            }
-        }
-        
-        // Check if position is too close to other boxes (prevent overlapping)
-        var tooCloseToOtherBox = false
-        let minDistanceBetweenObjects: Float = 2.0 // Minimum 2 meters between objects
-        for (existingId, existingAnchor) in placedBoxes {
-            let existingTransform = existingAnchor.transformMatrix(relativeTo: nil)
-            let existingPos = SIMD3<Float>(
-                existingTransform.columns.3.x,
-                existingTransform.columns.3.y,
-                existingTransform.columns.3.z
-            )
-            let distanceToExisting = length(boxPosition - existingPos)
-            if distanceToExisting < minDistanceBetweenObjects {
-                Swift.print("⚠️ Cannot place - too close to existing object \(existingId) (distance: \(String(format: "%.2f", distanceToExisting))m, minimum: \(minDistanceBetweenObjects)m)")
-                tooCloseToOtherBox = true
-                break
-            }
-        }
-        
-        if tooCloseToOtherBox {
-            Swift.print("⚠️ Tap location too close to existing object")
-            return
-        }
-        
-        Swift.print("🎯 Placing object at tap location (distance: \(String(format: "%.2f", length(boxPosition - cameraPos)))m)")
-        placeBoxAtPosition(boxPosition, location: location, in: arView, screenPoint: nil)
-    }
     // Place an object at exact AR world transform position (highest precision)
     private func placeBoxAtARTransform(_ arWorldTransform: simd_float4x4, location: LootBoxLocation, in arView: ARView) {
         guard let frame = arView.session.currentFrame else {
@@ -3741,6 +3684,11 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
         let anchor = createOptimalAnchor(for: groundedPosition, screenPoint: screenPoint, objectType: location.type, in: arView)
         anchor.name = location.id
         anchor.addChild(placedEntity)
+
+        // CRITICAL: Center the object on the crosshairs position
+        // This ensures objects appear exactly where the crosshair indicates
+        ARPlacementUtilities.centerEntityOnBase(entity: placedEntity, anchor: anchor)
+
         arView.scene.addAnchor(anchor)
 
         Swift.print("📍 Placed '\(location.name)' at grounded position (\(String(format: "%.2f", groundedPosition.x)), \(String(format: "%.2f", groundedPosition.y)), \(String(format: "%.2f", groundedPosition.z)))")
@@ -4835,11 +4783,18 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
     /// Handles notification from ARPlacementView when an object is saved
     /// This triggers immediate placement so the object appears right after placement view dismisses
     @objc private func handleARPlacementObjectSaved(_ notification: Notification) {
+        print("📥 [Placement Notification] Received ARPlacementObjectSaved notification")
+        print("   Timestamp: \(Date().timeIntervalSince1970)")
+        print("   AR view available: \(arView != nil)")
+        print("   User location available: \(userLocationManager?.currentLocation != nil)")
+
         guard arView != nil,
               let userLocation = userLocationManager?.currentLocation else {
             Swift.print("⚠️ [Placement Notification] Cannot place object: Missing AR view or location")
             return
         }
+
+        print("✅ [Placement Notification] AR view and location available")
 
         // Check if we have direct placement data (new format)
         if let placementData = notification.userInfo,
@@ -4922,7 +4877,11 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
             }()
 
             // Place immediately at the exact AR coordinates WITH the scale from placement view
+            print("🎯 [Placement Notification] Placing object at AR position: (\(arPosition.x), \(arPosition.y), \(arPosition.z))")
+            print("   Object ID: \(locationToPlace.id), Type: \(locationToPlace.type.displayName)")
+            print("   Scale: \(scale), Screen point: \(screenPoint != nil ? "available" : "nil")")
             placeObjectAtARPosition(locationToPlace, arPosition: arPosition, userLocation: userLocation, scale: scale, screenPoint: screenPoint)
+            print("✅ [Placement Notification] Object placement initiated - should now appear in main AR view")
 
         } else {
             // Fallback to old method (reload and check nearby)
@@ -4940,11 +4899,15 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
     }
 
     /// Place an object directly at specified AR coordinates (for immediate placement after AR creation)
-    private func placeObjectAtARPosition(_ location: LootBoxLocation, arPosition: SIMD3<Float>, userLocation: CLLocation, scale: Float = 1.0, screenPoint: CGPoint? = nil) {
+    public func placeObjectAtARPosition(_ location: LootBoxLocation, arPosition: SIMD3<Float>, userLocation: CLLocation, scale: Float = 1.0, screenPoint: CGPoint? = nil) {
         guard let arView = arView else {
-            Swift.print("⚠️ Cannot place object: No AR view")
+            Swift.print("❌ [Placement] Cannot place object: No AR view available in ARCoordinator")
+            Swift.print("   This usually means the main AR view hasn't been initialized yet")
+            Swift.print("   Try opening the main AR view first before using placement")
             return
         }
+
+        Swift.print("✅ [Placement] AR view available for object placement")
 
         // Check if object is already placed
         if placedBoxes.keys.contains(location.id) {
@@ -4963,6 +4926,8 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
 
         Swift.print("🎯 Placing object '\(location.name)' (ID: \(location.id)) in main AR view")
         Swift.print("   Final AR Position: (\(String(format: "%.4f", finalPosition.x)), \(String(format: "%.4f", finalPosition.y)), \(String(format: "%.4f", finalPosition.z)))")
+        Swift.print("   Object already exists: \(placedBoxes.keys.contains(location.id))")
+        Swift.print("   AR view scene anchor count before placement: \(arView.scene.anchors.count)")
 
         do {
             // Create optimal anchor (plane anchor if possible, world anchor as fallback)
@@ -4984,7 +4949,13 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
 
             // Ground the object properly - but skip for AR-placed objects that already have precise positioning
             // AR-placed objects from placement view are already positioned correctly on surfaces
-            if location.ar_offset_x == nil || location.ar_offset_y == nil || location.ar_offset_z == nil {
+            let hasARCoordinates = location.ar_offset_x != nil && location.ar_offset_y != nil && location.ar_offset_z != nil
+            Swift.print("📏 [Grounding Check] Location '\(location.name)' has AR coordinates: \(hasARCoordinates)")
+            if hasARCoordinates {
+                Swift.print("   AR offsets: X=\(location.ar_offset_x ?? 0), Y=\(location.ar_offset_y ?? 0), Z=\(location.ar_offset_z ?? 0)")
+            }
+
+            if !hasARCoordinates {
                 // Only apply grounding for GPS-based objects that don't have precise AR coordinates
                 let bounds = entity.visualBounds(relativeTo: anchor)
                 let currentMinY = bounds.min.y
@@ -4998,6 +4969,7 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
 
             // Add to scene
             arView.scene.addAnchor(anchor)
+            Swift.print("   ✅ Added anchor to AR scene - scene now has \(arView.scene.anchors.count) anchors")
 
             // Set callback to mark as collected when found
             findableObject.onFoundCallback = { [weak self] (id: String) in
@@ -5125,11 +5097,16 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
     
     /// Public method to resume AR session (called from views that need to resume AR)
     public func resumeARSession() {
-        resumeARSessionInternal()
+        resumeARSessionInternal(preserveExistingAnchors: false)
+    }
+
+    /// Public method to resume AR session while preserving existing anchors (used by placement view)
+    public func resumeARSessionPreservingAnchors() {
+        resumeARSessionInternal(preserveExistingAnchors: true)
     }
 
     /// Resume AR session when sheet is dismissed
-    private func resumeARSessionInternal() {
+    private func resumeARSessionInternal(preserveExistingAnchors: Bool = false) {
         Swift.print("▶️ [AR SESSION] resumeARSession called")
         Swift.print("   Thread: \(Thread.isMainThread ? "MAIN" : "BACKGROUND")")
         Swift.print("   Timestamp: \(Date())")
@@ -5162,9 +5139,15 @@ class ARCoordinator: NSObject, ObservableObject, ARSessionDelegate, AROriginProv
 
         // CRITICAL FIX: Use .resetTracking option to ensure camera feed comes back
         // Empty options [] can leave the session in a paused state
-        let resumeOptions: ARSession.RunOptions = [.resetTracking, .removeExistingAnchors]
-        Swift.print("▶️ Resuming AR session with resetTracking + removeExistingAnchors options")
-        Swift.print("   This ensures camera feed is restored and calibration data is fresh")
+        var resumeOptions: ARSession.RunOptions = [.resetTracking]
+        if !preserveExistingAnchors {
+            resumeOptions.insert(.removeExistingAnchors)
+            Swift.print("▶️ Resuming AR session with resetTracking + removeExistingAnchors options")
+            Swift.print("   This ensures camera feed is restored and calibration data is fresh")
+        } else {
+            Swift.print("▶️ Resuming AR session with resetTracking only (preserving existing anchors)")
+            Swift.print("   This preserves objects placed during placement view")
+        }
 
         arView.session.run(configToUse, options: resumeOptions)
         Swift.print("   ✅ Session resumed with resetTracking")

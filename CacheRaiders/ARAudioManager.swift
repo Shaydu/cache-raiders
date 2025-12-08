@@ -8,10 +8,13 @@ import CoreLocation
 // MARK: - AR Audio Manager
 class ARAudioManager {
 
+    // MARK: - Shared Instance
+    static let shared = ARAudioManager(arCoordinator: nil)
+
     private weak var arCoordinator: ARCoordinatorCore?
 
     // MARK: - Initialization
-    init(arCoordinator: ARCoordinatorCore) {
+    init(arCoordinator: ARCoordinatorCore?) {
         self.arCoordinator = arCoordinator
     }
 
@@ -217,5 +220,47 @@ class ARAudioManager {
             checkViewportVisibility()
         }
     }
+
+    // MARK: - Find Sound Effects
+
+    /// Plays the find sound effect for a specific loot box type
+    /// - Parameter type: The loot box type to play sound for
+    func playFindSound(for type: LootBoxType) {
+        // Configure audio session
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            try audioSession.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try audioSession.setActive(true)
+        } catch {
+            Swift.print("⚠️ Could not configure audio session for find sound: \(error)")
+        }
+
+        // Play appropriate sound based on type
+        switch type {
+        case .sphere:
+            // Use a gentle notification sound for spheres
+            AudioServicesPlaySystemSound(1104) // Different notification sound
+            Swift.print("🔊 SOUND: Sphere find sound (system sound 1104)")
+        case .terrorEngine:
+            // Use a more dramatic sound for terror engine
+            AudioServicesPlaySystemSound(1102) // Another notification sound
+            Swift.print("🔊 SOUND: Terror engine find sound (system sound 1102)")
+        default:
+            // Default sound for other types
+            AudioServicesPlaySystemSound(1103) // Standard notification sound
+            Swift.print("🔊 SOUND: Default find sound (system sound 1103) for \(type.displayName)")
+        }
+
+        // Add haptic feedback
+        DispatchQueue.main.async {
+            let impactFeedback = UIImpactFeedbackGenerator(style: .heavy)
+            impactFeedback.prepare()
+            impactFeedback.impactOccurred()
+        }
+    }
 }
+
+// MARK: - AudioManager Alias
+/// Convenience alias for backward compatibility with LootBoxFactory
+typealias AudioManager = ARAudioManager
 

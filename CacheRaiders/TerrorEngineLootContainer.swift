@@ -10,14 +10,15 @@ class TerrorEngineLootContainer {
         let container = ModelEntity()
         container.name = id
 
-        let baseSize = type.size * sizeMultiplier
+        // Load the terror engine model (per-model scaling is handled inside)
+        let (engine, builtInAnimation) = loadTerrorEngineModel(type: type, sizeMultiplier: sizeMultiplier)
 
-        // Load the terror engine model
-        let (engine, builtInAnimation) = loadTerrorEngineModel(size: baseSize, type: type)
+        // Use reference size for consistent prize and collision scaling (not per-model specific)
+        let referenceSize = type.arSize * sizeMultiplier
 
         // Create prize that appears when engine is "activated"
-        let prize = createPrize(type: type, size: baseSize)
-        prize.position = SIMD3<Float>(0, baseSize * 0.4, 0) // Above the engine
+        let prize = createPrize(type: type, size: referenceSize)
+        prize.position = SIMD3<Float>(0, referenceSize * 0.4, 0) // Above the engine
         prize.isEnabled = false // Hidden until activated
 
         // Add effects
@@ -31,7 +32,8 @@ class TerrorEngineLootContainer {
         let dummyLid = ModelEntity()
 
         // CRITICAL: Add collision component to container for tap detection
-        let collisionSize: Float = baseSize * 1.2 // Slightly larger than model for easier tapping
+        // Use a conservative collision size based on the reference size
+        let collisionSize: Float = referenceSize * 1.2 // Slightly larger than reference size for easier tapping
         container.collision = CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(collisionSize, collisionSize, collisionSize))])
 
         return LootBoxContainer(
@@ -49,8 +51,9 @@ class TerrorEngineLootContainer {
     }
 
     /// Loads a terror engine USDZ model and checks for built-in animations
-    private static func loadTerrorEngineModel(size: Float, type: LootBoxType) -> (ModelEntity, AnimationResource?) {
-        let modelNames = ["Terror_Engine_-_Leather_Ghost", "Terror_Engine_-_Krasue", "Terror_Engine_-_Grim_Reaper_MonsterOLD", "Grim_Reaper__Headless_Dark_Angel_of_Death"]
+    private static func loadTerrorEngineModel(type: LootBoxType, sizeMultiplier: Float) -> (ModelEntity, AnimationResource?) {
+        let factory = type.factory as! TerrorEngineFactory
+        let modelNames = ["Terror_Engine_-_Leather_Ghost", "Terror_Engine_-_Krasue", "Terror_Engine_-_Grim_Reaper_MonsterOLD", "Grim_Reaper__Headless_Dark_Angel_of_Death", "Dark_Knight__Spiked_Black_Armored_Warrior"]
 
         for modelName in modelNames {
             if let modelURL = Bundle.main.url(forResource: modelName, withExtension: "usdz") {
@@ -64,8 +67,9 @@ class TerrorEngineLootContainer {
                     // Add the loaded entity as a child to preserve its relative positioning
                     wrapperEntity.addChild(loadedEntity)
 
-                    // Scale the wrapper to match desired size
-                    wrapperEntity.scale = SIMD3<Float>(repeating: size)
+                    // Calculate model-specific scale: base size * model coefficient * user multiplier
+                    let modelScale = type.size * factory.scaleCoefficient(for: modelName) * sizeMultiplier
+                    wrapperEntity.scale = SIMD3<Float>(repeating: modelScale)
 
                     // Ensure wrapper is right-side up
                     wrapperEntity.orientation = simd_quatf(angle: 0, axis: SIMD3<Float>(1, 0, 0))
@@ -95,7 +99,7 @@ class TerrorEngineLootContainer {
         }
 
         print("❌ No Terror Engine models found, using fallback procedural engine")
-        return (createFallbackTerrorEngine(size: size, color: type.color, glowColor: type.glowColor), nil)
+        return (createFallbackTerrorEngine(size: type.size * sizeMultiplier, color: type.color, glowColor: type.glowColor), nil)
     }
 
     /// Finds the first ModelEntity in a hierarchy

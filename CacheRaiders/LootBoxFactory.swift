@@ -2,6 +2,9 @@ import RealityKit
 import UIKit
 import AVFoundation
 
+// Import supporting factories
+import Foundation
+
 // MARK: - Loot Box Factory Protocol
 /// Protocol for creating findable objects - eliminates need for exhaustive switch statements
 /// Each factory encapsulates its own sounds, animations, behaviors, and type-specific data
@@ -46,7 +49,11 @@ protocol LootBoxFactory {
     
     /// Base size in meters for this loot box type
     var size: Float { get }
-    
+
+    /// Default ground height offset for this loot box type (relative to camera height)
+    /// Used when no AR surface is detected. Negative values = lower placement, positive = higher
+    var defaultGroundHeightOffset: Float { get }
+
     /// List of possible item names/descriptions for this type
     var itemNames: [String] { get }
 
@@ -59,6 +66,10 @@ protocol LootBoxFactory {
     /// - Parameter size: The base size of the object
     /// - Returns: A tuple of (mesh, materialModifier) or nil if no prize
     func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)?
+
+    /// Ground height offset for AR placement (relative to default camera height)
+    /// Positive values place object higher, negative values place lower
+    var groundHeightOffset: Float { get }
 }
 
 // MARK: - Factory Implementations
@@ -70,6 +81,8 @@ struct ChaliceFactory: LootBoxFactory {
     var color: UIColor { UIColor(red: 0.8, green: 0.7, blue: 0.5, alpha: 1.0) } // Metallic bronze/gold
     var glowColor: UIColor { UIColor(red: 1.0, green: 0.85, blue: 0.5, alpha: 1.0) } // Warm golden glow
     var size: Float { 0.3 }
+    var groundHeightOffset: Float { 0.1 } // Standing object - slightly higher
+    var defaultGroundHeightOffset: Float { -1.0 } // Medium height standing object
     var itemNames: [String] { ["Sacred Chalice", "Ancient Chalice", "Golden Chalice"] }
     
     func itemDescription() -> String {
@@ -251,6 +264,8 @@ struct TreasureChestFactory: LootBoxFactory {
     var color: UIColor { UIColor(red: 0.6, green: 0.4, blue: 0.2, alpha: 1.0) } // Brown/wooden
     var glowColor: UIColor { UIColor(red: 1.0, green: 0.8, blue: 0.4, alpha: 1.0) } // Golden glow
     var size: Float { 0.61 } // 2 feet = 0.61 meters
+    var groundHeightOffset: Float { -0.1 } // Box-like object - slightly lower
+    var defaultGroundHeightOffset: Float { -1.5 } // Larger container - place on floor
     var itemNames: [String] { ["Treasure Chest", "Ancient Chest", "Locked Chest"] }
     
     func itemDescription() -> String {
@@ -439,6 +454,8 @@ struct LootChestFactory: LootBoxFactory {
     var color: UIColor { UIColor(red: 0.5, green: 0.4, blue: 0.3, alpha: 1.0) } // Darker brown/wooden
     var glowColor: UIColor { UIColor(red: 0.9, green: 0.7, blue: 0.5, alpha: 1.0) } // Warm amber glow
     var size: Float { 0.61 } // 2 feet = 0.61 meters
+    var groundHeightOffset: Float { -0.1 } // Box-like object - slightly lower
+    var defaultGroundHeightOffset: Float { -1.5 } // Larger container - place on floor
     var itemNames: [String] { ["Loot Chest", "Stylized Chest", "Ornate Chest"] }
     
     func itemDescription() -> String {
@@ -627,6 +644,8 @@ struct LootCartFactory: LootBoxFactory {
     var color: UIColor { UIColor(red: 0.9, green: 0.7, blue: 0.3, alpha: 1.0) } // Golden cart
     var glowColor: UIColor { UIColor(red: 1.0, green: 0.9, blue: 0.6, alpha: 1.0) } // Bright golden glow
     var size: Float { 0.5 } // Medium-sized cart
+    var groundHeightOffset: Float { -0.1 } // Cart/box-like object - slightly lower
+    var defaultGroundHeightOffset: Float { -1.5 } // Larger container - place on floor
     var itemNames: [String] { ["Loot Cart", "Golden Cart", "Treasure Cart"] }
     
     func itemDescription() -> String {
@@ -812,6 +831,8 @@ struct TempleRelicFactory: LootBoxFactory {
     var modelNames: [String] { ["Stylised_Treasure_Chest", "Treasure_Chest"] }
     var color: UIColor { UIColor(red: 0.4, green: 0.3, blue: 0.2, alpha: 1.0) } // Dark stone
     var glowColor: UIColor { UIColor(red: 0.8, green: 0.6, blue: 0.4, alpha: 1.0) } // Warm stone
+    var groundHeightOffset: Float { 0.1 } // Standing object - slightly higher
+    var defaultGroundHeightOffset: Float { -1.5 } // Larger container - place on floor
     var size: Float { 0.45 }
     var itemNames: [String] { ["Temple Relic", "Sacred Relic", "Temple Treasure"] }
     
@@ -1001,6 +1022,8 @@ struct SphereFactory: LootBoxFactory {
     var color: UIColor { UIColor(red: 0.9, green: 0.1, blue: 0.1, alpha: 1.0) } // Red/orange sphere
     var glowColor: UIColor { UIColor(red: 1.0, green: 0.3, blue: 0.1, alpha: 1.0) } // Bright orange glow
     var size: Float { 0.15 } // Smaller sphere
+    var groundHeightOffset: Float { 0.0 } // Geometric object - default height
+    var defaultGroundHeightOffset: Float { -0.8 } // Small object - place slightly below camera
     var itemNames: [String] { ["Mysterious Sphere", "Ancient Orb", "Glowing Sphere"] }
     
     func itemDescription() -> String {
@@ -1008,7 +1031,8 @@ struct SphereFactory: LootBoxFactory {
     }
     
     func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
-        let sphereRadius = Float.random(in: 0.15...0.3)
+        let finalSize = location.type.arSize * sizeMultiplier
+        let sphereRadius = finalSize
         let sphereMesh = MeshResource.generateSphere(radius: sphereRadius)
         var sphereMaterial = SimpleMaterial()
         
@@ -1025,7 +1049,7 @@ struct SphereFactory: LootBoxFactory {
 
         // Add collision shape for better grounding and surface detection
         // This helps ARKit understand the object's physical boundaries
-        sphere.collision = CollisionComponent(shapes: [.generateSphere(radius: sphereRadius)])
+        sphere.collision = CollisionComponent(shapes: [.generateSphere(radius: finalSize)])
 
         let light = PointLightComponent(color: location.type.glowColor, intensity: 200)
         sphere.components.set(light)
@@ -1151,6 +1175,8 @@ struct CubeFactory: LootBoxFactory {
     var color: UIColor { UIColor(red: 0.2, green: 0.6, blue: 0.9, alpha: 1.0) } // Blue cube
     var glowColor: UIColor { UIColor(red: 0.3, green: 0.7, blue: 1.0, alpha: 1.0) } // Bright blue glow
     var size: Float { 0.15 } // Same size as sphere
+    var groundHeightOffset: Float { 0.0 } // Geometric object - default height
+    var defaultGroundHeightOffset: Float { -0.8 } // Small object - place slightly below camera
     var itemNames: [String] { ["Mysterious Cube"] }
     
     func itemDescription() -> String {
@@ -1158,7 +1184,8 @@ struct CubeFactory: LootBoxFactory {
     }
     
     func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
-        let cubeSize = Float.random(in: 0.15...0.3)
+        let finalSize = location.type.arSize * sizeMultiplier
+        let cubeSize = finalSize
         let cubeMesh = MeshResource.generateBox(width: cubeSize, height: cubeSize, depth: cubeSize, cornerRadius: 0.01)
 
         // Use PhysicallyBasedMaterial for proper lighting and shading
@@ -1311,6 +1338,8 @@ struct TurkeyFactory: LootBoxFactory {
     var color: UIColor { UIColor(red: 0.7, green: 0.5, blue: 0.3, alpha: 1.0) } // Brown/tan turkey
     var glowColor: UIColor { UIColor(red: 1.0, green: 0.7, blue: 0.4, alpha: 1.0) } // Warm orange glow
     var size: Float { 0.4 }
+    var groundHeightOffset: Float { 0.1 } // Standing object - slightly higher
+    var defaultGroundHeightOffset: Float { -1.0 } // Medium height standing object
     var itemNames: [String] { ["Animated Turkey", "Rigged Turkey", "Thanksgiving Turkey"] }
     
     func itemDescription() -> String {
@@ -1324,8 +1353,8 @@ struct TurkeyFactory: LootBoxFactory {
         entity.name = location.id
         
         // Position turkey so its base sits on the ground
-        let baseSize = size * sizeMultiplier
-        let yOffset = baseSize * 0.2 // Offset to place base on ground
+        let finalSize = location.type.arSize * sizeMultiplier
+        let yOffset = finalSize * 0.2 // Offset to place base on ground
         entity.position = SIMD3<Float>(0, yOffset, 0)
         
         // Ensure entity is enabled and visible
@@ -1553,11 +1582,25 @@ struct TurkeyFactory: LootBoxFactory {
 struct TerrorEngineFactory: LootBoxFactory {
     static let shared = TerrorEngineFactory()
     var iconName: String { "engine.combustion.fill" }
-    var modelNames: [String] { ["Terror_Engine_-_Leather_Ghost", "Terror_Engine_-_Krasue", "Terror_Engine_-_Grim_Reaper_MonsterOLD", "Grim_Reaper__Headless_Dark_Angel_of_Death"] }
+    var modelNames: [String] { ["Terror_Engine_-_Leather_Ghost", "Terror_Engine_-_Krasue", "Terror_Engine_-_Grim_Reaper_MonsterOLD", "Grim_Reaper__Headless_Dark_Angel_of_Death", "Dark_Knight__Spiked_Black_Armored_Warrior"] }
     var color: UIColor { UIColor(red: 0.3, green: 0.2, blue: 0.1, alpha: 1.0) } // Dark leather/metal
     var glowColor: UIColor { UIColor(red: 0.8, green: 0.4, blue: 0.2, alpha: 1.0) } // Fiery orange glow
     var size: Float { 0.8 }
-    var itemNames: [String] { ["Terror Engine", "Ancient Engine", "Leather Ghost Engine", "Krasue Engine", "Grim Reaper Engine", "Dark Angel Engine"] }
+    var groundHeightOffset: Float { -0.1 } // Box-like object - slightly lower
+    var defaultGroundHeightOffset: Float { -1.5 } // Larger container - place on floor
+    var itemNames: [String] { ["Terror Engine", "Ancient Engine", "Leather Ghost Engine", "Krasue Engine", "Grim Reaper Engine", "Dark Angel Engine", "Dark Knight Engine"] }
+
+    /// Returns the scale coefficient for a specific model name
+    func scaleCoefficient(for modelName: String) -> Float {
+        let modelScaleCoefficients: [String: Float] = [
+            "Terror_Engine_-_Leather_Ghost": 1.0,
+            "Terror_Engine_-_Krasue": 0.8, // Krasue needs to be smaller
+            "Terror_Engine_-_Grim_Reaper_MonsterOLD": 1.2, // Grim Reaper Monster needs to be larger
+            "Grim_Reaper__Headless_Dark_Angel_of_Death": 1.5, // Headless Dark Angel needs to be much larger
+            "Dark_Knight__Spiked_Black_Armored_Warrior": 1.3 // Dark Knight needs to be larger
+        ]
+        return modelScaleCoefficients[modelName] ?? 1.0 // Default to 1.0 if model not found
+    }
 
     func itemDescription() -> String {
         return itemNames.randomElement() ?? "Terror Engine"
@@ -1570,8 +1613,8 @@ struct TerrorEngineFactory: LootBoxFactory {
         entity.name = location.id
 
         // Position terror engine so its base sits on the ground
-        let baseSize = size * sizeMultiplier
-        let yOffset = baseSize * 0.3 // Offset to place base on ground
+        let finalSize = location.type.arSize * sizeMultiplier
+        let yOffset = finalSize * 0.3 // Offset to place base on ground
         entity.position = SIMD3<Float>(0, yOffset, 0)
 
         // Ensure entity is enabled and visible
@@ -1717,6 +1760,8 @@ struct YourMomFactory: LootBoxFactory {
     var color: UIColor { UIColor(red: 0.6, green: 0.4, blue: 0.8, alpha: 1.0) } // Purple/indigo
     var glowColor: UIColor { UIColor(red: 0.7, green: 0.5, blue: 0.9, alpha: 1.0) } // Bright purple glow
     var size: Float { 0.5 }
+    var groundHeightOffset: Float { 0.0 } // Default height
+    var defaultGroundHeightOffset: Float { -1.2 } // Your mom objects - default height offset
     var itemNames: [String] { ["Your Mom", "Mystery Figure", "Legendary Character"] }
 
     func itemDescription() -> String {
@@ -1810,11 +1855,50 @@ struct YourMomFactory: LootBoxFactory {
             timingFunction: .easeOut
         )
 
-        // Show prize and complete
-        container.prize.isEnabled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        // Show prize and animate it properly
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            container.prize.isEnabled = true
+            self.animatePrizeReveal(container: container, onComplete: onComplete)
+        }
+    }
+
+    private func animatePrizeReveal(container: LootBoxContainer, onComplete: @escaping () -> Void) {
+        let prizeStartPos = container.prize.position
+        let prizeEndPos = SIMD3<Float>(prizeStartPos.x, prizeStartPos.y + 0.5, prizeStartPos.z)
+
+        let prizeTransform = Transform(
+            scale: container.prize.scale,
+            rotation: container.prize.orientation,
+            translation: prizeEndPos
+        )
+
+        container.prize.move(
+            to: prizeTransform,
+            relativeTo: container.container,
+            duration: 1.2,
+            timingFunction: .easeOut
+        )
+
+        animatePrizeRotation(prize: container.prize, duration: 1.2)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             onComplete()
         }
+    }
+
+    private func animatePrizeRotation(prize: ModelEntity, duration: Float) {
+        var currentRotation: Float = 0
+        let rotationSpeed: Float = Float.pi * 2 / duration
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { timer in
+            currentRotation += rotationSpeed * 0.016
+            if currentRotation >= Float.pi * 2 {
+                timer.invalidate()
+                prize.orientation = simd_quatf(angle: Float.pi * 2, axis: SIMD3<Float>(0, 1, 0))
+            } else {
+                prize.orientation = simd_quatf(angle: currentRotation, axis: SIMD3<Float>(0, 1, 0))
+            }
+        }
+        RunLoop.current.add(timer, forMode: .common)
     }
 
     func createWireframeMesh(size: Float) -> MeshResource {
@@ -1833,6 +1917,659 @@ struct YourMomFactory: LootBoxFactory {
             return material
         }
         return (mesh, materialModifier)
+    }
+}
+
+// MARK: - Model Factories (USDZ-based like spheres but with 3D models)
+struct DarkKnightFactory: LootBoxFactory {
+    static let shared = DarkKnightFactory()
+    var iconName: String { "person.fill" }
+    var modelNames: [String] { ["Dark_Knight__Spiked_Black_Armored_Warrior"] }
+    var color: UIColor { UIColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 1.0) } // Dark armor
+    var glowColor: UIColor { UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1.0) } // Gray glow
+    var size: Float { 0.5 }
+    var groundHeightOffset: Float { 0.1 } // Standing character - slightly higher
+    var defaultGroundHeightOffset: Float { -1.0 } // Standing character - medium height
+    var itemNames: [String] { ["Dark Knight", "Spiked Warrior", "Armored Knight"] }
+
+    func itemDescription() -> String {
+        return itemNames.randomElement() ?? "Dark Knight"
+    }
+
+    func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
+        let finalSize = location.type.arSize * sizeMultiplier
+        let modelEntity = loadModelEntity(modelName: "Dark_Knight__Spiked_Black_Armored_Warrior", size: finalSize, color: location.type.color, glowColor: location.type.glowColor)
+        modelEntity.name = location.id
+
+        // Position so base sits on ground
+        modelEntity.position = SIMD3<Float>(0, finalSize * 0.5, 0)
+
+        // Enable entity and add collision
+        modelEntity.isEnabled = true
+        modelEntity.collision = CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(finalSize, finalSize, finalSize))])
+
+        let findableObject = FindableObject(
+            locationId: location.id,
+            anchor: anchor,
+            sphereEntity: modelEntity,
+            container: nil,
+            location: location
+        )
+
+        return (modelEntity, findableObject)
+    }
+
+    func createContainer(location: LootBoxLocation, sizeMultiplier: Float) -> LootBoxContainer? {
+        return nil // Simple models don't use containers
+    }
+
+    func animateFind(entity: ModelEntity, container: LootBoxContainer?, tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
+        // Create confetti effect
+        let parentEntity = entity.parent ?? entity
+        let confettiPosition: SIMD3<Float>
+        if let tapPos = tapWorldPosition {
+            let parentTransform = parentEntity.transformMatrix(relativeTo: nil)
+            let parentWorldPos = SIMD3<Float>(
+                parentTransform.columns.3.x,
+                parentTransform.columns.3.y,
+                parentTransform.columns.3.z
+            )
+            confettiPosition = tapPos - parentWorldPos
+        } else {
+            confettiPosition = entity.position
+        }
+        LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
+        playFindSound()
+
+        // Simple fade out animation
+        animateModelFind(entity: entity, onComplete: onComplete)
+    }
+
+    func animateLoop(entity: ModelEntity) {
+        // Simple floating animation
+        let baseY = entity.position.y
+        var offset: Float = 0
+
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak entity] timer in
+            guard let entity = entity, entity.parent != nil else {
+                timer.invalidate()
+                return
+            }
+
+            offset += 0.02
+            entity.position.y = baseY + sin(offset) * 0.05
+        }
+    }
+
+    func playFindSound() {
+        LootBoxAnimation.playOpeningSoundWithHaptics()
+    }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateBox(size: size)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        return nil // Simple models don't have prizes
+    }
+
+    private func loadModelEntity(modelName: String, size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
+        guard let modelURL = Bundle.main.url(forResource: modelName, withExtension: "usdz") else {
+            print("⚠️ Could not find \(modelName).usdz in bundle, using fallback")
+            return createFallbackModel(size: size, color: color, glowColor: glowColor)
+        }
+
+        do {
+            let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
+            let wrapperEntity = ModelEntity()
+            wrapperEntity.addChild(loadedEntity)
+            wrapperEntity.scale = SIMD3<Float>(repeating: size)
+
+            // Add lighting
+            let light = PointLightComponent(color: glowColor, intensity: 200)
+            wrapperEntity.components.set(light)
+
+            return wrapperEntity
+        } catch {
+            print("❌ Error loading \(modelName): \(error), using fallback")
+            return createFallbackModel(size: size, color: color, glowColor: glowColor)
+        }
+    }
+
+    private func createFallbackModel(size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
+        let mesh = MeshResource.generateBox(size: size)
+        var material = SimpleMaterial()
+        material.color = .init(tint: color)
+        material.roughness = 0.8
+        material.metallic = 0.6
+
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+
+        let light = PointLightComponent(color: glowColor, intensity: 200)
+        entity.components.set(light)
+
+        return entity
+    }
+
+    private func animateModelFind(entity: ModelEntity, onComplete: @escaping () -> Void) {
+        let startScale = entity.scale
+        var elapsed: Float = 0
+        let totalDuration: Float = 2.0
+
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { timer in
+            elapsed += 0.016
+            let progress = min(elapsed / totalDuration, 1.0)
+
+            // Scale up then fade out
+            if progress < 0.5 {
+                let scaleProgress = progress * 2.0
+                entity.scale = startScale * (1.0 + 0.25 * scaleProgress)
+            } else {
+                let fadeProgress = (progress - 0.5) * 2.0
+                entity.scale = startScale * 1.25 * (1.0 - fadeProgress)
+
+                // Fade out light
+                if var light = entity.components[PointLightComponent.self] {
+                    light.intensity = 200 * (1.0 - fadeProgress)
+                    entity.components[PointLightComponent.self] = light
+                }
+            }
+
+            if progress >= 1.0 {
+                timer.invalidate()
+                entity.isEnabled = false
+                onComplete()
+            }
+        }
+    }
+}
+
+struct GrimReaperFactory: LootBoxFactory {
+    static let shared = GrimReaperFactory()
+    var iconName: String { "flame.fill" }
+    var modelNames: [String] { ["Grim_Reaper__Headless_Dark_Angel_of_Death"] }
+    var color: UIColor { UIColor(red: 0.1, green: 0.1, blue: 0.1, alpha: 1.0) } // Very dark
+    var glowColor: UIColor { UIColor.black }
+    var size: Float { 0.6 }
+    var groundHeightOffset: Float { 0.1 } // Standing character - slightly higher
+    var defaultGroundHeightOffset: Float { -1.0 } // Standing character - medium height
+    var itemNames: [String] { ["Grim Reaper", "Dark Angel", "Angel of Death"] }
+
+    func itemDescription() -> String {
+        return itemNames.randomElement() ?? "Grim Reaper"
+    }
+
+    func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
+        let finalSize = location.type.arSize * sizeMultiplier
+        let modelEntity = loadModelEntity(modelName: "Grim_Reaper__Headless_Dark_Angel_of_Death", size: finalSize, color: location.type.color, glowColor: location.type.glowColor)
+        modelEntity.name = location.id
+
+        // Position so base sits on ground
+        modelEntity.position = SIMD3<Float>(0, finalSize * 0.5, 0)
+
+        // Enable entity and add collision
+        modelEntity.isEnabled = true
+        modelEntity.collision = CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(finalSize, finalSize, finalSize))])
+
+        let findableObject = FindableObject(
+            locationId: location.id,
+            anchor: anchor,
+            sphereEntity: modelEntity,
+            container: nil,
+            location: location
+        )
+
+        return (modelEntity, findableObject)
+    }
+
+    func createContainer(location: LootBoxLocation, sizeMultiplier: Float) -> LootBoxContainer? {
+        return nil // Simple models don't use containers
+    }
+
+    func animateFind(entity: ModelEntity, container: LootBoxContainer?, tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
+        // Create confetti effect
+        let parentEntity = entity.parent ?? entity
+        let confettiPosition: SIMD3<Float>
+        if let tapPos = tapWorldPosition {
+            let parentTransform = parentEntity.transformMatrix(relativeTo: nil)
+            let parentWorldPos = SIMD3<Float>(
+                parentTransform.columns.3.x,
+                parentTransform.columns.3.y,
+                parentTransform.columns.3.z
+            )
+            confettiPosition = tapPos - parentWorldPos
+        } else {
+            confettiPosition = entity.position
+        }
+        LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
+        playFindSound()
+
+        // Simple fade out animation
+        animateModelFind(entity: entity, onComplete: onComplete)
+    }
+
+    func animateLoop(entity: ModelEntity) {
+        // Simple floating animation
+        let baseY = entity.position.y
+        var offset: Float = 0
+
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak entity] timer in
+            guard let entity = entity, entity.parent != nil else {
+                timer.invalidate()
+                return
+            }
+
+            offset += 0.02
+            entity.position.y = baseY + sin(offset) * 0.05
+        }
+    }
+
+    func playFindSound() {
+        LootBoxAnimation.playOpeningSoundWithHaptics()
+    }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateBox(size: size)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        return nil // Simple models don't have prizes
+    }
+
+    private func loadModelEntity(modelName: String, size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
+        guard let modelURL = Bundle.main.url(forResource: modelName, withExtension: "usdz") else {
+            print("⚠️ Could not find \(modelName).usdz in bundle, using fallback")
+            return createFallbackModel(size: size, color: color, glowColor: glowColor)
+        }
+
+        do {
+            let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
+            let wrapperEntity = ModelEntity()
+            wrapperEntity.addChild(loadedEntity)
+            wrapperEntity.scale = SIMD3<Float>(repeating: size)
+
+            // Add lighting
+            let light = PointLightComponent(color: glowColor, intensity: 200)
+            wrapperEntity.components.set(light)
+
+            return wrapperEntity
+        } catch {
+            print("❌ Error loading \(modelName): \(error), using fallback")
+            return createFallbackModel(size: size, color: color, glowColor: glowColor)
+        }
+    }
+
+    private func createFallbackModel(size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
+        let mesh = MeshResource.generateBox(size: size)
+        var material = SimpleMaterial()
+        material.color = .init(tint: color)
+        material.roughness = 0.8
+        material.metallic = 0.6
+
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+
+        let light = PointLightComponent(color: glowColor, intensity: 200)
+        entity.components.set(light)
+
+        return entity
+    }
+
+    private func animateModelFind(entity: ModelEntity, onComplete: @escaping () -> Void) {
+        let startScale = entity.scale
+        var elapsed: Float = 0
+        let totalDuration: Float = 2.0
+
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { timer in
+            elapsed += 0.016
+            let progress = min(elapsed / totalDuration, 1.0)
+
+            // Scale up then fade out
+            if progress < 0.5 {
+                let scaleProgress = progress * 2.0
+                entity.scale = startScale * (1.0 + 0.25 * scaleProgress)
+            } else {
+                let fadeProgress = (progress - 0.5) * 2.0
+                entity.scale = startScale * 1.25 * (1.0 - fadeProgress)
+
+                // Fade out light
+                if var light = entity.components[PointLightComponent.self] {
+                    light.intensity = 200 * (1.0 - fadeProgress)
+                    entity.components[PointLightComponent.self] = light
+                }
+            }
+
+            if progress >= 1.0 {
+                timer.invalidate()
+                entity.isEnabled = false
+                onComplete()
+            }
+        }
+    }
+}
+
+struct TerrorGrimReaperFactory: LootBoxFactory {
+    static let shared = TerrorGrimReaperFactory()
+    var iconName: String { "bolt.fill" }
+    var modelNames: [String] { ["Terror_Engine_-_Grim_Reaper_MonsterOLD"] }
+    var color: UIColor { UIColor(red: 0.8, green: 0.1, blue: 0.1, alpha: 1.0) } // Red
+    var glowColor: UIColor { UIColor.red }
+    var size: Float { 0.55 }
+    var groundHeightOffset: Float { 0.1 } // Standing character - slightly higher
+    var defaultGroundHeightOffset: Float { -1.0 } // Standing character - medium height
+    var itemNames: [String] { ["Terror Grim Reaper", "Monster Reaper", "Terror Monster"] }
+
+    func itemDescription() -> String {
+        return itemNames.randomElement() ?? "Terror Grim Reaper"
+    }
+
+    func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
+        let finalSize = location.type.arSize * sizeMultiplier
+        let modelEntity = loadModelEntity(modelName: "Terror_Engine_-_Grim_Reaper_MonsterOLD", size: finalSize, color: location.type.color, glowColor: location.type.glowColor)
+        modelEntity.name = location.id
+
+        // Position so base sits on ground
+        modelEntity.position = SIMD3<Float>(0, finalSize * 0.5, 0)
+
+        // Enable entity and add collision
+        modelEntity.isEnabled = true
+        modelEntity.collision = CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(finalSize, finalSize, finalSize))])
+
+        let findableObject = FindableObject(
+            locationId: location.id,
+            anchor: anchor,
+            sphereEntity: modelEntity,
+            container: nil,
+            location: location
+        )
+
+        return (modelEntity, findableObject)
+    }
+
+    func createContainer(location: LootBoxLocation, sizeMultiplier: Float) -> LootBoxContainer? {
+        return nil // Simple models don't use containers
+    }
+
+    func animateFind(entity: ModelEntity, container: LootBoxContainer?, tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
+        // Create confetti effect
+        let parentEntity = entity.parent ?? entity
+        let confettiPosition: SIMD3<Float>
+        if let tapPos = tapWorldPosition {
+            let parentTransform = parentEntity.transformMatrix(relativeTo: nil)
+            let parentWorldPos = SIMD3<Float>(
+                parentTransform.columns.3.x,
+                parentTransform.columns.3.y,
+                parentTransform.columns.3.z
+            )
+            confettiPosition = tapPos - parentWorldPos
+        } else {
+            confettiPosition = entity.position
+        }
+        LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
+        playFindSound()
+
+        // Simple fade out animation
+        animateModelFind(entity: entity, onComplete: onComplete)
+    }
+
+    func animateLoop(entity: ModelEntity) {
+        // Simple floating animation
+        let baseY = entity.position.y
+        var offset: Float = 0
+
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak entity] timer in
+            guard let entity = entity, entity.parent != nil else {
+                timer.invalidate()
+                return
+            }
+
+            offset += 0.02
+            entity.position.y = baseY + sin(offset) * 0.05
+        }
+    }
+
+    func playFindSound() {
+        LootBoxAnimation.playOpeningSoundWithHaptics()
+    }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateBox(size: size)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        return nil // Simple models don't have prizes
+    }
+
+    private func loadModelEntity(modelName: String, size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
+        guard let modelURL = Bundle.main.url(forResource: modelName, withExtension: "usdz") else {
+            print("⚠️ Could not find \(modelName).usdz in bundle, using fallback")
+            return createFallbackModel(size: size, color: color, glowColor: glowColor)
+        }
+
+        do {
+            let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
+            let wrapperEntity = ModelEntity()
+            wrapperEntity.addChild(loadedEntity)
+            wrapperEntity.scale = SIMD3<Float>(repeating: size)
+
+            // Add lighting
+            let light = PointLightComponent(color: glowColor, intensity: 200)
+            wrapperEntity.components.set(light)
+
+            return wrapperEntity
+        } catch {
+            print("❌ Error loading \(modelName): \(error), using fallback")
+            return createFallbackModel(size: size, color: color, glowColor: glowColor)
+        }
+    }
+
+    private func createFallbackModel(size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
+        let mesh = MeshResource.generateBox(size: size)
+        var material = SimpleMaterial()
+        material.color = .init(tint: color)
+        material.roughness = 0.8
+        material.metallic = 0.6
+
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+
+        let light = PointLightComponent(color: glowColor, intensity: 200)
+        entity.components.set(light)
+
+        return entity
+    }
+
+    private func animateModelFind(entity: ModelEntity, onComplete: @escaping () -> Void) {
+        let startScale = entity.scale
+        var elapsed: Float = 0
+        let totalDuration: Float = 2.0
+
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { timer in
+            elapsed += 0.016
+            let progress = min(elapsed / totalDuration, 1.0)
+
+            // Scale up then fade out
+            if progress < 0.5 {
+                let scaleProgress = progress * 2.0
+                entity.scale = startScale * (1.0 + 0.25 * scaleProgress)
+            } else {
+                let fadeProgress = (progress - 0.5) * 2.0
+                entity.scale = startScale * 1.25 * (1.0 - fadeProgress)
+
+                // Fade out light
+                if var light = entity.components[PointLightComponent.self] {
+                    light.intensity = 200 * (1.0 - fadeProgress)
+                    entity.components[PointLightComponent.self] = light
+                }
+            }
+
+            if progress >= 1.0 {
+                timer.invalidate()
+                entity.isEnabled = false
+                onComplete()
+            }
+        }
+    }
+}
+
+struct KrasueFactory: LootBoxFactory {
+    static let shared = KrasueFactory()
+    var iconName: String { "moon.fill" }
+    var modelNames: [String] { ["Terror_Engine_-_Krasue"] }
+    var color: UIColor { UIColor(red: 0.6, green: 0.2, blue: 0.8, alpha: 1.0) } // Purple
+    var glowColor: UIColor { UIColor.purple }
+    var size: Float { 0.45 }
+    var groundHeightOffset: Float { 0.1 } // Standing character - slightly higher
+    var defaultGroundHeightOffset: Float { -1.0 } // Standing character - medium height
+    var itemNames: [String] { ["Krasue", "Headless Spirit", "Flying Head"] }
+
+    func itemDescription() -> String {
+        return itemNames.randomElement() ?? "Krasue"
+    }
+
+    func createEntity(location: LootBoxLocation, anchor: AnchorEntity, sizeMultiplier: Float) -> (entity: ModelEntity, findableObject: FindableObject) {
+        let finalSize = location.type.arSize * sizeMultiplier
+        let modelEntity = loadModelEntity(modelName: "Terror_Engine_-_Krasue", size: finalSize, color: location.type.color, glowColor: location.type.glowColor)
+        modelEntity.name = location.id
+
+        // Position so base sits on ground
+        modelEntity.position = SIMD3<Float>(0, finalSize * 0.5, 0)
+
+        // Enable entity and add collision
+        modelEntity.isEnabled = true
+        modelEntity.collision = CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(finalSize, finalSize, finalSize))])
+
+        let findableObject = FindableObject(
+            locationId: location.id,
+            anchor: anchor,
+            sphereEntity: modelEntity,
+            container: nil,
+            location: location
+        )
+
+        return (modelEntity, findableObject)
+    }
+
+    func createContainer(location: LootBoxLocation, sizeMultiplier: Float) -> LootBoxContainer? {
+        return nil // Simple models don't use containers
+    }
+
+    func animateFind(entity: ModelEntity, container: LootBoxContainer?, tapWorldPosition: SIMD3<Float>?, onComplete: @escaping () -> Void) {
+        // Create confetti effect
+        let parentEntity = entity.parent ?? entity
+        let confettiPosition: SIMD3<Float>
+        if let tapPos = tapWorldPosition {
+            let parentTransform = parentEntity.transformMatrix(relativeTo: nil)
+            let parentWorldPos = SIMD3<Float>(
+                parentTransform.columns.3.x,
+                parentTransform.columns.3.y,
+                parentTransform.columns.3.z
+            )
+            confettiPosition = tapPos - parentWorldPos
+        } else {
+            confettiPosition = entity.position
+        }
+        LootBoxAnimation.createConfettiEffect(at: confettiPosition, parent: parentEntity)
+        playFindSound()
+
+        // Simple fade out animation
+        animateModelFind(entity: entity, onComplete: onComplete)
+    }
+
+    func animateLoop(entity: ModelEntity) {
+        // Simple floating animation
+        let baseY = entity.position.y
+        var offset: Float = 0
+
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak entity] timer in
+            guard let entity = entity, entity.parent != nil else {
+                timer.invalidate()
+                return
+            }
+
+            offset += 0.02
+            entity.position.y = baseY + sin(offset) * 0.05
+        }
+    }
+
+    func playFindSound() {
+        LootBoxAnimation.playOpeningSoundWithHaptics()
+    }
+
+    func createWireframeMesh(size: Float) -> MeshResource {
+        return MeshResource.generateBox(size: size)
+    }
+
+    func createPrizeMesh(size: Float) -> (mesh: MeshResource, materialModifier: (Material) -> Material)? {
+        return nil // Simple models don't have prizes
+    }
+
+    private func loadModelEntity(modelName: String, size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
+        guard let modelURL = Bundle.main.url(forResource: modelName, withExtension: "usdz") else {
+            print("⚠️ Could not find \(modelName).usdz in bundle, using fallback")
+            return createFallbackModel(size: size, color: color, glowColor: glowColor)
+        }
+
+        do {
+            let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
+            let wrapperEntity = ModelEntity()
+            wrapperEntity.addChild(loadedEntity)
+            wrapperEntity.scale = SIMD3<Float>(repeating: size)
+
+            // Add lighting
+            let light = PointLightComponent(color: glowColor, intensity: 200)
+            wrapperEntity.components.set(light)
+
+            return wrapperEntity
+        } catch {
+            print("❌ Error loading \(modelName): \(error), using fallback")
+            return createFallbackModel(size: size, color: color, glowColor: glowColor)
+        }
+    }
+
+    private func createFallbackModel(size: Float, color: UIColor, glowColor: UIColor) -> ModelEntity {
+        let mesh = MeshResource.generateBox(size: size)
+        var material = SimpleMaterial()
+        material.color = .init(tint: color)
+        material.roughness = 0.8
+        material.metallic = 0.6
+
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+
+        let light = PointLightComponent(color: glowColor, intensity: 200)
+        entity.components.set(light)
+
+        return entity
+    }
+
+    private func animateModelFind(entity: ModelEntity, onComplete: @escaping () -> Void) {
+        let startScale = entity.scale
+        var elapsed: Float = 0
+        let totalDuration: Float = 2.0
+
+        let timer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: true) { timer in
+            elapsed += 0.016
+            let progress = min(elapsed / totalDuration, 1.0)
+
+            // Scale up then fade out
+            if progress < 0.5 {
+                let scaleProgress = progress * 2.0
+                entity.scale = startScale * (1.0 + 0.25 * scaleProgress)
+            } else {
+                let fadeProgress = (progress - 0.5) * 2.0
+                entity.scale = startScale * 1.25 * (1.0 - fadeProgress)
+
+                // Fade out light
+                if var light = entity.components[PointLightComponent.self] {
+                    light.intensity = 200 * (1.0 - fadeProgress)
+                    entity.components[PointLightComponent.self] = light
+                }
+            }
+
+            if progress >= 1.0 {
+                timer.invalidate()
+                entity.isEnabled = false
+                onComplete()
+            }
+        }
     }
 }
 

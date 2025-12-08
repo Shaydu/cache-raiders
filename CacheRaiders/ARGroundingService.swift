@@ -299,20 +299,8 @@ class ARGroundingService {
     ///   - cameraPos: Current camera position
     /// - Returns: A default Y coordinate for placing the object
     func getDefaultGroundHeight(for objectType: LootBoxType, cameraPos: SIMD3<Float>) -> Float {
-        switch objectType {
-        case .sphere, .cube:
-            // Small objects: place slightly below camera (as if on a low table/surface)
-            return cameraPos.y - 0.8
-        case .chalice, .turkey:
-            // Medium height objects
-            return cameraPos.y - 1.0
-        case .treasureChest, .lootChest, .templeRelic, .lootCart, .terrorEngine:
-            // Larger containers: place on floor
-            return cameraPos.y - 1.5
-        case .yourMom:
-            // Your mom objects: place at default height
-            return cameraPos.y - 1.2
-        }
+        // Use the factory's default ground height offset, which varies by model type
+        return cameraPos.y + objectType.defaultGroundHeightOffset
     }
 
     /// Returns a default ground height for NPCs when no surface is detected

@@ -42,6 +42,7 @@ struct ARLootBoxView: View {
             )
             .edgesIgnoringSafeArea(.all)
 
+
             // Conversation overlay in bottom third
             if let message = conversationManager.currentMessage {
                 ARConversationOverlay(
@@ -50,7 +51,7 @@ struct ARLootBoxView: View {
                     isUserMessage: message.isUserMessage
                 )
             }
-            
+
             // Game mode indicator in center of screen
             GameModeIndicator(locationManager: locationManager)
         }
@@ -631,4 +632,5 @@ struct ARViewContainer: UIViewRepresentable {
         ARCoordinator()
     }
 }
+
 

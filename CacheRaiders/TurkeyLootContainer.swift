@@ -10,14 +10,14 @@ class TurkeyLootContainer {
         let container = ModelEntity()
         container.name = id
         
-        let baseSize = type.size * sizeMultiplier
+        let finalSize = type.arSize * sizeMultiplier
         
         // Load the turkey model (returns entity and any built-in animations)
-        let (turkey, builtInAnimation, isFallback) = loadTurkeyModel(size: baseSize, type: type, id: id)
-        
+        let (turkey, builtInAnimation, isFallback) = loadTurkeyModel(size: finalSize, type: type, id: id)
+
         // Create prize that sits inside/on the turkey
-        let prize = createPrize(type: type, size: baseSize)
-        prize.position = SIMD3<Float>(0, baseSize * 0.3, 0) // Above the turkey
+        let prize = createPrize(type: type, size: finalSize)
+        prize.position = SIMD3<Float>(0, finalSize * 0.3, 0) // Above the turkey
         prize.isEnabled = false // Hidden until opened
         
         // Add effects (but reduce/disable light if using fallback sphere to avoid hiding the model)
@@ -44,7 +44,7 @@ class TurkeyLootContainer {
         
         // CRITICAL: Add collision component to container for tap detection
         // This ensures the tap handler can detect taps on the turkey
-        let containerCollisionSize: Float = baseSize * 1.2 // Slightly larger for easier tapping
+        let containerCollisionSize: Float = finalSize * 1.2 // Slightly larger for easier tapping
         container.collision = CollisionComponent(shapes: [.generateBox(size: SIMD3<Float>(containerCollisionSize, containerCollisionSize, containerCollisionSize))])
         
         // Create a dummy lid entity for compatibility with LootBoxContainer

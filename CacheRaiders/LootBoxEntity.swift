@@ -15,6 +15,10 @@ enum LootBoxType: String, CaseIterable, Codable {
     case turkey = "Turkey"
     case terrorEngine = "Terror Engine"
     case yourMom = "Your Mom"
+    case darkKnight = "Dark Knight"
+    case grimReaper = "Grim Reaper"
+    case terrorGrimReaper = "Terror Grim Reaper"
+    case krasue = "Krasue"
 
     var displayName: String {
         return self.rawValue
@@ -32,6 +36,10 @@ enum LootBoxType: String, CaseIterable, Codable {
         case .turkey: return .systemBrown
         case .terrorEngine: return .systemPink
         case .yourMom: return .systemIndigo
+        case .darkKnight: return .systemGray
+        case .grimReaper: return .black
+        case .terrorGrimReaper: return .systemRed
+        case .krasue: return .systemPurple
         }
     }
 
@@ -40,9 +48,40 @@ enum LootBoxType: String, CaseIterable, Codable {
         return factory.color
     }
 
-    /// Returns the base size for this loot box type (delegates to factory)
+    /// Returns the normalized AR size for this loot box type in meters
+    /// These are the final sizes that objects appear at in AR (accounting for all scaling)
+    var arSize: Float {
+        switch self {
+        case .chalice: return 0.3    // Small decorative object
+        case .templeRelic: return 0.61 // 2 feet tall
+        case .treasureChest: return 0.61 // 2 feet tall
+        case .lootChest: return 0.5   // Medium chest
+        case .lootCart: return 0.5    // Medium cart
+        case .sphere: return 0.15     // Small sphere
+        case .cube: return 0.15       // Small cube
+        case .turkey: return 0.4      // Small turkey
+        case .terrorEngine: return 0.8 // Large terror engine
+        case .yourMom: return 1.435   // Large character (1.435m tall, 18% smaller than 1.75m)
+        case .darkKnight: return 1.3  // Large knight
+        case .grimReaper: return 1.5  // Large grim reaper
+        case .terrorGrimReaper: return 1.2 // Medium-large terror reaper
+        case .krasue: return 0.8     // Medium krasue
+        }
+    }
+
+    /// Legacy: Returns the base size for this loot box type (delegates to factory)
     var size: Float {
         return factory.size
+    }
+
+    /// Returns the ground height offset for AR placement (delegates to factory)
+    var groundHeightOffset: Float {
+        return factory.groundHeightOffset
+    }
+
+    /// Returns the default ground height offset for fallback positioning when no surface detected (delegates to factory)
+    var defaultGroundHeightOffset: Float {
+        return factory.defaultGroundHeightOffset
     }
 
     /// Returns the factory for this loot box type (compile-time constants eliminate runtime lookups)
@@ -58,6 +97,10 @@ enum LootBoxType: String, CaseIterable, Codable {
         case .turkey: return TurkeyFactory.shared
         case .terrorEngine: return TerrorEngineFactory.shared
         case .yourMom: return YourMomFactory.shared
+        case .darkKnight: return DarkKnightFactory.shared
+        case .grimReaper: return GrimReaperFactory.shared
+        case .terrorGrimReaper: return TerrorGrimReaperFactory.shared
+        case .krasue: return KrasueFactory.shared
         }
     }
 
