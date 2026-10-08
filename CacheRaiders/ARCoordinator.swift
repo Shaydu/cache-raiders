@@ -397,6 +397,11 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             self?.handleObjectUncollected(objectId: objectId)
         }
         
+        // Set up callback to clear all objects when game mode changes
+        locationManager.onAllObjectsCleared = { [weak self] in
+            self?.clearAllARObjects()
+        }
+        
         // Set up NPC sync handlers for two-way sync with admin
         setupNPCSyncHandlers()
         
@@ -426,6 +431,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             self,
             selector: #selector(handleDialogClosed),
             name: NSNotification.Name("SheetDismissed"),
+            object: nil
+        )
+        
+        // TESTING: Listen for corgi spawn notification (triggered after getting map)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSpawnCorgiNPC),
+            name: NSNotification.Name("SpawnCorgiNPC"),
             object: nil
         )
         
@@ -613,6 +626,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         distanceTracker?.stopDistanceLogging()
         occlusionManager?.stopOcclusionChecking()
         NotificationCenter.default.removeObserver(self, name: NSNotification.Name("ARPlacementObjectSaved"), object: nil)
+        NotificationCenter.default.removeObserver(self, name: NSNotification.Name("SpawnCorgiNPC"), object: nil)
         stopPeriodicGrounding()
     }
 
@@ -1157,11 +1171,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         hasAutoRandomized = true // Mark as having randomized (whether auto or manual)
 
         print("🗑️ Removing \(findableObjects.count) existing spheres...")
-        // Remove all existing placed boxes
-        for (_, findable) in findableObjects {
-            findable.anchor.removeFromParent()
-        }
-        findableObjects.removeAll() // Also clear findable objects
+        clearAllARObjects()
 
         // Also remove old randomly-generated AR item locations from locationManager to reset the counter
         // Keep GPS-based locations and manually-added map markers
@@ -1345,7 +1355,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         Swift.print("🏠 Indoor position: distance \(String(format: "%.1f", randomDistance))m, angle \(String(format: "%.1f", randomAngle * 180 / .pi))°")
         return (x, z)
     }
-
+    
     // Check if a position is within room boundaries defined by walls
     private func isPositionWithinRoomBounds(x: Float, z: Float, cameraPos: SIMD3<Float>, walls: [ARPlaneAnchor]) -> Bool {
         let testPos = SIMD3<Float>(x, cameraPos.y, z)
@@ -3245,7 +3255,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             
             // Scale NPC to reasonable size
             // Skeleton size is defined in SKELETON_SCALE constant above
-            let npcScale: Float = type == .skeleton ? Self.SKELETON_SCALE : 0.5
+            let npcScale: Float = type == .skeleton ? Self.SKELETON_SCALE : 5.0
             npcEntity.scale = SIMD3<Float>(repeating: npcScale)
             
             // Position NPC in front of camera
@@ -3368,6 +3378,14 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             if type == .skeleton {
                 skeletonAnchor = anchor
                 skeletonPlaced = true
+                
+                // TESTING: Also place corgi right next to skeleton to test if model renders
+                Swift.print("🧪 TESTING: Placing corgi next to skeleton to test model...")
+                let corgiTestPosition = SIMD3<Float>(npcPosition.x + 2.0, npcPosition.y, npcPosition.z) // 2 meters to the right
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.placeTestCorgi(at: corgiTestPosition, in: arView)
+                }
+                
             } else if type == .corgi {
                 corgiPlaced = true
             }
@@ -3616,7 +3634,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
             let npcEntity = ModelEntity()
             npcEntity.addChild(loadedEntity)
             
-            let npcScale: Float = type == .skeleton ? Self.SKELETON_SCALE : 0.5
+            let npcScale: Float = type == .skeleton ? Self.SKELETON_SCALE : 5.0
             npcEntity.scale = SIMD3<Float>(repeating: npcScale)
             
             let anchor = AnchorEntity(world: position)
@@ -4979,6 +4997,72 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
     }
     
+    /// TESTING: Place a test corgi at a specific position to verify model loads
+    private func placeTestCorgi(at position: SIMD3<Float>, in arView: ARView) {
+        Swift.print("🧪 [TestCorgi] Attempting to place test corgi at \(position)")
+        
+        guard let modelURL = Bundle.main.url(forResource: "Corgi_Traveller", withExtension: "usdz") else {
+            Swift.print("❌ [TestCorgi] Could not find Corgi_Traveller.usdz in bundle!")
+            Swift.print("   Make sure the file is added to the Xcode project target")
+            return
+        }
+        
+        Swift.print("✅ [TestCorgi] Found model at: \(modelURL.path)")
+        
+        do {
+            let loadedEntity = try Entity.loadModel(contentsOf: modelURL)
+            Swift.print("✅ [TestCorgi] Model loaded successfully")
+            
+            let corgiEntity = ModelEntity()
+            corgiEntity.addChild(loadedEntity)
+            corgiEntity.scale = SIMD3<Float>(repeating: 5.0) // Same scale as normal corgi
+            corgiEntity.name = "test-corgi"
+            
+            let anchor = AnchorEntity(world: position)
+            anchor.name = "test-corgi-anchor"
+            anchor.addChild(corgiEntity)
+            
+            arView.scene.addAnchor(anchor)
+            Swift.print("✅ [TestCorgi] Test corgi placed at position: \(position)")
+            Swift.print("   Look 2 meters to the right of Captain Bones!")
+            
+        } catch {
+            Swift.print("❌ [TestCorgi] Error loading corgi model: \(error)")
+            Swift.print("   Error details: \(error.localizedDescription)")
+        }
+    }
+    
+    /// TESTING: Handle notification to spawn corgi NPC after getting map
+    /// Simplified: Just directly place the corgi in AR
+    @objc private func handleSpawnCorgiNPC(_ notification: Notification) {
+        Swift.print("🐕 [SpawnCorgiNPC] Received notification - DIRECTLY placing corgi in AR")
+        
+        guard let arView = arView else {
+            Swift.print("⚠️ [SpawnCorgiNPC] Cannot spawn corgi: AR view not available")
+            return
+        }
+        
+        // Reset corgi state to ensure it can spawn fresh
+        Swift.print("🐕 [SpawnCorgiNPC] Resetting corgi state...")
+        if let existingCorgi = placedNPCs[NPCType.corgi.npcId] {
+            Swift.print("🐕 [SpawnCorgiNPC] Removing existing corgi")
+            existingCorgi.removeFromParent()
+            placedNPCs.removeValue(forKey: NPCType.corgi.npcId)
+        }
+        corgiPlaced = false
+        
+        // Directly place the corgi in AR after a short delay
+        Swift.print("🐕 [SpawnCorgiNPC] Scheduling corgi placement in 2 seconds...")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            guard let self = self else {
+                Swift.print("⚠️ [SpawnCorgiNPC] Self is nil, cannot place corgi")
+                return
+            }
+            Swift.print("🐕 [SpawnCorgiNPC] Now calling placeNPC for corgi...")
+            self.placeNPC(type: .corgi, in: arView)
+        }
+    }
+    
     /// Pause AR session when sheet is shown (saves battery and prevents UI freezes)
     private func pauseARSession() {
         guard let arView = arView else {
@@ -5042,6 +5126,7 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         }
         // placedBoxes removed - using findableObjects instead
         findableObjects.removeAll()
+        objectsInViewport.removeAll()
         objectPlacementTimes.removeAll()
         
         // Remove all placed NPCs
@@ -5061,7 +5146,12 @@ class ARCoordinator: NSObject, ARSessionDelegate {
         // Update tap handler's NPC reference
         tapHandler?.placedNPCs = placedNPCs
         
+        // Set flag to force re-placement when AR tracking is ready
+        // This ensures objects are re-placed after game mode change
+        shouldForceReplacement = true
+        
         Swift.print("✅ Cleared \(lootBoxCount) loot boxes and \(npcCount) NPCs from AR scene")
+        Swift.print("🔄 Force re-placement flag set - objects will be re-placed based on new game mode")
     }
     
 }

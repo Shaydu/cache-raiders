@@ -140,16 +140,13 @@ class QRCodeScannerViewController: UIViewController {
     private var previewLayer: AVCaptureVideoPreviewLayer?
     private var metadataOutput: AVCaptureMetadataOutput?
     private var scanningFrameView: UIView?
-    private var scanButton: UIButton?
     private var instructionLabel: UILabel?
     private var lastScanTime: Date = Date.distantPast
-    private let scanDebounceInterval: TimeInterval = 0.1 // Prevent duplicate scans within 100ms (faster response)
+    private let scanDebounceInterval: TimeInterval = 0.1 // Prevent duplicate scans within 100ms
     private var sessionStartAttempts = 0
     private let maxSessionStartAttempts = 5
-    private var isScanning = false // Track scanning state
     
     // CRITICAL: AVCaptureSession requires a dedicated serial queue for all operations
-    // Using a global concurrent queue causes thread safety issues and camera freezes
     private let sessionQueue = DispatchQueue(label: "com.cacheraiders.qrscanner.session")
     
     override func viewDidLoad() {
@@ -157,21 +154,10 @@ class QRCodeScannerViewController: UIViewController {
         
         print("📷 QR Scanner: viewDidLoad() called")
         
-        // Set background to black initially, but the preview layer will show the camera feed
-        // The preview layer will be behind all UI elements, so the camera feed will be visible
         view.backgroundColor = .black
-        
-        // Ensure view is opaque so it covers the AR view behind it
         view.isOpaque = true
         
-        // DEBUG: Listen for app state changes to track interruptions
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleAppWillResignActive),
-            name: UIApplication.willResignActiveNotification,
-            object: nil
-        )
-        
+        // Listen for app state changes
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAppDidBecomeActive),
@@ -179,22 +165,6 @@ class QRCodeScannerViewController: UIViewController {
             object: nil
         )
         
-        // DEBUG: Listen for sheet/dialog notifications that might interrupt camera
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleSheetPresented),
-            name: NSNotification.Name("SheetPresented"),
-            object: nil
-        )
-        
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleSheetDismissed),
-            name: NSNotification.Name("SheetDismissed"),
-            object: nil
-        )
-        
-        // DEBUG: Listen for camera interruptions
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleSessionWasInterrupted),
@@ -244,31 +214,12 @@ class QRCodeScannerViewController: UIViewController {
             closeButton.heightAnchor.constraint(equalToConstant: 44)
         ])
         
-        // Add scan button
-        let scanButton = UIButton(type: .system)
-        scanButton.setTitle("Scan", for: .normal)
-        scanButton.setTitleColor(.white, for: .normal)
-        scanButton.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.9)
-        scanButton.layer.cornerRadius = 12
-        scanButton.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
-        scanButton.addTarget(self, action: #selector(scanButtonTapped), for: .touchUpInside)
-        scanButton.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(scanButton)
-        self.scanButton = scanButton
-        
-        NSLayoutConstraint.activate([
-            scanButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            scanButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -32),
-            scanButton.widthAnchor.constraint(equalToConstant: 200),
-            scanButton.heightAnchor.constraint(equalToConstant: 56)
-        ])
-        
         // Add instruction label
         let instructionLabel = UILabel()
-        instructionLabel.text = "Tap 'Scan' to start scanning"
+        instructionLabel.text = "Align QR code in the frame"
         instructionLabel.textColor = .white
         instructionLabel.textAlignment = .center
-        instructionLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        instructionLabel.font = .systemFont(ofSize: 16, weight: .medium)
         instructionLabel.backgroundColor = UIColor.black.withAlphaComponent(0.6)
         instructionLabel.layer.cornerRadius = 8
         instructionLabel.clipsToBounds = true
@@ -279,28 +230,25 @@ class QRCodeScannerViewController: UIViewController {
         self.instructionLabel = instructionLabel
         
         NSLayoutConstraint.activate([
-            instructionLabel.bottomAnchor.constraint(equalTo: scanButton.topAnchor, constant: -16),
+            instructionLabel.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -32),
             instructionLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             instructionLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 20),
             instructionLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -20),
-            instructionLabel.heightAnchor.constraint(equalToConstant: 36)
+            instructionLabel.heightAnchor.constraint(equalToConstant: 44)
         ])
     }
     
     private func setupCamera() {
         print("📷 QR Scanner: Starting camera setup...")
-        // CRITICAL: All AVCaptureSession operations must be on the dedicated serial queue
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             
             print("📷 QR Scanner: Creating capture session on session queue...")
             let session = AVCaptureSession()
-            // Use medium preset for faster startup and better performance
-            // Medium quality is sufficient for QR code detection and provides faster frame processing
             if session.canSetSessionPreset(.medium) {
                 session.sessionPreset = .medium
             } else {
-                session.sessionPreset = .low // Fallback for older devices
+                session.sessionPreset = .low
             }
             
             guard let videoCaptureDevice = AVCaptureDevice.default(for: .video) else {
@@ -330,65 +278,47 @@ class QRCodeScannerViewController: UIViewController {
                 return
             }
             
-            // PERFORMANCE: Optimize camera settings quickly without blocking
-            // Use minimal configuration to prevent freezing during setup
+            // Optimize camera settings
             do {
                 try videoCaptureDevice.lockForConfiguration()
-                
-                // PERFORMANCE: Skip format searching to prevent freeze - use default format
-                // Format searching can be slow and cause UI freezing
-                // Default format is usually sufficient for QR code scanning
-                
-                // Enable autofocus for better QR code detection (quick operation)
                 if videoCaptureDevice.isFocusModeSupported(.continuousAutoFocus) {
                     videoCaptureDevice.focusMode = .continuousAutoFocus
                 }
-                
                 videoCaptureDevice.unlockForConfiguration()
-                print("✅ QR Scanner: Camera configured (using default format for performance)")
+                print("✅ QR Scanner: Camera configured")
             } catch {
                 print("⚠️ QR Scanner: Could not optimize camera settings: \(error.localizedDescription)")
-                // Continue anyway - camera will work with default settings
             }
             
             let metadataOutput = AVCaptureMetadataOutput()
             
             if session.canAddOutput(metadataOutput) {
                 session.addOutput(metadataOutput)
-                
-                // PERFORMANCE: Use background queue for metadata processing to prevent UI freezing
-                // Metadata processing happens frequently and should not block main thread
                 metadataOutput.metadataObjectTypes = [.qr]
                 
-                // Update UI on main thread - must set session and metadataOutput synchronously
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
                     
                     print("📷 QR Scanner: Setting up UI on main thread...")
                     
-                    // Store references BEFORE UI setup so they're available
                     self.captureSession = session
                     self.metadataOutput = metadataOutput
                     
-                    // CRITICAL: Set delegate on background queue to prevent UI freezing
-                    // Use a dedicated serial queue for metadata processing
+                    // Set delegate on background queue
                     let metadataQueue = DispatchQueue(label: "com.cacheraiders.qrscanner.metadata", qos: .userInitiated)
                     metadataOutput.setMetadataObjectsDelegate(self, queue: metadataQueue)
-                    print("📷 QR Scanner: Delegate set, metadata types: \(metadataOutput.metadataObjectTypes ?? [])")
+                    print("📷 QR Scanner: Delegate set")
                     
-                    // CRITICAL: Ensure rectOfInterest is set to full frame initially
-                    // This allows scanning anywhere in the frame, not just a specific region
+                    // Set rectOfInterest to full frame
                     let fullRect = CGRect(x: 0, y: 0, width: 1, height: 1)
                     self.sessionQueue.async {
                         metadataOutput.rectOfInterest = fullRect
-                        print("📷 QR Scanner: Set rectOfInterest to full frame")
                     }
                     
-                    // Create preview layer with session
+                    // Create preview layer
                     let previewLayer = AVCaptureVideoPreviewLayer(session: session)
                     previewLayer.videoGravity = .resizeAspectFill
                     
-                    // Configure connection for proper orientation
                     if let connection = previewLayer.connection {
                         if #available(iOS 17.0, *) {
                             if connection.isVideoRotationAngleSupported(90) {
@@ -403,7 +333,7 @@ class QRCodeScannerViewController: UIViewController {
                     
                     self.previewLayer = previewLayer
                     
-                    // CRITICAL: Remove any existing preview layers first to avoid conflicts
+                    // Remove existing preview layers
                     if let existingLayers = self.view.layer.sublayers {
                         for layer in existingLayers {
                             if layer is AVCaptureVideoPreviewLayer {
@@ -412,33 +342,21 @@ class QRCodeScannerViewController: UIViewController {
                         }
                     }
                     
-                    // CRITICAL: Insert preview layer at index 0 so it's behind all UI elements
-                    // This ensures the camera feed is visible as the background
+                    // Insert preview layer at index 0 (behind UI)
                     self.view.layer.insertSublayer(previewLayer, at: 0)
                     
-                    // PERFORMANCE: Skip verbose logging to prevent UI delays
-                    // Only log essential information
-                    
-                    // Set frame - use view bounds, will be updated in viewDidLayoutSubviews if needed
                     let bounds = self.view.layer.bounds
                     if bounds.width > 0 && bounds.height > 0 {
                         previewLayer.frame = bounds
                         print("📷 QR Scanner: Preview layer added with frame: \(bounds)")
-                        print("📷 QR Scanner: Preview layer isHidden: \(previewLayer.isHidden), opacity: \(previewLayer.opacity)")
-                    } else {
-                        print("⚠️ QR Scanner: View bounds are zero, will update in viewDidLayoutSubviews")
                     }
                     
                     // Add scanning frame overlay
                     self.addScanningFrame()
                     
-                    // Update preview layer frame after layout (will be called again in viewDidLayoutSubviews)
-                    self.updatePreviewLayerFrame()
-                    
-                    // Start preview session so user can see camera feed
-                    // Metadata scanning will only be active when user taps "Scan" button
-                    print("📷 QR Scanner: Starting camera preview...")
-                    self.startPreviewSession()
+                    // Start session automatically
+                    print("📷 QR Scanner: Starting scanning session...")
+                    self.startSession()
                 }
             } else {
                 DispatchQueue.main.async {
@@ -446,31 +364,6 @@ class QRCodeScannerViewController: UIViewController {
                 }
                 return
             }
-        }
-    }
-    
-    private func updatePreviewLayerFrame() {
-        guard let previewLayer = previewLayer else { return }
-        
-        // Only update if bounds are valid
-        let bounds = view.layer.bounds
-        guard bounds.width > 0 && bounds.height > 0 else {
-            print("⚠️ QR Scanner: View bounds invalid, skipping preview layer update")
-            return
-        }
-        
-        previewLayer.frame = bounds
-        
-        // CRITICAL: Always set rectOfInterest to full frame for better scanning
-        // This allows scanning anywhere in the camera view, not just a specific region
-        // The scanning frame overlay is just visual guidance, not a restriction
-        guard let output = metadataOutput else { return }
-        let fullRect = CGRect(x: 0, y: 0, width: 1, height: 1)
-        
-        // Update rectOfInterest on session queue
-        sessionQueue.async {
-            output.rectOfInterest = fullRect
-            print("📷 QR Scanner: Updated rectOfInterest to full frame for better scanning")
         }
     }
     
@@ -495,19 +388,13 @@ class QRCodeScannerViewController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         
-        // Ensure preview layer frame matches view bounds
         if let previewLayer = previewLayer {
             let bounds = view.layer.bounds
             if bounds.width > 0 && bounds.height > 0 {
                 CATransaction.begin()
-                CATransaction.setDisableActions(true) // Prevent animation during layout
+                CATransaction.setDisableActions(true)
                 previewLayer.frame = bounds
                 CATransaction.commit()
-                
-                // Update rectOfInterest after frame is set
-                updatePreviewLayerFrame()
-                
-                print("📷 QR Scanner: Preview layer frame updated in viewDidLayoutSubviews: \(bounds)")
             }
         }
     }
@@ -537,63 +424,8 @@ class QRCodeScannerViewController: UIViewController {
     }
     
     @objc private func closeTapped() {
-        // Stop scanning before dismissing
-        stopScanning()
+        stopSession()
         dismiss(animated: true)
-    }
-    
-    @objc private func scanButtonTapped() {
-        if isScanning {
-            stopScanning()
-        } else {
-            startScanning()
-        }
-    }
-    
-    private func startScanning() {
-        guard !isScanning else { return }
-        
-        isScanning = true
-        updateScanButton()
-        
-        // Start the capture session
-        startSessionIfNeeded()
-        
-        // Update instruction label
-        instructionLabel?.text = "Align QR code in the frame"
-    }
-    
-    private func stopScanning() {
-        guard isScanning else { return }
-        
-        isScanning = false
-        updateScanButton()
-        
-        // Don't stop the session - keep preview running
-        // Just disable scanning (metadata processing will check isScanning flag)
-        print("📷 QR Scanner: Scanning paused by user - preview still running")
-        
-        // Update instruction label
-        instructionLabel?.text = "Tap 'Scan' to start scanning"
-    }
-    
-    private func updateScanButton() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, let button = self.scanButton else { return }
-            if self.isScanning {
-                button.setTitle("Pause", for: .normal)
-                button.backgroundColor = UIColor.systemOrange.withAlphaComponent(0.9)
-            } else {
-                button.setTitle("Scan", for: .normal)
-                button.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.9)
-            }
-        }
-    }
-    
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        print("📷 QR Scanner: viewWillAppear() called")
-        // Don't start here - wait for viewDidAppear when view is fully laid out
     }
     
     override func viewDidAppear(_ animated: Bool) {
@@ -601,208 +433,90 @@ class QRCodeScannerViewController: UIViewController {
         
         print("📷 QR Scanner: viewDidAppear() called")
         
-        // CRITICAL: Ensure preview layer is properly set up and visible
         if let previewLayer = previewLayer {
             let bounds = view.layer.bounds
-            print("📷 QR Scanner: viewDidAppear - view bounds: \(bounds)")
-            print("📷 QR Scanner: Preview layer exists, superlayer: \(previewLayer.superlayer != nil ? "exists" : "nil")")
-            print("📷 QR Scanner: Preview layer frame: \(previewLayer.frame)")
-            print("📷 QR Scanner: Preview layer isHidden: \(previewLayer.isHidden), opacity: \(previewLayer.opacity)")
-            
             if bounds.width > 0 && bounds.height > 0 {
-                // Ensure preview layer is in the view's layer hierarchy
                 if previewLayer.superlayer != view.layer {
-                    // Remove from any other superlayer first
                     previewLayer.removeFromSuperlayer()
-                    // Add to view's layer at index 0 (behind UI elements)
                     view.layer.insertSublayer(previewLayer, at: 0)
-                    print("📷 QR Scanner: Preview layer re-added to view hierarchy")
                 }
-                
-                // Ensure preview layer is visible
                 previewLayer.isHidden = false
                 previewLayer.opacity = 1.0
                 previewLayer.frame = bounds
-                print("📷 QR Scanner: Preview layer frame set in viewDidAppear: \(bounds)")
-                print("📷 QR Scanner: View background color: \(view.backgroundColor?.description ?? "nil")")
-            } else {
-                print("⚠️ QR Scanner: View bounds are invalid in viewDidAppear")
             }
-        } else {
-            print("⚠️ QR Scanner: Preview layer is nil in viewDidAppear - camera setup may not be complete")
         }
         
-        // Start preview session so user can see camera feed
-        // Metadata scanning will only be active when user taps "Scan" button
+        // Start session if not already running
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            self?.startPreviewSession()
+            self?.startSession()
         }
     }
     
-    private func startPreviewSession() {
-        // Start session for camera preview (so user can see the feed)
-        // This is separate from scanning - preview always runs, scanning is controlled by isScanning
-        guard let session = captureSession else {
-            print("⏳ QR Scanner: Session not ready yet for preview")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                self?.startPreviewSession()
-            }
-            return
-        }
-        
-        guard !session.isRunning else {
-            print("✅ QR Scanner: Preview session already running")
-            return
-        }
-        
-        // Start session on the dedicated session queue
-        let capturedSession = session
-        sessionQueue.async { [weak self] in
-            guard self != nil else { return }
-            
-            print("📷 QR Scanner: Starting preview session...")
-            capturedSession.startRunning()
-            print("✅ QR Scanner: Preview session started - camera feed visible")
-        }
-    }
-    
-    private func startSessionIfNeeded() {
-        // This is called when user wants to start scanning
-        // Preview should already be running, we just need to ensure metadata is enabled
-        guard isScanning else {
-            print("📷 QR Scanner: Scanning not enabled - waiting for user to tap 'Scan' button")
-            return
-        }
-        
-        // Ensure preview session is running
-        startPreviewSession()
-        
-        // Prevent infinite retries
+    private func startSession() {
         guard sessionStartAttempts < maxSessionStartAttempts else {
             print("⚠️ QR Scanner: Max session start attempts reached")
             showError("Failed to start camera. Please try again.")
-            isScanning = false
-            updateScanButton()
             return
         }
         
         sessionStartAttempts += 1
         
-        // Capture session before entering nonisolated context
         guard let session = captureSession else {
             print("⏳ QR Scanner: Session not ready yet, attempt \(sessionStartAttempts)/\(maxSessionStartAttempts)")
-            // Session setup might still be in progress, try again after a short delay
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                self?.startSessionIfNeeded()
+                self?.startSession()
             }
             return
         }
         
-        // Session should already be running for preview, but verify
-        if !session.isRunning {
-            startPreviewSession()
+        guard !session.isRunning else {
+            print("✅ QR Scanner: Session already running")
+            sessionStartAttempts = 0
+            return
         }
         
-        print("✅ QR Scanner: Scanning enabled - metadata processing active")
-        sessionStartAttempts = 0 // Reset on success
-        
-        // Ensure preview layer frame is set before starting
-        if let previewLayer = previewLayer {
-            let bounds = view.layer.bounds
-            if bounds.width > 0 && bounds.height > 0 {
-                previewLayer.frame = bounds
-                print("📷 QR Scanner: Preview layer frame set to: \(bounds)")
-            }
-        }
-        
-        // Update rectOfInterest if needed
-        updatePreviewLayerFrame()
-        
-        // Start session on the dedicated session queue
-        // CRITICAL: Must start on session queue, not main queue
         let capturedSession = session
         sessionQueue.async { [weak self] in
-            guard let self = self else { return }
-            
-            guard !capturedSession.isRunning else {
-                print("✅ QR Scanner: Session already running (checked on session queue)")
-                DispatchQueue.main.async {
-                    self.sessionStartAttempts = 0
-                }
-                return
-            }
+            guard self != nil else { return }
             
             print("📷 QR Scanner: Starting session on session queue...")
-            let startTime = Date()
             capturedSession.startRunning()
-            let startDuration = Date().timeIntervalSince(startTime)
-            print("📷 QR Scanner: Session startRunning() call completed in \(String(format: "%.3f", startDuration))s")
             
-            // Give it a moment to start, then verify
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 guard let self = self else { return }
                 if capturedSession.isRunning {
                     print("✅ QR Scanner: Camera session started successfully")
-                    print("📷 QR Scanner: Metadata object types: \(self.metadataOutput?.metadataObjectTypes ?? [])")
-                    
-                    // Verify preview layer is still properly configured
-                    if let previewLayer = self.previewLayer {
-                        print("📷 QR Scanner: Preview layer verification:")
-                        print("   - Superlayer: \(previewLayer.superlayer != nil ? "exists" : "nil")")
-                        print("   - Frame: \(previewLayer.frame)")
-                        print("   - IsHidden: \(previewLayer.isHidden)")
-                        print("   - Opacity: \(previewLayer.opacity)")
-                        print("   - VideoGravity: \(previewLayer.videoGravity.rawValue)")
-                        
-                        // Ensure it's visible
-                        if previewLayer.isHidden || previewLayer.opacity < 1.0 {
-                            print("⚠️ QR Scanner: Preview layer not fully visible, fixing...")
-                            previewLayer.isHidden = false
-                            previewLayer.opacity = 1.0
-                        }
-                    } else {
-                        print("⚠️ QR Scanner: Preview layer is nil after session started!")
-                    }
-                    
                     self.sessionStartAttempts = 0
                 } else {
                     print("⚠️ QR Scanner: Session start may have failed, retrying...")
                     if self.sessionStartAttempts < self.maxSessionStartAttempts {
-                        self.startSessionIfNeeded()
+                        self.startSession()
                     }
                 }
+            }
+        }
+    }
+    
+    private func stopSession() {
+        let session = captureSession
+        if let session = session, session.isRunning {
+            print("📷 QR Scanner: Stopping session")
+            sessionQueue.async {
+                session.stopRunning()
+                print("📷 QR Scanner: Session stopped")
             }
         }
     }
     
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        
-        print("📷 QR Scanner: viewWillDisappear() called - stopping camera")
-        
-        // CRITICAL: Stop session on the dedicated session queue
-        // Capture session before entering nonisolated context
-        let session = captureSession
-        if let session = session, session.isRunning {
-            print("📷 QR Scanner: Stopping session in viewWillDisappear")
-            sessionQueue.async {
-                session.stopRunning()
-                print("📷 QR Scanner: Session stopped successfully")
-            }
-        } else {
-            print("📷 QR Scanner: Session was not running (already stopped)")
-        }
+        print("📷 QR Scanner: viewWillDisappear() called")
+        stopSession()
     }
     
     deinit {
-        print("📷 QR Scanner: deinit() called - cleaning up")
-        
-        // Remove notification observers
+        print("📷 QR Scanner: deinit() called")
         NotificationCenter.default.removeObserver(self)
-        
-        // Clean up camera session when view controller is deallocated
-        // CRITICAL: Use the dedicated session queue
-        // Capture session before entering nonisolated context
         let session = captureSession
         if let session = session, session.isRunning {
             sessionQueue.async {
@@ -811,123 +525,62 @@ class QRCodeScannerViewController: UIViewController {
         }
     }
     
-    // MARK: - Interruption Handlers (Debug Logging)
-    
-    @objc private func handleAppWillResignActive(_ notification: Notification) {
-        print("🚨 QR Scanner INTERRUPTION: App will resign active - camera may pause")
-    }
+    // MARK: - Interruption Handlers
     
     @objc private func handleAppDidBecomeActive(_ notification: Notification) {
-        print("✅ QR Scanner: App became active - camera should resume")
-        // Restart preview session (always show preview)
-        startPreviewSession()
-        // If scanning was active, ensure it continues
-        if isScanning {
-            startSessionIfNeeded()
-        }
-    }
-    
-    @objc private func handleSheetPresented(_ notification: Notification) {
-        print("🚨 QR Scanner INTERRUPTION: Sheet presented - may affect camera")
-    }
-    
-    @objc private func handleSheetDismissed(_ notification: Notification) {
-        print("✅ QR Scanner: Sheet dismissed - camera should resume")
+        print("✅ QR Scanner: App became active - resuming camera")
+        startSession()
     }
     
     @objc private func handleSessionWasInterrupted(_ notification: Notification) {
-        guard let userInfo = notification.userInfo,
-              let reasonValue = userInfo[AVCaptureSessionInterruptionReasonKey] as? Int,
-              let reason = AVCaptureSession.InterruptionReason(rawValue: reasonValue) else {
-            print("🚨 QR Scanner INTERRUPTION: Camera session interrupted (unknown reason)")
-            return
-        }
-        
-        let reasonString: String
-        switch reason {
-        case .videoDeviceNotAvailableInBackground:
-            reasonString = "device not available in background"
-        case .audioDeviceInUseByAnotherClient:
-            reasonString = "audio device in use by another client"
-        case .videoDeviceInUseByAnotherClient:
-            reasonString = "video device in use by another client (AR camera?)"
-        case .videoDeviceNotAvailableWithMultipleForegroundApps:
-            reasonString = "device not available with multiple foreground apps"
-        case .videoDeviceNotAvailableDueToSystemPressure:
-            reasonString = "device not available due to system pressure"
-        @unknown default:
-            reasonString = "unknown reason (\(reasonValue))"
-        }
-        
-        print("🚨 QR Scanner INTERRUPTION: Camera session interrupted - reason: \(reasonString)")
-        
-        // Log interruption type if available
-        if let interruptionType = userInfo[AVCaptureSessionInterruptionReasonKey] {
-            print("   Interruption reason code: \(interruptionType)")
-        }
+        print("🚨 QR Scanner: Camera session interrupted")
     }
     
     @objc private func handleSessionInterruptionEnded(_ notification: Notification) {
-        print("✅ QR Scanner: Camera session interruption ended - attempting to resume")
-        // Restart preview session (always show preview)
-        startPreviewSession()
-        // If scanning was active, ensure it continues
-        if isScanning {
-            startSessionIfNeeded()
-        }
+        print("✅ QR Scanner: Camera session interruption ended - resuming")
+        startSession()
     }
 }
 
 // MARK: - AVCaptureMetadataOutputObjectsDelegate
 extension QRCodeScannerViewController: AVCaptureMetadataOutputObjectsDelegate {
     nonisolated func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
-        // PERFORMANCE: Early return if no objects to process - do this quickly
         guard !metadataObjects.isEmpty else { return }
         
-        // Check if scanning is enabled - only process if user has tapped "Scan"
-        // We need to check this on main thread since isScanning is @MainActor
         Task { @MainActor [weak self] in
-            guard let self = self, self.isScanning else {
-                return // Scanning not enabled, ignore metadata
-            }
+            guard let self = self else { return }
             
-            // PERFORMANCE: Process on background thread to prevent UI freezing
-            // Extract data quickly without blocking
             guard let metadataObject = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
                   let stringValue = metadataObject.stringValue else {
-                return // Silently ignore invalid objects
+                return
             }
             
-            // Quick validation - do minimal work here
+            // Validate URL
             guard stringValue.hasPrefix("http://") || stringValue.hasPrefix("https://") else {
-                return // Silently ignore non-URL codes
+                return
             }
             
-            // CRITICAL: Capture values before entering main actor context
             let capturedString = stringValue
             let currentTime = Date()
             
-            // Debounce: prevent duplicate scans within the debounce interval
+            // Debounce duplicate scans
             guard currentTime.timeIntervalSince(self.lastScanTime) >= self.scanDebounceInterval else {
-                return // Too soon since last scan, ignore silently
+                return
             }
             
-            // Mark this scan time to prevent duplicates
             self.lastScanTime = currentTime
             
             print("✅ QR Scanner: Processing valid QR code: \(capturedString)")
             
-            // Stop scanning after successful scan
-            self.isScanning = false
-            self.updateScanButton()
-            self.instructionLabel?.text = "Tap 'Scan' to start scanning"
+            // Stop session after successful scan
+            self.stopSession()
             
-            // Play haptic feedback (must be on main thread)
+            // Play haptic feedback
             let generator = UINotificationFeedbackGenerator()
-            generator.prepare() // Prepare generator for immediate feedback
+            generator.prepare()
             generator.notificationOccurred(.success)
             
-            // Notify delegate immediately (non-blocking)
+            // Notify delegate
             self.delegate?.didScanQRCode(capturedString)
         }
     }

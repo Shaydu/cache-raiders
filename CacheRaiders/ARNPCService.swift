@@ -117,7 +117,7 @@ class ARNPCService {
             npcEntity.addChild(loadedEntity)
             
             // Scale NPC to reasonable size
-            let npcScale: Float = type == .skeleton ? ARNPCConstants.SKELETON_SCALE : 0.5
+            let npcScale: Float = type == .skeleton ? ARNPCConstants.SKELETON_SCALE : 5.0
             npcEntity.scale = SIMD3<Float>(repeating: npcScale)
             
             // Position NPC in front of camera

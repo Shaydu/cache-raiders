@@ -6,22 +6,6 @@ const MapManager = {
     selectedLocation: null,
     selectedMarker: null,
     currentTileLayer: null,
-    currentMapStyle: 'standard', // 'standard' or 'pirate'
-
-    /**
-     * Get saved map style preference or default to 'standard'
-     */
-    getMapStylePreference() {
-        const saved = localStorage.getItem('mapStyle');
-        return saved || 'standard';
-    },
-
-    /**
-     * Save map style preference
-     */
-    saveMapStylePreference(style) {
-        localStorage.setItem('mapStyle', style);
-    },
 
     /**
      * Wait for Leaflet library to be loaded
@@ -96,22 +80,8 @@ const MapManager = {
 
         this.map = L.map('map').setView(defaultCenter, defaultZoom);
 
-        // Load saved map style preference
-        this.currentMapStyle = this.getMapStylePreference();
-        
-        // Update radio button to match saved preference
-        const standardRadio = document.getElementById('mapStyleStandard');
-        const pirateRadio = document.getElementById('mapStylePirate');
-        if (standardRadio && pirateRadio) {
-            if (this.currentMapStyle === 'pirate') {
-                pirateRadio.checked = true;
-            } else {
-                standardRadio.checked = true;
-            }
-        }
-
-        // Initialize with the saved style
-        this.setMapStyle(this.currentMapStyle, false); // false = don't save (already saved)
+        // Initialize with OpenStreetMap tiles
+        this.initTileLayer();
 
         // Handle map clicks
         this.map.on('click', (e) => {
@@ -133,6 +103,28 @@ const MapManager = {
         });
 
         return this.map;
+    },
+
+    /**
+     * Initialize tile layer with OpenStreetMap
+     */
+    initTileLayer() {
+        if (this.currentTileLayer) {
+            this.map.removeLayer(this.currentTileLayer);
+        }
+
+        this.currentTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors',
+            maxZoom: Config.MAP_MAX_ZOOM,
+            maxNativeZoom: Config.MAP_MAX_NATIVE_ZOOM
+        });
+
+        this.currentTileLayer.on('tileerror', function(error, tile) {
+            console.warn('Tile load error at zoom level:', MapManager.map.getZoom(), error);
+        });
+
+        this.currentTileLayer.addTo(this.map);
+        console.log('🗺️ Map initialized with OpenStreetMap tiles');
     },
 
     /**
@@ -170,160 +162,6 @@ const MapManager = {
             // Circle markers: scale from 14px (zoom 10) to 35px (zoom 18)
             return Math.max(12, Math.min(32, baseCircleSize * zoomFactor));
         }
-    },
-
-    /**
-     * Set map style (standard or pirate)
-     */
-    setMapStyle(style, savePreference = true) {
-        if (!this.map) {
-            console.warn('Map not initialized yet');
-            return;
-        }
-        
-        if (typeof L === 'undefined') {
-            console.error('Leaflet library (L) not loaded');
-            return;
-        }
-
-        // Remove existing tile layer
-        if (this.currentTileLayer) {
-            this.map.removeLayer(this.currentTileLayer);
-        }
-
-        // Remove/add CSS classes for styling
-        const mapElement = document.getElementById('map');
-        if (style === 'pirate') {
-            mapElement.classList.add('pirate-map-style');
-        } else {
-            mapElement.classList.remove('pirate-map-style');
-        }
-
-        // Create new tile layer based on style
-        let tileLayer;
-        if (style === 'pirate') {
-            // Pirate map style - Google Maps with custom styled map
-            const pirateMapStyles = [
-                {
-                    "featureType": "all",
-                    "elementType": "labels.text.fill",
-                    "stylers": [
-                        { "color": "#5d4e37" },  // dark brown text for readability
-                        { "weight": "normal" }
-                    ]
-                },
-                {
-                    "featureType": "all",
-                    "elementType": "labels.text.stroke",
-                    "stylers": [
-                        { "color": "#e8d8b0" },  // parchment-colored stroke
-                        { "weight": 2 }
-                    ]
-                },
-                {
-                    "featureType": "landscape",
-                    "elementType": "geometry",
-                    "stylers": [
-                        { "color": "#e8d8b0" }   // parchment land
-                    ]
-                },
-                {
-                    "featureType": "water",
-                    "elementType": "geometry",
-                    "stylers": [
-                        { "color": "#c3b48c" },  // muted brown water
-                        { "saturation": -30 }
-                    ]
-                },
-                {
-                    "featureType": "water",
-                    "elementType": "labels.text.fill",
-                    "stylers": [
-                        { "color": "#8b7355" }  // darker brown for water labels
-                    ]
-                },
-                {
-                    "featureType": "road",
-                    "elementType": "geometry.stroke",
-                    "stylers": [
-                        { "color": "#7d6541" },  // rough "inked" lines
-                        { "weight": 1.5 }
-                    ]
-                },
-                {
-                    "featureType": "road",
-                    "elementType": "geometry.fill",
-                    "stylers": [
-                        { "color": "#d8c7a1" }
-                    ]
-                },
-                {
-                    "featureType": "road",
-                    "elementType": "labels.text.fill",
-                    "stylers": [
-                        { "color": "#5d4e37" }  // dark brown for road labels
-                    ]
-                },
-                {
-                    "featureType": "poi",
-                    "elementType": "geometry",
-                    "stylers": [
-                        { "color": "#d4c4a5" }  // slightly different color for POIs
-                    ]
-                },
-                {
-                    "featureType": "poi",
-                    "elementType": "labels.text.fill",
-                    "stylers": [
-                        { "color": "#5d4e37" }  // dark brown for POI labels
-                    ]
-                },
-                {
-                    "featureType": "administrative",
-                    "elementType": "geometry.stroke",
-                    "stylers": [
-                        { "color": "#7d6541" },  // brown stroke for boundaries
-                        { "weight": 1 }
-                    ]
-                },
-                {
-                    "featureType": "administrative",
-                    "elementType": "labels.text.fill",
-                    "stylers": [
-                        { "color": "#5d4e37" }  // dark brown for admin labels
-                    ]
-                }
-            ];
-
-            // Use Google Maps styled map with Leaflet.GoogleMutant
-            tileLayer = L.gridLayer.googleMutant({
-                type: 'roadmap',
-                styles: pirateMapStyles,
-                maxZoom: Config.MAP_MAX_ZOOM
-            });
-        } else {
-            // Standard style - OpenStreetMap
-            tileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap contributors',
-                maxZoom: Config.MAP_MAX_ZOOM,
-                maxNativeZoom: Config.MAP_MAX_NATIVE_ZOOM
-            });
-        }
-
-        tileLayer.on('tileerror', function(error, tile) {
-            console.warn('Tile load error at zoom level:', MapManager.map.getZoom(), error);
-        });
-
-        tileLayer.addTo(this.map);
-        this.currentTileLayer = tileLayer;
-        this.currentMapStyle = style;
-
-        // Save preference
-        if (savePreference) {
-            this.saveMapStylePreference(style);
-        }
-
-        console.log(`🗺️ Map style changed to: ${style}`);
     },
 
     /**
@@ -422,4 +260,3 @@ const MapManager = {
 
 // Make MapManager available globally
 window.MapManager = MapManager;
-
