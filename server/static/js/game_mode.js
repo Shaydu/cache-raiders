@@ -12,6 +12,15 @@ const GameModeManager = {
         await this.loadGameMode();
         this.setupEventListeners();
         this.setupWebSocketListener();
+        
+        // If we're starting in story mode, load story elements
+        if (this.currentGameMode === 'dead_mens_secrets') {
+            if (ObjectsManager && typeof ObjectsManager.loadStoryElements === 'function') {
+                await ObjectsManager.loadStoryElements();
+                console.log('📖 Loaded story mode elements on init');
+            }
+        }
+        
         console.log('✅ Game mode manager initialized');
     },
 
@@ -50,8 +59,12 @@ const GameModeManager = {
                 
                 console.log(`🎮 Game mode changed via WebSocket: ${data.game_mode}`);
                 
-                // Reload objects to update map display (filter based on new game mode)
-                if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
+                // Refresh map for new game mode (loads story elements if in story mode)
+                if (ObjectsManager && typeof ObjectsManager.refreshForGameMode === 'function') {
+                    ObjectsManager.refreshForGameMode(data.game_mode).then(() => {
+                        console.log('🗺️ Map markers refreshed for new game mode (via WebSocket)');
+                    });
+                } else if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
                     ObjectsManager.loadObjects().then(() => {
                         console.log('🗺️ Map markers refreshed for new game mode (via WebSocket)');
                     });
@@ -127,8 +140,12 @@ const GameModeManager = {
                 // CRITICAL: Reload game mode from server to ensure UI is in sync
                 await this.loadGameMode();
                 
-                // Reload objects to update map display (filter based on new game mode)
-                if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
+                // Refresh map for new game mode (loads story elements if in story mode)
+                if (ObjectsManager && typeof ObjectsManager.refreshForGameMode === 'function') {
+                    ObjectsManager.refreshForGameMode(data.game_mode).then(() => {
+                        console.log('🗺️ Map markers refreshed for new game mode');
+                    });
+                } else if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
                     ObjectsManager.loadObjects().then(() => {
                         console.log('🗺️ Map markers refreshed for new game mode');
                     });

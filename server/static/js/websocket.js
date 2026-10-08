@@ -110,6 +110,34 @@ const WebSocketManager = {
                     ObjectsManager.removeObjectMarker(data.object_id);
                 }
             });
+
+            // Listen for game mode changes (CRITICAL: Must be in connect() to ensure socket exists)
+            this.socket.on('game_mode_changed', (data) => {
+                console.log(`🎮 [WebSocket] Game mode changed event received: ${data.game_mode}`);
+                
+                // Update GameModeManager if available
+                if (window.GameModeManager) {
+                    GameModeManager.currentGameMode = data.game_mode;
+                    
+                    // Update dropdown
+                    const dropdown = document.getElementById('gameMode');
+                    if (dropdown) {
+                        dropdown.value = data.game_mode;
+                        console.log(`🎮 [WebSocket] Updated dropdown to: ${data.game_mode}`);
+                    }
+                    
+                    // Refresh map for new game mode
+                    if (ObjectsManager && typeof ObjectsManager.refreshForGameMode === 'function') {
+                        ObjectsManager.refreshForGameMode(data.game_mode).then(() => {
+                            console.log('🗺️ Map markers refreshed for new game mode (via WebSocket)');
+                        });
+                    } else if (ObjectsManager && typeof ObjectsManager.loadObjects === 'function') {
+                        ObjectsManager.loadObjects().then(() => {
+                            console.log('🗺️ Map markers refreshed for new game mode (via WebSocket)');
+                        });
+                    }
+                }
+            });
         } catch (error) {
             console.warn('⚠️ Failed to initialize WebSocket:', error);
         }

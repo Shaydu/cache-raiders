@@ -1,6 +1,7 @@
 import SwiftUI
 import RealityKit
 import ARKit
+import Combine
 
 // MARK: - AR Loot Box View
 struct ARLootBoxView: View {
@@ -39,6 +40,123 @@ struct ARLootBoxView: View {
                     message: message.message,
                     isUserMessage: message.isUserMessage
                 )
+            }
+            
+            // Game mode indicator in center of screen
+            GameModeIndicator(locationManager: locationManager)
+        }
+    }
+}
+
+// MARK: - Game Mode Indicator
+struct GameModeIndicator: View {
+    @ObservedObject var locationManager: LootBoxLocationManager
+    @State private var isVisible: Bool = false
+    @State private var currentDisplayedMode: GameMode?
+    @State private var fadeOutTask: Task<Void, Never>?
+    
+    var body: some View {
+        VStack {
+            Spacer()
+            
+            if isVisible, let mode = currentDisplayedMode {
+                Text(mode.displayName)
+                    .font(.system(.title2, design: .rounded, weight: .bold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.black.opacity(0.7))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(mode == .deadMensSecrets ? Color.yellow : Color.blue, lineWidth: 2)
+                            )
+                    )
+                    .shadow(color: .black.opacity(0.5), radius: 8, x: 0, y: 4)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
+            
+            Spacer()
+        }
+        .onChange(of: locationManager.gameMode) { oldMode, newMode in
+            print("🎮 GameModeIndicator onChange triggered: \(oldMode.displayName) → \(newMode.displayName)")
+            handleGameModeChange(oldMode: oldMode, newMode: newMode)
+        }
+        .onReceive(locationManager.$gameMode.dropFirst()) { newMode in
+            // Listen to published property changes (dropFirst to skip initial value)
+            if let current = currentDisplayedMode {
+                if current != newMode {
+                    print("🎮 GameModeIndicator onReceive triggered: \(current.displayName) → \(newMode.displayName)")
+                    handleGameModeChange(oldMode: current, newMode: newMode)
+                }
+            } else {
+                // First time receiving - just update the displayed mode
+                print("🎮 GameModeIndicator onReceive: Initial mode \(newMode.displayName)")
+                currentDisplayedMode = newMode
+            }
+        }
+        .onAppear {
+            // Show badge initially when view appears
+            print("🎮 GameModeIndicator onAppear: Initial mode is \(locationManager.gameMode.displayName)")
+            currentDisplayedMode = locationManager.gameMode
+            isVisible = true
+            scheduleFadeOut()
+        }
+        .id(locationManager.gameMode) // Force view refresh when game mode changes
+    }
+    
+    private func handleGameModeChange(oldMode: GameMode, newMode: GameMode) {
+        // Only show badge if game mode actually changed (not initial load)
+        guard oldMode != newMode else {
+            print("🎮 GameModeIndicator: Mode unchanged, skipping")
+            return
+        }
+        
+        print("🎮 GameModeIndicator: Game mode changed from \(oldMode.displayName) to \(newMode.displayName)")
+        print("   Current isVisible: \(isVisible)")
+        print("   Current displayed mode: \(currentDisplayedMode?.displayName ?? "nil")")
+        
+        // Cancel any existing fade-out task
+        fadeOutTask?.cancel()
+        
+        // Update the displayed mode
+        currentDisplayedMode = newMode
+        
+        // Show the badge immediately when mode changes
+        // Use MainActor to ensure UI updates happen on main thread
+        Task { @MainActor in
+            print("🎮 GameModeIndicator: Setting isVisible to true on main thread")
+            withAnimation(.easeIn(duration: 0.3)) {
+                isVisible = true
+            }
+            
+            // Schedule new fade-out after 5 seconds
+            scheduleFadeOut()
+        }
+    }
+    
+    private func scheduleFadeOut() {
+        // Cancel any existing task
+        fadeOutTask?.cancel()
+        
+        // Create new fade-out task
+        fadeOutTask = Task {
+            // Wait 5 seconds
+            try? await Task.sleep(nanoseconds: 5_000_000_000) // 5 seconds
+            
+            // Check if task was cancelled
+            guard !Task.isCancelled else { 
+                print("🎮 GameModeIndicator: Fade-out task was cancelled")
+                return 
+            }
+            
+            // Fade out with animation
+            await MainActor.run {
+                print("🎮 GameModeIndicator: Fading out notification")
+                withAnimation(.easeOut(duration: 0.5)) {
+                    isVisible = false
+                }
             }
         }
     }

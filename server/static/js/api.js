@@ -130,6 +130,15 @@ const ApiService = {
     },
 
     /**
+     * Story Mode Elements API (for admin map)
+     */
+    storyElements: {
+        async getAll() {
+            return ApiService.fetch('/api/admin/story-mode-elements');
+        }
+    },
+
+    /**
      * Server Info API
      */
     serverInfo: {

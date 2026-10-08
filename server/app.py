@@ -2981,6 +2981,12 @@ def get_npc_map_piece(npc_id: str):
         }
         map_logger.warning(f"[{request_id}] No target location provided, using default: {target_location}")
     
+    # Store the user's original location (before we potentially modify target_location)
+    user_location = {
+        'latitude': target_location.get('latitude'),
+        'longitude': target_location.get('longitude')
+    }
+    
     # Check if user has an existing active treasure hunt
     existing_hunt = None
     if device_uuid:
@@ -3045,6 +3051,39 @@ def get_npc_map_piece(npc_id: str):
             'longitude': existing_hunt['treasure_longitude']
         }
         map_logger.info(f"[{request_id}] Using existing treasure location: {target_location}")
+    else:
+        # NEW treasure hunt - generate treasure location within 10 meters of user
+        # This makes the treasure easy to find and test
+        import random
+        import math
+        
+        user_lat = user_location.get('latitude')
+        user_lon = user_location.get('longitude')
+        
+        if user_lat and user_lon:
+            # Generate random point within 10 meters
+            max_distance_m = 10.0
+            
+            # Convert meters to approximate degrees
+            # 1 degree latitude ≈ 111,000 meters
+            # 1 degree longitude ≈ 111,000 * cos(latitude) meters
+            lat_offset_per_meter = 1.0 / 111000.0
+            lon_offset_per_meter = 1.0 / (111000.0 * math.cos(math.radians(user_lat)))
+            
+            # Random distance between 5-10 meters (not too close, not too far)
+            distance = random.uniform(5.0, max_distance_m)
+            angle = random.uniform(0, 2 * math.pi)
+            
+            lat_offset = distance * math.cos(angle) * lat_offset_per_meter
+            lon_offset = distance * math.sin(angle) * lon_offset_per_meter
+            
+            target_location = {
+                'latitude': user_lat + lat_offset,
+                'longitude': user_lon + lon_offset
+            }
+            
+            map_logger.info(f"[{request_id}] Generated NEW treasure location within 10m of user: {target_location}")
+            print(f"🎯 New treasure hunt - X marks the spot {distance:.1f}m from user at ({target_location['latitude']:.6f}, {target_location['longitude']:.6f})")
     
     map_logger.info(f"[{request_id}] Final target location: lat={target_location.get('latitude')}, lon={target_location.get('longitude')}")
     
@@ -3082,7 +3121,7 @@ def get_npc_map_piece(npc_id: str):
                     approximate_lon = lon + (random.random() - 0.5) * 0.001
                     map_piece = {
                         "piece_number": 1,
-                        "hint": "Arr, this be the first half o' the map, matey! The treasure be near these waters!",
+                        "hint": "Arr, here be the treasure map, matey! X marks the spot where me gold be buried!",
                         "approximate_latitude": approximate_lat,
                         "approximate_longitude": approximate_lon,
                         "landmarks": [],
@@ -3109,7 +3148,7 @@ def get_npc_map_piece(npc_id: str):
                     approximate_lon = lon + (random.random() - 0.5) * 0.001
                     map_piece = {
                         "piece_number": 1,
-                        "hint": "Arr, this be the first half o' the map, matey! The treasure be near these waters!",
+                        "hint": "Arr, here be the treasure map, matey! X marks the spot where me gold be buried!",
                         "approximate_latitude": approximate_lat,
                         "approximate_longitude": approximate_lon,
                         "landmarks": [],
@@ -3302,6 +3341,149 @@ def combine_map_pieces():
         'complete_map': combined_map,
         'message': 'Map pieces combined! X marks the spot!'
     }), 200
+
+# ============================================================================
+# Admin Story Mode Elements (for admin panel map)
+# ============================================================================
+
+@app.route('/api/admin/story-mode-elements', methods=['GET'])
+def get_story_mode_elements():
+    """Get all story mode elements for the admin panel map.
+    
+    Returns all active treasure hunts with their story elements:
+    - 💀 Skeleton (Captain Bones) - at origin location
+    - 🐕 Corgi (Barnaby) - appears in Stage 2+
+    - ❌ Treasure X - the target treasure location
+    - 🏴‍☠️ Bandit Hideout - appears in Stage 2+
+    
+    Also includes player info for each hunt.
+    """
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Get all active treasure hunts with player info
+        cursor.execute('''
+            SELECT 
+                th.id,
+                th.device_uuid,
+                th.treasure_latitude,
+                th.treasure_longitude,
+                th.origin_latitude,
+                th.origin_longitude,
+                th.current_stage,
+                th.corgi_latitude,
+                th.corgi_longitude,
+                th.bandit_latitude,
+                th.bandit_longitude,
+                th.created_at,
+                th.status,
+                p.player_name
+            FROM treasure_hunts th
+            LEFT JOIN players p ON th.device_uuid = p.device_uuid
+            WHERE th.status = 'active'
+            ORDER BY th.created_at DESC
+        ''')
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        story_elements = []
+        
+        for row in rows:
+            hunt_id = row[0]
+            device_uuid = row[1]
+            treasure_lat = row[2]
+            treasure_lon = row[3]
+            origin_lat = row[4]
+            origin_lon = row[5]
+            current_stage = row[6] or 'stage_1'
+            corgi_lat = row[7]
+            corgi_lon = row[8]
+            bandit_lat = row[9]
+            bandit_lon = row[10]
+            created_at = row[11]
+            status = row[12]
+            player_name = row[13] or f"Player {device_uuid[:8]}"
+            
+            hunt_elements = {
+                'hunt_id': hunt_id,
+                'device_uuid': device_uuid,
+                'player_name': player_name,
+                'current_stage': current_stage,
+                'status': status,
+                'created_at': created_at,
+                'elements': []
+            }
+            
+            # 💀 Skeleton (Captain Bones) - always at origin location
+            if origin_lat and origin_lon:
+                hunt_elements['elements'].append({
+                    'id': f'skeleton_{hunt_id}',
+                    'type': 'skeleton',
+                    'name': f'💀 Captain Bones ({player_name})',
+                    'latitude': origin_lat,
+                    'longitude': origin_lon,
+                    'icon': '💀',
+                    'description': 'Skeleton NPC - gives first map piece'
+                })
+            
+            # ❌ Treasure X - the target location
+            if treasure_lat and treasure_lon:
+                hunt_elements['elements'].append({
+                    'id': f'treasure_{hunt_id}',
+                    'type': 'treasure',
+                    'name': f'❌ Treasure X ({player_name})',
+                    'latitude': treasure_lat,
+                    'longitude': treasure_lon,
+                    'icon': '❌',
+                    'description': 'X marks the spot!'
+                })
+            
+            # 🐕 Corgi (Barnaby) - appears in Stage 2+
+            if current_stage in ['stage_2', 'completed'] and corgi_lat and corgi_lon:
+                hunt_elements['elements'].append({
+                    'id': f'corgi_{hunt_id}',
+                    'type': 'corgi',
+                    'name': f'🐕 Barnaby the Corgi ({player_name})',
+                    'latitude': corgi_lat,
+                    'longitude': corgi_lon,
+                    'icon': '🐕',
+                    'description': 'Corgi NPC - confesses to taking treasure'
+                })
+            
+            # 🏴‍☠️ Bandit Hideout - appears in Stage 2+
+            if current_stage in ['stage_2', 'completed'] and bandit_lat and bandit_lon:
+                hunt_elements['elements'].append({
+                    'id': f'bandit_{hunt_id}',
+                    'type': 'bandit',
+                    'name': f'🏴‍☠️ Bandit Hideout ({player_name})',
+                    'latitude': bandit_lat,
+                    'longitude': bandit_lon,
+                    'icon': '🏴‍☠️',
+                    'description': 'Where bandits fled with remaining treasure'
+                })
+            
+            story_elements.append(hunt_elements)
+        
+        # Flatten all elements for easy map display
+        all_elements = []
+        for hunt in story_elements:
+            all_elements.extend(hunt['elements'])
+        
+        return jsonify({
+            'story_elements': all_elements,
+            'hunts': story_elements,
+            'total_hunts': len(story_elements),
+            'total_elements': len(all_elements)
+        }), 200
+        
+    except Exception as e:
+        print(f"❌ Error fetching story mode elements: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to fetch story elements: {str(e)}'}), 500
+
 
 # ============================================================================
 # Treasure Hunt Endpoints

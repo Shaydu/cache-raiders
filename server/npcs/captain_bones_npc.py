@@ -4,8 +4,8 @@ Captain Bones NPC - The Skeleton Pirate
 Captain Bones is the main quest-giver in CacheRaiders. He's a skeleton pirate
 who died 200 years ago and now guards the secrets of buried treasure.
 
-He speaks exclusively in pirate dialect and gives players the first half
-of the treasure map when they interact with him.
+He speaks exclusively in pirate dialect and gives players the treasure
+map when they interact with him.
 
 Game Role:
 - Stage 1: Gives the first map piece with approximate treasure coordinates
@@ -45,11 +45,11 @@ class CaptainBonesNPC:
     
     # Map piece introduction phrases
     MAP_PIECE_INTROS = [
-        "I've got somethin' for ye, matey - half o' me old treasure map!",
-        "Arr, take this torn piece o' map. It be showin' where X marks the spot!",
-        "Here be the first half o' the map, ye swashbuckler!",
+        "I've got somethin' for ye, matey - me old treasure map!",
+        "Arr, take this map. It be showin' where X marks the spot!",
+        "Here be the treasure map, ye swashbuckler!",
         "This weathered parchment shows the way to me buried gold!",
-        "Guard this map piece with yer life, or ye'll never find the booty!",
+        "Guard this map with yer life, or ye'll never find the booty!",
     ]
     
     # Farewell phrases

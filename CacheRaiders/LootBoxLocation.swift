@@ -235,6 +235,8 @@ class LootBoxLocationManager: ObservableObject {
     @Published var useGenericDoubloonIcons: Bool = false // When enabled, show generic doubloon icons and reveal real objects with animation
     @Published var gameMode: GameMode = .open { // Game mode: Open or Story Mode
         didSet {
+            print("🎮 [LootBoxLocationManager] gameMode didSet: \(oldValue.displayName) → \(gameMode.displayName)")
+            
             // STORY MODE: Remove all API objects when entering story mode (only NPCs should remain)
             if gameMode == .deadMensSecrets && oldValue != gameMode {
                 let objectsToRemove = locations.filter { location in
@@ -259,11 +261,15 @@ class LootBoxLocationManager: ObservableObject {
                 startAPIRefreshTimer()
                 Swift.print("▶️ Restarted API refresh timer (open mode - API objects enabled)")
             }
+            
+            // Notify that game mode changed (for UI updates)
+            objectWillChange.send()
         }
     }
     var onSizeChanged: (() -> Void)? // Callback when size settings change
     var onObjectCollectedByOtherUser: ((String) -> Void)? // Callback when object is collected by another user (to remove from AR)
     var onObjectUncollected: ((String) -> Void)? // Callback when object is uncollected (to re-place in AR)
+    var onAllObjectsCleared: (() -> Void)? // Callback when all objects should be cleared (e.g., game mode change)
     private let locationsFileName = "lootBoxLocations.json"
     private let maxDistanceKey = "maxSearchDistance"
     private let dataService = GameItemDataService.shared
@@ -315,17 +321,26 @@ class LootBoxLocationManager: ObservableObject {
         // API sync is always enabled - start refresh timer
         startAPIRefreshTimer()
         
+        // CRITICAL: Set up WebSocket event handlers BEFORE connecting
+        // This ensures we catch game mode changes that may come during/after connection
+        setupWebSocketCallbacks()
+        
         // Auto-connect to WebSocket (only if not in offline mode)
+        // WebSocket provides pub/sub for real-time game mode changes (no polling needed)
         if !OfflineModeManager.shared.isOfflineMode {
+            // Connect to WebSocket (callbacks are already set up above)
             WebSocketService.shared.connect()
-            // Fetch initial game mode from server
+            
+            // Fetch initial game mode from server after a brief delay to ensure API is ready
+            // This ensures we get the current server state on startup
+            // After this, all changes will come via WebSocket pub/sub (game_mode_changed event)
             Task {
-                await fetchGameModeFromServer()
+                // Shorter initial delay - API should be ready quickly
+                try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
+                print("🎮 [LootBoxLocationManager] Initial game mode fetch from server (startup)...")
+                await fetchGameModeFromServer(retryCount: 5) // More retries for reliability
             }
         }
-        
-        // Set up WebSocket event handlers for real-time updates
-        setupWebSocketCallbacks()
     }
     
     /// Set up WebSocket callbacks to handle real-time collection events from other users
@@ -406,60 +421,168 @@ class LootBoxLocationManager: ObservableObject {
         }
         
         WebSocketService.shared.onGameModeChanged = { [weak self] gameModeString in
-            guard let self = self else { return }
+            print("🎮🎮🎮 [LootBoxLocationManager] onGameModeChanged callback INVOKED with: \(gameModeString)")
+            print("   Thread: \(Thread.current)")
+            print("   Callback timestamp: \(Date())")
             
-            print("🎮 Game mode changed via WebSocket: \(gameModeString)")
+            guard let self = self else {
+                print("⚠️ [LootBoxLocationManager] onGameModeChanged callback: self is nil")
+                return
+            }
+            
+            print("🎮 [LootBoxLocationManager] Game mode changed callback received: \(gameModeString)")
+            print("   Current game mode before update: \(self.gameMode.rawValue) (\(self.gameMode.displayName))")
+            print("   Callback executed on thread: \(Thread.current)")
             
             // Update game mode from server
             if let newMode = GameMode(rawValue: gameModeString) {
                 Task { @MainActor in
-                    self.gameMode = newMode
-                    // Don't save to UserDefaults - server is the source of truth
-                    print("✅ Game mode updated to: \(newMode.displayName)")
+                    let oldMode = self.gameMode
+                    
+                    print("   New game mode from server: \(newMode.rawValue) (\(newMode.displayName))")
+                    print("   Old game mode: \(oldMode.rawValue) (\(oldMode.displayName))")
+                    
+                    // If game mode actually changed, update it and reset
+                    if oldMode != newMode {
+                        print("   🎮 Game mode changed from \(oldMode.displayName) to \(newMode.displayName) - updating and resetting")
+                        
+                        // Update game mode first - this will trigger the notification
+                        self.gameMode = newMode
+                        // Don't save to UserDefaults - server is the source of truth
+                        print("✅ [LootBoxLocationManager] Game mode updated to: \(newMode.displayName)")
+                        
+                        // Give a small delay to ensure notification appears before clearing objects
+                        try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                        
+                        // Now reset and reload
+                        await self.resetAndReloadGameItems()
+                    } else {
+                        print("   ℹ️ Game mode unchanged (already \(newMode.displayName))")
+                        // Still update to ensure sync
+                        self.gameMode = newMode
+                    }
                 }
             } else {
-                print("⚠️ Invalid game mode received: \(gameModeString)")
+                print("⚠️ [LootBoxLocationManager] Invalid game mode received from server: \(gameModeString)")
+                print("   Valid game modes are: \(GameMode.allCases.map { $0.rawValue }.joined(separator: ", "))")
+            }
+        }
+        
+        print("✅ [LootBoxLocationManager] onGameModeChanged callback registered")
+        print("   Callback address: \(String(describing: WebSocketService.shared.onGameModeChanged))")
+        
+        // Fetch game mode when WebSocket connects (in case it changed while disconnected)
+        WebSocketService.shared.onConnected = { [weak self] in
+            guard let self = self else { return }
+            
+            print("🔌 WebSocket connected - fetching current game mode from server")
+            print("   Current local game mode: \(self.gameMode.rawValue) (\(self.gameMode.displayName))")
+            
+            // Fetch current game mode to ensure we're in sync with server (with retries)
+            Task {
+                await self.fetchGameModeFromServer(retryCount: 2)
             }
         }
     }
     
-    /// Fetch game mode from server
-    private func fetchGameModeFromServer() async {
+    /// Fetch game mode from server (public method for manual refresh)
+    /// Call this when the app becomes active or after QR code scan to ensure sync with server
+    func refreshGameMode() async {
+        await fetchGameModeFromServer(retryCount: 3)
+    }
+    
+    /// Fetch game mode from server with retry logic
+    private func fetchGameModeFromServer(retryCount: Int = 1) async {
         // Skip if offline mode is enabled
         if OfflineModeManager.shared.isOfflineMode {
-            print("📴 Offline mode - skipping game mode fetch from server")
+            print("📴 [LootBoxLocationManager] Offline mode - skipping game mode fetch from server")
             return
         }
         
-        let baseURL = APIService.shared.baseURL
-        guard let url = URL(string: "\(baseURL)/api/settings/game-mode") else {
-            print("⚠️ Invalid URL for game mode endpoint")
-            return
-        }
+        print("🔄 [LootBoxLocationManager] Fetching game mode from server...")
         
-        do {
-            let (data, response) = try await URLSession.shared.data(from: url)
-            
-            guard let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                print("⚠️ Failed to fetch game mode: HTTP \(((response as? HTTPURLResponse)?.statusCode ?? 0))")
-                return
-            }
-            
-            let decoder = JSONDecoder()
-            let gameModeResponse = try decoder.decode(GameModeResponse.self, from: data)
-            
-            await MainActor.run {
-                if let newMode = GameMode(rawValue: gameModeResponse.game_mode) {
-                    self.gameMode = newMode
-                    print("✅ Game mode fetched from server: \(newMode.displayName)")
-                } else {
-                    print("⚠️ Invalid game mode from server: \(gameModeResponse.game_mode)")
+        var lastError: Error?
+        
+        for attempt in 1...retryCount {
+            do {
+                let gameModeString = try await APIService.shared.getGameMode()
+                
+                print("   Server returned game mode: \(gameModeString)")
+                
+                await MainActor.run {
+                    if let newMode = GameMode(rawValue: gameModeString) {
+                        let oldMode = self.gameMode
+                        
+                        print("   Current local game mode: \(oldMode.rawValue) (\(oldMode.displayName))")
+                        print("   Server game mode: \(newMode.rawValue) (\(newMode.displayName))")
+                        
+                        // If game mode actually changed, update it and reset
+                        if oldMode != newMode {
+                            print("✅ [LootBoxLocationManager] Game mode changed from server: \(oldMode.displayName) → \(newMode.displayName)")
+                            
+                            // Update game mode first - this will trigger the notification
+                            self.gameMode = newMode
+                            
+                            // Give a small delay to ensure notification appears before clearing objects
+                            Task {
+                                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
+                                await self.resetAndReloadGameItems()
+                            }
+                        } else {
+                            print("✅ [LootBoxLocationManager] Game mode fetched from server: \(newMode.displayName) (unchanged)")
+                            // Still update to ensure sync
+                            self.gameMode = newMode
+                        }
+                    } else {
+                        print("⚠️ [LootBoxLocationManager] Invalid game mode from server: \(gameModeString)")
+                        print("   Valid game modes are: \(GameMode.allCases.map { $0.rawValue }.joined(separator: ", "))")
+                    }
+                }
+                return // Success - exit the retry loop
+            } catch {
+                lastError = error
+                print("⚠️ [LootBoxLocationManager] Attempt \(attempt)/\(retryCount) failed to fetch game mode: \(error.localizedDescription)")
+                
+                if attempt < retryCount {
+                    // Wait before retry (exponential backoff)
+                    let delaySeconds = Double(attempt)
+                    print("   Retrying in \(delaySeconds)s...")
+                    try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
                 }
             }
-        } catch {
-            print("⚠️ Error fetching game mode from server: \(error.localizedDescription)")
-            // Fall back to UserDefaults value if server fetch fails
+        }
+        
+        // All retries failed
+        if let error = lastError {
+            print("❌ [LootBoxLocationManager] All \(retryCount) attempts failed to fetch game mode: \(error.localizedDescription)")
+            print("   Using local value: \(gameMode.displayName)")
+        }
+    }
+    
+    /// Reset and reload all game items when game mode changes
+    /// This clears all locations and AR objects, then reloads from server based on new game mode
+    func resetAndReloadGameItems() async {
+        print("🔄 Resetting and reloading game items due to game mode change...")
+        
+        await MainActor.run {
+            // Clear all locations
+            let clearedCount = self.locations.count
+            self.locations.removeAll()
+            print("🗑️ Cleared \(clearedCount) locations")
+            
+            // Notify AR coordinator to clear all AR objects
+            self.onAllObjectsCleared?()
+            
+            // Save the cleared state
+            self.saveLocations()
+        }
+        
+        // Reload from server based on current game mode
+        if let userLocation = self.lastKnownUserLocation {
+            await self.loadLocationsFromAPI(userLocation: userLocation, includeFound: true)
+            print("✅ Reloaded game items from server for game mode: \(self.gameMode.displayName)")
+        } else {
+            print("⚠️ No user location available - game items will load when location is available")
         }
     }
     
@@ -1103,19 +1226,30 @@ class LootBoxLocationManager: ObservableObject {
         useGenericDoubloonIcons = UserDefaults.standard.bool(forKey: useGenericDoubloonIconsKey)
     }
     
-    // Save game mode preference
+    // Save game mode preference - DISABLED: Game mode is server-authoritative
+    // This function is kept for backwards compatibility but does nothing
     func saveGameMode() {
-        UserDefaults.standard.set(gameMode.rawValue, forKey: gameModeKey)
+        // NO-OP: Game mode is controlled by server, not saved locally
+        print("⚠️ [LootBoxLocationManager] saveGameMode() called but game mode is server-authoritative - not saving locally")
     }
     
-    // Load game mode preference
+    // Load game mode preference - ALWAYS default to open mode
+    // Game mode is server-authoritative, so we don't load from UserDefaults
+    // The server value will be fetched shortly after startup via WebSocket/API
     private func loadGameMode() {
-        if let savedMode = UserDefaults.standard.string(forKey: gameModeKey),
-           let mode = GameMode(rawValue: savedMode) {
-            gameMode = mode // didSet will handle cleanup if needed
-        } else {
-            gameMode = .open // Default to open mode
+        // DEBUG: Check what was previously stored (but don't use it)
+        if let savedMode = UserDefaults.standard.string(forKey: gameModeKey) {
+            print("⚠️ [LootBoxLocationManager] Found stale UserDefaults gameMode: '\(savedMode)' - IGNORING (server is authoritative)")
+            // Clear the stale value
+            UserDefaults.standard.removeObject(forKey: gameModeKey)
+            print("🗑️ [LootBoxLocationManager] Cleared stale gameMode from UserDefaults")
         }
+        
+        // Always start with open mode - server will update us via fetchGameModeFromServer()
+        // This prevents the app from using stale local values when admin has changed the mode
+        gameMode = .open
+        print("🎮 [LootBoxLocationManager] Defaulting to OPEN mode - will sync with server shortly")
+        print("   Current gameMode value: \(gameMode.rawValue) (\(gameMode.displayName))")
     }
     
     // Save selected AR lens preference
