@@ -140,6 +140,23 @@ class ARPlacementReticle: ObservableObject {
         return length(placementPos - cameraPos)
     }
 
+    /// Gets the screen coordinates for the current placement position
+    func getPlacementScreenPoint() -> CGPoint? {
+        guard let arView = arView,
+              let frame = arView.session.currentFrame,
+              let placementPos = getPlacementPosition() else { return nil }
+
+        // Project world position to screen coordinates
+        let camera = frame.camera
+        let screenPoint = camera.projectPoint(placementPos,
+                                             orientation: .portrait,
+                                             viewportSize: arView.bounds.size)
+
+        // Convert to UIKit coordinates (flip Y axis)
+        let uiKitPoint = CGPoint(x: screenPoint.x, y: arView.bounds.height - screenPoint.y)
+        return uiKitPoint
+    }
+
     // MARK: - Private Methods
 
     private func createReticle(in arView: ARView) {

@@ -3,11 +3,12 @@ import RealityKit
 import ARKit
 import CoreLocation
 import CoreMotion
+import Combine
 
 // MARK: - AR VIO/SLAM Enhancement Service
 /// Advanced service that enhances AR tracking stability using VIO (Visual Inertial Odometry)
 /// and SLAM (Simultaneous Localization and Mapping) techniques
-class ARVIO_SLAM_Service: NSObject, ObservableObject {
+class ARVIO_SLAM_Service: ObservableObject {
 
     // MARK: - Properties
 
@@ -40,7 +41,6 @@ class ARVIO_SLAM_Service: NSObject, ObservableObject {
     // MARK: - Initialization
 
     init(arView: ARView?, arCoordinator: ARCoordinator?) {
-        super.init()
         self.arView = arView
         self.arCoordinator = arCoordinator
 
@@ -442,9 +442,10 @@ class FeatureTracker {
             for feature in features.prefix(10) { // Process first 10 features
                 if let depth = getDepthAtPoint(feature, from: sceneDepth) {
                     let camera = frame.camera
-                    let ray = camera.unprojectPoint(feature, ontoPlane: camera.transform * matrix_identity_float4x4, orientation: .portrait, viewportSize: CGSize(width: 1920, height: 1080))
-                    let landmark3D = SIMD3<Float>(Float(ray.x), Float(ray.y), Float(ray.z)) * depth
-                    newLandmarks.append(landmark3D)
+                    if let ray = camera.unprojectPoint(feature, ontoPlane: camera.transform * matrix_identity_float4x4, orientation: .portrait, viewportSize: CGSize(width: 1920, height: 1080)) {
+                        let landmark3D = SIMD3<Float>(Float(ray.x), Float(ray.y), Float(ray.z)) * depth
+                        newLandmarks.append(landmark3D)
+                    }
                 }
             }
         }
