@@ -168,19 +168,41 @@ class ARPlacementUtilities {
 
     // MARK: - Object Centering
 
-    /// Ensures object is positioned correctly relative to anchor
-    /// Most 3D models have their origin at the base center, so no horizontal centering is needed
-    /// The crosshairs indicate where the object's base should be positioned
+    /// Centers the model entity horizontally on the anchor position (crosshairs)
+    /// This ensures the model's base center aligns with where the crosshairs appear
     /// - Parameters:
-    ///   - entity: The entity to position
+    ///   - entity: The entity to center
     ///   - anchor: The anchor the entity is attached to
     static func centerEntityOnBase(entity: ModelEntity, anchor: AnchorEntity) {
-        // For most 3D models (USDZ files), the origin is already at the base center
-        // No horizontal centering needed - the entity origin should align with crosshairs
-        // Vertical positioning is handled separately by grounding
+        // Calculate the entity's visual bounds relative to the anchor
+        let bounds = entity.visualBounds(relativeTo: anchor)
 
-        Swift.print("🎯 [Positioning] Object positioned at crosshairs (no centering applied):")
-        Swift.print("   Entity is positioned with origin at anchor center (crosshairs location)")
-        Swift.print("   Vertical positioning will be handled by grounding")
+        // Find the center point of the entity's base (horizontal center)
+        let entityCenterX = (bounds.min.x + bounds.max.x) / 2.0
+        let entityCenterZ = (bounds.min.z + bounds.max.z) / 2.0
+
+        // Only apply centering if the bounds are meaningful (not zero or very small)
+        let boundsWidth = bounds.max.x - bounds.min.x
+        let boundsDepth = bounds.max.z - bounds.min.z
+
+        if abs(boundsWidth) > 0.001 && abs(boundsDepth) > 0.001 {
+            // Store original position for debugging
+            let originalPosition = entity.position
+
+            // Offset the entity so its horizontal center aligns with the anchor position (crosshairs)
+            entity.position.x -= entityCenterX
+            entity.position.z -= entityCenterZ
+
+            let formattedOffsetX = String(format: "%.3f", entityCenterX)
+            let formattedOffsetZ = String(format: "%.3f", entityCenterZ)
+            let formattedBounds = String(format: "X:[%.3f,%.3f] Z:[%.3f,%.3f]", bounds.min.x, bounds.max.x, bounds.min.z, bounds.max.z)
+            Swift.print("🎯 [Positioning] Object centered on crosshairs:")
+            Swift.print("   Visual bounds: \(formattedBounds)")
+            Swift.print("   Center calculated: X=\(formattedOffsetX)m, Z=\(formattedOffsetZ)m")
+            Swift.print("   Position adjusted: (\(String(format: "%.3f", originalPosition.x)), \(String(format: "%.3f", originalPosition.z))) → (\(String(format: "%.3f", entity.position.x)), \(String(format: "%.3f", entity.position.z)))")
+            Swift.print("   Entity base center now aligns with crosshairs position")
+        } else {
+            Swift.print("⚠️ [Positioning] Skipping centering - bounds too small or invalid: width=\(String(format: "%.6f", boundsWidth)), depth=\(String(format: "%.6f", boundsDepth))")
+        }
     }
 }

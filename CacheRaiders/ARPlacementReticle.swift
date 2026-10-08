@@ -8,6 +8,9 @@ class ARPlacementReticle: ObservableObject {
     weak var arView: ARView?
     weak var locationManager: LootBoxLocationManager?
 
+    // Callback to get preview object position when available
+    var previewObjectPositionProvider: (() -> SIMD3<Float>?)?
+
     private var reticleAnchor: AnchorEntity?
     private var reticleEntity: ModelEntity?
     private var distanceLabel: ModelEntity?
@@ -92,7 +95,12 @@ class ARPlacementReticle: ObservableObject {
                     raycastResult.worldTransform.columns.3.z
                 )
 
-                updateReticlePosition(hitPosition, cameraPos: cameraPos)
+                // If there's a preview object, position crosshairs at its center instead of raycast hit
+                if let previewPosition = previewObjectPositionProvider?() {
+                    updateReticlePosition(previewPosition, cameraPos: cameraPos)
+                } else {
+                    updateReticlePosition(hitPosition, cameraPos: cameraPos)
+                }
                 return
             }
         }

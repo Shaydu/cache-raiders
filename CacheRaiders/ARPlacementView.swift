@@ -772,6 +772,23 @@ struct ARPlacementView: View {
                 // Initialize placement reticle with AR view and location manager
                 placementReticle.arView = arView
                 placementReticle.locationManager = locationManager
+
+                // Set up preview object position provider so crosshairs follow preview object
+                placementReticle.previewObjectPositionProvider = { [weak self] in
+                    guard let self = self,
+                          let previewAnchor = self.previewObjectAnchor else {
+                        return nil
+                    }
+
+                    // Get the world position of the preview anchor
+                    let transform = previewAnchor.transformMatrix(relativeTo: nil)
+                    return SIMD3<Float>(
+                        transform.columns.3.x,
+                        transform.columns.3.y,
+                        transform.columns.3.z
+                    )
+                }
+
                 placementReticle.show()
 
                 // CRITICAL: Force initial update to ensure reticle anchor is positioned
@@ -1312,12 +1329,12 @@ struct ARPlacementView: View {
                 
                 // Ensure entity is enabled and visible
                 entity.isEnabled = true
-                
+
+                // Add entity to anchor FIRST (required for bounds calculation)
+                anchor.addChild(entity)
+
                 // CRITICAL FIX: Center the object on the crosshairs position BEFORE ground snapping
                 ARPlacementUtilities.centerEntityOnBase(entity: entity, anchor: anchor)
-                
-                // Add entity to anchor
-                anchor.addChild(entity)
                 
                 // FINAL GROUND SNAP (placement preview): ensure the visual mesh sits exactly on the ground
                 // We align the lowest point of the rendered geometry with the placement position's Y so that
