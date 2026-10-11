@@ -159,7 +159,7 @@ follow the smell of ale and steak!
         self,
         treasure_latitude: float,
         treasure_longitude: float,
-        max_distance_meters: float = 20.0
+        max_distance_meters: float = 10.0
     ) -> Tuple[float, float]:
         """Generate a location for Corgi within specified distance of treasure.
         
@@ -169,7 +169,7 @@ follow the smell of ale and steak!
         Args:
             treasure_latitude: Original treasure X latitude
             treasure_longitude: Original treasure X longitude
-            max_distance_meters: Maximum distance from treasure (default 20m)
+            max_distance_meters: Maximum distance from treasure (default 10m for easy testing)
             
         Returns:
             Tuple of (latitude, longitude) for Corgi's position
@@ -180,8 +180,8 @@ follow the smell of ale and steak!
         lat_offset_per_meter = 1.0 / 111000.0
         lon_offset_per_meter = 1.0 / (111000.0 * math.cos(math.radians(treasure_latitude)))
         
-        # Generate random distance (between 10m and max_distance)
-        distance = random.uniform(10.0, max_distance_meters)
+        # Generate random distance (between 3m and max_distance for close proximity)
+        distance = random.uniform(3.0, max_distance_meters)
         
         # Generate random angle
         angle = random.uniform(0, 2 * math.pi)
@@ -201,19 +201,19 @@ follow the smell of ale and steak!
         self,
         treasure_latitude: float,
         treasure_longitude: float,
-        min_distance_meters: float = 50.0,
-        max_distance_meters: float = 150.0
+        min_distance_meters: float = 15.0,
+        max_distance_meters: float = 30.0
     ) -> Tuple[float, float]:
         """Generate a location for the bandits' hideout.
         
-        The bandits are further away from the original treasure,
-        creating the Stage 3 objective.
+        The bandits are a bit further from the original treasure,
+        creating the Stage 3 objective. Kept close (15-30m) for easy testing.
         
         Args:
             treasure_latitude: Original treasure X latitude
             treasure_longitude: Original treasure X longitude
-            min_distance_meters: Minimum distance from original treasure
-            max_distance_meters: Maximum distance from original treasure
+            min_distance_meters: Minimum distance from original treasure (default 15m)
+            max_distance_meters: Maximum distance from original treasure (default 30m)
             
         Returns:
             Tuple of (latitude, longitude) for bandit hideout

@@ -627,21 +627,21 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.bordered)
                 
-                Spacer()
-                
                 Button(action: {
                     showQRScanner = true
                 }) {
                     HStack {
                         Image(systemName: "qrcode.viewfinder")
-                        Text("Scan QR Code")
+                        Text("Scan QR")
                     }
                 }
                 .buttonStyle(.bordered)
                 .tint(.blue)
+                
+                Spacer()
             }
             
-            Text("Enter your computer's local IP address (e.g., 192.168.1.100:5001). Find it with: ifconfig (Mac) or ipconfig (Windows). Or scan the QR code from the server admin page.")
+            Text("Enter your computer's local IP address (e.g., 192.168.1.100:5001) or scan a QR code. Find it with: ifconfig (Mac) or ipconfig (Windows).")
                 .font(.caption2)
                 .foregroundColor(.secondary)
             
@@ -897,32 +897,19 @@ struct SettingsView: View {
             .padding(.vertical, 4)
         }
         .padding(.vertical, 4)
-        .fullScreenCover(isPresented: $showQRScanner) {
-            QRCodeScannerView(scannedURL: $scannedURL)
-        }
         .sheet(isPresented: $showNetworkDiagnostics) {
             if let report = networkDiagnosticReport {
                 NetworkDiagnosticsView(report: report)
             }
         }
-        .onChange(of: scannedURL) { oldURL, newURL in
-            guard let url = newURL, url != oldURL else { return }
-            
-            // Defer state modification to next run loop to avoid "Modifying state during view update" warning
-            DispatchQueue.main.async {
-                // Update the form field immediately so user sees the URL
-                self.viewModel.apiURL = url
-                
-                // Save the URL and reconnect WebSocket
-                let saved = self.viewModel.saveAPIURL()
-                
-                if saved {
-                    // Reset scannedURL after processing to allow scanning again
-                    self.scannedURL = nil
-                } else {
-                    // If save failed, still reset to allow retry
-                    self.scannedURL = nil
-                }
+        .sheet(isPresented: $showQRScanner) {
+            QRCodeScannerView(scannedURL: $scannedURL)
+        }
+        .onChange(of: scannedURL) { _, newValue in
+            if let url = newValue {
+                viewModel.apiURL = url
+                _ = viewModel.saveAPIURL()
+                scannedURL = nil // Reset for next scan
             }
         }
     }
